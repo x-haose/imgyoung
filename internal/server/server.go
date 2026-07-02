@@ -22,7 +22,7 @@ type Config struct {
 	Driver storage.Driver
 	// Upload 上传编排服务。
 	Upload *upload.Service
-	// Token 上传鉴权 Token(迭代 0–4:单 Token;多 Token 体系见迭代 5)。
+	// Token 上传鉴权 Token,单 Token 模型(多 Token 体系见设计定稿·鉴权与滥用防护)。
 	Token string
 	// MaxUploadBytes 单图字节上限(内存三道闸之一)。
 	MaxUploadBytes int64

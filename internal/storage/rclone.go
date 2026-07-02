@@ -10,7 +10,7 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
 
-	// 按需注册 rclone 后端(设计定稿·按需 import 后端):迭代 0 仅 local。
+	// 按需注册 rclone 后端(设计定稿·按需 import 后端),当前仅 local。
 	_ "github.com/rclone/rclone/backend/local"
 )
 

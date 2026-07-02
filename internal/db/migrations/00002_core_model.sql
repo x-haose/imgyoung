@@ -1,6 +1,6 @@
 -- +goose Up
--- 迭代 1:落地设计定稿的两层核心模型(物理图 blobs / 上传引用 images)。
--- 上传永远新建 blob(sha256 不唯一),精确/相似合并由后台任务处理(迭代 6)。
+-- 两层核心模型:物理图 blobs / 上传引用 images(见设计定稿·数据模型)。
+-- 上传永远新建 blob(sha256 不唯一),精确/相似合并由后台查重任务处理。
 DROP TABLE images;
 
 CREATE TABLE blobs (
@@ -10,7 +10,7 @@ CREATE TABLE blobs (
     sha256 TEXT NOT NULL,
     -- 感知哈希(64 位,按 int64 存储),供后台相似度查重
     phash INTEGER NOT NULL,
-    -- MD5,可空:仅需要 ETag 校验的渠道才计算(迭代 2+)
+    -- MD5,可空:仅需要 ETag 校验的渠道才计算
     md5 TEXT,
     -- 渠道内对象键,形如 {short_id}_{sha256 前 8 位}
     storage_key TEXT NOT NULL,
@@ -34,7 +34,7 @@ CREATE TABLE images (
     -- 对外短 ID(nanoid)
     id TEXT PRIMARY KEY,
     blob_id INTEGER NOT NULL REFERENCES blobs (id),
-    -- 预留:多用户体系(迭代 5)
+    -- 预留:多用户体系(见设计定稿·鉴权模型)
     user_id TEXT,
     -- 原始文件名,仅作元数据展示
     file_name TEXT NOT NULL DEFAULT '',
@@ -46,7 +46,7 @@ CREATE TABLE idempotency_keys (
     -- 客户端幂等键(唯一约束即防重入口)
     key TEXT PRIMARY KEY,
     image_id TEXT NOT NULL REFERENCES images (id),
-    -- 保留期清理依据(迭代 4 起随 TTL sweeper 一起回收)
+    -- 保留期清理依据,由 TTL 清理任务定期回收
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

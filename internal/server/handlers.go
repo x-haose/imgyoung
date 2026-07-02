@@ -135,7 +135,8 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 
 	rc, err := s.cfg.Driver.Open(r.Context(), row.StorageKey)
 	if errors.Is(err, storage.ErrNotFound) {
-		// DB 有记录但渠道无对象:数据不一致,记录告警并对外 404(对账任务见迭代 3)。
+		// DB 有记录但渠道无对象:数据不一致,记录告警并对外 404;
+		// 一致性由对账任务兜底(见设计定稿·可靠性与灾备)。
 		s.cfg.Logger.Warn("引用存在但渠道对象缺失", "id", imageID, "key", row.StorageKey)
 		http.NotFound(w, r)
 		return

@@ -35,8 +35,8 @@ func main() {
 }
 
 // run 装配全部依赖并运行 HTTP 服务,直至收到退出信号或服务异常。
-// @Description: 迭代 0 的最小优雅退出(停收新请求 + 等待 in-flight);
-// 完整停机编排(排空任务/checkpoint WAL)见迭代 3。
+// @Description: 最小优雅退出:停收新请求 + 等待 in-flight 请求完成;
+// 完整停机编排(排空任务/checkpoint WAL)见设计定稿·优雅停机。
 // @return 启动失败或异常退出时的错误
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -162,7 +162,8 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, fmt.Errorf("写入渠道: %w", err)
 	}
 
-	// Put 成功而落库失败会产生孤儿对象,由对账任务回收(迭代 3),此处不回滚渠道写入。
+	// Put 成功而落库失败会产生孤儿对象,由对账任务回收(见设计定稿·对账 GC),
+	// 此处不回滚渠道写入。
 	err = s.persist(ctx, persistParams{
 		shortID:  shortID,
 		fileName: fileName,

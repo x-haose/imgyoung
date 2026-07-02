@@ -1,6 +1,5 @@
 -- +goose Up
--- 迭代 0 最小上传引用表:短 ID → 渠道对象键的映射。
--- 完整数据模型(blobs/images/blob_channels/variants 等)按设计定稿在迭代 1 落表。
+-- 最小上传引用表:短 ID → 渠道对象键的映射(已被 00002 的两层模型取代)。
 CREATE TABLE images (
     -- 对外短 ID(nanoid),同时是主键
     id TEXT PRIMARY KEY,

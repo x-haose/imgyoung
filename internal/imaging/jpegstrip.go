@@ -1,5 +1,5 @@
-// Package imaging 提供图片字节级处理:迭代 1 为 JPEG 元数据剥离;
-// 访问时按需处理管道(升级缝一)将在迭代 6 落在本包。
+// Package imaging 提供图片字节级处理(JPEG 元数据剥离)与 EXIF 档位定义;
+// 设计定稿中的按需处理管道(升级缝一)同属本包职责。
 package imaging
 
 import (
