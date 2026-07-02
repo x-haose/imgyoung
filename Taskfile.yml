@@ -1,0 +1,36 @@
+# ImgYoung 开发入口:task <name>(https://taskfile.dev)
+version: '3'
+
+tasks:
+  build:
+    desc: 构建单二进制(纯 Go,无 cgo)
+    env:
+      CGO_ENABLED: '0'
+    cmds:
+      - go build -trimpath -o imgyoung ./cmd/imgyoung
+
+  test:
+    desc: 全量测试(含数据竞争检测)
+    cmds:
+      - go test -race ./...
+
+  lint:
+    desc: lint 门禁:0 issue 才算过(质量红线)
+    cmds:
+      - golangci-lint run
+
+  generate:
+    desc: 重新生成 sqlc 查询代码
+    cmds:
+      - sqlc generate
+
+  run:
+    desc: 本地运行
+    deps: [build]
+    cmds:
+      - ./imgyoung
+
+  docker:
+    desc: 构建 Docker 镜像
+    cmds:
+      - docker build -t imgyoung:dev .

@@ -1,0 +1,36 @@
+# ImgYoung 项目约定
+
+设计蓝图:`图床项目_功能与设计定稿.md`(唯一权威,动手前先对照它;改设计先改文档)。
+
+## 质量红线(不可协商)
+
+- **0 警告**:`golangci-lint run` 0 issue、`go vet` 0 警告、GoLand IDE 0 警告。lint 配置在 `.golangci.yml`(迭代 0 建立,linter 集合从严),CI 门禁,红了不合并。`//nolint` 必须附一行理由,否则视为违规。
+- **注释全覆盖**:接口、方法、函数、结构体、字段——导出与非导出的都要有注释。
+  - 函数/方法用 **goanno 格式**,但**首行必须以标识符名开头**(兼容 godoc 与 revive 的 exported 规则),随后接 `@Description` / `@param` / `@return`:
+
+    ```go
+    // Put 将字节流写入指定渠道。
+    // @Description: 流式上传,不落盘;调用方负责关闭 r。渠道不可用时返回 ErrChannelDown。
+    // @param ctx 控制超时与取消
+    // @param key 渠道内对象键
+    // @param r 待写入的数据流
+    // @return 上传后的对象信息
+    // @return 错误
+    func (d *RcloneDriver) Put(ctx context.Context, key string, r io.Reader) (*ObjectInfo, error)
+    ```
+
+  - 字段注释写在字段上方或行尾,说明语义、单位、边界(如"租约到期时间,UTC;零值表示未认领")。
+  - 注释解释**为什么和约束**,不复述代码在做什么。
+
+## 架构原则
+
+- 按定稿执行,`CGO_ENABLED=0` 全程纯 Go。
+- **升级缝只有两条**(图像处理引擎、数据库),不新增投机抽象:一个实现不提前抽接口(定稿点名的 StorageDriver 等除外)、无单一产品的工厂、无"以后可能用到"的配置项。
+- 文件 < 800 行,函数 < 50 行,嵌套 ≤ 4 层,优先提前返回。
+- 业务表是唯一真相(outbox),River 任务只是幂等触发器。
+
+## 工作流
+
+- 每完成一个功能块:重读自己的 diff 自查 → `golangci-lint run && go test ./...` 全绿 → code-reviewer 审查 → 修复后才算完成。不允许"先提交后补测试"。
+- 测试:核心逻辑(引用计数、状态机、TTL、查重、密钥派生)单元测试;StorageDriver 链路用 rclone `local`/`memory` backend 做集成测试,零云账号依赖。
+- 提交信息遵循 conventional commits(feat/fix/refactor/...)。

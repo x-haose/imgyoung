@@ -1,0 +1,161 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// clearEnv 清空本包关心的全部环境变量,保证用例间隔离。
+// @Description: t.Setenv 置空即可——Load 将空值视为未设置。
+func clearEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{envConfig, envListen, envDataDir, envToken, envMaxUploadMB} {
+		t.Setenv(k, "")
+	}
+}
+
+// writeYAML 在临时目录写一个配置文件并返回其路径。
+func writeYAML(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "imgyoung.yml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("写测试配置文件: %v", err)
+	}
+	return path
+}
+
+// TestLoadDefaults 验证无环境变量、无配置文件时返回文档约定的默认值。
+func TestLoadDefaults(t *testing.T) {
+	clearEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.Listen != ":8080" {
+		t.Errorf("Listen = %q, 期望 :8080", cfg.Listen)
+	}
+	if cfg.DataDir != "data" {
+		t.Errorf("DataDir = %q, 期望 data", cfg.DataDir)
+	}
+	if cfg.Token != "" {
+		t.Errorf("Token = %q, 期望空(由 main 生成随机值)", cfg.Token)
+	}
+	if cfg.MaxUploadBytes != 50<<20 {
+		t.Errorf("MaxUploadBytes = %d, 期望 %d", cfg.MaxUploadBytes, 50<<20)
+	}
+}
+
+// TestLoadEnvOverrides 验证环境变量能覆盖全部默认值。
+func TestLoadEnvOverrides(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envListen, "127.0.0.1:9000")
+	t.Setenv(envDataDir, "/var/lib/imgyoung")
+	t.Setenv(envToken, "secret")
+	t.Setenv(envMaxUploadMB, "8")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.Listen != "127.0.0.1:9000" || cfg.DataDir != "/var/lib/imgyoung" ||
+		cfg.Token != "secret" || cfg.MaxUploadBytes != 8<<20 {
+		t.Fatalf("配置未按环境变量覆盖: %+v", cfg)
+	}
+}
+
+// TestLoadYAMLFile 验证 IMGYOUNG_CONFIG 指向的 yaml 文件生效。
+func TestLoadYAMLFile(t *testing.T) {
+	clearEnv(t)
+	path := writeYAML(t, "listen: \":7000\"\ndata_dir: /srv/img\ntoken: from-file\nmax_upload_mb: 12\n")
+	t.Setenv(envConfig, path)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.Listen != ":7000" || cfg.DataDir != "/srv/img" ||
+		cfg.Token != "from-file" || cfg.MaxUploadBytes != 12<<20 {
+		t.Fatalf("配置未按 yaml 文件加载: %+v", cfg)
+	}
+}
+
+// TestLoadEnvBeatsFile 验证优先级:环境变量 > 配置文件 > 默认值。
+func TestLoadEnvBeatsFile(t *testing.T) {
+	clearEnv(t)
+	path := writeYAML(t, "listen: \":7000\"\nmax_upload_mb: 12\n")
+	t.Setenv(envConfig, path)
+	t.Setenv(envListen, ":9999")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.Listen != ":9999" {
+		t.Errorf("Listen = %q, 期望环境变量覆盖为 :9999", cfg.Listen)
+	}
+	if cfg.MaxUploadBytes != 12<<20 {
+		t.Errorf("MaxUploadBytes = %d, 期望保留文件值 %d", cfg.MaxUploadBytes, 12<<20)
+	}
+	if cfg.DataDir != "data" {
+		t.Errorf("DataDir = %q, 期望保留默认值 data", cfg.DataDir)
+	}
+}
+
+// TestLoadDefaultConfigFile 验证工作目录下的 imgyoung.yml 会被自动发现。
+func TestLoadDefaultConfigFile(t *testing.T) {
+	clearEnv(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, defaultConfigFile), []byte("listen: \":6000\"\n"), 0o600); err != nil {
+		t.Fatalf("写默认配置文件: %v", err)
+	}
+	t.Chdir(dir)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.Listen != ":6000" {
+		t.Fatalf("Listen = %q, 期望自动发现 imgyoung.yml 中的 :6000", cfg.Listen)
+	}
+}
+
+// TestLoadInvalidMaxUpload 验证非法的上传上限快速失败(设计定稿·输入验证)。
+func TestLoadInvalidMaxUpload(t *testing.T) {
+	for name, v := range map[string]string{"非数字": "abc", "零": "0", "负数": "-3"} {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(envMaxUploadMB, v)
+			if _, err := Load(); err == nil {
+				t.Fatalf("%s=%q 应返回错误", envMaxUploadMB, v)
+			}
+		})
+	}
+}
+
+// TestLoadMissingConfigFile 验证显式指定但不存在的配置文件快速失败。
+func TestLoadMissingConfigFile(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envConfig, "/no/such/file.yml")
+	if _, err := Load(); err == nil {
+		t.Fatal("指向不存在的配置文件应返回错误")
+	}
+}
+
+// TestGenerateToken 验证随机 Token 的长度与唯一性。
+func TestGenerateToken(t *testing.T) {
+	a, err := GenerateToken()
+	if err != nil {
+		t.Fatalf("GenerateToken 返回错误: %v", err)
+	}
+	b, err := GenerateToken()
+	if err != nil {
+		t.Fatalf("GenerateToken 返回错误: %v", err)
+	}
+	if len(a) != tokenHexLen {
+		t.Fatalf("Token 长度 = %d, 期望 %d", len(a), tokenHexLen)
+	}
+	if a == b {
+		t.Fatalf("两次生成的 Token 相同: %q", a)
+	}
+}

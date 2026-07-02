@@ -1,0 +1,24 @@
+# CI 门禁:lint 0 issue + 全量测试(-race)+ 纯 Go 构建
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.11.4
+      - name: Test
+        run: go test -race ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath ./cmd/imgyoung

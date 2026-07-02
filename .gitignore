@@ -1,0 +1,13 @@
+# go
+/imgyoung
+/dist/
+*.test
+coverage.out
+
+# runtime data
+/data/
+/imgyoung.yml
+
+# ide / os
+.idea/
+.DS_Store

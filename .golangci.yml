@@ -1,0 +1,32 @@
+# ImgYoung lint 门禁:0 issue 才允许合并(项目质量红线,见 CLAUDE.md)。
+# default: standard 已含 errcheck / govet / ineffassign / staticcheck / unused。
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - copyloopvar # 循环变量误捕获
+    - errorlint   # 错误比较必须走 errors.Is/As
+    - gocritic    # 通用代码体检
+    - gosec       # 安全静态分析
+    - misspell    # 注释与字符串拼写
+    - revive      # 风格与导出注释
+    - unconvert   # 冗余类型转换
+    - unparam     # 无用参数
+  settings:
+    revive:
+      rules:
+        # 导出标识符必须有以其命名开头的注释(注释全覆盖红线的机器检查)
+        - name: exported
+        # 每个包必须有包注释
+        - name: package-comments
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
