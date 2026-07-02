@@ -23,6 +23,27 @@ type Blob struct {
 	CreatedAt     string
 }
 
+type BlobChannel struct {
+	BlobID    int64
+	ChannelID int64
+	State     string
+	Attempts  int64
+	LastError string
+	UpdatedAt string
+}
+
+type Channel struct {
+	ID              int64
+	Name            string
+	Driver          string
+	ConfigSealed    string
+	Priority        int64
+	Healthy         int64
+	Encrypted       string
+	AllowDirectLink int64
+	CreatedAt       string
+}
+
 type IdempotencyKey struct {
 	Key       string
 	ImageID   string

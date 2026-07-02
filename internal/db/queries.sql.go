@@ -40,6 +40,35 @@ func (q *Queries) CreateBlob(ctx context.Context, arg CreateBlobParams) (int64, 
 	return id, err
 }
 
+const createChannel = `-- name: CreateChannel :one
+INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link)
+VALUES (?, ?, ?, ?, ?, ?)
+RETURNING id
+`
+
+type CreateChannelParams struct {
+	Name            string
+	Driver          string
+	ConfigSealed    string
+	Priority        int64
+	Encrypted       string
+	AllowDirectLink int64
+}
+
+func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createChannel,
+		arg.Name,
+		arg.Driver,
+		arg.ConfigSealed,
+		arg.Priority,
+		arg.Encrypted,
+		arg.AllowDirectLink,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createIdempotencyKey = `-- name: CreateIdempotencyKey :exec
 INSERT INTO idempotency_keys (key, image_id)
 VALUES (?, ?)
@@ -69,6 +98,39 @@ type CreateImageParams struct {
 func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
 	_, err := q.db.ExecContext(ctx, createImage, arg.ID, arg.BlobID, arg.FileName)
 	return err
+}
+
+const deleteChannel = `-- name: DeleteChannel :exec
+DELETE FROM channels
+WHERE id = ?
+`
+
+func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteChannel, id)
+	return err
+}
+
+const getChannel = `-- name: GetChannel :one
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at
+FROM channels
+WHERE id = ?
+`
+
+func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
+	row := q.db.QueryRowContext(ctx, getChannel, id)
+	var i Channel
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Driver,
+		&i.ConfigSealed,
+		&i.Priority,
+		&i.Healthy,
+		&i.Encrypted,
+		&i.AllowDirectLink,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getIdempotencyImage = `-- name: GetIdempotencyImage :one
@@ -110,4 +172,184 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 		&i.Size,
 	)
 	return i, err
+}
+
+const listBlobChannels = `-- name: ListBlobChannels :many
+SELECT bc.channel_id, bc.state, c.name, c.priority, c.healthy
+FROM blob_channels bc
+JOIN channels c ON c.id = bc.channel_id
+WHERE bc.blob_id = ?
+ORDER BY c.priority DESC, c.id ASC
+`
+
+type ListBlobChannelsRow struct {
+	ChannelID int64
+	State     string
+	Name      string
+	Priority  int64
+	Healthy   int64
+}
+
+func (q *Queries) ListBlobChannels(ctx context.Context, blobID int64) ([]ListBlobChannelsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobChannels, blobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlobChannelsRow
+	for rows.Next() {
+		var i ListBlobChannelsRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.State,
+			&i.Name,
+			&i.Priority,
+			&i.Healthy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChannels = `-- name: ListChannels :many
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at
+FROM channels
+ORDER BY priority DESC, id ASC
+`
+
+func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
+	rows, err := q.db.QueryContext(ctx, listChannels)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Channel
+	for rows.Next() {
+		var i Channel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Driver,
+			&i.ConfigSealed,
+			&i.Priority,
+			&i.Healthy,
+			&i.Encrypted,
+			&i.AllowDirectLink,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingBlobChannels = `-- name: ListPendingBlobChannels :many
+SELECT blob_id, channel_id
+FROM blob_channels
+WHERE state IN ('pending', 'uploading')
+ORDER BY updated_at ASC
+LIMIT ?
+`
+
+type ListPendingBlobChannelsRow struct {
+	BlobID    int64
+	ChannelID int64
+}
+
+func (q *Queries) ListPendingBlobChannels(ctx context.Context, limit int64) ([]ListPendingBlobChannelsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingBlobChannels, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingBlobChannelsRow
+	for rows.Next() {
+		var i ListPendingBlobChannelsRow
+		if err := rows.Scan(&i.BlobID, &i.ChannelID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markBlobChannel = `-- name: MarkBlobChannel :exec
+UPDATE blob_channels
+SET state      = ?,
+    last_error = ?,
+    attempts   = attempts + 1,
+    updated_at = datetime('now')
+WHERE blob_id = ? AND channel_id = ?
+`
+
+type MarkBlobChannelParams struct {
+	State     string
+	LastError string
+	BlobID    int64
+	ChannelID int64
+}
+
+func (q *Queries) MarkBlobChannel(ctx context.Context, arg MarkBlobChannelParams) error {
+	_, err := q.db.ExecContext(ctx, markBlobChannel,
+		arg.State,
+		arg.LastError,
+		arg.BlobID,
+		arg.ChannelID,
+	)
+	return err
+}
+
+const updateChannelHealth = `-- name: UpdateChannelHealth :exec
+UPDATE channels
+SET healthy = ?
+WHERE id = ?
+`
+
+type UpdateChannelHealthParams struct {
+	Healthy int64
+	ID      int64
+}
+
+func (q *Queries) UpdateChannelHealth(ctx context.Context, arg UpdateChannelHealthParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelHealth, arg.Healthy, arg.ID)
+	return err
+}
+
+const upsertBlobChannel = `-- name: UpsertBlobChannel :exec
+INSERT INTO blob_channels (blob_id, channel_id, state)
+VALUES (?, ?, ?)
+ON CONFLICT (blob_id, channel_id)
+DO UPDATE SET state = excluded.state, updated_at = datetime('now')
+`
+
+type UpsertBlobChannelParams struct {
+	BlobID    int64
+	ChannelID int64
+	State     string
+}
+
+func (q *Queries) UpsertBlobChannel(ctx context.Context, arg UpsertBlobChannelParams) error {
+	_, err := q.db.ExecContext(ctx, upsertBlobChannel, arg.BlobID, arg.ChannelID, arg.State)
+	return err
 }

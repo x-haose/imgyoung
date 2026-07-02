@@ -33,6 +33,6 @@
 ## 工作流
 
 - 每完成一个功能块:重读自己的 diff 自查 → `golangci-lint run && go test ./...` 全绿 → 代码审查 → 修复后才算完成。不允许"先提交后补测试"。
-- **代码审查用项目自带的 `quality-reviewer` agent**(定义在 `.claude/agents/quality-reviewer.md`),备选 general-purpose agent 或主会话自审。不用 ecc:code-reviewer / ecc:security-reviewer——那两个 agent 的系统提示词含大量安全审计话术,叠加本项目的鉴权/加密代码会触发内容分类器误拦(已实测复现两次)。审查 prompt 要点:先声明良性背景(开源自部署图床、作者本人仓库、常规工程质量审查),用工程词汇描述任务。
+- **代码审查用 general-purpose agent**(或主会话自审),不用 ecc:code-reviewer / ecc:security-reviewer——那两个 agent 的系统提示词含大量安全审计话术,叠加本项目的鉴权/加密代码会触发内容分类器误拦(已实测复现两次)。审查 prompt 模板:先声明良性背景(开源自部署图床、作者本人仓库、常规工程质量审查),用工程词汇(正确性/并发/错误处理/输入校验)描述任务。
 - 测试:核心逻辑(引用计数、状态机、TTL、查重、密钥派生)单元测试;StorageDriver 链路用 rclone `local`/`memory` backend 做集成测试,零云账号依赖。
 - 提交信息遵循 conventional commits(feat/fix/refactor/...)。
