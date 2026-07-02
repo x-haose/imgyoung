@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/x-haose/imgyoung/internal/imaging"
 	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
@@ -81,7 +82,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 档位决策:单次表单字段 > 全局默认(在 API 层定死,Service 不做隐式回退)。
-	policy := upload.EXIFPolicy(r.FormValue("exif_policy"))
+	policy := imaging.EXIFPolicy(r.FormValue("exif_policy"))
 	if policy == "" {
 		policy = s.cfg.DefaultEXIFPolicy
 	}
@@ -101,7 +102,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, upload.ErrInvalidImage):
 		s.writeError(w, http.StatusBadRequest, "图片内容无法解析")
 		return
-	case errors.Is(err, upload.ErrUnknownPolicy):
+	case errors.Is(err, imaging.ErrUnknownPolicy):
 		s.writeError(w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
 		return
 	case err != nil:

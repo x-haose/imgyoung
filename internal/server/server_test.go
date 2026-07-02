@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/db"
+	"github.com/x-haose/imgyoung/internal/imaging"
 	"github.com/x-haose/imgyoung/internal/server"
 	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
@@ -61,7 +62,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		Token:             testToken,
 		MaxUploadBytes:    1 << 20,
 		AllowEmptyReferer: true,
-		DefaultEXIFPolicy: upload.PolicyPassthrough,
+		DefaultEXIFPolicy: imaging.PolicyPassthrough,
 		Logger:            slog.New(slog.DiscardHandler),
 	}
 	if mutate != nil {

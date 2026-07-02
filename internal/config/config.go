@@ -15,6 +15,8 @@ import (
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/x-haose/imgyoung/internal/imaging"
 )
 
 // 环境变量名。
@@ -68,9 +70,9 @@ type Config struct {
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行,默认 true(设计定稿·防盗链)。
 	AllowEmptyReferer bool
-	// EXIFPolicy 全局默认 EXIF 档位,默认 "passthrough"(不动用户原图);
-	// 单次上传可覆盖。
-	EXIFPolicy string
+	// EXIFPolicy 全局默认 EXIF 档位,默认 passthrough(不动用户原图);
+	// 单次上传可覆盖。枚举见 imaging 包。
+	EXIFPolicy imaging.EXIFPolicy
 }
 
 // envPrefix 环境变量统一前缀,剥掉后小写即为配置键(IMGYOUNG_DATA_DIR → data_dir)。
@@ -158,9 +160,9 @@ func Load() (Config, error) {
 	if raw.MaxPixelsMP <= 0 {
 		return Config{}, fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", raw.MaxPixelsMP)
 	}
-	// spoof 为实验特性尚未实现,不静默降级(设计定稿·EXIF 三档)。
-	if raw.EXIFPolicy != "strip" && raw.EXIFPolicy != "passthrough" {
-		return Config{}, fmt.Errorf("exif_policy=%q 非法: 可选 strip / passthrough", raw.EXIFPolicy)
+	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
+	if err := imaging.ValidatePolicy(imaging.EXIFPolicy(raw.EXIFPolicy)); err != nil {
+		return Config{}, fmt.Errorf("exif_policy 配置非法: %w", err)
 	}
 	return Config{
 		Listen:            raw.Listen,
@@ -171,7 +173,7 @@ func Load() (Config, error) {
 		MaxPixels:         raw.MaxPixelsMP * megapixel,
 		RefererWhitelist:  raw.RefererWhitelist,
 		AllowEmptyReferer: raw.AllowEmptyReferer,
-		EXIFPolicy:        raw.EXIFPolicy,
+		EXIFPolicy:        imaging.EXIFPolicy(raw.EXIFPolicy),
 	}, nil
 }
 

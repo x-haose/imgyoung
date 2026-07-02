@@ -28,16 +28,25 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
+// 图片 MIME 类型常量(http.DetectContentType 的返回值)。
+const (
+	mimeJPEG = "image/jpeg"
+	mimePNG  = "image/png"
+	mimeGIF  = "image/gif"
+	mimeWebP = "image/webp"
+)
+
 // allowedMIME 图片格式白名单(设计定稿·滥用防护:格式白名单)。
 // SVG 刻意不在列(XSS 风险,设计定稿·格式安全)。
 var allowedMIME = map[string]struct{}{
-	"image/jpeg": {},
-	"image/png":  {},
-	"image/gif":  {},
-	"image/webp": {},
+	mimeJPEG: {},
+	mimePNG:  {},
+	mimeGIF:  {},
+	mimeWebP: {},
 }
 
 // 上传链路的业务错误哨兵,由 API 层映射为 HTTP 状态码。
+// EXIF 档位枚举与其校验错误见 imaging 包(单一真相)。
 var (
 	// ErrUnsupportedType 内容不在图片格式白名单内(按 magic bytes 判定)。
 	ErrUnsupportedType = errors.New("upload: 不支持的文件类型")
@@ -45,20 +54,6 @@ var (
 	ErrTooManyPixels = errors.New("upload: 图片分辨率超出限制")
 	// ErrInvalidImage 声明格式合法但内容无法解析。
 	ErrInvalidImage = errors.New("upload: 图片内容无法解析")
-	// ErrUnknownPolicy EXIF 策略取值非法或尚未实现(如实验特性 spoof)。
-	ErrUnknownPolicy = errors.New("upload: 未知的 EXIF 策略")
-)
-
-// EXIFPolicy EXIF 处理档位(设计定稿·EXIF 三档)。
-type EXIFPolicy string
-
-// EXIF 档位取值;spoof 为实验特性,尚未实现,取值时返回 ErrUnknownPolicy。
-// 档位决策(全局默认/单次覆盖)由调用方(API 层)完成,本包只接受明确档位。
-const (
-	// PolicyStrip 剥离全部元数据。
-	PolicyStrip EXIFPolicy = "strip"
-	// PolicyPassthrough 保留原样,不动任何元数据(全局默认档)。
-	PolicyPassthrough EXIFPolicy = "passthrough"
 )
 
 // Config Service 的全部依赖与参数。
@@ -81,7 +76,7 @@ type Options struct {
 	IdempotencyKey string
 	// EXIFPolicy 本次上传生效的 EXIF 档位,必填——由调用方解析
 	// "单次指定 > 全局默认"后传入明确值,本包不做隐式回退。
-	EXIFPolicy EXIFPolicy
+	EXIFPolicy imaging.EXIFPolicy
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -134,11 +129,11 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, ErrTooManyPixels
 	}
 
-	if err := validatePolicy(opts.EXIFPolicy); err != nil {
+	if err := imaging.ValidatePolicy(opts.EXIFPolicy); err != nil {
 		return Result{}, err
 	}
 	// 净化在前、哈希在后:哈希对象 = 实际存储字节(设计定稿·数据流)。
-	if opts.EXIFPolicy == PolicyStrip && mime == "image/jpeg" {
+	if opts.EXIFPolicy == imaging.PolicyStrip && mime == mimeJPEG {
 		stripped, serr := imaging.StripJPEGMetadata(data)
 		if serr != nil {
 			return Result{}, fmt.Errorf("%w: %w", ErrInvalidImage, serr)
@@ -190,20 +185,6 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, err
 	}
 	return Result{ImageID: shortID}, nil
-}
-
-// validatePolicy 校验档位为已实现的明确取值。
-// @Description: 空值、实验特性 spoof 与乱填值一律返回 ErrUnknownPolicy——
-// 不做隐式回退,档位决策必须由调用方显式完成(不静默降级)。
-// @param p 调用方传入的档位
-// @return 取值非法时的错误
-func validatePolicy(p EXIFPolicy) error {
-	switch p {
-	case PolicyStrip, PolicyPassthrough:
-		return nil
-	default:
-		return fmt.Errorf("%w: %q", ErrUnknownPolicy, p)
-	}
 }
 
 // persistParams 一次落库所需的全部字段。

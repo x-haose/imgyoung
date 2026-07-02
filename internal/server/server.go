@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/x-haose/imgyoung/internal/db"
+	"github.com/x-haose/imgyoung/internal/imaging"
 	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
@@ -29,7 +30,7 @@ type Config struct {
 	BaseURL string
 	// DefaultEXIFPolicy 全局默认 EXIF 档位;单次上传的表单字段可覆盖。
 	// 档位决策在本层完成,传给 Service 的必须是明确档位。
-	DefaultEXIFPolicy upload.EXIFPolicy
+	DefaultEXIFPolicy imaging.EXIFPolicy
 	// RefererWhitelist 防盗链白名单;为空表示不启用。
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行。

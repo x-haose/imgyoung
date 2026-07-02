@@ -93,7 +93,7 @@ func run() error {
 		Token:             token,
 		MaxUploadBytes:    cfg.MaxUploadBytes,
 		BaseURL:           cfg.BaseURL,
-		DefaultEXIFPolicy: upload.EXIFPolicy(cfg.EXIFPolicy),
+		DefaultEXIFPolicy: cfg.EXIFPolicy,
 		RefererWhitelist:  cfg.RefererWhitelist,
 		AllowEmptyReferer: cfg.AllowEmptyReferer,
 		Logger:            logger,
