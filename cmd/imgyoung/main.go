@@ -83,9 +83,11 @@ func run() error {
 
 	queries := db.New(conn)
 	channels, err := channel.NewManager(ctx, channel.ManagerConfig{
+		Conn:    conn,
 		Queries: queries,
 		Master:  master,
 		DataDir: cfg.DataDir,
+		Logger:  logger,
 	})
 	if err != nil {
 		return err
@@ -99,7 +101,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if err = runner.Start(ctx); err != nil {
+	// Runner 用独立生命周期:SIGTERM 不直接砍断在途复制,由 Stop 优雅收敛。
+	runnerCtx, runnerCancel := context.WithCancel(context.Background())
+	defer runnerCancel()
+	if err = runner.Start(runnerCtx); err != nil {
 		return err
 	}
 
@@ -171,9 +176,13 @@ func run() error {
 	if err = httpSrv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("优雅退出: %w", err)
 	}
-	if err = runner.Stop(shutdownCtx); err != nil {
+	// 任务停止使用独立预算,不与 HTTP 排空争抢同一超时。
+	runnerStopCtx, cancelRunnerStop := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancelRunnerStop()
+	if err = runner.Stop(runnerStopCtx); err != nil {
 		logger.Warn("补齐任务停止未完成", "err", err)
 	}
+	runnerCancel()
 	if err = <-errCh; !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("HTTP 服务收尾: %w", err)
 	}

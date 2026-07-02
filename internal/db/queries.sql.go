@@ -340,28 +340,33 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 	return items, nil
 }
 
-const listPendingBlobChannels = `-- name: ListPendingBlobChannels :many
+const listPendingBlobChannelsPage = `-- name: ListPendingBlobChannelsPage :many
 SELECT blob_id, channel_id
 FROM blob_channels
 WHERE state IN ('pending', 'uploading')
-ORDER BY updated_at ASC
-LIMIT ?
+ORDER BY blob_id ASC, channel_id ASC
+LIMIT ? OFFSET ?
 `
 
-type ListPendingBlobChannelsRow struct {
+type ListPendingBlobChannelsPageParams struct {
+	Limit  int64
+	Offset int64
+}
+
+type ListPendingBlobChannelsPageRow struct {
 	BlobID    int64
 	ChannelID int64
 }
 
-func (q *Queries) ListPendingBlobChannels(ctx context.Context, limit int64) ([]ListPendingBlobChannelsRow, error) {
-	rows, err := q.db.QueryContext(ctx, listPendingBlobChannels, limit)
+func (q *Queries) ListPendingBlobChannelsPage(ctx context.Context, arg ListPendingBlobChannelsPageParams) ([]ListPendingBlobChannelsPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingBlobChannelsPage, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListPendingBlobChannelsRow
+	var items []ListPendingBlobChannelsPageRow
 	for rows.Next() {
-		var i ListPendingBlobChannelsRow
+		var i ListPendingBlobChannelsPageRow
 		if err := rows.Scan(&i.BlobID, &i.ChannelID); err != nil {
 			return nil, err
 		}
@@ -380,7 +385,7 @@ const markBlobChannel = `-- name: MarkBlobChannel :exec
 UPDATE blob_channels
 SET state      = ?,
     last_error = ?,
-    attempts   = attempts + 1,
+    attempts   = attempts + ?,
     updated_at = datetime('now')
 WHERE blob_id = ? AND channel_id = ?
 `
@@ -388,6 +393,7 @@ WHERE blob_id = ? AND channel_id = ?
 type MarkBlobChannelParams struct {
 	State     string
 	LastError string
+	Attempts  int64
 	BlobID    int64
 	ChannelID int64
 }
@@ -396,9 +402,22 @@ func (q *Queries) MarkBlobChannel(ctx context.Context, arg MarkBlobChannelParams
 	_, err := q.db.ExecContext(ctx, markBlobChannel,
 		arg.State,
 		arg.LastError,
+		arg.Attempts,
 		arg.BlobID,
 		arg.ChannelID,
 	)
+	return err
+}
+
+const resetFailedBlobChannels = `-- name: ResetFailedBlobChannels :exec
+UPDATE blob_channels
+SET state      = 'pending',
+    updated_at = datetime('now')
+WHERE state = 'failed' AND channel_id = ?
+`
+
+func (q *Queries) ResetFailedBlobChannels(ctx context.Context, channelID int64) error {
+	_, err := q.db.ExecContext(ctx, resetFailedBlobChannels, channelID)
 	return err
 }
 

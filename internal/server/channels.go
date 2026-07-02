@@ -45,9 +45,12 @@ type channelCreateRequest struct {
 // handleChannelCreate 创建渠道。
 func (s *Server) handleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, channelBodyLimit)
+	dec := json.NewDecoder(r.Body)
+	// 拒绝未知字段:字段名拼错静默取零值是无声的配置事故。
+	dec.DisallowUnknownFields()
 	var req channelCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "请求体不是合法 JSON")
+	if err := dec.Decode(&req); err != nil {
+		s.writeError(w, http.StatusBadRequest, "请求体不是合法 JSON 或含未知字段")
 		return
 	}
 	encrypted := s.cfg.EncryptNewChannels

@@ -12,6 +12,7 @@ import (
 	"image/png"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,9 +56,11 @@ func newTestEnv(t *testing.T, maxPixels int64) *testEnv {
 	}
 	queries := db.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
+		Conn:    conn,
 		Queries: queries,
 		Master:  master,
 		DataDir: dir,
+		Logger:  slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatalf("创建渠道管理器: %v", err)
@@ -271,6 +274,62 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 	for chID, state := range states {
 		if chID != primaryID && state != channel.StatePending {
 			t.Errorf("渠道 %d 状态 = %q, 期望 pending(待补齐)", chID, state)
+		}
+	}
+}
+
+// TestProcessFallsBackWhenPrimaryFails 验证上传降级:主渠道写入失败时
+// 自动顺延下一健康渠道,不整体报错(设计定稿·上传失败→降级下一渠道)。
+func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
+	env := newTestEnv(t, 1<<20)
+	brokenDir := t.TempDir()
+	cfgJSON, err := json.Marshal(map[string]string{"path": brokenDir})
+	if err != nil {
+		t.Fatalf("编码渠道配置: %v", err)
+	}
+	sealed, err := env.mgr.SealConfig(string(cfgJSON))
+	if err != nil {
+		t.Fatalf("加密渠道配置: %v", err)
+	}
+	brokenID, err := env.queries.CreateChannel(t.Context(), db.CreateChannelParams{
+		Name: "broken-primary", Driver: "local", ConfigSealed: sealed, Priority: 300,
+	})
+	if err != nil {
+		t.Fatalf("创建渠道: %v", err)
+	}
+	if err := env.mgr.Reload(t.Context()); err != nil {
+		t.Fatalf("重载管理器: %v", err)
+	}
+	// 主渠道目录不可写,写入必失败。
+	if err := os.Chmod(brokenDir, 0o000); err != nil {
+		t.Fatalf("模拟主渠道故障: %v", err)
+	}
+	defer func() {
+		if cerr := os.Chmod(brokenDir, 0o700); cerr != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+			t.Errorf("恢复目录权限: %v", cerr)
+		}
+	}()
+
+	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
+		FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+	})
+	if err != nil {
+		t.Fatalf("主渠道故障时上传应降级成功, 实际错误: %v", err)
+	}
+	row, err := env.queries.GetImageBlob(t.Context(), res.ImageID)
+	if err != nil {
+		t.Fatalf("查询引用记录: %v", err)
+	}
+	replicas, err := env.queries.ListBlobChannels(t.Context(), row.BlobID)
+	if err != nil {
+		t.Fatalf("查询副本状态: %v", err)
+	}
+	for _, rep := range replicas {
+		if rep.ChannelID == brokenID && rep.State == channel.StateDone {
+			t.Fatal("故障主渠道不应有就绪副本")
+		}
+		if rep.ChannelID != brokenID && rep.State != channel.StateDone {
+			t.Errorf("降级渠道 %d 状态 = %q, 期望 done", rep.ChannelID, rep.State)
 		}
 	}
 }

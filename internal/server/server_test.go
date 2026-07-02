@@ -51,9 +51,11 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 	}
 	queries := db.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
+		Conn:    conn,
 		Queries: queries,
 		Master:  master,
 		DataDir: dir,
+		Logger:  slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatalf("创建渠道管理器: %v", err)
@@ -477,5 +479,23 @@ func TestRedirectMode(t *testing.T) {
 	loc := resp.Header.Get("Location")
 	if !strings.HasPrefix(loc, "https://cdn.example.com/pub/") {
 		t.Fatalf("Location = %q, 期望 public_base_url 前缀", loc)
+	}
+}
+
+// TestChannelCreateValidation 验证创建接口的输入校验:未知字段与矛盾组合拒绝。
+func TestChannelCreateValidation(t *testing.T) {
+	ts := newTestServer(t, nil)
+
+	unknown := postChannel(t, ts, `{"name":"x","driver":"local","prioritty":5}`)
+	defer closeBody(t, unknown)
+	if unknown.StatusCode != http.StatusBadRequest {
+		t.Fatalf("未知字段状态码 = %d, 期望 400", unknown.StatusCode)
+	}
+
+	conflict := postChannel(t, ts,
+		fmt.Sprintf(`{"name":"y","driver":"local","encrypted":true,"allow_direct_link":true,"config":{"path":%q}}`, t.TempDir()))
+	defer closeBody(t, conflict)
+	if conflict.StatusCode != http.StatusBadRequest {
+		t.Fatalf("加密+直链矛盾组合状态码 = %d, 期望 400", conflict.StatusCode)
 	}
 }

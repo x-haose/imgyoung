@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,9 +44,11 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	queries := db.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
+		Conn:    conn,
 		Queries: queries,
 		Master:  master,
 		DataDir: dir,
+		Logger:  slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatalf("NewManager 返回错误: %v", err)

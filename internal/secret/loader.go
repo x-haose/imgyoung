@@ -34,8 +34,13 @@ func LoadOrCreate(dataDir string) (*MasterKey, bool, error) {
 		if kerr != nil {
 			return nil, false, kerr
 		}
-		if werr := os.WriteFile(path, []byte(key.Hex()+"\n"), 0o600); werr != nil {
-			return nil, false, fmt.Errorf("写入主密钥文件 %q: %w", path, werr)
+		// 临时文件 + 重命名保证原子性:写一半崩溃不会留下损坏的密钥文件。
+		tmp := path + ".tmp"
+		if werr := os.WriteFile(tmp, []byte(key.Hex()+"\n"), 0o600); werr != nil {
+			return nil, false, fmt.Errorf("写入主密钥临时文件 %q: %w", tmp, werr)
+		}
+		if werr := os.Rename(tmp, path); werr != nil {
+			return nil, false, fmt.Errorf("落定主密钥文件 %q: %w", path, werr)
 		}
 		return key, true, nil
 	default:

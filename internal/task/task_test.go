@@ -45,7 +45,8 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	queries := db.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
-		Queries: queries, Master: master, DataDir: dir,
+		Conn: conn, Queries: queries, Master: master, DataDir: dir,
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err != nil {
 		t.Fatalf("创建渠道管理器: %v", err)
@@ -163,6 +164,23 @@ func TestReconcileRequeuesPending(t *testing.T) {
 
 	if err := env.runner.Reconcile(t.Context()); err != nil {
 		t.Fatalf("恢复扫描: %v", err)
+	}
+	waitState(t, env, blobID, env.backup.ID, channel.StateDone)
+}
+
+// TestReconcileResetsFailedOnHealthyChannel 验证对账把健康渠道上的 failed 副本
+// 复位为 pending 并最终补齐(failed 不是永久终态)。
+func TestReconcileResetsFailedOnHealthyChannel(t *testing.T) {
+	env := newTestEnv(t)
+	blobID, _ := seedBlob(t, env)
+	if err := env.queries.UpsertBlobChannel(t.Context(), db.UpsertBlobChannelParams{
+		BlobID: blobID, ChannelID: env.backup.ID, State: channel.StateFailed,
+	}); err != nil {
+		t.Fatalf("标记副本失败态: %v", err)
+	}
+
+	if err := env.runner.Reconcile(t.Context()); err != nil {
+		t.Fatalf("对账扫描: %v", err)
 	}
 	waitState(t, env, blobID, env.backup.ID, channel.StateDone)
 }

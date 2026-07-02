@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/corona10/goimagehash"
 
@@ -70,10 +71,25 @@ var (
 
 // ChannelSelector 写入目标的选择与枚举(由 channel.Manager 实现)。
 type ChannelSelector interface {
-	// Primary 返回主渠道:健康渠道中优先级最高者。
-	Primary() (channel.Handle, error)
+	// Healthy 返回健康渠道句柄,按优先级降序。
+	Healthy() []channel.Handle
 	// All 返回全部渠道句柄,按优先级降序。
 	All() []channel.Handle
+}
+
+// putTimeout 单次渠道同步写入的超时上限——远端渠道半死时不允许无限挂起
+// 占用并发闸名额(上限按 50MB 大图过慢速链路放宽)。
+const putTimeout = 10 * time.Minute
+
+// putWithTimeout 带超时地向渠道写入一份对象。
+// @param h 目标渠道
+// @param key 对象键
+// @param data 完整字节
+// @return 写入失败或超时时的错误
+func putWithTimeout(ctx context.Context, h channel.Handle, key string, data []byte) error {
+	putCtx, cancel := context.WithTimeout(ctx, putTimeout)
+	defer cancel()
+	return h.Driver.Put(putCtx, key, bytes.NewReader(data), int64(len(data)))
 }
 
 // ReplicationEnqueuer 副本补齐任务的入队口(由 task.Runner 实现)。
@@ -200,26 +216,20 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段(设计定稿·命名)。
 	key := shortID + "_" + hex.EncodeToString(sum[:4])
 
-	// 写入语义:主渠道成功即返回(min_success 可要求更多同步副本),
-	// 其余渠道由补齐任务异步复制(设计定稿·上传管理)。
-	primary, err := s.cfg.Channels.Primary()
-	if err != nil {
-		return Result{}, fmt.Errorf("选择主渠道: %w", err)
+	// 写入语义:按优先级向健康渠道同步写入,首个成功者即本次主渠道,
+	// 写入失败自动顺延下一渠道(设计定稿·渠道管理:上传失败→降级下一渠道);
+	// min_success 可要求更多同步副本,其余渠道由补齐任务异步复制。
+	healthy := s.cfg.Channels.Healthy()
+	if len(healthy) == 0 {
+		return Result{}, fmt.Errorf("选择主渠道: %w", channel.ErrNoHealthyChannel)
 	}
-	if err = primary.Driver.Put(ctx, key, bytes.NewReader(data), int64(len(data))); err != nil {
-		return Result{}, fmt.Errorf("写入渠道 %q: %w", primary.Name, err)
-	}
-	doneIDs := []int64{primary.ID}
-	all := s.cfg.Channels.All()
-	for _, h := range all {
+	doneIDs := make([]int64, 0, s.minSuccess())
+	for _, h := range healthy {
 		if len(doneIDs) >= s.minSuccess() {
 			break
 		}
-		if h.ID == primary.ID {
-			continue
-		}
-		if perr := h.Driver.Put(ctx, key, bytes.NewReader(data), int64(len(data))); perr != nil {
-			s.cfg.Logger.Warn("同步副本写入失败", "channel", h.Name, "err", perr)
+		if perr := putWithTimeout(ctx, h, key, data); perr != nil {
+			s.cfg.Logger.Warn("渠道写入失败,顺延下一渠道", "channel", h.Name, "err", perr)
 			continue
 		}
 		doneIDs = append(doneIDs, h.ID)
@@ -227,14 +237,16 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	if len(doneIDs) < s.minSuccess() {
 		return Result{}, fmt.Errorf("%w: 要求 %d 份,仅写入 %d 份", ErrInsufficientReplicas, s.minSuccess(), len(doneIDs))
 	}
+	all := s.cfg.Channels.All()
 
 	// Put 成功而落库失败会产生孤儿对象,由对账任务回收(见设计定稿·对账 GC),
 	// 此处不回滚渠道写入。
-	err = s.persist(ctx, persistParams{
+	blobID, err := s.persist(ctx, persistParams{
 		shortID:  shortID,
 		fileName: fileName,
 		idemKey:  idemKey,
 		doneIDs:  doneIDs,
+		channels: all,
 		sha256:   hex.EncodeToString(sum[:]),
 		phash:    int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
 		key:      key,
@@ -256,11 +268,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	// 触发异步补齐;入队失败仅告警——pending 行由恢复扫描兜底(围栏设计)。
 	if s.cfg.Replicator != nil {
 		if pending := pendingIDs(all, doneIDs); len(pending) > 0 {
-			row, qerr := s.cfg.Queries.GetImageBlob(ctx, shortID)
-			if qerr == nil {
-				qerr = s.cfg.Replicator.EnqueueReplication(ctx, row.BlobID, pending)
-			}
-			if qerr != nil {
+			if qerr := s.cfg.Replicator.EnqueueReplication(ctx, blobID, pending); qerr != nil {
 				s.cfg.Logger.Warn("补齐任务入队失败,待恢复扫描兜底", "image", shortID, "err", qerr)
 			}
 		}
@@ -330,6 +338,8 @@ type persistParams struct {
 	idemKey string
 	// doneIDs 已同步写入的渠道 ID(至少含主渠道)。
 	doneIDs []int64
+	// channels 本次上传使用的渠道快照(与 doneIDs 同源,避免两次取集合不一致)。
+	channels []channel.Handle
 	// sha256 净化后字节哈希(十六进制)。
 	sha256 string
 	// phash 感知哈希(按位存入 int64)。
@@ -344,12 +354,13 @@ type persistParams struct {
 	width, height int64
 }
 
-// persist 在单事务内写入 blob、引用与幂等键。
+// persist 在单事务内写入 blob、引用、副本状态与幂等键。
+// @return 新建的 blob 主键
 // @return 事务执行失败时的错误
-func (s *Service) persist(ctx context.Context, p persistParams) error {
+func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	tx, err := s.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("开启事务: %w", err)
+		return 0, fmt.Errorf("开启事务: %w", err)
 	}
 	// 提交成功后 Rollback 返回 ErrTxDone,属预期,显式忽略。
 	defer func() { _ = tx.Rollback() }()
@@ -365,21 +376,21 @@ func (s *Service) persist(ctx context.Context, p persistParams) error {
 		Height:     p.height,
 	})
 	if err != nil {
-		return fmt.Errorf("写入 blob 记录: %w", err)
+		return 0, fmt.Errorf("写入 blob 记录: %w", err)
 	}
 	if err = q.CreateImage(ctx, db.CreateImageParams{
 		ID:       p.shortID,
 		BlobID:   blobID,
 		FileName: p.fileName,
 	}); err != nil {
-		return fmt.Errorf("写入引用记录: %w", err)
+		return 0, fmt.Errorf("写入引用记录: %w", err)
 	}
 	// 副本状态:已同步渠道就绪,其余渠道待补齐(outbox,补齐任务据此驱动)。
 	done := make(map[int64]struct{}, len(p.doneIDs))
 	for _, chID := range p.doneIDs {
 		done[chID] = struct{}{}
 	}
-	for _, h := range s.cfg.Channels.All() {
+	for _, h := range p.channels {
 		state := channel.StatePending
 		if _, ok := done[h.ID]; ok {
 			state = channel.StateDone
@@ -387,7 +398,7 @@ func (s *Service) persist(ctx context.Context, p persistParams) error {
 		if err = q.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{
 			BlobID: blobID, ChannelID: h.ID, State: state,
 		}); err != nil {
-			return fmt.Errorf("写入副本状态(渠道 %d): %w", h.ID, err)
+			return 0, fmt.Errorf("写入副本状态(渠道 %d): %w", h.ID, err)
 		}
 	}
 	if p.idemKey != "" {
@@ -395,11 +406,11 @@ func (s *Service) persist(ctx context.Context, p persistParams) error {
 			Key:     p.idemKey,
 			ImageID: p.shortID,
 		}); err != nil {
-			return fmt.Errorf("写入幂等键: %w", err)
+			return 0, fmt.Errorf("写入幂等键: %w", err)
 		}
 	}
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务: %w", err)
+		return 0, fmt.Errorf("提交事务: %w", err)
 	}
-	return nil
+	return blobID, nil
 }

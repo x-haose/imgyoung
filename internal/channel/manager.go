@@ -2,10 +2,12 @@ package channel
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,12 +41,16 @@ type Handle struct {
 
 // ManagerConfig 管理器依赖。
 type ManagerConfig struct {
+	// Conn 数据库连接(删除渠道等需要事务的操作用)。
+	Conn *sql.DB
 	// Queries sqlc 查询集。
 	Queries *db.Queries
 	// Master 主密钥(解密渠道配置、派生 crypt 密码)。
 	Master *secret.MasterKey
 	// DataDir 数据目录(内置 local 渠道的默认存储位置)。
 	DataDir string
+	// Logger 结构化日志。
+	Logger *slog.Logger
 }
 
 // managed 一条已加载渠道的运行态。
@@ -86,11 +92,14 @@ func (m *Manager) Reload(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("加载渠道列表: %w", err)
 	}
+	// 单渠道构造失败只跳过并告警,不拖垮其余渠道(一个坏渠道不能 brick 服务);
+	// 全部失败才视为致命。
 	loaded := make([]managed, 0, len(rows))
 	for _, row := range rows {
 		driver, params, derr := m.buildDriver(ctx, row)
 		if derr != nil {
-			return fmt.Errorf("构造渠道 %q 驱动: %w", row.Name, derr)
+			m.cfg.Logger.Error("渠道驱动构造失败,本渠道跳过", "channel", row.Name, "err", derr)
+			continue
 		}
 		loaded = append(loaded, managed{
 			handle: Handle{
@@ -104,10 +113,39 @@ func (m *Manager) Reload(ctx context.Context) error {
 			healthy: row.Healthy != 0,
 		})
 	}
+	if len(rows) > 0 && len(loaded) == 0 {
+		return fmt.Errorf("全部 %d 个渠道均无法装载", len(rows))
+	}
 	m.mu.Lock()
 	m.channels = loaded
 	m.mu.Unlock()
 	return nil
+}
+
+// Healthy 返回当前健康的渠道句柄,按优先级降序。
+// @return 健康渠道切片(副本)
+func (m *Manager) Healthy() []Handle {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]Handle, 0, len(m.channels))
+	for _, c := range m.channels {
+		if c.healthy {
+			out = append(out, c.handle)
+		}
+	}
+	return out
+}
+
+// setHealth 更新单个渠道的内存健康标记(健康翻转无需重建驱动)。
+func (m *Manager) setHealth(channelID int64, healthy bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.channels {
+		if m.channels[i].handle.ID == channelID {
+			m.channels[i].healthy = healthy
+			return
+		}
+	}
 }
 
 // Primary 返回主渠道:健康渠道中优先级最高者。
@@ -197,11 +235,11 @@ func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driv
 
 	remote := BuildRemote(row.Driver, params, path)
 	if row.Encrypted != 0 {
-		password, err := m.deriveHex(row.ID, "crypt:password")
+		password, err := m.deriveHex(row, "crypt:password")
 		if err != nil {
 			return nil, nil, err
 		}
-		salt, err := m.deriveHex(row.ID, "crypt:salt")
+		salt, err := m.deriveHex(row, "crypt:salt")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -231,12 +269,15 @@ func (m *Manager) Get(channelID int64) (Handle, bool) {
 }
 
 // deriveHex 为渠道派生一个 hex 编码的子密钥(crypt 密码/盐)。
-// @param channelID 渠道主键(参与用途标识,渠道间隔离)
+// @Description: 用途标识含创建时间——SQLite 的 rowid 可能在删除后被复用,
+// 仅绑 ID 会让新渠道派生出与已删渠道相同的密钥。
+// @param row 渠道记录
 // @param usage 用途后缀
 // @return 64 位 hex 字符串
 // @return 派生失败时的错误
-func (m *Manager) deriveHex(channelID int64, usage string) (string, error) {
-	raw, err := m.cfg.Master.Derive(fmt.Sprintf("channel:%d:%s", channelID, usage), 32)
+func (m *Manager) deriveHex(row db.Channel, usage string) (string, error) {
+	purpose := fmt.Sprintf("channel:%d:%s:%s", row.ID, row.CreatedAt, usage)
+	raw, err := m.cfg.Master.Derive(purpose, 32)
 	if err != nil {
 		return "", err
 	}

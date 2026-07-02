@@ -2,9 +2,12 @@ package channel
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/storage"
@@ -27,6 +30,38 @@ type CreateParams struct {
 	Encrypted bool
 	// AllowDirectLink 是否允许 302 直链。
 	AllowDirectLink bool
+}
+
+// nameMaxLen 渠道名长度上限。
+const nameMaxLen = 64
+
+// configKeyPattern 渠道配置键的合法字符集(与 rclone 连接字符串参数名一致)。
+var configKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// validateCreateParams 校验创建参数:必填项、渠道名长度、配置键字符集、
+// 加密与直链的互斥(密文无法直出)。
+// @param p 创建参数
+// @return 参数非法时的 ErrInvalidChannel
+func validateCreateParams(p CreateParams) error {
+	if p.Name == "" || p.Driver == "" {
+		return fmt.Errorf("%w: name 与 driver 必填", ErrInvalidChannel)
+	}
+	if len(p.Name) > nameMaxLen {
+		return fmt.Errorf("%w: name 超过 %d 字节", ErrInvalidChannel, nameMaxLen)
+	}
+	if p.Encrypted && p.AllowDirectLink {
+		return fmt.Errorf("%w: 加密渠道不允许直链(密文无法直出)", ErrInvalidChannel)
+	}
+	for k := range p.Config {
+		// 约定键不进连接字符串,豁免字符集限制。
+		if k == "path" || k == "public_base_url" {
+			continue
+		}
+		if !configKeyPattern.MatchString(k) {
+			return fmt.Errorf("%w: 配置键 %q 非法(仅允许字母数字下划线)", ErrInvalidChannel, k)
+		}
+	}
+	return nil
 }
 
 // Info 渠道的对外描述(不含任何配置与凭证)。
@@ -52,8 +87,8 @@ type Info struct {
 // @return 新渠道 ID
 // @return 参数非法、后端初始化失败或落库失败时的错误
 func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
-	if p.Name == "" || p.Driver == "" {
-		return 0, fmt.Errorf("%w: name 与 driver 必填", ErrInvalidChannel)
+	if err := validateCreateParams(p); err != nil {
+		return 0, err
 	}
 	cfgJSON, err := json.Marshal(p.Config)
 	if err != nil {
@@ -87,17 +122,28 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("写入渠道记录: %w", err)
 	}
+	// 渠道已落库;装载失败只告警(客户端已获 ID,重启或下次 Reload 可恢复)。
 	if err := m.Reload(ctx); err != nil {
-		return 0, err
+		m.cfg.Logger.Error("渠道已创建但装载失败", "channel", p.Name, "err", err)
 	}
 	return channelID, nil
 }
 
 // Delete 删除渠道;若其持有任何图的唯一就绪副本则拒绝(防数据丢失)。
+// @Description: 唯一副本检查与删除在同一事务内完成,消除并发上传落库
+// 造成的检查-删除窗口(TOCTOU)。
 // @param channelID 渠道主键
 // @return ErrHoldsSoleReplicas 或删除/重载失败时的错误
 func (m *Manager) Delete(ctx context.Context, channelID int64) error {
-	sole, err := m.cfg.Queries.CountSoleReplicas(ctx, channelID)
+	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启事务: %w", err)
+	}
+	// 提交成功后 Rollback 返回 ErrTxDone,属预期,显式忽略。
+	defer func() { _ = tx.Rollback() }()
+
+	q := m.cfg.Queries.WithTx(tx)
+	sole, err := q.CountSoleReplicas(ctx, channelID)
 	if err != nil {
 		return fmt.Errorf("检查唯一副本: %w", err)
 	}
@@ -105,11 +151,14 @@ func (m *Manager) Delete(ctx context.Context, channelID int64) error {
 		return fmt.Errorf("%w(%d 张图仅此渠道有副本)", ErrHoldsSoleReplicas, sole)
 	}
 	// 先清副本记录(外键约束);渠道上可能残留的对象文件由对账任务回收。
-	if err := m.cfg.Queries.DeleteBlobChannelsByChannel(ctx, channelID); err != nil {
+	if err := q.DeleteBlobChannelsByChannel(ctx, channelID); err != nil {
 		return fmt.Errorf("清理渠道副本记录: %w", err)
 	}
-	if err := m.cfg.Queries.DeleteChannel(ctx, channelID); err != nil {
+	if err := q.DeleteChannel(ctx, channelID); err != nil {
 		return fmt.Errorf("删除渠道记录: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交事务: %w", err)
 	}
 	return m.Reload(ctx)
 }
@@ -136,16 +185,23 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 	return out, nil
 }
 
-// CheckAll 对全部渠道做一次健康探测,状态变化写回 DB 并重载。
+// probeTimeout 单渠道健康探测超时;各渠道独立计时,慢渠道不拖累其他渠道。
+const probeTimeout = 10 * time.Second
+
+// CheckAll 对全部渠道做一次健康探测,状态变化写回 DB 并更新内存标记。
 // @Description: 探测 = Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
 // 健康(后端可达),其余错误视为不健康(设计定稿·健康检查+自动切换)。
-// @return 本次由健康转为不健康(或反向)的渠道名列表
+// 健康翻转只改标记、不重建驱动;单渠道异常(含记录已被删)跳过不中断整轮。
+// @return 本次健康状态翻转的渠道名列表
 // @return 探测本身无法进行时的错误
 func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 	changed := []string{}
 	for _, c := range m.All() {
 		healthy := probe(ctx, c.Driver)
 		row, err := m.cfg.Queries.GetChannel(ctx, c.ID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
 		if err != nil {
 			return changed, fmt.Errorf("读取渠道 %q: %w", c.Name, err)
 		}
@@ -161,20 +217,18 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 		}); err != nil {
 			return changed, fmt.Errorf("更新渠道 %q 健康状态: %w", c.Name, err)
 		}
+		m.setHealth(c.ID, healthy)
 		changed = append(changed, c.Name)
-	}
-	if len(changed) > 0 {
-		if err := m.Reload(ctx); err != nil {
-			return changed, err
-		}
 	}
 	return changed, nil
 }
 
-// probe 探测单个渠道可达性。
+// probe 探测单个渠道可达性(独立超时)。
 // @param d 渠道驱动
 // @return 是否健康
 func probe(ctx context.Context, d storage.Driver) bool {
-	_, err := d.Stat(ctx, ".imgyoung-health-probe")
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	_, err := d.Stat(probeCtx, ".imgyoung-health-probe")
 	return err == nil || errors.Is(err, storage.ErrNotFound)
 }

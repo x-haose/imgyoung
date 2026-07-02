@@ -72,7 +72,7 @@ DO UPDATE SET state = excluded.state, updated_at = datetime('now');
 UPDATE blob_channels
 SET state      = ?,
     last_error = ?,
-    attempts   = attempts + 1,
+    attempts   = attempts + ?,
     updated_at = datetime('now')
 WHERE blob_id = ? AND channel_id = ?;
 
@@ -83,12 +83,18 @@ JOIN channels c ON c.id = bc.channel_id
 WHERE bc.blob_id = ?
 ORDER BY c.priority DESC, c.id ASC;
 
--- name: ListPendingBlobChannels :many
+-- name: ListPendingBlobChannelsPage :many
 SELECT blob_id, channel_id
 FROM blob_channels
 WHERE state IN ('pending', 'uploading')
-ORDER BY updated_at ASC
-LIMIT ?;
+ORDER BY blob_id ASC, channel_id ASC
+LIMIT ? OFFSET ?;
+
+-- name: ResetFailedBlobChannels :exec
+UPDATE blob_channels
+SET state      = 'pending',
+    updated_at = datetime('now')
+WHERE state = 'failed' AND channel_id = ?;
 
 -- name: CreateIdempotencyKey :exec
 INSERT INTO idempotency_keys (key, image_id)
