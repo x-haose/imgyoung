@@ -99,6 +99,7 @@ curl -X DELETE -H "Authorization: Bearer my-token" http://localhost:8080/api/cha
 
 ```bash
 task test   # 全量测试(-race)
+task e2e    # 端到端测试:编译真实二进制、启动进程、覆盖全部对外功能
 task lint   # golangci-lint,0 issue 门禁
 task --list # 查看全部任务
 ```

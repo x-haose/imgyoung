@@ -14,6 +14,11 @@ tasks:
     cmds:
       - go test -race ./...
 
+  e2e:
+    desc: 端到端测试(编译真实二进制并启动进程)
+    cmds:
+      - go test -tags e2e -count=1 ./e2e/ -timeout 300s
+
   lint:
     desc: lint 门禁:0 issue 才算过(质量红线)
     cmds:

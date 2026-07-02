@@ -2,6 +2,10 @@
 # default: standard 已含 errcheck / govet / ineffassign / staticcheck / unused。
 version: "2"
 
+run:
+  build-tags:
+    - e2e
+
 linters:
   default: standard
   enable:

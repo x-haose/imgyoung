@@ -20,5 +20,7 @@ jobs:
           version: v2.11.4
       - name: Test
         run: go test -race ./...
+      - name: E2E
+        run: go test -tags e2e -count=1 ./e2e/ -timeout 300s
       - name: Build
         run: CGO_ENABLED=0 go build -trimpath ./cmd/imgyoung

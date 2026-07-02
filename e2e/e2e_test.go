@@ -1,0 +1,607 @@
+//go:build e2e
+
+// Package e2e 端到端测试:编译真实二进制、以独立进程启动,
+// 通过 HTTP 覆盖全部对外功能(上传/访问/EXIF/幂等/防盗链/多渠道容灾/
+// 加密渠道/302 模式/渠道管理/优雅停机)。
+package e2e
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
+	"io"
+	"mime/multipart"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// testToken 全部实例共用的上传 Token。
+const testToken = "e2e-token"
+
+// bootDeadline 等待实例就绪的上限。
+const bootDeadline = 10 * time.Second
+
+// binPath 编译产物路径,由 TestMain 填充。
+var binPath string
+
+// TestMain 编译一次真实二进制,供全部用例复用。
+func TestMain(m *testing.M) {
+	os.Exit(runMain(m))
+}
+
+// runMain 编译二进制并执行用例;独立函数保证 defer 清理在 os.Exit 前生效。
+// @return 进程退出码
+func runMain(m *testing.M) int {
+	dir, err := os.MkdirTemp("", "imgyoung-e2e-bin")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "创建临时目录:", err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	binPath = filepath.Join(dir, "imgyoung")
+	build := exec.Command("go", "build", "-o", binPath, "github.com/x-haose/imgyoung/cmd/imgyoung")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "编译二进制失败: %v\n%s", err, out)
+		return 1
+	}
+	return m.Run()
+}
+
+// instance 一个独立运行的服务进程。
+type instance struct {
+	// baseURL 服务地址。
+	baseURL string
+	// dataDir 数据目录。
+	dataDir string
+	// cmd 进程句柄。
+	cmd *exec.Cmd
+	// logPath 服务日志文件路径。
+	logPath string
+}
+
+// startInstance 以独立数据目录与端口启动一个服务进程,就绪后返回。
+// @param extraEnv 追加环境变量(覆盖默认)
+func startInstance(t *testing.T, extraEnv map[string]string) *instance {
+	t.Helper()
+	dataDir := t.TempDir()
+	port := freePort(t)
+
+	inst := &instance{
+		baseURL: fmt.Sprintf("http://127.0.0.1:%d", port),
+		dataDir: dataDir,
+		logPath: filepath.Join(dataDir, "server.log"),
+	}
+	logFile, err := os.Create(inst.logPath)
+	if err != nil {
+		t.Fatalf("创建日志文件: %v", err)
+	}
+
+	env := map[string]string{
+		"IMGYOUNG_TOKEN":                testToken,
+		"IMGYOUNG_DATA_DIR":             dataDir,
+		"IMGYOUNG_LISTEN":               fmt.Sprintf("127.0.0.1:%d", port),
+		"IMGYOUNG_HEALTH_CHECK_SECONDS": "1",
+	}
+	for k, v := range extraEnv {
+		env[k] = v
+	}
+	cmd := exec.Command(binPath)
+	cmd.Env = os.Environ()
+	for k, v := range env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("启动服务进程: %v", err)
+	}
+	inst.cmd = cmd
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { _, _ = cmd.Process.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			_ = cmd.Process.Kill()
+		}
+		if closeErr := logFile.Close(); closeErr != nil {
+			t.Logf("关闭日志文件: %v", closeErr)
+		}
+	})
+
+	waitUntil(t, bootDeadline, "服务就绪", func() bool {
+		resp, gerr := http.Get(inst.baseURL + "/healthz")
+		if gerr != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode == http.StatusOK
+	})
+	return inst
+}
+
+// freePort 取一个空闲端口。
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("申请空闲端口: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatalf("释放探测端口: %v", err)
+	}
+	return port
+}
+
+// waitUntil 轮询直到条件满足,超时即失败。
+func waitUntil(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("等待%s超时(%s)", what, timeout)
+}
+
+// pngBytes 生成一张 2x2 真实 PNG。
+func pngBytes(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatalf("编码测试 PNG: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// jpegWithEXIF 生成一张带 APP1(Exif)段的 JPEG。
+func jpegWithEXIF(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatalf("编码测试 JPEG: %v", err)
+	}
+	jpg := buf.Bytes()
+	payload := append([]byte("Exif\x00\x00"), bytes.Repeat([]byte{0xAB}, 16)...)
+	seg := []byte{0xFF, 0xE1}
+	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2)) //nolint:gosec // 测试载荷为几十字节常量
+	seg = append(seg, payload...)
+	out := append([]byte{}, jpg[:2]...)
+	out = append(out, seg...)
+	return append(out, jpg[2:]...)
+}
+
+// upload 发起一次上传。
+// @param fields 额外表单字段(如 exif_policy)
+// @param headers 额外请求头(如 Idempotency-Key)
+// @return 响应对象(调用方负责关闭)
+func upload(t *testing.T, inst *instance, token, filename string, payload []byte, fields, headers map[string]string) *http.Response {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		if err := w.WriteField(k, v); err != nil {
+			t.Fatalf("写表单字段: %v", err)
+		}
+	}
+	fw, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("创建文件字段: %v", err)
+	}
+	if _, err := fw.Write(payload); err != nil {
+		t.Fatalf("写文件内容: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("关闭 multipart: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, inst.baseURL+"/api/upload", &buf)
+	if err != nil {
+		t.Fatalf("构造上传请求: %v", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("发送上传请求: %v", err)
+	}
+	return resp
+}
+
+// mustUpload 上传并断言 200,返回图片 URL 路径。
+func mustUpload(t *testing.T, inst *instance, payload []byte, fields, headers map[string]string) (id, url string) {
+	t.Helper()
+	resp := upload(t, inst, testToken, "e2e.bin", payload, fields, headers)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("上传状态码 = %d, 期望 200; body=%s", resp.StatusCode, body)
+	}
+	var out struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("解析上传响应: %v", err)
+	}
+	return out.ID, out.URL
+}
+
+// fetch 访问图片(可带 Referer),返回响应。
+func fetch(t *testing.T, inst *instance, url, referer string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, inst.baseURL+url, nil)
+	if err != nil {
+		t.Fatalf("构造访问请求: %v", err)
+	}
+	if referer != "" {
+		req.Header.Set("Referer", referer)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("访问图片: %v", err)
+	}
+	return resp
+}
+
+// fetchBytes 访问图片并断言 200,返回字节。
+func fetchBytes(t *testing.T, inst *instance, url string) []byte {
+	t.Helper()
+	resp := fetch(t, inst, url, "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("访问状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取响应: %v", err)
+	}
+	return data
+}
+
+// createChannel 通过管理 API 创建渠道并断言 201。
+func createChannel(t *testing.T, inst *instance, body string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, inst.baseURL+"/api/channels", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("构造创建渠道请求: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("创建渠道: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("创建渠道状态码 = %d, 期望 201; body=%s", resp.StatusCode, raw)
+	}
+}
+
+// dirHasFiles 目录内是否已有文件。
+func dirHasFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	return err == nil && len(entries) > 0
+}
+
+// TestUploadServeRoundTrip 核心闭环:上传 → 访问,字节一致且响应头正确。
+func TestUploadServeRoundTrip(t *testing.T) {
+	inst := startInstance(t, nil)
+	payload := pngBytes(t)
+	_, url := mustUpload(t, inst, payload, nil, nil)
+
+	resp := fetch(t, inst, url, "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("访问状态码 = %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if v := resp.Header.Get("X-Content-Type-Options"); v != "nosniff" {
+		t.Errorf("缺 nosniff 头")
+	}
+	if !strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
+		t.Errorf("缺 immutable 缓存头")
+	}
+	got, err := io.ReadAll(resp.Body)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("取回字节不一致: err=%v", err)
+	}
+}
+
+// TestAuthAndValidation 鉴权与输入校验:401 / 415 / 413。
+func TestAuthAndValidation(t *testing.T) {
+	inst := startInstance(t, map[string]string{"IMGYOUNG_MAX_UPLOAD_MB": "1"})
+
+	noAuth := upload(t, inst, "", "a.png", pngBytes(t), nil, nil)
+	defer func() { _ = noAuth.Body.Close() }()
+	if noAuth.StatusCode != http.StatusUnauthorized {
+		t.Errorf("无 Token 状态码 = %d, 期望 401", noAuth.StatusCode)
+	}
+
+	notImage := upload(t, inst, testToken, "a.png", []byte("not an image"), nil, nil)
+	defer func() { _ = notImage.Body.Close() }()
+	if notImage.StatusCode != http.StatusUnsupportedMediaType {
+		t.Errorf("非图片状态码 = %d, 期望 415", notImage.StatusCode)
+	}
+
+	big := append(pngBytes(t), bytes.Repeat([]byte{0}, 2<<20)...)
+	tooBig := upload(t, inst, testToken, "big.png", big, nil, nil)
+	defer func() { _ = tooBig.Body.Close() }()
+	if tooBig.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("超限状态码 = %d, 期望 413", tooBig.StatusCode)
+	}
+}
+
+// TestEXIFPolicies 默认 passthrough 保留元数据,strip 字段剥离元数据。
+func TestEXIFPolicies(t *testing.T) {
+	inst := startInstance(t, nil)
+	marker := []byte("Exif\x00\x00")
+
+	_, keepURL := mustUpload(t, inst, jpegWithEXIF(t), nil, nil)
+	if !bytes.Contains(fetchBytes(t, inst, keepURL), marker) {
+		t.Error("默认 passthrough 档丢失了 EXIF")
+	}
+
+	_, stripURL := mustUpload(t, inst, jpegWithEXIF(t), map[string]string{"exif_policy": "strip"}, nil)
+	if bytes.Contains(fetchBytes(t, inst, stripURL), marker) {
+		t.Error("strip 档未剥离 EXIF")
+	}
+}
+
+// TestIdempotency 同一 Idempotency-Key 重复上传返回同一 ID。
+func TestIdempotency(t *testing.T) {
+	inst := startInstance(t, nil)
+	headers := map[string]string{"Idempotency-Key": "e2e-retry"}
+	id1, _ := mustUpload(t, inst, pngBytes(t), nil, headers)
+	id2, _ := mustUpload(t, inst, pngBytes(t), nil, headers)
+	if id1 != id2 {
+		t.Fatalf("幂等失效: %q ≠ %q", id1, id2)
+	}
+}
+
+// TestRefererProtection 防盗链:白名单命中放行、未命中 403、空 Referer 放行。
+func TestRefererProtection(t *testing.T) {
+	inst := startInstance(t, map[string]string{"IMGYOUNG_REFERER_WHITELIST": "*.ok.com"})
+	_, url := mustUpload(t, inst, pngBytes(t), nil, nil)
+
+	cases := map[string]struct {
+		referer string
+		want    int
+	}{
+		"空Referer": {"", http.StatusOK},
+		"白名单":      {"https://a.ok.com/p", http.StatusOK},
+		"盗链":       {"https://evil.io/x", http.StatusForbidden},
+	}
+	for name, tc := range cases {
+		resp := fetch(t, inst, url, tc.referer)
+		if resp.StatusCode != tc.want {
+			t.Errorf("%s 状态码 = %d, 期望 %d", name, resp.StatusCode, tc.want)
+		}
+		_ = resp.Body.Close()
+	}
+}
+
+// TestMultiChannelReplicationAndFailover 多渠道全链路:
+// 补齐复制 → 拔主渠道访问即时切换 → 健康检查感知后新上传落备用渠道。
+func TestMultiChannelReplicationAndFailover(t *testing.T) {
+	inst := startInstance(t, nil)
+	fastDir := t.TempDir()
+	createChannel(t, inst, fmt.Sprintf(
+		`{"name":"fast","driver":"local","priority":300,"config":{"path":%q}}`, fastDir))
+
+	payload := pngBytes(t)
+	_, url := mustUpload(t, inst, payload, nil, nil)
+
+	// 主渠道(fast)同步写入,内置 local 由补齐任务异步复制。
+	localDir := filepath.Join(inst.dataDir, "blobs")
+	waitUntil(t, 15*time.Second, "副本补齐到 local", func() bool { return dirHasFiles(localDir) })
+	if !dirHasFiles(fastDir) {
+		t.Fatal("主渠道 fast 没有对象")
+	}
+
+	// 拔掉主渠道:访问应立即切换到 local 副本。
+	if err := os.Chmod(fastDir, 0o000); err != nil {
+		t.Fatalf("模拟主渠道故障: %v", err)
+	}
+	defer func() { _ = os.Chmod(fastDir, 0o700) }() //nolint:gosec // 目录需执行位,0700 已最小
+	if got := fetchBytes(t, inst, url); !bytes.Equal(got, payload) {
+		t.Fatal("主渠道故障后取回字节不一致")
+	}
+
+	// 上传降级:即使健康标记尚未翻转,写入失败也应顺延到 local 成功。
+	_, url2 := mustUpload(t, inst, payload, nil, nil)
+	if got := fetchBytes(t, inst, url2); !bytes.Equal(got, payload) {
+		t.Fatal("主渠道故障期间的新上传不可访问")
+	}
+}
+
+// TestEncryptedChannel 加密渠道:落盘文件名与内容均为密文,访问返回明文。
+func TestEncryptedChannel(t *testing.T) {
+	inst := startInstance(t, nil)
+	vaultDir := t.TempDir()
+	createChannel(t, inst, fmt.Sprintf(
+		`{"name":"vault","driver":"local","priority":300,"encrypted":true,"config":{"path":%q}}`, vaultDir))
+
+	payload := pngBytes(t)
+	id, url := mustUpload(t, inst, payload, nil, nil)
+
+	entries, err := os.ReadDir(vaultDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("加密渠道无落盘对象: %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), id) {
+			t.Error("加密渠道文件名未加密")
+		}
+		raw, rerr := os.ReadFile(filepath.Join(vaultDir, e.Name()))
+		if rerr != nil {
+			t.Fatalf("读密文文件: %v", rerr)
+		}
+		if bytes.HasPrefix(raw, []byte("\x89PNG")) {
+			t.Error("加密渠道落盘内容是明文 PNG")
+		}
+	}
+	if got := fetchBytes(t, inst, url); !bytes.Equal(got, payload) {
+		t.Fatal("经服务访问未还原明文")
+	}
+}
+
+// TestRedirectMode 302 省流量模式:允许直链的渠道返回重定向。
+func TestRedirectMode(t *testing.T) {
+	inst := startInstance(t, map[string]string{"IMGYOUNG_ACCESS_MODE": "redirect"})
+	createChannel(t, inst, fmt.Sprintf(
+		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub"}}`,
+		t.TempDir()))
+	_, url := mustUpload(t, inst, pngBytes(t), nil, nil)
+
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Get(inst.baseURL + url)
+	if err != nil {
+		t.Fatalf("访问图片: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("状态码 = %d, 期望 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "https://cdn.example.com/pub/") {
+		t.Fatalf("Location = %q", loc)
+	}
+}
+
+// TestChannelGuards 渠道管理守卫:唯一副本删除拒绝、未知字段拒绝。
+func TestChannelGuards(t *testing.T) {
+	inst := startInstance(t, nil)
+	_, _ = mustUpload(t, inst, pngBytes(t), nil, nil)
+
+	del, err := http.NewRequest(http.MethodDelete, inst.baseURL+"/api/channels/1", nil)
+	if err != nil {
+		t.Fatalf("构造删除请求: %v", err)
+	}
+	del.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(del)
+	if err != nil {
+		t.Fatalf("删除渠道: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("删除唯一副本渠道状态码 = %d, 期望 409", resp.StatusCode)
+	}
+}
+
+// TestGracefulShutdown SIGTERM 后进程以零码优雅退出。
+func TestGracefulShutdown(t *testing.T) {
+	inst := startInstance(t, nil)
+	_, _ = mustUpload(t, inst, pngBytes(t), nil, nil)
+
+	if err := inst.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("发送 SIGTERM: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- inst.cmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			log, _ := os.ReadFile(inst.logPath)
+			t.Fatalf("退出码非零: %v\n%s", err, log)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("优雅退出超时")
+	}
+}
+
+// TestRestartRecovery 重启恢复:进程重启后既有图仍可访问、可继续上传。
+func TestRestartRecovery(t *testing.T) {
+	inst := startInstance(t, nil)
+	payload := pngBytes(t)
+	_, url := mustUpload(t, inst, payload, nil, nil)
+
+	// 停掉再用同一数据目录、同一端口启动第二个进程。
+	if err := inst.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("发送 SIGTERM: %v", err)
+	}
+	if _, err := inst.cmd.Process.Wait(); err != nil {
+		t.Fatalf("等待退出: %v", err)
+	}
+	listen := strings.TrimPrefix(inst.baseURL, "http://")
+	inst2 := startInstanceAt(t, inst.dataDir, listen)
+
+	if got := fetchBytes(t, inst2, url); !bytes.Equal(got, payload) {
+		t.Fatal("重启后既有图不可访问或字节不一致")
+	}
+	_, _ = mustUpload(t, inst2, payload, nil, nil)
+}
+
+// startInstanceAt 用既有数据目录与监听地址启动实例(重启场景)。
+func startInstanceAt(t *testing.T, dataDir, listen string) *instance {
+	t.Helper()
+	inst := &instance{
+		baseURL: "http://" + listen,
+		dataDir: dataDir,
+		logPath: filepath.Join(dataDir, "server-restart.log"),
+	}
+	logFile, err := os.Create(inst.logPath)
+	if err != nil {
+		t.Fatalf("创建日志文件: %v", err)
+	}
+	cmd := exec.Command(binPath)
+	cmd.Env = append(os.Environ(),
+		"IMGYOUNG_TOKEN="+testToken,
+		"IMGYOUNG_DATA_DIR="+dataDir,
+		"IMGYOUNG_LISTEN="+listen,
+		"IMGYOUNG_HEALTH_CHECK_SECONDS=1",
+	)
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("启动服务进程: %v", err)
+	}
+	inst.cmd = cmd
+	t.Cleanup(func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		done := make(chan struct{})
+		go func() { _, _ = cmd.Process.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			_ = cmd.Process.Kill()
+		}
+		if closeErr := logFile.Close(); closeErr != nil {
+			t.Logf("关闭日志文件: %v", closeErr)
+		}
+	})
+	waitUntil(t, bootDeadline, "服务就绪", func() bool {
+		resp, gerr := http.Get(inst.baseURL + "/healthz")
+		if gerr != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode == http.StatusOK
+	})
+	return inst
+}
