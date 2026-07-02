@@ -3,6 +3,7 @@
 package imaging
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -26,6 +27,8 @@ const (
 // isMetadataSegment 判断段是否属于应剥离的元数据。
 // @Description: 白名单策略——APPn 中仅保留 APP0/APP2/APP14(功能必需),
 // 其余 APPn(Exif/XMP/IPTC/相机私有段等)与 COM 注释一律视为元数据剥离。
+// @param marker 段标记(0xFF 后的第二字节)
+// @return 是否应剥离
 func isMetadataSegment(marker byte) bool {
 	if marker == markerCOM {
 		return true
@@ -39,9 +42,11 @@ func isMetadataSegment(marker byte) bool {
 // errMalformedJPEG 输入不是结构完整的 JPEG。
 var errMalformedJPEG = errors.New("imaging: 畸形的 JPEG 结构")
 
-// StripJPEGMetadata 移除 JPEG 中的全部元数据段,返回新的字节切片(不修改输入)。
+// StripJPEGMetadata 移除 JPEG 中的全部元数据段与 EOI 后的尾部附加数据,
+// 返回新的字节切片(不修改输入)。
 // @Description: 纯段级字节操作,不解码、无损、零像素改动(设计定稿·EXIF strip)。
-// 剥离范围见 isMetadataSegment(APPn 白名单 + COM);SOS 之后的熵编码数据原样保留。
+// 剥离范围见 isMetadataSegment(APPn 白名单 + COM);熵编码数据原样保留;
+// 已知边界:渐进式 JPEG 多次扫描之间的段不再扫描(极少携带元数据)。
 // @param data 完整的 JPEG 字节
 // @return 剥离后的 JPEG 字节
 // @return 输入不是结构完整的 JPEG 时的错误
@@ -69,9 +74,19 @@ func StripJPEGMetadata(data []byte) ([]byte, error) {
 
 		marker := data[i+1]
 		switch {
-		case marker == markerSOS, marker == markerEOI:
-			// 段表结束:其后为熵编码数据(或文件结束),原样保留。
-			out = append(out, data[i:]...)
+		case marker == markerSOS:
+			// 段表结束,其后为熵编码数据。熵编码流中 0xFF 均被填充为 FF00
+			// (RST 为 FFD0–D7),裸 FFD9 必为真正的 EOI——在此截断,
+			// 丢弃 EOI 之后的一切尾部附加数据(Motion Photo 视频、隐写载荷等)。
+			tail := data[i:]
+			if end := bytes.Index(tail, []byte{0xFF, markerEOI}); end >= 0 {
+				tail = tail[:end+2]
+			}
+			out = append(out, tail...)
+			return out, nil
+		case marker == markerEOI:
+			// 文件结束:只保留 EOI 本身,丢弃其后的尾部数据。
+			out = append(out, data[i:i+2]...)
 			return out, nil
 		case marker == markerTEM, marker >= markerRST0 && marker <= markerRST7:
 			// 无长度字段的独立标记,原样保留。

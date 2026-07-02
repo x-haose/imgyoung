@@ -121,6 +121,48 @@ func TestStripJPEGMetadataKeepsPixels(t *testing.T) {
 	}
 }
 
+// TestStripJPEGMetadataDropsTrailingData 验证 EOI 之后的尾部附加数据被丢弃。
+// @Description: Motion Photo 等会在 JPEG 结尾附加视频/任意数据,隐私载荷
+// 比 EXIF 更大,strip 必须一并截断。
+func TestStripJPEGMetadataDropsTrailingData(t *testing.T) {
+	jpg := encodeJPEG(t)
+	withTrailer := append(append([]byte{}, jpg...), []byte("EMBEDDED-MP4-DATA-0123456789")...)
+
+	got, err := StripJPEGMetadata(withTrailer)
+	if err != nil {
+		t.Fatalf("StripJPEGMetadata 返回错误: %v", err)
+	}
+	if bytes.Contains(got, []byte("EMBEDDED-MP4")) {
+		t.Fatal("EOI 之后的尾部数据未被丢弃")
+	}
+	if len(got) < 2 || got[len(got)-2] != 0xFF || got[len(got)-1] != 0xD9 {
+		t.Fatalf("输出未以 EOI(FFD9)结尾: 末尾字节 % X", got[max(0, len(got)-2):])
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(got)); err != nil {
+		t.Fatalf("截断后无法解码: %v", err)
+	}
+}
+
+// TestStripJPEGMetadataSkipsPadding 验证段间的 0xFF 填充字节被规范化跳过。
+func TestStripJPEGMetadataSkipsPadding(t *testing.T) {
+	jpg := spliceSegment(t, encodeJPEG(t), 0xE1, []byte("Exif\x00\x00pad"))
+	// 在 SOI 与首段之间插入两个填充 0xFF。
+	padded := append([]byte{}, jpg[:2]...)
+	padded = append(padded, 0xFF, 0xFF)
+	padded = append(padded, jpg[2:]...)
+
+	got, err := StripJPEGMetadata(padded)
+	if err != nil {
+		t.Fatalf("StripJPEGMetadata 返回错误: %v", err)
+	}
+	if hasSegment(t, got, 0xE1) {
+		t.Error("填充字节干扰了段剥离")
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(got)); err != nil {
+		t.Fatalf("剥离后无法解码: %v", err)
+	}
+}
+
 // TestStripJPEGMetadataIdempotent 验证对已剥离的图再剥离,输出不变。
 func TestStripJPEGMetadataIdempotent(t *testing.T) {
 	once, err := StripJPEGMetadata(spliceSegment(t, encodeJPEG(t), 0xE1, []byte("Exif\x00\x00")))

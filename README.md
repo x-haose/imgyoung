@@ -54,6 +54,7 @@ max_upload_mb: 50
 ## 已知限制
 
 - 动画 WebP 暂不支持(解码库限制,上传返回 400);动画 GIF 正常。
+- `exif_policy=strip` 目前仅处理 JPEG(剥离元数据段与 EOI 后的尾部附加数据,如 Motion Photo 视频);PNG/WebP/GIF 的元数据块暂原样保留,后续版本补齐。
 
 ## PicGo / PicList 对接
 

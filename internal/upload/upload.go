@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"image"
 	"net/http"
+	"strings"
 
 	"github.com/corona10/goimagehash"
 
@@ -45,6 +46,16 @@ var allowedMIME = map[string]struct{}{
 	mimeWebP: {},
 }
 
+// formatMIME image 包解码器的 format 名 → MIME。
+// http.DetectContentType 与 image 包是两套独立的 magic 匹配规则,
+// 落库的 MIME 必须与实际解码格式交叉验证,不隐式假设两者一致。
+var formatMIME = map[string]string{
+	"jpeg": mimeJPEG,
+	"png":  mimePNG,
+	"gif":  mimeGIF,
+	"webp": mimeWebP,
+}
+
 // 上传链路的业务错误哨兵,由 API 层映射为 HTTP 状态码。
 // EXIF 档位枚举与其校验错误见 imaging 包(单一真相)。
 var (
@@ -76,6 +87,8 @@ type Options struct {
 	IdempotencyKey string
 	// EXIFPolicy 本次上传生效的 EXIF 档位,必填——由调用方解析
 	// "单次指定 > 全局默认"后传入明确值,本包不做隐式回退。
+	// 注意:strip 目前仅对 JPEG 生效,PNG/WebP/GIF 的元数据块原样保留
+	// (README·已知限制)。
 	EXIFPolicy imaging.EXIFPolicy
 }
 
@@ -92,6 +105,7 @@ type Result struct {
 
 // New 创建上传服务。
 // @param cfg 依赖与参数,字段均必填
+// @return 就绪的上传服务
 func New(cfg Config) *Service {
 	return &Service{cfg: cfg}
 }
@@ -125,9 +139,12 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	}
 
 	// 像素预算:只读图片头取尺寸,超限直接拒绝、不进完整解码器(内存三道闸)。
-	meta, _, err := image.DecodeConfig(bytes.NewReader(data))
+	meta, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %w", ErrInvalidImage, err)
+	}
+	if formatMIME[format] != mime {
+		return Result{}, fmt.Errorf("%w: 嗅探类型 %s 与解码格式 %s 不一致", ErrInvalidImage, mime, format)
 	}
 	if int64(meta.Width)*int64(meta.Height) > s.cfg.MaxPixels {
 		return Result{}, ErrTooManyPixels
@@ -192,10 +209,18 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 // maxFileNameBytes 文件名的存储字节上限,超出部分截断。
 const maxFileNameBytes = 255
 
-// truncateName 将文件名按 UTF-8 安全截断到 maxFileNameBytes 字节以内。
-// @param name 客户端提交的原始文件名(不可信输入)
-// @return 截断后的文件名,多字节字符不被截半
+// truncateName 清洗并截断客户端提交的文件名(不可信输入,仅作元数据)。
+// @Description: 移除控制字符(防止将来输出到响应头/日志时被注入),
+// 再按 UTF-8 安全截断到 maxFileNameBytes 字节以内(多字节字符不截半)。
+// @param name 客户端提交的原始文件名
+// @return 清洗截断后的文件名
 func truncateName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7F {
+			return -1
+		}
+		return r
+	}, name)
 	if len(name) <= maxFileNameBytes {
 		return name
 	}
