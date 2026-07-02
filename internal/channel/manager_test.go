@@ -245,6 +245,60 @@ func TestManagerCandidatesForBlob(t *testing.T) {
 	}
 }
 
+// TestManagerGet 验证按 ID 取句柄。
+func TestManagerGet(t *testing.T) {
+	env := newTestEnv(t)
+	id, _ := addChannel(t, env, "backup-high", 200, false)
+	if h, ok := env.mgr.Get(id); !ok || h.Name != "backup-high" {
+		t.Fatalf("Get(%d) = %+v/%v, 期望命中 backup-high", id, h, ok)
+	}
+	if _, ok := env.mgr.Get(99999); ok {
+		t.Fatal("Get(不存在的 ID) 应返回 false")
+	}
+}
+
+// TestManagerCheckAll 验证健康探测:渠道故障被感知、恢复后回归。
+func TestManagerCheckAll(t *testing.T) {
+	env := newTestEnv(t)
+	id, dir := addChannel(t, env, "flaky", 300, false)
+
+	changed, err := env.mgr.CheckAll(t.Context())
+	if err != nil || len(changed) != 0 {
+		t.Fatalf("初始探测 = %v/%v, 期望无变化", changed, err)
+	}
+
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatalf("模拟渠道故障: %v", err)
+	}
+	defer func() {
+		if cerr := os.Chmod(dir, 0o700); cerr != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+			t.Errorf("恢复目录权限: %v", cerr)
+		}
+	}()
+	changed, err = env.mgr.CheckAll(t.Context())
+	if err != nil || len(changed) != 1 || changed[0] != "flaky" {
+		t.Fatalf("故障探测 = %v/%v, 期望 flaky 状态翻转", changed, err)
+	}
+	primary, err := env.mgr.Primary()
+	if err != nil || primary.Name != "local" {
+		t.Fatalf("故障后主渠道 = %v/%v, 期望降级回 local", primary.Name, err)
+	}
+
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		t.Fatalf("恢复渠道: %v", err)
+	}
+	changed, err = env.mgr.CheckAll(t.Context())
+	if err != nil || len(changed) != 1 {
+		t.Fatalf("恢复探测 = %v/%v, 期望 flaky 回归", changed, err)
+	}
+	if primary, _ := env.mgr.Primary(); primary.Name != "flaky" {
+		t.Fatalf("恢复后主渠道 = %q, 期望 flaky", primary.Name)
+	}
+	if _, ok := env.mgr.Get(id); !ok {
+		t.Fatal("恢复后渠道句柄丢失")
+	}
+}
+
 // TestManagerNoHealthyChannel 验证全部不健康时 Primary 返回明确错误。
 func TestManagerNoHealthyChannel(t *testing.T) {
 	env := newTestEnv(t)
