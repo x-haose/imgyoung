@@ -68,7 +68,8 @@ type Config struct {
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行,默认 true(设计定稿·防盗链)。
 	AllowEmptyReferer bool
-	// EXIFPolicy 全局默认 EXIF 档位,默认 "strip";单次上传可覆盖。
+	// EXIFPolicy 全局默认 EXIF 档位,默认 "passthrough"(不动用户原图);
+	// 单次上传可覆盖。
 	EXIFPolicy string
 }
 
@@ -93,7 +94,7 @@ func Load() (Config, error) {
 		"max_pixels_mp":       int64(50),
 		"referer_whitelist":   []string{},
 		"allow_empty_referer": true,
-		"exif_policy":         "strip",
+		"exif_policy":         "passthrough",
 	}, ".")
 	if err := k.Load(defaults, nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)

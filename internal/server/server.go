@@ -27,6 +27,9 @@ type Config struct {
 	MaxUploadBytes int64
 	// BaseURL 对外站点地址(无尾部斜杠);为空时响应返回相对路径。
 	BaseURL string
+	// DefaultEXIFPolicy 全局默认 EXIF 档位;单次上传的表单字段可覆盖。
+	// 档位决策在本层完成,传给 Service 的必须是明确档位。
+	DefaultEXIFPolicy upload.EXIFPolicy
 	// RefererWhitelist 防盗链白名单;为空表示不启用。
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行。

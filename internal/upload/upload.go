@@ -53,12 +53,11 @@ var (
 type EXIFPolicy string
 
 // EXIF 档位取值;spoof 为实验特性,尚未实现,取值时返回 ErrUnknownPolicy。
+// 档位决策(全局默认/单次覆盖)由调用方(API 层)完成,本包只接受明确档位。
 const (
-	// PolicyDefault 空值,表示使用全局默认档位。
-	PolicyDefault EXIFPolicy = ""
-	// PolicyStrip 剥离全部元数据(默认推荐档)。
+	// PolicyStrip 剥离全部元数据。
 	PolicyStrip EXIFPolicy = "strip"
-	// PolicyPassthrough 保留原样,不动任何元数据。
+	// PolicyPassthrough 保留原样,不动任何元数据(全局默认档)。
 	PolicyPassthrough EXIFPolicy = "passthrough"
 )
 
@@ -72,8 +71,6 @@ type Config struct {
 	Driver storage.Driver
 	// MaxPixels 像素预算(width × height 上限)。
 	MaxPixels int64
-	// DefaultEXIFPolicy 全局默认 EXIF 档位;空值等同 PolicyStrip。
-	DefaultEXIFPolicy EXIFPolicy
 }
 
 // Options 一次上传的可选参数。
@@ -82,7 +79,8 @@ type Options struct {
 	FileName string
 	// IdempotencyKey 客户端幂等键,可为空。
 	IdempotencyKey string
-	// EXIFPolicy 本次上传的 EXIF 档位;PolicyDefault 表示用全局默认。
+	// EXIFPolicy 本次上传生效的 EXIF 档位,必填——由调用方解析
+	// "单次指定 > 全局默认"后传入明确值,本包不做隐式回退。
 	EXIFPolicy EXIFPolicy
 }
 
@@ -136,12 +134,11 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, ErrTooManyPixels
 	}
 
-	policy, err := s.resolvePolicy(opts.EXIFPolicy)
-	if err != nil {
+	if err := validatePolicy(opts.EXIFPolicy); err != nil {
 		return Result{}, err
 	}
 	// 净化在前、哈希在后:哈希对象 = 实际存储字节(设计定稿·数据流)。
-	if policy == PolicyStrip && mime == "image/jpeg" {
+	if opts.EXIFPolicy == PolicyStrip && mime == "image/jpeg" {
 		stripped, serr := imaging.StripJPEGMetadata(data)
 		if serr != nil {
 			return Result{}, fmt.Errorf("%w: %w", ErrInvalidImage, serr)
@@ -195,23 +192,17 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	return Result{ImageID: shortID}, nil
 }
 
-// resolvePolicy 解析本次上传生效的 EXIF 档位:单次指定 > 全局默认 > strip。
-// @Description: spoof 为实验特性尚未实现,与未知取值一并返回 ErrUnknownPolicy
-// (设计定稿·EXIF 三档:spoof 列为实验,不静默降级)。
-// @param p 单次上传指定的档位,可为 PolicyDefault
-// @return 生效档位
+// validatePolicy 校验档位为已实现的明确取值。
+// @Description: 空值、实验特性 spoof 与乱填值一律返回 ErrUnknownPolicy——
+// 不做隐式回退,档位决策必须由调用方显式完成(不静默降级)。
+// @param p 调用方传入的档位
 // @return 取值非法时的错误
-func (s *Service) resolvePolicy(p EXIFPolicy) (EXIFPolicy, error) {
-	if p == PolicyDefault {
-		p = s.cfg.DefaultEXIFPolicy
-	}
+func validatePolicy(p EXIFPolicy) error {
 	switch p {
-	case PolicyDefault, PolicyStrip:
-		return PolicyStrip, nil
-	case PolicyPassthrough:
-		return PolicyPassthrough, nil
+	case PolicyStrip, PolicyPassthrough:
+		return nil
 	default:
-		return "", fmt.Errorf("%w: %q", ErrUnknownPolicy, p)
+		return fmt.Errorf("%w: %q", ErrUnknownPolicy, p)
 	}
 }
 

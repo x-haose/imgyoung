@@ -61,6 +61,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		Token:             testToken,
 		MaxUploadBytes:    1 << 20,
 		AllowEmptyReferer: true,
+		DefaultEXIFPolicy: upload.PolicyPassthrough,
 		Logger:            slog.New(slog.DiscardHandler),
 	}
 	if mutate != nil {
@@ -261,10 +262,15 @@ func TestUploadEXIFPolicyField(t *testing.T) {
 		return resp
 	}
 
-	ok := post("passthrough")
+	ok := post("strip")
 	defer closeBody(t, ok)
 	if ok.StatusCode != http.StatusOK {
-		t.Fatalf("passthrough 上传状态码 = %d, 期望 200", ok.StatusCode)
+		t.Fatalf("strip 上传状态码 = %d, 期望 200", ok.StatusCode)
+	}
+	byDefault := post("")
+	defer closeBody(t, byDefault)
+	if byDefault.StatusCode != http.StatusOK {
+		t.Fatalf("未指定档位(用全局默认)状态码 = %d, 期望 200", byDefault.StatusCode)
 	}
 	bad := post("spoof")
 	defer closeBody(t, bad)

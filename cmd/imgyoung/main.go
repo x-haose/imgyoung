@@ -81,11 +81,10 @@ func run() error {
 
 	queries := db.New(conn)
 	uploadSvc := upload.New(upload.Config{
-		Conn:              conn,
-		Queries:           queries,
-		Driver:            driver,
-		MaxPixels:         cfg.MaxPixels,
-		DefaultEXIFPolicy: upload.EXIFPolicy(cfg.EXIFPolicy),
+		Conn:      conn,
+		Queries:   queries,
+		Driver:    driver,
+		MaxPixels: cfg.MaxPixels,
 	})
 	srv := server.New(server.Config{
 		Queries:           queries,
@@ -94,6 +93,7 @@ func run() error {
 		Token:             token,
 		MaxUploadBytes:    cfg.MaxUploadBytes,
 		BaseURL:           cfg.BaseURL,
+		DefaultEXIFPolicy: upload.EXIFPolicy(cfg.EXIFPolicy),
 		RefererWhitelist:  cfg.RefererWhitelist,
 		AllowEmptyReferer: cfg.AllowEmptyReferer,
 		Logger:            logger,

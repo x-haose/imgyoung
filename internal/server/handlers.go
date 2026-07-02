@@ -80,10 +80,16 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 档位决策:单次表单字段 > 全局默认(在 API 层定死,Service 不做隐式回退)。
+	policy := upload.EXIFPolicy(r.FormValue("exif_policy"))
+	if policy == "" {
+		policy = s.cfg.DefaultEXIFPolicy
+	}
+
 	res, err := s.cfg.Upload.Process(r.Context(), data, upload.Options{
 		FileName:       header.Filename,
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
-		EXIFPolicy:     upload.EXIFPolicy(r.FormValue("exif_policy")),
+		EXIFPolicy:     policy,
 	})
 	switch {
 	case errors.Is(err, upload.ErrUnsupportedType):

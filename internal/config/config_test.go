@@ -59,21 +59,21 @@ func TestLoadDefaults(t *testing.T) {
 	if !cfg.AllowEmptyReferer {
 		t.Error("AllowEmptyReferer = false, 期望默认 true(设计定稿:空 Referer 默认放行)")
 	}
-	if cfg.EXIFPolicy != "strip" {
-		t.Errorf("EXIFPolicy = %q, 期望默认 strip", cfg.EXIFPolicy)
+	if cfg.EXIFPolicy != "passthrough" {
+		t.Errorf("EXIFPolicy = %q, 期望默认 passthrough(默认不动用户原图)", cfg.EXIFPolicy)
 	}
 }
 
 // TestLoadEXIFPolicy 验证 EXIF 档位配置:合法值生效,非法值(含未实现的 spoof)快速失败。
 func TestLoadEXIFPolicy(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envEXIFPolicy, "passthrough")
+	t.Setenv(envEXIFPolicy, "strip")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load 返回错误: %v", err)
 	}
-	if cfg.EXIFPolicy != "passthrough" {
-		t.Errorf("EXIFPolicy = %q, 期望 passthrough", cfg.EXIFPolicy)
+	if cfg.EXIFPolicy != "strip" {
+		t.Errorf("EXIFPolicy = %q, 期望 strip", cfg.EXIFPolicy)
 	}
 
 	for _, v := range []string{"spoof", "bogus"} {
