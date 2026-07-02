@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -75,6 +76,12 @@ type ChannelSelector interface {
 	All() []channel.Handle
 }
 
+// ReplicationEnqueuer 副本补齐任务的入队口(由 task.Runner 实现)。
+type ReplicationEnqueuer interface {
+	// EnqueueReplication 为目标渠道入队补齐任务(幂等)。
+	EnqueueReplication(ctx context.Context, blobID int64, channelIDs []int64) error
+}
+
 // Config Service 的全部依赖与参数。
 type Config struct {
 	// Conn 数据库连接(事务用)。
@@ -83,9 +90,18 @@ type Config struct {
 	Queries *db.Queries
 	// Channels 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐。
 	Channels ChannelSelector
+	// Replicator 补齐入队口;可为 nil(pending 行由恢复扫描兜底)。
+	Replicator ReplicationEnqueuer
 	// MaxPixels 像素预算(width × height 上限)。
 	MaxPixels int64
+	// MinSuccess 返回成功所需的最少副本数,小于 1 视为 1(设计定稿·写入语义)。
+	MinSuccess int
+	// Logger 结构化日志。
+	Logger *slog.Logger
 }
+
+// ErrInsufficientReplicas 同步副本数不足 MinSuccess 要求。
+var ErrInsufficientReplicas = errors.New("upload: 副本数不足")
 
 // Options 一次上传的可选参数。
 type Options struct {
@@ -184,7 +200,8 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段(设计定稿·命名)。
 	key := shortID + "_" + hex.EncodeToString(sum[:4])
 
-	// 写入语义:主渠道成功即返回,其余渠道由补齐任务异步复制(设计定稿·上传管理)。
+	// 写入语义:主渠道成功即返回(min_success 可要求更多同步副本),
+	// 其余渠道由补齐任务异步复制(设计定稿·上传管理)。
 	primary, err := s.cfg.Channels.Primary()
 	if err != nil {
 		return Result{}, fmt.Errorf("选择主渠道: %w", err)
@@ -192,21 +209,39 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	if err = primary.Driver.Put(ctx, key, bytes.NewReader(data), int64(len(data))); err != nil {
 		return Result{}, fmt.Errorf("写入渠道 %q: %w", primary.Name, err)
 	}
+	doneIDs := []int64{primary.ID}
+	all := s.cfg.Channels.All()
+	for _, h := range all {
+		if len(doneIDs) >= s.minSuccess() {
+			break
+		}
+		if h.ID == primary.ID {
+			continue
+		}
+		if perr := h.Driver.Put(ctx, key, bytes.NewReader(data), int64(len(data))); perr != nil {
+			s.cfg.Logger.Warn("同步副本写入失败", "channel", h.Name, "err", perr)
+			continue
+		}
+		doneIDs = append(doneIDs, h.ID)
+	}
+	if len(doneIDs) < s.minSuccess() {
+		return Result{}, fmt.Errorf("%w: 要求 %d 份,仅写入 %d 份", ErrInsufficientReplicas, s.minSuccess(), len(doneIDs))
+	}
 
 	// Put 成功而落库失败会产生孤儿对象,由对账任务回收(见设计定稿·对账 GC),
 	// 此处不回滚渠道写入。
 	err = s.persist(ctx, persistParams{
-		shortID:   shortID,
-		fileName:  fileName,
-		idemKey:   idemKey,
-		primaryID: primary.ID,
-		sha256:    hex.EncodeToString(sum[:]),
-		phash:     int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
-		key:       key,
-		mime:      mime,
-		size:      int64(len(data)),
-		width:     int64(meta.Width),
-		height:    int64(meta.Height),
+		shortID:  shortID,
+		fileName: fileName,
+		idemKey:  idemKey,
+		doneIDs:  doneIDs,
+		sha256:   hex.EncodeToString(sum[:]),
+		phash:    int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
+		key:      key,
+		mime:     mime,
+		size:     int64(len(data)),
+		width:    int64(meta.Width),
+		height:   int64(meta.Height),
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -217,7 +252,46 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		}
 		return Result{}, err
 	}
+
+	// 触发异步补齐;入队失败仅告警——pending 行由恢复扫描兜底(围栏设计)。
+	if s.cfg.Replicator != nil {
+		if pending := pendingIDs(all, doneIDs); len(pending) > 0 {
+			row, qerr := s.cfg.Queries.GetImageBlob(ctx, shortID)
+			if qerr == nil {
+				qerr = s.cfg.Replicator.EnqueueReplication(ctx, row.BlobID, pending)
+			}
+			if qerr != nil {
+				s.cfg.Logger.Warn("补齐任务入队失败,待恢复扫描兜底", "image", shortID, "err", qerr)
+			}
+		}
+	}
 	return Result{ImageID: shortID}, nil
+}
+
+// minSuccess 归一化最少副本数(至少 1)。
+func (s *Service) minSuccess() int {
+	if s.cfg.MinSuccess < 1 {
+		return 1
+	}
+	return s.cfg.MinSuccess
+}
+
+// pendingIDs 返回未同步写入的渠道 ID 集(待异步补齐)。
+// @param all 全部渠道句柄
+// @param doneIDs 已同步写入的渠道 ID
+// @return 待补齐渠道 ID
+func pendingIDs(all []channel.Handle, doneIDs []int64) []int64 {
+	done := make(map[int64]struct{}, len(doneIDs))
+	for _, chID := range doneIDs {
+		done[chID] = struct{}{}
+	}
+	out := make([]int64, 0, len(all))
+	for _, h := range all {
+		if _, ok := done[h.ID]; !ok {
+			out = append(out, h.ID)
+		}
+	}
+	return out
 }
 
 // maxFileNameBytes 文件名的存储字节上限,超出部分截断。
@@ -254,8 +328,8 @@ type persistParams struct {
 	fileName string
 	// idemKey 幂等键,可为空。
 	idemKey string
-	// primaryID 已同步写入的主渠道 ID。
-	primaryID int64
+	// doneIDs 已同步写入的渠道 ID(至少含主渠道)。
+	doneIDs []int64
 	// sha256 净化后字节哈希(十六进制)。
 	sha256 string
 	// phash 感知哈希(按位存入 int64)。
@@ -300,10 +374,14 @@ func (s *Service) persist(ctx context.Context, p persistParams) error {
 	}); err != nil {
 		return fmt.Errorf("写入引用记录: %w", err)
 	}
-	// 副本状态:主渠道已就绪,其余渠道待补齐(outbox,补齐任务据此驱动)。
+	// 副本状态:已同步渠道就绪,其余渠道待补齐(outbox,补齐任务据此驱动)。
+	done := make(map[int64]struct{}, len(p.doneIDs))
+	for _, chID := range p.doneIDs {
+		done[chID] = struct{}{}
+	}
 	for _, h := range s.cfg.Channels.All() {
 		state := channel.StatePending
-		if h.ID == p.primaryID {
+		if _, ok := done[h.ID]; ok {
 			state = channel.StateDone
 		}
 		if err = q.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{

@@ -3,6 +3,7 @@ package server_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -62,11 +63,13 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		Queries:   queries,
 		Channels:  mgr,
 		MaxPixels: 1 << 20,
+		Logger:    slog.New(slog.DiscardHandler),
 	})
 
 	cfg := server.Config{
 		Queries:              queries,
 		Channels:             mgr,
+		Admin:                mgr,
 		Upload:               svc,
 		Token:                testToken,
 		MaxUploadBytes:       1 << 20,
@@ -360,5 +363,119 @@ func TestServeUnknownID(t *testing.T) {
 	defer closeBody(t, resp)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("状态码 = %d, 期望 404", resp.StatusCode)
+	}
+}
+
+// postChannel 通过管理 API 创建渠道。
+// @return 响应对象(调用方负责关闭与断言)
+func postChannel(t *testing.T, ts *httptest.Server, body string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/channels", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("构造创建渠道请求: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("发送创建渠道请求: %v", err)
+	}
+	return resp
+}
+
+// TestChannelCRUD 验证渠道管理 API:创建、列表、删除与唯一副本守卫。
+func TestChannelCRUD(t *testing.T) {
+	ts := newTestServer(t, nil)
+
+	// 创建第二个渠道(低优先级,不参与上传主写)。
+	body := fmt.Sprintf(`{"name":"backup","driver":"local","priority":10,"config":{"path":%q}}`, t.TempDir())
+	created := postChannel(t, ts, body)
+	defer closeBody(t, created)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("创建渠道状态码 = %d, 期望 201", created.StatusCode)
+	}
+	var cr struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(created.Body).Decode(&cr); err != nil {
+		t.Fatalf("解析创建响应: %v", err)
+	}
+
+	// 列表应含两个渠道且不含配置字段。
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/channels", nil)
+	if err != nil {
+		t.Fatalf("构造列表请求: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	listResp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("发送列表请求: %v", err)
+	}
+	defer closeBody(t, listResp)
+	raw, err := io.ReadAll(listResp.Body)
+	if err != nil {
+		t.Fatalf("读取列表响应: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"backup"`)) || bytes.Contains(raw, []byte("config")) {
+		t.Fatalf("渠道列表异常(应含 backup 且不含配置): %s", raw)
+	}
+
+	// 上传一张图:唯一副本在主渠道(内置 local),删除它应被守卫拒绝。
+	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	defer closeBody(t, up)
+	localID := int64(1) // 迁移内置渠道为首条记录
+	del := func(id int64) int {
+		delReq, derr := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/channels/%d", ts.URL, id), nil)
+		if derr != nil {
+			t.Fatalf("构造删除请求: %v", derr)
+		}
+		delReq.Header.Set("Authorization", "Bearer "+testToken)
+		dresp, derr := ts.Client().Do(delReq)
+		if derr != nil {
+			t.Fatalf("发送删除请求: %v", derr)
+		}
+		defer closeBody(t, dresp)
+		return dresp.StatusCode
+	}
+	if code := del(localID); code != http.StatusConflict {
+		t.Fatalf("删除持有唯一副本的渠道状态码 = %d, 期望 409", code)
+	}
+	if code := del(cr.ID); code != http.StatusNoContent {
+		t.Fatalf("删除空渠道状态码 = %d, 期望 204", code)
+	}
+}
+
+// TestRedirectMode 验证 302 省流量模式:允许直链的候选渠道返回重定向。
+func TestRedirectMode(t *testing.T) {
+	ts := newTestServer(t, func(c *server.Config) { c.RedirectMode = true })
+
+	// 高优先级 + 允许直链的渠道成为主渠道,上传即落在它上面。
+	body := fmt.Sprintf(
+		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub/"}}`,
+		t.TempDir())
+	created := postChannel(t, ts, body)
+	defer closeBody(t, created)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("创建渠道状态码 = %d, 期望 201", created.StatusCode)
+	}
+
+	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	defer closeBody(t, up)
+	_, imgURL := decodeUpload(t, up)
+
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Get(ts.URL + imgURL)
+	if err != nil {
+		t.Fatalf("访问图片: %v", err)
+	}
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("状态码 = %d, 期望 302", resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if !strings.HasPrefix(loc, "https://cdn.example.com/pub/") {
+		t.Fatalf("Location = %q, 期望 public_base_url 前缀", loc)
 	}
 }

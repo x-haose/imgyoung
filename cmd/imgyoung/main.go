@@ -18,6 +18,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/secret"
 	"github.com/x-haose/imgyoung/internal/server"
+	"github.com/x-haose/imgyoung/internal/task"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
 
@@ -89,15 +90,34 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	runner, err := task.NewRunner(task.RunnerConfig{
+		Conn:    conn,
+		Queries: queries,
+		Manager: channels,
+		Logger:  logger,
+	})
+	if err != nil {
+		return err
+	}
+	if err = runner.Start(ctx); err != nil {
+		return err
+	}
+
 	uploadSvc := upload.New(upload.Config{
-		Conn:      conn,
-		Queries:   queries,
-		Channels:  channels,
-		MaxPixels: cfg.MaxPixels,
+		Conn:       conn,
+		Queries:    queries,
+		Channels:   channels,
+		Replicator: runner,
+		MaxPixels:  cfg.MaxPixels,
+		MinSuccess: cfg.MinSuccess,
+		Logger:     logger,
 	})
 	srv := server.New(server.Config{
 		Queries:              queries,
 		Channels:             channels,
+		Admin:                channels,
+		EncryptNewChannels:   cfg.EncryptNewChannels,
+		RedirectMode:         cfg.AccessMode == "redirect",
 		Upload:               uploadSvc,
 		Token:                token,
 		MaxUploadBytes:       cfg.MaxUploadBytes,
@@ -114,6 +134,28 @@ func run() error {
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
+	// 渠道健康检查循环(设计定稿·健康检查+自动切换)。
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.HealthCheckSeconds) * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+				changed, cerr := channels.CheckAll(probeCtx)
+				cancel()
+				if cerr != nil {
+					logger.Warn("健康检查未完成", "err", cerr)
+				}
+				if len(changed) > 0 {
+					logger.Info("渠道健康状态变化", "channels", changed)
+				}
+			}
+		}
+	}()
+
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()
 	logger.Info("ImgYoung 已启动", "listen", cfg.Listen, "data_dir", cfg.DataDir)
@@ -128,6 +170,9 @@ func run() error {
 	defer cancel()
 	if err = httpSrv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("优雅退出: %w", err)
+	}
+	if err = runner.Stop(shutdownCtx); err != nil {
+		logger.Warn("补齐任务停止未完成", "err", err)
 	}
 	if err = <-errCh; !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("HTTP 服务收尾: %w", err)

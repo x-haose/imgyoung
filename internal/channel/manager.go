@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/x-haose/imgyoung/internal/db"
@@ -17,6 +18,9 @@ import (
 // ErrNoHealthyChannel 当前没有任何健康渠道可用。
 var ErrNoHealthyChannel = errors.New("channel: 无健康渠道可用")
 
+// ErrHoldsSoleReplicas 渠道持有某些图的唯一就绪副本,删除会造成数据丢失。
+var ErrHoldsSoleReplicas = errors.New("channel: 渠道持有唯一副本,拒绝删除")
+
 // Handle 渠道句柄:选择结果的最小载体。
 type Handle struct {
 	// ID 渠道内部主键。
@@ -25,6 +29,12 @@ type Handle struct {
 	Name string
 	// Driver 就绪的存储驱动(加密渠道已含 crypt 包裹)。
 	Driver storage.Driver
+	// Encrypted 是否为加密渠道(密文不可直链)。
+	Encrypted bool
+	// AllowDirectLink 是否允许 302 直链。
+	AllowDirectLink bool
+	// PublicBaseURL 对外直链前缀(空 = 无直链能力);来自渠道配置键 public_base_url。
+	PublicBaseURL string
 }
 
 // ManagerConfig 管理器依赖。
@@ -78,12 +88,19 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	loaded := make([]managed, 0, len(rows))
 	for _, row := range rows {
-		driver, derr := m.buildDriver(ctx, row)
+		driver, params, derr := m.buildDriver(ctx, row)
 		if derr != nil {
 			return fmt.Errorf("构造渠道 %q 驱动: %w", row.Name, derr)
 		}
 		loaded = append(loaded, managed{
-			handle:  Handle{ID: row.ID, Name: row.Name, Driver: driver},
+			handle: Handle{
+				ID:              row.ID,
+				Name:            row.Name,
+				Driver:          driver,
+				Encrypted:       row.Encrypted != 0,
+				AllowDirectLink: row.AllowDirectLink != 0,
+				PublicBaseURL:   strings.TrimRight(params["public_base_url"], "/"),
+			},
 			healthy: row.Healthy != 0,
 		})
 	}
@@ -152,22 +169,28 @@ func (m *Manager) SealConfig(plain string) (string, error) {
 
 // buildDriver 按渠道行构造存储驱动:解密参数 → 连接字符串 → 可选 crypt 包裹。
 // @param row 渠道记录
-// @return 就绪的驱动
+// @return 就绪的驱动与解密后的原始参数表(含约定键)
 // @return 解密、解析或后端初始化失败时的错误
-func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driver, error) {
+func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driver, map[string]string, error) {
 	params := map[string]string{}
 	if row.ConfigSealed != "" {
 		plain, err := m.cfg.Master.DecryptString(row.ConfigSealed)
 		if err != nil {
-			return nil, fmt.Errorf("解密渠道配置: %w", err)
+			return nil, nil, fmt.Errorf("解密渠道配置: %w", err)
 		}
 		if err := json.Unmarshal([]byte(plain), &params); err != nil {
-			return nil, fmt.Errorf("解析渠道配置 JSON: %w", err)
+			return nil, nil, fmt.Errorf("解析渠道配置 JSON: %w", err)
 		}
 	}
-	// 约定键 path 为后端内路径,其余为后端参数;内置 local 缺省落 dataDir/blobs。
+	raw := map[string]string{}
+	for k, v := range params {
+		raw[k] = v
+	}
+	// 约定键:path 为后端内路径,public_base_url 为直链前缀(均非 rclone 参数);
+	// 其余为后端参数。内置 local 缺省落 dataDir/blobs。
 	path := params["path"]
 	delete(params, "path")
+	delete(params, "public_base_url")
 	if row.Driver == "local" && path == "" {
 		path = filepath.Join(m.cfg.DataDir, "blobs")
 	}
@@ -176,17 +199,35 @@ func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driv
 	if row.Encrypted != 0 {
 		password, err := m.deriveHex(row.ID, "crypt:password")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		salt, err := m.deriveHex(row.ID, "crypt:salt")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if remote, err = WrapCrypt(remote, password, salt); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return storage.NewRcloneDriver(ctx, remote)
+	driver, err := storage.NewRcloneDriver(ctx, remote)
+	if err != nil {
+		return nil, nil, err
+	}
+	return driver, raw, nil
+}
+
+// Get 按 ID 返回渠道句柄。
+// @param channelID 渠道主键
+// @return 句柄与是否存在
+func (m *Manager) Get(channelID int64) (Handle, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, c := range m.channels {
+		if c.handle.ID == channelID {
+			return c.handle, true
+		}
+	}
+	return Handle{}, false
 }
 
 // deriveHex 为渠道派生一个 hex 编码的子密钥(crypt 密码/盐)。

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/imaging"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
@@ -104,6 +105,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, imaging.ErrUnknownPolicy):
 		s.writeError(w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
 		return
+	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
+		s.cfg.Logger.Error("渠道不可用,上传失败", "err", err)
+		s.writeError(w, http.StatusServiceUnavailable, "存储渠道暂不可用,请稍后重试")
+		return
 	case err != nil:
 		s.cfg.Logger.Error("上传处理失败", "err", err)
 		s.writeError(w, http.StatusInternalServerError, "服务内部错误")
@@ -144,6 +149,17 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Logger.Warn("无可用渠道服务该图", "id", imageID)
 		http.Error(w, "渠道暂不可用", http.StatusServiceUnavailable)
 		return
+	}
+
+	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向(设计定稿·访问管理)。
+	if s.cfg.RedirectMode {
+		for _, cand := range candidates {
+			if cand.AllowDirectLink && !cand.Encrypted && cand.PublicBaseURL != "" {
+				http.Redirect(w, r, cand.PublicBaseURL+"/"+row.StorageKey, http.StatusFound)
+				return
+			}
+		}
+		// 无直链候选,回退代理。
 	}
 
 	// 访问容灾:按优先级逐个尝试,取第一个能打开的渠道(设计定稿·自动切换)。

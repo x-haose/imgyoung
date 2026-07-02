@@ -11,6 +11,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -70,6 +71,7 @@ func newTestEnv(t *testing.T, maxPixels int64) *testEnv {
 		Queries:   queries,
 		Channels:  mgr,
 		MaxPixels: maxPixels,
+		Logger:    slog.New(slog.DiscardHandler),
 	})
 	return &testEnv{svc: svc, queries: queries, driver: primary.Driver, mgr: mgr}
 }

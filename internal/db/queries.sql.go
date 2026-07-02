@@ -9,6 +9,25 @@ import (
 	"context"
 )
 
+const countSoleReplicas = `-- name: CountSoleReplicas :one
+SELECT COUNT(*)
+FROM blob_channels bc
+WHERE bc.channel_id = ?
+  AND bc.state = 'done'
+  AND NOT EXISTS (SELECT 1
+                  FROM blob_channels o
+                  WHERE o.blob_id = bc.blob_id
+                    AND o.channel_id != bc.channel_id
+                    AND o.state = 'done')
+`
+
+func (q *Queries) CountSoleReplicas(ctx context.Context, channelID int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countSoleReplicas, channelID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createBlob = `-- name: CreateBlob :one
 INSERT INTO blobs (sha256, phash, storage_key, mime, size, width, height)
 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -100,6 +119,16 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 	return err
 }
 
+const deleteBlobChannelsByChannel = `-- name: DeleteBlobChannelsByChannel :exec
+DELETE FROM blob_channels
+WHERE channel_id = ?
+`
+
+func (q *Queries) DeleteBlobChannelsByChannel(ctx context.Context, channelID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBlobChannelsByChannel, channelID)
+	return err
+}
+
 const deleteChannel = `-- name: DeleteChannel :exec
 DELETE FROM channels
 WHERE id = ?
@@ -108,6 +137,57 @@ WHERE id = ?
 func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
 	_, err := q.db.ExecContext(ctx, deleteChannel, id)
 	return err
+}
+
+const getBlob = `-- name: GetBlob :one
+SELECT id, sha256, phash, md5, storage_key, mime, size, width, height, ref_count, pending_delete, created_at
+FROM blobs
+WHERE id = ?
+`
+
+func (q *Queries) GetBlob(ctx context.Context, id int64) (Blob, error) {
+	row := q.db.QueryRowContext(ctx, getBlob, id)
+	var i Blob
+	err := row.Scan(
+		&i.ID,
+		&i.Sha256,
+		&i.Phash,
+		&i.Md5,
+		&i.StorageKey,
+		&i.Mime,
+		&i.Size,
+		&i.Width,
+		&i.Height,
+		&i.RefCount,
+		&i.PendingDelete,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBlobChannel = `-- name: GetBlobChannel :one
+SELECT blob_id, channel_id, state, attempts, last_error, updated_at
+FROM blob_channels
+WHERE blob_id = ? AND channel_id = ?
+`
+
+type GetBlobChannelParams struct {
+	BlobID    int64
+	ChannelID int64
+}
+
+func (q *Queries) GetBlobChannel(ctx context.Context, arg GetBlobChannelParams) (BlobChannel, error) {
+	row := q.db.QueryRowContext(ctx, getBlobChannel, arg.BlobID, arg.ChannelID)
+	var i BlobChannel
+	err := row.Scan(
+		&i.BlobID,
+		&i.ChannelID,
+		&i.State,
+		&i.Attempts,
+		&i.LastError,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getChannel = `-- name: GetChannel :one

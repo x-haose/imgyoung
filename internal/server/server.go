@@ -27,6 +27,12 @@ type Config struct {
 	Queries *db.Queries
 	// Channels 访问路径的渠道候选来源(容灾切换依据)。
 	Channels BlobChannels
+	// Admin 渠道管理操作。
+	Admin ChannelAdmin
+	// EncryptNewChannels 新建渠道未指定 encrypted 时的全局默认(创建时固化)。
+	EncryptNewChannels bool
+	// RedirectMode 302 省流量模式:候选渠道允许直链时重定向,否则回退代理。
+	RedirectMode bool
 	// Upload 上传编排服务。
 	Upload *upload.Service
 	// Token 上传鉴权 Token,单 Token 模型(多 Token 体系见设计定稿·鉴权与滥用防护)。
@@ -71,6 +77,12 @@ func (s *Server) Handler() http.Handler {
 			return s.limitConcurrency(s.cfg.MaxConcurrentUploads, next)
 		})
 		g.Post("/api/upload", s.handleUpload)
+	})
+	r.Group(func(g chi.Router) {
+		g.Use(s.requireToken)
+		g.Post("/api/channels", s.handleChannelCreate)
+		g.Get("/api/channels", s.handleChannelList)
+		g.Delete("/api/channels/{id}", s.handleChannelDelete)
 	})
 	r.Group(func(g chi.Router) {
 		// 防盗链只作用于对外公开图片入口(设计定稿·区分后台浏览 vs 真实访问)。

@@ -45,6 +45,14 @@ const (
 	envAllowEmptyReferer = "IMGYOUNG_ALLOW_EMPTY_REFERER"
 	// envEXIFPolicy 全局默认 EXIF 档位(strip / passthrough)。
 	envEXIFPolicy = "IMGYOUNG_EXIF_POLICY"
+	// envMinSuccess 上传返回成功所需的最少同步副本数。
+	envMinSuccess = "IMGYOUNG_MIN_SUCCESS"
+	// envAccessMode 访问模式:proxy(默认)/ redirect(302 省流量)。
+	envAccessMode = "IMGYOUNG_ACCESS_MODE"
+	// envEncryptNewChannels 新建渠道未显式指定时的加密默认值。
+	envEncryptNewChannels = "IMGYOUNG_ENCRYPT_NEW_CHANNELS"
+	// envHealthCheckSeconds 渠道健康检查间隔(秒)。
+	envHealthCheckSeconds = "IMGYOUNG_HEALTH_CHECK_SECONDS"
 )
 
 // megapixel 一百万像素。
@@ -81,6 +89,14 @@ type Config struct {
 	// EXIFPolicy 全局默认 EXIF 档位,默认 passthrough(不动用户原图);
 	// 单次上传可覆盖。枚举见 imaging 包。
 	EXIFPolicy imaging.EXIFPolicy
+	// MinSuccess 上传返回成功所需的最少同步副本数,默认 1。
+	MinSuccess int
+	// AccessMode 访问模式:proxy(默认,代理)/ redirect(302 省流量)。
+	AccessMode string
+	// EncryptNewChannels 新建渠道未显式指定 encrypted 时的默认值,默认 false。
+	EncryptNewChannels bool
+	// HealthCheckSeconds 渠道健康检查间隔(秒),默认 60。
+	HealthCheckSeconds int
 }
 
 // envPrefix 环境变量统一前缀,剥掉后小写即为配置键(IMGYOUNG_DATA_DIR → data_dir)。
@@ -107,6 +123,10 @@ func Load() (Config, error) {
 		"referer_whitelist":      []string{},
 		"allow_empty_referer":    true,
 		"exif_policy":            "passthrough",
+		"min_success":            1,
+		"access_mode":            "proxy",
+		"encrypt_new_channels":   false,
+		"health_check_seconds":   60,
 	}, ".")
 	if err := k.Load(defaults, nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)
@@ -164,6 +184,14 @@ func Load() (Config, error) {
 		AllowEmptyReferer bool `koanf:"allow_empty_referer"`
 		// EXIFPolicy 全局默认 EXIF 档位。
 		EXIFPolicy string `koanf:"exif_policy"`
+		// MinSuccess 最少同步副本数。
+		MinSuccess int `koanf:"min_success"`
+		// AccessMode 访问模式。
+		AccessMode string `koanf:"access_mode"`
+		// EncryptNewChannels 新建渠道加密默认值。
+		EncryptNewChannels bool `koanf:"encrypt_new_channels"`
+		// HealthCheckSeconds 健康检查间隔(秒)。
+		HealthCheckSeconds int `koanf:"health_check_seconds"`
 	}
 	if err := k.Unmarshal("", &raw); err != nil {
 		return Config{}, fmt.Errorf("解析配置: %w", err)
@@ -181,6 +209,15 @@ func Load() (Config, error) {
 	if err := imaging.ValidatePolicy(imaging.EXIFPolicy(raw.EXIFPolicy)); err != nil {
 		return Config{}, fmt.Errorf("exif_policy 配置非法: %w", err)
 	}
+	if raw.MinSuccess < 1 {
+		return Config{}, fmt.Errorf("min_success=%d 非法: 需要正整数", raw.MinSuccess)
+	}
+	if raw.AccessMode != "proxy" && raw.AccessMode != "redirect" {
+		return Config{}, fmt.Errorf("access_mode=%q 非法: 可选 proxy / redirect", raw.AccessMode)
+	}
+	if raw.HealthCheckSeconds < 1 {
+		return Config{}, fmt.Errorf("health_check_seconds=%d 非法: 需要正整数", raw.HealthCheckSeconds)
+	}
 	return Config{
 		Listen:               raw.Listen,
 		DataDir:              raw.DataDir,
@@ -193,6 +230,10 @@ func Load() (Config, error) {
 		RefererWhitelist:     raw.RefererWhitelist,
 		AllowEmptyReferer:    raw.AllowEmptyReferer,
 		EXIFPolicy:           imaging.EXIFPolicy(raw.EXIFPolicy),
+		MinSuccess:           raw.MinSuccess,
+		AccessMode:           raw.AccessMode,
+		EncryptNewChannels:   raw.EncryptNewChannels,
+		HealthCheckSeconds:   raw.HealthCheckSeconds,
 	}, nil
 }
 

@@ -13,6 +13,27 @@ FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?;
 
+-- name: GetBlob :one
+SELECT *
+FROM blobs
+WHERE id = ?;
+
+-- name: GetBlobChannel :one
+SELECT *
+FROM blob_channels
+WHERE blob_id = ? AND channel_id = ?;
+
+-- name: CountSoleReplicas :one
+SELECT COUNT(*)
+FROM blob_channels bc
+WHERE bc.channel_id = ?
+  AND bc.state = 'done'
+  AND NOT EXISTS (SELECT 1
+                  FROM blob_channels o
+                  WHERE o.blob_id = bc.blob_id
+                    AND o.channel_id != bc.channel_id
+                    AND o.state = 'done');
+
 -- name: CreateChannel :one
 INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -36,6 +57,10 @@ WHERE id = ?;
 -- name: DeleteChannel :exec
 DELETE FROM channels
 WHERE id = ?;
+
+-- name: DeleteBlobChannelsByChannel :exec
+DELETE FROM blob_channels
+WHERE channel_id = ?;
 
 -- name: UpsertBlobChannel :exec
 INSERT INTO blob_channels (blob_id, channel_id, state)

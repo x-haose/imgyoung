@@ -13,6 +13,8 @@ func clearEnv(t *testing.T) {
 	for _, k := range []string{
 		envConfig, envListen, envDataDir, envToken, envMasterKey, envMaxUploadMB,
 		envBaseURL, envMaxPixelsMP, envRefererWhitelist, envAllowEmptyReferer,
+		envEXIFPolicy, envMinSuccess, envAccessMode, envEncryptNewChannels,
+		envHealthCheckSeconds, envMaxConcurrentUploads,
 	} {
 		t.Setenv(k, "")
 	}
@@ -64,6 +66,19 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.EXIFPolicy != "passthrough" {
 		t.Errorf("EXIFPolicy = %q, 期望默认 passthrough(默认不动用户原图)", cfg.EXIFPolicy)
+	}
+	if cfg.MinSuccess != 1 || cfg.AccessMode != "proxy" || cfg.EncryptNewChannels || cfg.HealthCheckSeconds != 60 {
+		t.Errorf("多渠道相关默认值异常: min_success=%d access_mode=%q encrypt_new=%v health=%d",
+			cfg.MinSuccess, cfg.AccessMode, cfg.EncryptNewChannels, cfg.HealthCheckSeconds)
+	}
+}
+
+// TestLoadInvalidAccessMode 验证非法访问模式快速失败。
+func TestLoadInvalidAccessMode(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envAccessMode, "cdn")
+	if _, err := Load(); err == nil {
+		t.Fatal("access_mode=cdn 应返回错误")
 	}
 }
 
