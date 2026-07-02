@@ -111,7 +111,7 @@ func TestProcessStoresPNG(t *testing.T) {
 	env := newTestEnv(t, 1<<20)
 	payload := pngBytes(t)
 
-	res, err := env.svc.Process(t.Context(), payload, "a.png", "")
+	res, err := env.svc.Process(t.Context(), payload, upload.Options{FileName: "a.png"})
 	if err != nil {
 		t.Fatalf("Process 返回错误: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestProcessStripsJPEGMetadata(t *testing.T) {
 	env := newTestEnv(t, 1<<20)
 	payload := jpegWithEXIF(t)
 
-	res, err := env.svc.Process(t.Context(), payload, "a.jpg", "")
+	res, err := env.svc.Process(t.Context(), payload, upload.Options{FileName: "a.jpg"})
 	if err != nil {
 		t.Fatalf("Process 返回错误: %v", err)
 	}
@@ -166,10 +166,42 @@ func TestProcessStripsJPEGMetadata(t *testing.T) {
 	}
 }
 
+// TestProcessPassthroughKeepsEXIF 验证 passthrough 档位原样存储、不动元数据。
+func TestProcessPassthroughKeepsEXIF(t *testing.T) {
+	env := newTestEnv(t, 1<<20)
+	payload := jpegWithEXIF(t)
+
+	res, err := env.svc.Process(t.Context(), payload, upload.Options{
+		FileName:   "a.jpg",
+		EXIFPolicy: upload.PolicyPassthrough,
+	})
+	if err != nil {
+		t.Fatalf("Process 返回错误: %v", err)
+	}
+	stored := fetchStored(t, env, res.ImageID)
+	if !bytes.Equal(stored, payload) {
+		t.Fatal("passthrough 档位下存储字节应与上传完全一致")
+	}
+}
+
+// TestProcessRejectsUnknownPolicy 验证非法档位(含未实现的 spoof)返回 ErrUnknownPolicy。
+func TestProcessRejectsUnknownPolicy(t *testing.T) {
+	env := newTestEnv(t, 1<<20)
+	for _, policy := range []upload.EXIFPolicy{"spoof", "bogus"} {
+		_, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
+			FileName:   "a.png",
+			EXIFPolicy: policy,
+		})
+		if !errors.Is(err, upload.ErrUnknownPolicy) {
+			t.Fatalf("policy=%q 错误 = %v, 期望 ErrUnknownPolicy", policy, err)
+		}
+	}
+}
+
 // TestProcessRejectsUnsupportedType 验证非白名单类型返回 ErrUnsupportedType。
 func TestProcessRejectsUnsupportedType(t *testing.T) {
 	env := newTestEnv(t, 1<<20)
-	_, err := env.svc.Process(t.Context(), []byte("just some text"), "a.txt", "")
+	_, err := env.svc.Process(t.Context(), []byte("just some text"), upload.Options{FileName: "a.txt"})
 	if !errors.Is(err, upload.ErrUnsupportedType) {
 		t.Fatalf("错误 = %v, 期望 ErrUnsupportedType", err)
 	}
@@ -178,7 +210,7 @@ func TestProcessRejectsUnsupportedType(t *testing.T) {
 // TestProcessRejectsTooManyPixels 验证超出像素预算返回 ErrTooManyPixels(不进解码器)。
 func TestProcessRejectsTooManyPixels(t *testing.T) {
 	env := newTestEnv(t, 1) // 预算 1 像素,2x2 必超
-	_, err := env.svc.Process(t.Context(), pngBytes(t), "a.png", "")
+	_, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{FileName: "a.png"})
 	if !errors.Is(err, upload.ErrTooManyPixels) {
 		t.Fatalf("错误 = %v, 期望 ErrTooManyPixels", err)
 	}
@@ -189,11 +221,11 @@ func TestProcessIdempotency(t *testing.T) {
 	env := newTestEnv(t, 1<<20)
 	payload := pngBytes(t)
 
-	first, err := env.svc.Process(t.Context(), payload, "a.png", "retry-key-1")
+	first, err := env.svc.Process(t.Context(), payload, upload.Options{FileName: "a.png", IdempotencyKey: "retry-key-1"})
 	if err != nil {
 		t.Fatalf("第一次 Process: %v", err)
 	}
-	second, err := env.svc.Process(t.Context(), payload, "a.png", "retry-key-1")
+	second, err := env.svc.Process(t.Context(), payload, upload.Options{FileName: "a.png", IdempotencyKey: "retry-key-1"})
 	if err != nil {
 		t.Fatalf("第二次 Process: %v", err)
 	}

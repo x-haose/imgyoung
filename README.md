@@ -18,7 +18,7 @@ docker run -p 8080:8080 -v imgyoung-data:/data -e IMGYOUNG_TOKEN=my-token imgyou
 ```
 
 ```bash
-# 上传
+# 上传(可选:-H "Idempotency-Key: xx" 幂等重试;-F exif_policy=passthrough 保留 EXIF)
 curl -H "Authorization: Bearer my-token" -F "file=@a.png" http://localhost:8080/api/upload
 # => {"id":"R0RjUyP1UW","url":"/i/R0RjUyP1UW"}
 
@@ -40,6 +40,7 @@ open http://localhost:8080/i/R0RjUyP1UW
 | `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;设置后上传响应返回绝对 URL(PicGo 等客户端需要) |
 | `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单,逗号分隔,支持 `*.example.com` |
 | `IMGYOUNG_ALLOW_EMPTY_REFERER` | `allow_empty_referer` | `true` | 空 Referer 是否放行 |
+| `IMGYOUNG_EXIF_POLICY` | `exif_policy` | `strip` | 全局默认 EXIF 档位:`strip`(剥离元数据)/ `passthrough`(原样保留);`spoof` 为实验特性尚未开放。单次上传可用表单字段 `exif_policy` 覆盖 |
 
 ```yaml
 # imgyoung.yml 示例

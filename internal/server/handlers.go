@@ -80,7 +80,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.cfg.Upload.Process(r.Context(), data, header.Filename, r.Header.Get(idempotencyHeader))
+	res, err := s.cfg.Upload.Process(r.Context(), data, upload.Options{
+		FileName:       header.Filename,
+		IdempotencyKey: r.Header.Get(idempotencyHeader),
+		EXIFPolicy:     upload.EXIFPolicy(r.FormValue("exif_policy")),
+	})
 	switch {
 	case errors.Is(err, upload.ErrUnsupportedType):
 		s.writeError(w, http.StatusUnsupportedMediaType, "仅支持图片文件(jpeg/png/gif/webp)")
@@ -90,6 +94,9 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, upload.ErrInvalidImage):
 		s.writeError(w, http.StatusBadRequest, "图片内容无法解析")
+		return
+	case errors.Is(err, upload.ErrUnknownPolicy):
+		s.writeError(w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
 		return
 	case err != nil:
 		s.cfg.Logger.Error("上传处理失败", "err", err)

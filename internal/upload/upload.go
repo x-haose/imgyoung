@@ -45,6 +45,21 @@ var (
 	ErrTooManyPixels = errors.New("upload: 图片分辨率超出限制")
 	// ErrInvalidImage 声明格式合法但内容无法解析。
 	ErrInvalidImage = errors.New("upload: 图片内容无法解析")
+	// ErrUnknownPolicy EXIF 策略取值非法或尚未实现(如实验特性 spoof)。
+	ErrUnknownPolicy = errors.New("upload: 未知的 EXIF 策略")
+)
+
+// EXIFPolicy EXIF 处理档位(设计定稿·EXIF 三档)。
+type EXIFPolicy string
+
+// EXIF 档位取值;spoof 为实验特性,尚未实现,取值时返回 ErrUnknownPolicy。
+const (
+	// PolicyDefault 空值,表示使用全局默认档位。
+	PolicyDefault EXIFPolicy = ""
+	// PolicyStrip 剥离全部元数据(默认推荐档)。
+	PolicyStrip EXIFPolicy = "strip"
+	// PolicyPassthrough 保留原样,不动任何元数据。
+	PolicyPassthrough EXIFPolicy = "passthrough"
 )
 
 // Config Service 的全部依赖与参数。
@@ -57,6 +72,18 @@ type Config struct {
 	Driver storage.Driver
 	// MaxPixels 像素预算(width × height 上限)。
 	MaxPixels int64
+	// DefaultEXIFPolicy 全局默认 EXIF 档位;空值等同 PolicyStrip。
+	DefaultEXIFPolicy EXIFPolicy
+}
+
+// Options 一次上传的可选参数。
+type Options struct {
+	// FileName 原始文件名(仅存元数据,不参与任何逻辑)。
+	FileName string
+	// IdempotencyKey 客户端幂等键,可为空。
+	IdempotencyKey string
+	// EXIFPolicy 本次上传的 EXIF 档位;PolicyDefault 表示用全局默认。
+	EXIFPolicy EXIFPolicy
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -77,13 +104,13 @@ func New(cfg Config) *Service {
 }
 
 // Process 执行完整上传管道并返回结果。
-// @Description: idemKey 非空时启用幂等:命中已有键直接返回既有结果。
+// @Description: 幂等键非空时启用幂等:命中已有键直接返回既有结果。
 // @param data 完整的上传字节(调用方已做大小闸)
-// @param fileName 原始文件名(仅存元数据,不参与任何逻辑)
-// @param idemKey 客户端幂等键,可为空
+// @param opts 文件名/幂等键/EXIF 档位等可选参数
 // @return 上传结果
 // @return 业务错误(见哨兵)或基础设施错误
-func (s *Service) Process(ctx context.Context, data []byte, fileName, idemKey string) (Result, error) {
+func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Result, error) {
+	fileName, idemKey := opts.FileName, opts.IdempotencyKey
 	if idemKey != "" {
 		imageID, err := s.cfg.Queries.GetIdempotencyImage(ctx, idemKey)
 		if err == nil {
@@ -109,8 +136,12 @@ func (s *Service) Process(ctx context.Context, data []byte, fileName, idemKey st
 		return Result{}, ErrTooManyPixels
 	}
 
+	policy, err := s.resolvePolicy(opts.EXIFPolicy)
+	if err != nil {
+		return Result{}, err
+	}
 	// 净化在前、哈希在后:哈希对象 = 实际存储字节(设计定稿·数据流)。
-	if mime == "image/jpeg" {
+	if policy == PolicyStrip && mime == "image/jpeg" {
 		stripped, serr := imaging.StripJPEGMetadata(data)
 		if serr != nil {
 			return Result{}, fmt.Errorf("%w: %w", ErrInvalidImage, serr)
@@ -162,6 +193,26 @@ func (s *Service) Process(ctx context.Context, data []byte, fileName, idemKey st
 		return Result{}, err
 	}
 	return Result{ImageID: shortID}, nil
+}
+
+// resolvePolicy 解析本次上传生效的 EXIF 档位:单次指定 > 全局默认 > strip。
+// @Description: spoof 为实验特性尚未实现,与未知取值一并返回 ErrUnknownPolicy
+// (设计定稿·EXIF 三档:spoof 列为实验,不静默降级)。
+// @param p 单次上传指定的档位,可为 PolicyDefault
+// @return 生效档位
+// @return 取值非法时的错误
+func (s *Service) resolvePolicy(p EXIFPolicy) (EXIFPolicy, error) {
+	if p == PolicyDefault {
+		p = s.cfg.DefaultEXIFPolicy
+	}
+	switch p {
+	case PolicyDefault, PolicyStrip:
+		return PolicyStrip, nil
+	case PolicyPassthrough:
+		return PolicyPassthrough, nil
+	default:
+		return "", fmt.Errorf("%w: %q", ErrUnknownPolicy, p)
+	}
 }
 
 // persistParams 一次落库所需的全部字段。

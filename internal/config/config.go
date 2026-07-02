@@ -37,6 +37,8 @@ const (
 	envRefererWhitelist = "IMGYOUNG_REFERER_WHITELIST"
 	// envAllowEmptyReferer 空 Referer 是否放行。
 	envAllowEmptyReferer = "IMGYOUNG_ALLOW_EMPTY_REFERER"
+	// envEXIFPolicy 全局默认 EXIF 档位(strip / passthrough)。
+	envEXIFPolicy = "IMGYOUNG_EXIF_POLICY"
 )
 
 // megapixel 一百万像素。
@@ -66,6 +68,8 @@ type Config struct {
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行,默认 true(设计定稿·防盗链)。
 	AllowEmptyReferer bool
+	// EXIFPolicy 全局默认 EXIF 档位,默认 "strip";单次上传可覆盖。
+	EXIFPolicy string
 }
 
 // envPrefix 环境变量统一前缀,剥掉后小写即为配置键(IMGYOUNG_DATA_DIR → data_dir)。
@@ -89,6 +93,7 @@ func Load() (Config, error) {
 		"max_pixels_mp":       int64(50),
 		"referer_whitelist":   []string{},
 		"allow_empty_referer": true,
+		"exif_policy":         "strip",
 	}, ".")
 	if err := k.Load(defaults, nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)
@@ -140,6 +145,8 @@ func Load() (Config, error) {
 		RefererWhitelist []string `koanf:"referer_whitelist"`
 		// AllowEmptyReferer 空 Referer 是否放行。
 		AllowEmptyReferer bool `koanf:"allow_empty_referer"`
+		// EXIFPolicy 全局默认 EXIF 档位。
+		EXIFPolicy string `koanf:"exif_policy"`
 	}
 	if err := k.Unmarshal("", &raw); err != nil {
 		return Config{}, fmt.Errorf("解析配置: %w", err)
@@ -150,6 +157,10 @@ func Load() (Config, error) {
 	if raw.MaxPixelsMP <= 0 {
 		return Config{}, fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", raw.MaxPixelsMP)
 	}
+	// spoof 为实验特性尚未实现,不静默降级(设计定稿·EXIF 三档)。
+	if raw.EXIFPolicy != "strip" && raw.EXIFPolicy != "passthrough" {
+		return Config{}, fmt.Errorf("exif_policy=%q 非法: 可选 strip / passthrough", raw.EXIFPolicy)
+	}
 	return Config{
 		Listen:            raw.Listen,
 		DataDir:           raw.DataDir,
@@ -159,6 +170,7 @@ func Load() (Config, error) {
 		MaxPixels:         raw.MaxPixelsMP * megapixel,
 		RefererWhitelist:  raw.RefererWhitelist,
 		AllowEmptyReferer: raw.AllowEmptyReferer,
+		EXIFPolicy:        raw.EXIFPolicy,
 	}, nil
 }
 

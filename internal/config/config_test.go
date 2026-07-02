@@ -59,6 +59,32 @@ func TestLoadDefaults(t *testing.T) {
 	if !cfg.AllowEmptyReferer {
 		t.Error("AllowEmptyReferer = false, 期望默认 true(设计定稿:空 Referer 默认放行)")
 	}
+	if cfg.EXIFPolicy != "strip" {
+		t.Errorf("EXIFPolicy = %q, 期望默认 strip", cfg.EXIFPolicy)
+	}
+}
+
+// TestLoadEXIFPolicy 验证 EXIF 档位配置:合法值生效,非法值(含未实现的 spoof)快速失败。
+func TestLoadEXIFPolicy(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envEXIFPolicy, "passthrough")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.EXIFPolicy != "passthrough" {
+		t.Errorf("EXIFPolicy = %q, 期望 passthrough", cfg.EXIFPolicy)
+	}
+
+	for _, v := range []string{"spoof", "bogus"} {
+		t.Run(v, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(envEXIFPolicy, v)
+			if _, err := Load(); err == nil {
+				t.Fatalf("exif_policy=%q 应返回错误", v)
+			}
+		})
+	}
 }
 
 // TestLoadRefererAndBaseURL 验证防盗链与站点地址相关配置的读取。

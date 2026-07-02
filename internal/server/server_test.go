@@ -225,6 +225,54 @@ func TestUploadIdempotencyHeader(t *testing.T) {
 	}
 }
 
+// TestUploadEXIFPolicyField 验证 multipart 表单字段 exif_policy 可覆盖单次上传档位,
+// 非法取值返回 400。
+func TestUploadEXIFPolicyField(t *testing.T) {
+	ts := newTestServer(t, nil)
+
+	post := func(policy string) *http.Response {
+		var buf bytes.Buffer
+		w := multipart.NewWriter(&buf)
+		if policy != "" {
+			if err := w.WriteField("exif_policy", policy); err != nil {
+				t.Fatalf("写入表单字段: %v", err)
+			}
+		}
+		fw, err := w.CreateFormFile("file", "a.png")
+		if err != nil {
+			t.Fatalf("创建 multipart 字段: %v", err)
+		}
+		if _, err := fw.Write(pngBytes(t)); err != nil {
+			t.Fatalf("写入 multipart 内容: %v", err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatalf("关闭 multipart writer: %v", err)
+		}
+		req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/upload", &buf)
+		if err != nil {
+			t.Fatalf("构造上传请求: %v", err)
+		}
+		req.Header.Set("Content-Type", w.FormDataContentType())
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("发送上传请求: %v", err)
+		}
+		return resp
+	}
+
+	ok := post("passthrough")
+	defer closeBody(t, ok)
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("passthrough 上传状态码 = %d, 期望 200", ok.StatusCode)
+	}
+	bad := post("spoof")
+	defer closeBody(t, bad)
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("spoof 上传状态码 = %d, 期望 400(实验特性未实现)", bad.StatusCode)
+	}
+}
+
 // TestUploadBaseURL 验证配置 BaseURL 后响应返回绝对地址(PicGo 等客户端需要)。
 func TestUploadBaseURL(t *testing.T) {
 	ts := newTestServer(t, func(c *server.Config) { c.BaseURL = "https://img.example.com" })
