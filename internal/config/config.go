@@ -29,7 +29,18 @@ const (
 	envToken = "IMGYOUNG_TOKEN"
 	// envMaxUploadMB 单图上限(MB)。
 	envMaxUploadMB = "IMGYOUNG_MAX_UPLOAD_MB"
+	// envBaseURL 对外站点地址(生成绝对 URL 用,PicGo 等客户端需要)。
+	envBaseURL = "IMGYOUNG_BASE_URL"
+	// envMaxPixelsMP 像素预算(百万像素)。
+	envMaxPixelsMP = "IMGYOUNG_MAX_PIXELS_MP"
+	// envRefererWhitelist 防盗链白名单,逗号分隔,支持 *.example.com 通配。
+	envRefererWhitelist = "IMGYOUNG_REFERER_WHITELIST"
+	// envAllowEmptyReferer 空 Referer 是否放行。
+	envAllowEmptyReferer = "IMGYOUNG_ALLOW_EMPTY_REFERER"
 )
+
+// megapixel 一百万像素。
+const megapixel = 1_000_000
 
 // defaultConfigFile 自动发现的默认配置文件名(相对工作目录)。
 const defaultConfigFile = "imgyoung.yml"
@@ -47,6 +58,14 @@ type Config struct {
 	Token string
 	// MaxUploadBytes 单图字节上限,默认 50MB。
 	MaxUploadBytes int64
+	// BaseURL 对外站点地址(无尾部斜杠);为空时上传响应返回相对路径。
+	BaseURL string
+	// MaxPixels 像素预算(width × height 上限),默认 50MP。
+	MaxPixels int64
+	// RefererWhitelist 防盗链白名单;为空表示不启用防盗链。
+	RefererWhitelist []string
+	// AllowEmptyReferer 空 Referer 是否放行,默认 true(设计定稿·防盗链)。
+	AllowEmptyReferer bool
 }
 
 // envPrefix 环境变量统一前缀,剥掉后小写即为配置键(IMGYOUNG_DATA_DIR → data_dir)。
@@ -62,10 +81,14 @@ func Load() (Config, error) {
 
 	// 第一层:默认值。
 	defaults := confmap.Provider(map[string]any{
-		"listen":        ":8080",
-		"data_dir":      "data",
-		"token":         "",
-		"max_upload_mb": int64(50),
+		"listen":              ":8080",
+		"data_dir":            "data",
+		"token":               "",
+		"max_upload_mb":       int64(50),
+		"base_url":            "",
+		"max_pixels_mp":       int64(50),
+		"referer_whitelist":   []string{},
+		"allow_empty_referer": true,
 	}, ".")
 	if err := k.Load(defaults, nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)
@@ -89,7 +112,12 @@ func Load() (Config, error) {
 		if value == "" || key == envConfig {
 			return "", nil
 		}
-		return strings.ToLower(strings.TrimPrefix(key, envPrefix)), value
+		name := strings.ToLower(strings.TrimPrefix(key, envPrefix))
+		// 列表型变量:逗号分隔并去空白。
+		if key == envRefererWhitelist {
+			return name, splitCSV(value)
+		}
+		return name, value
 	})
 	if err := k.Load(envProvider, nil); err != nil {
 		return Config{}, fmt.Errorf("读取环境变量: %w", err)
@@ -104,6 +132,14 @@ func Load() (Config, error) {
 		Token string `koanf:"token"`
 		// MaxUploadMB 单图上限(MB)。
 		MaxUploadMB int64 `koanf:"max_upload_mb"`
+		// BaseURL 对外站点地址。
+		BaseURL string `koanf:"base_url"`
+		// MaxPixelsMP 像素预算(百万像素)。
+		MaxPixelsMP int64 `koanf:"max_pixels_mp"`
+		// RefererWhitelist 防盗链白名单。
+		RefererWhitelist []string `koanf:"referer_whitelist"`
+		// AllowEmptyReferer 空 Referer 是否放行。
+		AllowEmptyReferer bool `koanf:"allow_empty_referer"`
 	}
 	if err := k.Unmarshal("", &raw); err != nil {
 		return Config{}, fmt.Errorf("解析配置: %w", err)
@@ -111,12 +147,31 @@ func Load() (Config, error) {
 	if raw.MaxUploadMB <= 0 {
 		return Config{}, fmt.Errorf("max_upload_mb=%d 非法: 需要正整数(单位 MB)", raw.MaxUploadMB)
 	}
+	if raw.MaxPixelsMP <= 0 {
+		return Config{}, fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", raw.MaxPixelsMP)
+	}
 	return Config{
-		Listen:         raw.Listen,
-		DataDir:        raw.DataDir,
-		Token:          raw.Token,
-		MaxUploadBytes: raw.MaxUploadMB << 20,
+		Listen:            raw.Listen,
+		DataDir:           raw.DataDir,
+		Token:             raw.Token,
+		MaxUploadBytes:    raw.MaxUploadMB << 20,
+		BaseURL:           strings.TrimRight(raw.BaseURL, "/"),
+		MaxPixels:         raw.MaxPixelsMP * megapixel,
+		RefererWhitelist:  raw.RefererWhitelist,
+		AllowEmptyReferer: raw.AllowEmptyReferer,
 	}, nil
+}
+
+// splitCSV 按逗号切分并去除各项首尾空白,丢弃空项。
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if trimmed := strings.TrimSpace(p); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 // GenerateToken 生成加密安全的随机上传 Token。

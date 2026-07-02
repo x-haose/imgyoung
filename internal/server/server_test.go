@@ -11,18 +11,21 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/server"
 	"github.com/x-haose/imgyoung/internal/storage"
+	"github.com/x-haose/imgyoung/internal/upload"
 )
 
 // testToken 测试用上传 Token。
 const testToken = "test-token"
 
 // newTestServer 组装一个使用临时目录(DB + local 渠道)的完整测试服务。
-func newTestServer(t *testing.T) *httptest.Server {
+// @param mutate 可选的配置修改器,用于按用例定制防盗链/BaseURL 等
+func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -43,24 +46,36 @@ func newTestServer(t *testing.T) *httptest.Server {
 	if err != nil {
 		t.Fatalf("创建测试存储驱动: %v", err)
 	}
-
-	s := server.New(server.Config{
-		Queries:        db.New(conn),
-		Driver:         driver,
-		Token:          testToken,
-		MaxUploadBytes: 1 << 20,
-		Logger:         slog.New(slog.DiscardHandler),
+	queries := db.New(conn)
+	svc := upload.New(upload.Config{
+		Conn:      conn,
+		Queries:   queries,
+		Driver:    driver,
+		MaxPixels: 1 << 20,
 	})
-	ts := httptest.NewServer(s.Handler())
+
+	cfg := server.Config{
+		Queries:           queries,
+		Driver:            driver,
+		Upload:            svc,
+		Token:             testToken,
+		MaxUploadBytes:    1 << 20,
+		AllowEmptyReferer: true,
+		Logger:            slog.New(slog.DiscardHandler),
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	ts := httptest.NewServer(server.New(cfg).Handler())
 	t.Cleanup(ts.Close)
 	return ts
 }
 
-// pngBytes 生成一张 1x1 的真实 PNG 图片字节。
+// pngBytes 生成一张 2x2 的真实 PNG 图片字节。
 func pngBytes(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
 		t.Fatalf("编码测试 PNG: %v", err)
 	}
 	return buf.Bytes()
@@ -85,8 +100,8 @@ func multipartBody(t *testing.T, filename string, payload []byte) (*bytes.Buffer
 	return &buf, w.FormDataContentType()
 }
 
-// upload 向测试服务发起一次上传请求。
-func upload(t *testing.T, ts *httptest.Server, token, filename string, payload []byte) *http.Response {
+// upload 向测试服务发起一次上传请求;extraHeaders 追加请求头。
+func uploadReq(t *testing.T, ts *httptest.Server, token, filename string, payload []byte, extraHeaders map[string]string) *http.Response {
 	t.Helper()
 	body, contentType := multipartBody(t, filename, payload)
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/upload", body)
@@ -96,6 +111,9 @@ func upload(t *testing.T, ts *httptest.Server, token, filename string, payload [
 	req.Header.Set("Content-Type", contentType)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
 	}
 	resp, err := ts.Client().Do(req)
 	if err != nil {
@@ -112,12 +130,25 @@ func closeBody(t *testing.T, resp *http.Response) {
 	}
 }
 
+// decodeUpload 解析上传响应体。
+func decodeUpload(t *testing.T, resp *http.Response) (id, url string) {
+	t.Helper()
+	var result struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("解析上传响应: %v", err)
+	}
+	return result.ID, result.URL
+}
+
 // TestUploadRequiresAuth 验证缺失或错误 Token 一律 401。
 func TestUploadRequiresAuth(t *testing.T) {
-	ts := newTestServer(t)
+	ts := newTestServer(t, nil)
 	for name, token := range map[string]string{"无Token": "", "错误Token": "wrong"} {
 		t.Run(name, func(t *testing.T) {
-			resp := upload(t, ts, token, "a.png", pngBytes(t))
+			resp := uploadReq(t, ts, token, "a.png", pngBytes(t), nil)
 			defer closeBody(t, resp)
 			if resp.StatusCode != http.StatusUnauthorized {
 				t.Fatalf("状态码 = %d, 期望 401", resp.StatusCode)
@@ -128,36 +159,31 @@ func TestUploadRequiresAuth(t *testing.T) {
 
 // TestUploadRejectsNonImage 验证非图片内容(按 magic bytes 判定)返回 415。
 func TestUploadRejectsNonImage(t *testing.T) {
-	ts := newTestServer(t)
-	resp := upload(t, ts, testToken, "fake.png", []byte("plain text disguised as png"))
+	ts := newTestServer(t, nil)
+	resp := uploadReq(t, ts, testToken, "fake.png", []byte("plain text disguised as png"), nil)
 	defer closeBody(t, resp)
 	if resp.StatusCode != http.StatusUnsupportedMediaType {
 		t.Fatalf("状态码 = %d, 期望 415", resp.StatusCode)
 	}
 }
 
-// TestUploadAndServeRoundTrip 验证上传后能按短 ID 原样取回,且响应头正确。
+// TestUploadAndServeRoundTrip 验证上传后能按短 ID 取回,且响应头正确。
+// @Description: JPEG 会被净化改字节,故用 PNG 验证字节一致性。
 func TestUploadAndServeRoundTrip(t *testing.T) {
-	ts := newTestServer(t)
+	ts := newTestServer(t, nil)
 	payload := pngBytes(t)
 
-	resp := upload(t, ts, testToken, "a.png", payload)
+	resp := uploadReq(t, ts, testToken, "a.png", payload, nil)
 	defer closeBody(t, resp)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("上传状态码 = %d, 期望 200", resp.StatusCode)
 	}
-	var result struct {
-		ID  string `json:"id"`
-		URL string `json:"url"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("解析上传响应: %v", err)
-	}
-	if result.ID == "" || result.URL == "" {
-		t.Fatalf("上传响应缺字段: %+v", result)
+	imgID, imgURL := decodeUpload(t, resp)
+	if imgID == "" || !strings.HasPrefix(imgURL, "/i/") {
+		t.Fatalf("上传响应异常: id=%q url=%q", imgID, imgURL)
 	}
 
-	get, err := ts.Client().Get(ts.URL + result.URL)
+	get, err := ts.Client().Get(ts.URL + imgURL)
 	if err != nil {
 		t.Fatalf("访问图片: %v", err)
 	}
@@ -180,12 +206,79 @@ func TestUploadAndServeRoundTrip(t *testing.T) {
 	}
 }
 
+// TestUploadIdempotencyHeader 验证携带同一 Idempotency-Key 的重复上传返回同一 ID。
+func TestUploadIdempotencyHeader(t *testing.T) {
+	ts := newTestServer(t, nil)
+	payload := pngBytes(t)
+	headers := map[string]string{"Idempotency-Key": "client-retry-1"}
+
+	first := uploadReq(t, ts, testToken, "a.png", payload, headers)
+	defer closeBody(t, first)
+	firstID, _ := decodeUpload(t, first)
+
+	second := uploadReq(t, ts, testToken, "a.png", payload, headers)
+	defer closeBody(t, second)
+	secondID, _ := decodeUpload(t, second)
+
+	if firstID == "" || firstID != secondID {
+		t.Fatalf("幂等键失效: %q ≠ %q", firstID, secondID)
+	}
+}
+
+// TestUploadBaseURL 验证配置 BaseURL 后响应返回绝对地址(PicGo 等客户端需要)。
+func TestUploadBaseURL(t *testing.T) {
+	ts := newTestServer(t, func(c *server.Config) { c.BaseURL = "https://img.example.com" })
+	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	defer closeBody(t, resp)
+	_, imgURL := decodeUpload(t, resp)
+	if !strings.HasPrefix(imgURL, "https://img.example.com/i/") {
+		t.Fatalf("url = %q, 期望以 BaseURL 开头的绝对地址", imgURL)
+	}
+}
+
+// TestRefererProtection 验证防盗链:白名单命中放行、未命中 403、空 Referer 按配置。
+func TestRefererProtection(t *testing.T) {
+	ts := newTestServer(t, func(c *server.Config) {
+		c.RefererWhitelist = []string{"*.ok.com"}
+		c.AllowEmptyReferer = true
+	})
+	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	defer closeBody(t, resp)
+	_, imgURL := decodeUpload(t, resp)
+
+	get := func(referer string) int {
+		req, err := http.NewRequest(http.MethodGet, ts.URL+imgURL, nil)
+		if err != nil {
+			t.Fatalf("构造访问请求: %v", err)
+		}
+		if referer != "" {
+			req.Header.Set("Referer", referer)
+		}
+		r, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("访问图片: %v", err)
+		}
+		defer closeBody(t, r)
+		return r.StatusCode
+	}
+
+	if code := get(""); code != http.StatusOK {
+		t.Errorf("空 Referer 状态码 = %d, 期望 200(默认放行)", code)
+	}
+	if code := get("https://a.ok.com/post/1"); code != http.StatusOK {
+		t.Errorf("白名单 Referer 状态码 = %d, 期望 200", code)
+	}
+	if code := get("https://evil.io/steal"); code != http.StatusForbidden {
+		t.Errorf("盗链 Referer 状态码 = %d, 期望 403", code)
+	}
+}
+
 // TestUploadTooLarge 验证超过单图上限的上传返回 413(内存闸门,见设计定稿)。
 func TestUploadTooLarge(t *testing.T) {
-	ts := newTestServer(t)
+	ts := newTestServer(t, nil)
 	// 测试服务上限为 1MB,构造 2MB 载荷(以 PNG 头开头以排除 415 干扰)。
 	payload := append(pngBytes(t), bytes.Repeat([]byte{0}, 2<<20)...)
-	resp := upload(t, ts, testToken, "big.png", payload)
+	resp := uploadReq(t, ts, testToken, "big.png", payload, nil)
 	defer closeBody(t, resp)
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("状态码 = %d, 期望 413", resp.StatusCode)
@@ -194,7 +287,7 @@ func TestUploadTooLarge(t *testing.T) {
 
 // TestServeUnknownID 验证访问不存在的短 ID 返回 404。
 func TestServeUnknownID(t *testing.T) {
-	ts := newTestServer(t)
+	ts := newTestServer(t, nil)
 	resp, err := ts.Client().Get(ts.URL + "/i/nonexistent0")
 	if err != nil {
 		t.Fatalf("访问图片: %v", err)

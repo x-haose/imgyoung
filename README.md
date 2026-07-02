@@ -1,6 +1,8 @@
 # ImgYoung
 
-多渠道主备容灾的自部署图床(Go + rclone)。**开发中:当前为迭代 0 骨架**。
+多渠道主备容灾的自部署图床(Go + rclone)。**开发中:迭代 1(上传链路)进行中**。
+
+已具备:magic bytes 格式校验(jpeg/png/gif/webp 白名单)· JPEG 元数据剥离(EXIF/XMP/IPTC/COM,保留 ICC)· 像素预算 · SHA256 + 感知哈希入库 · 客户端幂等(`Idempotency-Key` 头)· 防盗链白名单 · 代理访问。
 
 设计蓝图:[图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md) · 项目约定:[CLAUDE.md](./CLAUDE.md)
 
@@ -34,6 +36,10 @@ open http://localhost:8080/i/R0RjUyP1UW
 | `IMGYOUNG_DATA_DIR` | `data_dir` | `data` | 数据目录(SQLite 与本地存储) |
 | `IMGYOUNG_TOKEN` | `token` | (随机生成) | 上传 Token |
 | `IMGYOUNG_MAX_UPLOAD_MB` | `max_upload_mb` | `50` | 单图上限(MB) |
+| `IMGYOUNG_MAX_PIXELS_MP` | `max_pixels_mp` | `50` | 像素预算(百万像素) |
+| `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;设置后上传响应返回绝对 URL(PicGo 等客户端需要) |
+| `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单,逗号分隔,支持 `*.example.com` |
+| `IMGYOUNG_ALLOW_EMPTY_REFERER` | `allow_empty_referer` | `true` | 空 Referer 是否放行 |
 
 ```yaml
 # imgyoung.yml 示例

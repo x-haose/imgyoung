@@ -3,6 +3,7 @@ module github.com/x-haose/imgyoung
 go 1.25.7
 
 require (
+	github.com/corona10/goimagehash v1.1.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/knadh/koanf/parsers/yaml v1.1.0
 	github.com/knadh/koanf/providers/confmap v1.0.0
@@ -11,6 +12,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/pressly/goose/v3 v3.27.2
 	github.com/rclone/rclone v1.74.3
+	golang.org/x/image v0.41.0
 	modernc.org/sqlite v1.53.0
 )
 
@@ -42,6 +44,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/peterh/liner v1.2.2 // indirect
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
@@ -67,7 +70,7 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 	golang.org/x/term v0.43.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.73.4 // indirect

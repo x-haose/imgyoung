@@ -17,6 +17,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/server"
 	"github.com/x-haose/imgyoung/internal/storage"
+	"github.com/x-haose/imgyoung/internal/upload"
 )
 
 // shutdownTimeout 优雅退出时等待 in-flight 请求完成的上限。
@@ -78,12 +79,23 @@ func run() error {
 		logger.Info("未配置 IMGYOUNG_TOKEN,已生成随机上传 Token(仅本次运行有效)", "token", token)
 	}
 
+	queries := db.New(conn)
+	uploadSvc := upload.New(upload.Config{
+		Conn:      conn,
+		Queries:   queries,
+		Driver:    driver,
+		MaxPixels: cfg.MaxPixels,
+	})
 	srv := server.New(server.Config{
-		Queries:        db.New(conn),
-		Driver:         driver,
-		Token:          token,
-		MaxUploadBytes: cfg.MaxUploadBytes,
-		Logger:         logger,
+		Queries:           queries,
+		Driver:            driver,
+		Upload:            uploadSvc,
+		Token:             token,
+		MaxUploadBytes:    cfg.MaxUploadBytes,
+		BaseURL:           cfg.BaseURL,
+		RefererWhitelist:  cfg.RefererWhitelist,
+		AllowEmptyReferer: cfg.AllowEmptyReferer,
+		Logger:            logger,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,

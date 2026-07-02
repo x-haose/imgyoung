@@ -4,10 +4,35 @@
 
 package db
 
+import (
+	"database/sql"
+)
+
+type Blob struct {
+	ID            int64
+	Sha256        string
+	Phash         int64
+	Md5           sql.NullString
+	StorageKey    string
+	Mime          string
+	Size          int64
+	Width         int64
+	Height        int64
+	RefCount      int64
+	PendingDelete int64
+	CreatedAt     string
+}
+
+type IdempotencyKey struct {
+	Key       string
+	ImageID   string
+	CreatedAt string
+}
+
 type Image struct {
-	ID         string
-	StorageKey string
-	Mime       string
-	Size       int64
-	CreatedAt  string
+	ID        string
+	BlobID    int64
+	UserID    sql.NullString
+	FileName  string
+	CreatedAt string
 }

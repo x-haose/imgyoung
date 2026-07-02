@@ -10,7 +10,10 @@ import (
 // @Description: t.Setenv 置空即可——Load 将空值视为未设置。
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{envConfig, envListen, envDataDir, envToken, envMaxUploadMB} {
+	for _, k := range []string{
+		envConfig, envListen, envDataDir, envToken, envMaxUploadMB,
+		envBaseURL, envMaxPixelsMP, envRefererWhitelist, envAllowEmptyReferer,
+	} {
 		t.Setenv(k, "")
 	}
 }
@@ -43,6 +46,45 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.MaxUploadBytes != 50<<20 {
 		t.Errorf("MaxUploadBytes = %d, 期望 %d", cfg.MaxUploadBytes, 50<<20)
+	}
+	if cfg.BaseURL != "" {
+		t.Errorf("BaseURL = %q, 期望空", cfg.BaseURL)
+	}
+	if cfg.MaxPixels != 50_000_000 {
+		t.Errorf("MaxPixels = %d, 期望 50MP", cfg.MaxPixels)
+	}
+	if len(cfg.RefererWhitelist) != 0 {
+		t.Errorf("RefererWhitelist = %v, 期望空(不启用防盗链)", cfg.RefererWhitelist)
+	}
+	if !cfg.AllowEmptyReferer {
+		t.Error("AllowEmptyReferer = false, 期望默认 true(设计定稿:空 Referer 默认放行)")
+	}
+}
+
+// TestLoadRefererAndBaseURL 验证防盗链与站点地址相关配置的读取。
+func TestLoadRefererAndBaseURL(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envBaseURL, "https://img.example.com/")
+	t.Setenv(envMaxPixelsMP, "2")
+	t.Setenv(envRefererWhitelist, "*.example.com, blog.foo.dev")
+	t.Setenv(envAllowEmptyReferer, "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if cfg.BaseURL != "https://img.example.com" {
+		t.Errorf("BaseURL = %q, 期望去除尾部斜杠", cfg.BaseURL)
+	}
+	if cfg.MaxPixels != 2_000_000 {
+		t.Errorf("MaxPixels = %d, 期望 2MP", cfg.MaxPixels)
+	}
+	want := []string{"*.example.com", "blog.foo.dev"}
+	if len(cfg.RefererWhitelist) != 2 || cfg.RefererWhitelist[0] != want[0] || cfg.RefererWhitelist[1] != want[1] {
+		t.Errorf("RefererWhitelist = %v, 期望 %v(逗号分隔并去空白)", cfg.RefererWhitelist, want)
+	}
+	if cfg.AllowEmptyReferer {
+		t.Error("AllowEmptyReferer = true, 期望 false")
 	}
 }
 

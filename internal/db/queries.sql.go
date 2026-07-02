@@ -9,43 +9,105 @@ import (
 	"context"
 )
 
+const createBlob = `-- name: CreateBlob :one
+INSERT INTO blobs (sha256, phash, storage_key, mime, size, width, height)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+RETURNING id
+`
+
+type CreateBlobParams struct {
+	Sha256     string
+	Phash      int64
+	StorageKey string
+	Mime       string
+	Size       int64
+	Width      int64
+	Height     int64
+}
+
+func (q *Queries) CreateBlob(ctx context.Context, arg CreateBlobParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, createBlob,
+		arg.Sha256,
+		arg.Phash,
+		arg.StorageKey,
+		arg.Mime,
+		arg.Size,
+		arg.Width,
+		arg.Height,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createIdempotencyKey = `-- name: CreateIdempotencyKey :exec
+INSERT INTO idempotency_keys (key, image_id)
+VALUES (?, ?)
+`
+
+type CreateIdempotencyKeyParams struct {
+	Key     string
+	ImageID string
+}
+
+func (q *Queries) CreateIdempotencyKey(ctx context.Context, arg CreateIdempotencyKeyParams) error {
+	_, err := q.db.ExecContext(ctx, createIdempotencyKey, arg.Key, arg.ImageID)
+	return err
+}
+
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, storage_key, mime, size)
-VALUES (?, ?, ?, ?)
+INSERT INTO images (id, blob_id, file_name)
+VALUES (?, ?, ?)
 `
 
 type CreateImageParams struct {
+	ID       string
+	BlobID   int64
+	FileName string
+}
+
+func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
+	_, err := q.db.ExecContext(ctx, createImage, arg.ID, arg.BlobID, arg.FileName)
+	return err
+}
+
+const getIdempotencyImage = `-- name: GetIdempotencyImage :one
+SELECT image_id
+FROM idempotency_keys
+WHERE key = ?
+`
+
+func (q *Queries) GetIdempotencyImage(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getIdempotencyImage, key)
+	var image_id string
+	err := row.Scan(&image_id)
+	return image_id, err
+}
+
+const getImageBlob = `-- name: GetImageBlob :one
+SELECT i.id, i.file_name, b.storage_key, b.mime, b.size
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.id = ?
+`
+
+type GetImageBlobRow struct {
 	ID         string
+	FileName   string
 	StorageKey string
 	Mime       string
 	Size       int64
 }
 
-func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
-	_, err := q.db.ExecContext(ctx, createImage,
-		arg.ID,
-		arg.StorageKey,
-		arg.Mime,
-		arg.Size,
-	)
-	return err
-}
-
-const getImage = `-- name: GetImage :one
-SELECT id, storage_key, mime, size, created_at
-FROM images
-WHERE id = ?
-`
-
-func (q *Queries) GetImage(ctx context.Context, id string) (Image, error) {
-	row := q.db.QueryRowContext(ctx, getImage, id)
-	var i Image
+func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow, error) {
+	row := q.db.QueryRowContext(ctx, getImageBlob, id)
+	var i GetImageBlobRow
 	err := row.Scan(
 		&i.ID,
+		&i.FileName,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
-		&i.CreatedAt,
 	)
 	return i, err
 }
