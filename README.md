@@ -49,6 +49,17 @@ token: my-token
 max_upload_mb: 50
 ```
 
+## PicGo / PicList 对接
+
+使用 [picgo-plugin-web-uploader](https://github.com/squirrel-land/picgo-plugin-web-uploader) 或 PicList 自定义图床,按以下参数配置:
+
+| 参数 | 值 |
+|---|---|
+| API 地址 | `https://你的域名/api/upload`(需设置 `base_url` 以返回绝对地址) |
+| POST 参数名 | `file` |
+| 自定义请求头 | `{"Authorization": "Bearer 你的Token"}` |
+| JSON 路径 | `url` |
+
 ## 开发
 
 ```bash
