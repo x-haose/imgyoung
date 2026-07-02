@@ -56,14 +56,15 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 	})
 
 	cfg := server.Config{
-		Queries:           queries,
-		Driver:            driver,
-		Upload:            svc,
-		Token:             testToken,
-		MaxUploadBytes:    1 << 20,
-		AllowEmptyReferer: true,
-		DefaultEXIFPolicy: imaging.PolicyPassthrough,
-		Logger:            slog.New(slog.DiscardHandler),
+		Queries:              queries,
+		Driver:               driver,
+		Upload:               svc,
+		Token:                testToken,
+		MaxUploadBytes:       1 << 20,
+		MaxConcurrentUploads: 4,
+		AllowEmptyReferer:    true,
+		DefaultEXIFPolicy:    imaging.PolicyPassthrough,
+		Logger:               slog.New(slog.DiscardHandler),
 	}
 	if mutate != nil {
 		mutate(&cfg)

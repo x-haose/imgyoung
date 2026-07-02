@@ -103,7 +103,11 @@ func New(cfg Config) *Service {
 // @return 上传结果
 // @return 业务错误(见哨兵)或基础设施错误
 func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Result, error) {
-	fileName, idemKey := opts.FileName, opts.IdempotencyKey
+	// 输入验证先行:档位必须是明确合法值,文件名限长(仅元数据,不影响逻辑)。
+	if err := imaging.ValidatePolicy(opts.EXIFPolicy); err != nil {
+		return Result{}, err
+	}
+	fileName, idemKey := truncateName(opts.FileName), opts.IdempotencyKey
 	if idemKey != "" {
 		imageID, err := s.cfg.Queries.GetIdempotencyImage(ctx, idemKey)
 		if err == nil {
@@ -129,9 +133,6 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, ErrTooManyPixels
 	}
 
-	if err := imaging.ValidatePolicy(opts.EXIFPolicy); err != nil {
-		return Result{}, err
-	}
 	// 净化在前、哈希在后:哈希对象 = 实际存储字节(设计定稿·数据流)。
 	if opts.EXIFPolicy == imaging.PolicyStrip && mime == mimeJPEG {
 		stripped, serr := imaging.StripJPEGMetadata(data)
@@ -186,6 +187,24 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, err
 	}
 	return Result{ImageID: shortID}, nil
+}
+
+// maxFileNameBytes 文件名的存储字节上限,超出部分截断。
+const maxFileNameBytes = 255
+
+// truncateName 将文件名按 UTF-8 安全截断到 maxFileNameBytes 字节以内。
+// @param name 客户端提交的原始文件名(不可信输入)
+// @return 截断后的文件名,多字节字符不被截半
+func truncateName(name string) string {
+	if len(name) <= maxFileNameBytes {
+		return name
+	}
+	cut := maxFileNameBytes
+	// 回退到 UTF-8 字符边界(非续字节)。
+	for cut > 0 && name[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	return name[:cut]
 }
 
 // persistParams 一次落库所需的全部字段。

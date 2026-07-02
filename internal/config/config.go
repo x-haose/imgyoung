@@ -31,6 +31,8 @@ const (
 	envToken = "IMGYOUNG_TOKEN"
 	// envMaxUploadMB 单图上限(MB)。
 	envMaxUploadMB = "IMGYOUNG_MAX_UPLOAD_MB"
+	// envMaxConcurrentUploads 上传并发上限。
+	envMaxConcurrentUploads = "IMGYOUNG_MAX_CONCURRENT_UPLOADS"
 	// envBaseURL 对外站点地址(生成绝对 URL 用,PicGo 等客户端需要)。
 	envBaseURL = "IMGYOUNG_BASE_URL"
 	// envMaxPixelsMP 像素预算(百万像素)。
@@ -62,6 +64,8 @@ type Config struct {
 	Token string
 	// MaxUploadBytes 单图字节上限,默认 50MB。
 	MaxUploadBytes int64
+	// MaxConcurrentUploads 上传并发上限,默认 8(设计定稿·内存防护)。
+	MaxConcurrentUploads int
 	// BaseURL 对外站点地址(无尾部斜杠);为空时上传响应返回相对路径。
 	BaseURL string
 	// MaxPixels 像素预算(width × height 上限),默认 50MP。
@@ -88,15 +92,16 @@ func Load() (Config, error) {
 
 	// 第一层:默认值。
 	defaults := confmap.Provider(map[string]any{
-		"listen":              ":8080",
-		"data_dir":            "data",
-		"token":               "",
-		"max_upload_mb":       int64(50),
-		"base_url":            "",
-		"max_pixels_mp":       int64(50),
-		"referer_whitelist":   []string{},
-		"allow_empty_referer": true,
-		"exif_policy":         "passthrough",
+		"listen":                 ":8080",
+		"data_dir":               "data",
+		"token":                  "",
+		"max_upload_mb":          int64(50),
+		"max_concurrent_uploads": 8,
+		"base_url":               "",
+		"max_pixels_mp":          int64(50),
+		"referer_whitelist":      []string{},
+		"allow_empty_referer":    true,
+		"exif_policy":            "passthrough",
 	}, ".")
 	if err := k.Load(defaults, nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)
@@ -140,6 +145,8 @@ func Load() (Config, error) {
 		Token string `koanf:"token"`
 		// MaxUploadMB 单图上限(MB)。
 		MaxUploadMB int64 `koanf:"max_upload_mb"`
+		// MaxConcurrentUploads 上传并发上限。
+		MaxConcurrentUploads int `koanf:"max_concurrent_uploads"`
 		// BaseURL 对外站点地址。
 		BaseURL string `koanf:"base_url"`
 		// MaxPixelsMP 像素预算(百万像素)。
@@ -157,6 +164,9 @@ func Load() (Config, error) {
 	if raw.MaxUploadMB <= 0 {
 		return Config{}, fmt.Errorf("max_upload_mb=%d 非法: 需要正整数(单位 MB)", raw.MaxUploadMB)
 	}
+	if raw.MaxConcurrentUploads <= 0 {
+		return Config{}, fmt.Errorf("max_concurrent_uploads=%d 非法: 需要正整数", raw.MaxConcurrentUploads)
+	}
 	if raw.MaxPixelsMP <= 0 {
 		return Config{}, fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", raw.MaxPixelsMP)
 	}
@@ -165,15 +175,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("exif_policy 配置非法: %w", err)
 	}
 	return Config{
-		Listen:            raw.Listen,
-		DataDir:           raw.DataDir,
-		Token:             raw.Token,
-		MaxUploadBytes:    raw.MaxUploadMB << 20,
-		BaseURL:           strings.TrimRight(raw.BaseURL, "/"),
-		MaxPixels:         raw.MaxPixelsMP * megapixel,
-		RefererWhitelist:  raw.RefererWhitelist,
-		AllowEmptyReferer: raw.AllowEmptyReferer,
-		EXIFPolicy:        imaging.EXIFPolicy(raw.EXIFPolicy),
+		Listen:               raw.Listen,
+		DataDir:              raw.DataDir,
+		Token:                raw.Token,
+		MaxUploadBytes:       raw.MaxUploadMB << 20,
+		MaxConcurrentUploads: raw.MaxConcurrentUploads,
+		BaseURL:              strings.TrimRight(raw.BaseURL, "/"),
+		MaxPixels:            raw.MaxPixelsMP * megapixel,
+		RefererWhitelist:     raw.RefererWhitelist,
+		AllowEmptyReferer:    raw.AllowEmptyReferer,
+		EXIFPolicy:           imaging.EXIFPolicy(raw.EXIFPolicy),
 	}, nil
 }
 

@@ -47,6 +47,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MaxUploadBytes != 50<<20 {
 		t.Errorf("MaxUploadBytes = %d, 期望 %d", cfg.MaxUploadBytes, 50<<20)
 	}
+	if cfg.MaxConcurrentUploads != 8 {
+		t.Errorf("MaxConcurrentUploads = %d, 期望默认 8", cfg.MaxConcurrentUploads)
+	}
 	if cfg.BaseURL != "" {
 		t.Errorf("BaseURL = %q, 期望空", cfg.BaseURL)
 	}
@@ -198,6 +201,15 @@ func TestLoadInvalidMaxUpload(t *testing.T) {
 				t.Fatalf("%s=%q 应返回错误", envMaxUploadMB, v)
 			}
 		})
+	}
+}
+
+// TestLoadInvalidMaxConcurrentUploads 验证非法的并发上限快速失败。
+func TestLoadInvalidMaxConcurrentUploads(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envMaxConcurrentUploads, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("max_concurrent_uploads=0 应返回错误")
 	}
 }
 

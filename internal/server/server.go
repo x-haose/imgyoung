@@ -26,6 +26,8 @@ type Config struct {
 	Token string
 	// MaxUploadBytes 单图字节上限(内存三道闸之一)。
 	MaxUploadBytes int64
+	// MaxConcurrentUploads 上传并发上限(内存三道闸之一),必须 > 0。
+	MaxConcurrentUploads int
 	// BaseURL 对外站点地址(无尾部斜杠);为空时响应返回相对路径。
 	BaseURL string
 	// DefaultEXIFPolicy 全局默认 EXIF 档位;单次上传的表单字段可覆盖。
@@ -58,6 +60,9 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/healthz", s.handleHealth)
 	r.Group(func(g chi.Router) {
 		g.Use(s.requireToken)
+		g.Use(func(next http.Handler) http.Handler {
+			return s.limitConcurrency(s.cfg.MaxConcurrentUploads, next)
+		})
 		g.Post("/api/upload", s.handleUpload)
 	})
 	r.Group(func(g chi.Router) {

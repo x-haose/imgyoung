@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/imaging"
@@ -201,6 +202,30 @@ func TestProcessRejectsUnknownPolicy(t *testing.T) {
 		if !errors.Is(err, imaging.ErrUnknownPolicy) {
 			t.Fatalf("policy=%q 错误 = %v, 期望 ErrUnknownPolicy", policy, err)
 		}
+	}
+}
+
+// TestProcessTruncatesLongFileName 验证超长文件名被 UTF-8 安全截断到 255 字节。
+func TestProcessTruncatesLongFileName(t *testing.T) {
+	env := newTestEnv(t, 1<<20)
+	longName := strings.Repeat("图", 100) + ".png" // 304 字节,截断点落在多字节字符上
+
+	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
+		FileName:   longName,
+		EXIFPolicy: imaging.PolicyPassthrough,
+	})
+	if err != nil {
+		t.Fatalf("Process 返回错误: %v", err)
+	}
+	row, err := env.queries.GetImageBlob(t.Context(), res.ImageID)
+	if err != nil {
+		t.Fatalf("查询引用记录: %v", err)
+	}
+	if len(row.FileName) > 255 {
+		t.Fatalf("文件名长度 = %d 字节, 期望 ≤ 255", len(row.FileName))
+	}
+	if !strings.HasPrefix(longName, row.FileName) || !utf8.ValidString(row.FileName) {
+		t.Fatalf("截断结果不是合法 UTF-8 前缀: %q", row.FileName)
 	}
 }
 

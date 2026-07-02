@@ -87,16 +87,17 @@ func run() error {
 		MaxPixels: cfg.MaxPixels,
 	})
 	srv := server.New(server.Config{
-		Queries:           queries,
-		Driver:            driver,
-		Upload:            uploadSvc,
-		Token:             token,
-		MaxUploadBytes:    cfg.MaxUploadBytes,
-		BaseURL:           cfg.BaseURL,
-		DefaultEXIFPolicy: cfg.EXIFPolicy,
-		RefererWhitelist:  cfg.RefererWhitelist,
-		AllowEmptyReferer: cfg.AllowEmptyReferer,
-		Logger:            logger,
+		Queries:              queries,
+		Driver:               driver,
+		Upload:               uploadSvc,
+		Token:                token,
+		MaxUploadBytes:       cfg.MaxUploadBytes,
+		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
+		BaseURL:              cfg.BaseURL,
+		DefaultEXIFPolicy:    cfg.EXIFPolicy,
+		RefererWhitelist:     cfg.RefererWhitelist,
+		AllowEmptyReferer:    cfg.AllowEmptyReferer,
+		Logger:               logger,
 	})
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,

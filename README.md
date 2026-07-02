@@ -37,6 +37,7 @@ open http://localhost:8080/i/R0RjUyP1UW
 | `IMGYOUNG_TOKEN` | `token` | (随机生成) | 上传 Token |
 | `IMGYOUNG_MAX_UPLOAD_MB` | `max_upload_mb` | `50` | 单图上限(MB) |
 | `IMGYOUNG_MAX_PIXELS_MP` | `max_pixels_mp` | `50` | 像素预算(百万像素) |
+| `IMGYOUNG_MAX_CONCURRENT_UPLOADS` | `max_concurrent_uploads` | `8` | 上传并发上限,满载返回 429 |
 | `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;设置后上传响应返回绝对 URL(PicGo 等客户端需要) |
 | `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单,逗号分隔,支持 `*.example.com` |
 | `IMGYOUNG_ALLOW_EMPTY_REFERER` | `allow_empty_referer` | `true` | 空 Referer 是否放行 |
@@ -49,6 +50,10 @@ data_dir: /srv/imgyoung
 token: my-token
 max_upload_mb: 50
 ```
+
+## 已知限制
+
+- 动画 WebP 暂不支持(解码库限制,上传返回 400);动画 GIF 正常。
 
 ## PicGo / PicList 对接
 
