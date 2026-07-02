@@ -13,10 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/config"
 	"github.com/x-haose/imgyoung/internal/db"
+	"github.com/x-haose/imgyoung/internal/secret"
 	"github.com/x-haose/imgyoung/internal/server"
-	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
 
@@ -66,7 +67,7 @@ func run() error {
 		return err
 	}
 
-	driver, err := storage.NewRcloneDriver(ctx, filepath.Join(cfg.DataDir, "blobs"))
+	master, err := loadMasterKey(cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -80,15 +81,23 @@ func run() error {
 	}
 
 	queries := db.New(conn)
+	channels, err := channel.NewManager(ctx, channel.ManagerConfig{
+		Queries: queries,
+		Master:  master,
+		DataDir: cfg.DataDir,
+	})
+	if err != nil {
+		return err
+	}
 	uploadSvc := upload.New(upload.Config{
 		Conn:      conn,
 		Queries:   queries,
-		Driver:    driver,
+		Channels:  channels,
 		MaxPixels: cfg.MaxPixels,
 	})
 	srv := server.New(server.Config{
 		Queries:              queries,
-		Driver:               driver,
+		Channels:             channels,
 		Upload:               uploadSvc,
 		Token:                token,
 		MaxUploadBytes:       cfg.MaxUploadBytes,
@@ -125,4 +134,28 @@ func run() error {
 	}
 	logger.Info("已退出")
 	return nil
+}
+
+// loadMasterKey 解析主密钥:环境变量/配置(hex)优先,否则数据目录文件(首启生成)。
+// @param cfg 运行配置
+// @param logger 结构化日志(首启生成时提示备份)
+// @return 主密钥
+// @return 密钥非法或文件读写失败时的错误
+func loadMasterKey(cfg config.Config, logger *slog.Logger) (*secret.MasterKey, error) {
+	if cfg.MasterKey != "" {
+		key, err := secret.MasterKeyFromHex(cfg.MasterKey)
+		if err != nil {
+			return nil, fmt.Errorf("master_key 配置非法: %w", err)
+		}
+		return key, nil
+	}
+	key, created, err := secret.LoadOrCreate(cfg.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		logger.Warn("已生成主密钥文件,请立即备份——丢失将导致渠道配置与加密渠道数据永久不可恢复",
+			"path", filepath.Join(cfg.DataDir, "master.key"))
+	}
+	return key, nil
 }

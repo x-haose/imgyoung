@@ -8,7 +8,7 @@ INSERT INTO images (id, blob_id, file_name)
 VALUES (?, ?, ?);
 
 -- name: GetImageBlob :one
-SELECT i.id, i.file_name, b.storage_key, b.mime, b.size
+SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?;

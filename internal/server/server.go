@@ -3,23 +3,30 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/imaging"
-	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
+
+// BlobChannels 按 blob 提供可服务的渠道候选(由 channel.Manager 实现)。
+type BlobChannels interface {
+	// CandidatesForBlob 返回健康且副本就绪的渠道,按优先级降序。
+	CandidatesForBlob(ctx context.Context, blobID int64) ([]channel.Handle, error)
+}
 
 // Config Server 的全部依赖与参数。
 type Config struct {
 	// Queries sqlc 生成的类型安全查询集(访问路径用)。
 	Queries *db.Queries
-	// Driver 目标渠道的存储驱动(访问路径用)。
-	Driver storage.Driver
+	// Channels 访问路径的渠道候选来源(容灾切换依据)。
+	Channels BlobChannels
 	// Upload 上传编排服务。
 	Upload *upload.Service
 	// Token 上传鉴权 Token,单 Token 模型(多 Token 体系见设计定稿·鉴权与滥用防护)。

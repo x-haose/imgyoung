@@ -10,7 +10,9 @@ import (
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
 
-	// 按需注册 rclone 后端(设计定稿·按需 import 后端),当前仅 local。
+	// 按需注册 rclone 后端(设计定稿·按需 import 后端):
+	// local 为内置渠道;crypt 供渠道存储加密包裹任意后端。
+	_ "github.com/rclone/rclone/backend/crypt"
 	_ "github.com/rclone/rclone/backend/local"
 )
 

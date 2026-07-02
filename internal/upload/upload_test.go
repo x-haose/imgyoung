@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/jpeg"
@@ -15,8 +16,10 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/imaging"
+	"github.com/x-haose/imgyoung/internal/secret"
 	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
@@ -26,6 +29,7 @@ type testEnv struct {
 	svc     *upload.Service
 	queries *db.Queries
 	driver  storage.Driver
+	mgr     *channel.Manager
 }
 
 // newTestEnv 组装测试环境,maxPixels 为像素预算上限。
@@ -44,18 +48,30 @@ func newTestEnv(t *testing.T, maxPixels int64) *testEnv {
 	if err := db.Migrate(conn); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
-	driver, err := storage.NewRcloneDriver(t.Context(), filepath.Join(dir, "blobs"))
+	master, err := secret.NewMasterKey()
 	if err != nil {
-		t.Fatalf("创建测试存储驱动: %v", err)
+		t.Fatalf("生成主密钥: %v", err)
 	}
 	queries := db.New(conn)
+	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
+		Queries: queries,
+		Master:  master,
+		DataDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("创建渠道管理器: %v", err)
+	}
+	primary, err := mgr.Primary()
+	if err != nil {
+		t.Fatalf("取主渠道: %v", err)
+	}
 	svc := upload.New(upload.Config{
 		Conn:      conn,
 		Queries:   queries,
-		Driver:    driver,
+		Channels:  mgr,
 		MaxPixels: maxPixels,
 	})
-	return &testEnv{svc: svc, queries: queries, driver: driver}
+	return &testEnv{svc: svc, queries: queries, driver: primary.Driver, mgr: mgr}
 }
 
 // pngBytes 生成一张 2x2 的真实 PNG。
@@ -201,6 +217,58 @@ func TestProcessRejectsUnknownPolicy(t *testing.T) {
 		})
 		if !errors.Is(err, imaging.ErrUnknownPolicy) {
 			t.Fatalf("policy=%q 错误 = %v, 期望 ErrUnknownPolicy", policy, err)
+		}
+	}
+}
+
+// TestProcessMarksReplicaStates 验证多渠道写入语义:主渠道副本 done,其余渠道 pending。
+func TestProcessMarksReplicaStates(t *testing.T) {
+	env := newTestEnv(t, 1<<20)
+	cfgJSON, err := json.Marshal(map[string]string{"path": t.TempDir()})
+	if err != nil {
+		t.Fatalf("编码渠道配置: %v", err)
+	}
+	sealed, err := env.mgr.SealConfig(string(cfgJSON))
+	if err != nil {
+		t.Fatalf("加密渠道配置: %v", err)
+	}
+	primaryID, err := env.queries.CreateChannel(t.Context(), db.CreateChannelParams{
+		Name: "fast", Driver: "local", ConfigSealed: sealed, Priority: 200,
+	})
+	if err != nil {
+		t.Fatalf("创建渠道: %v", err)
+	}
+	if err := env.mgr.Reload(t.Context()); err != nil {
+		t.Fatalf("重载管理器: %v", err)
+	}
+
+	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
+		FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+	})
+	if err != nil {
+		t.Fatalf("Process 返回错误: %v", err)
+	}
+	row, err := env.queries.GetImageBlob(t.Context(), res.ImageID)
+	if err != nil {
+		t.Fatalf("查询引用记录: %v", err)
+	}
+	replicas, err := env.queries.ListBlobChannels(t.Context(), row.BlobID)
+	if err != nil {
+		t.Fatalf("查询副本状态: %v", err)
+	}
+	if len(replicas) != 2 {
+		t.Fatalf("副本记录数 = %d, 期望 2(每渠道一条)", len(replicas))
+	}
+	states := map[int64]string{}
+	for _, rep := range replicas {
+		states[rep.ChannelID] = rep.State
+	}
+	if states[primaryID] != channel.StateDone {
+		t.Errorf("主渠道状态 = %q, 期望 done(同步写入)", states[primaryID])
+	}
+	for chID, state := range states {
+		if chID != primaryID && state != channel.StatePending {
+			t.Errorf("渠道 %d 状态 = %q, 期望 pending(待补齐)", chID, state)
 		}
 	}
 }

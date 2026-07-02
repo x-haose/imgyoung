@@ -14,10 +14,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/imaging"
+	"github.com/x-haose/imgyoung/internal/secret"
 	"github.com/x-haose/imgyoung/internal/server"
-	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
 
@@ -43,21 +44,29 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
 
-	driver, err := storage.NewRcloneDriver(t.Context(), filepath.Join(dir, "blobs"))
+	master, err := secret.NewMasterKey()
 	if err != nil {
-		t.Fatalf("创建测试存储驱动: %v", err)
+		t.Fatalf("生成主密钥: %v", err)
 	}
 	queries := db.New(conn)
+	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
+		Queries: queries,
+		Master:  master,
+		DataDir: dir,
+	})
+	if err != nil {
+		t.Fatalf("创建渠道管理器: %v", err)
+	}
 	svc := upload.New(upload.Config{
 		Conn:      conn,
 		Queries:   queries,
-		Driver:    driver,
+		Channels:  mgr,
 		MaxPixels: 1 << 20,
 	})
 
 	cfg := server.Config{
 		Queries:              queries,
-		Driver:               driver,
+		Channels:             mgr,
 		Upload:               svc,
 		Token:                testToken,
 		MaxUploadBytes:       1 << 20,

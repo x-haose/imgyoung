@@ -29,6 +29,8 @@ const (
 	envDataDir = "IMGYOUNG_DATA_DIR"
 	// envToken 上传 Token;留空则启动时生成随机值并打印。
 	envToken = "IMGYOUNG_TOKEN"
+	// envMasterKey 主密钥(64 位 hex);留空则使用数据目录下的 master.key 文件。
+	envMasterKey = "IMGYOUNG_MASTER_KEY"
 	// envMaxUploadMB 单图上限(MB)。
 	envMaxUploadMB = "IMGYOUNG_MAX_UPLOAD_MB"
 	// envMaxConcurrentUploads 上传并发上限。
@@ -62,6 +64,8 @@ type Config struct {
 	DataDir string
 	// Token 上传鉴权 Token;为空表示需要生成。
 	Token string
+	// MasterKey 主密钥(64 位 hex);为空表示使用数据目录文件(首启生成)。
+	MasterKey string
 	// MaxUploadBytes 单图字节上限,默认 50MB。
 	MaxUploadBytes int64
 	// MaxConcurrentUploads 上传并发上限,默认 8(设计定稿·内存防护)。
@@ -95,6 +99,7 @@ func Load() (Config, error) {
 		"listen":                 ":8080",
 		"data_dir":               "data",
 		"token":                  "",
+		"master_key":             "",
 		"max_upload_mb":          int64(50),
 		"max_concurrent_uploads": 8,
 		"base_url":               "",
@@ -143,6 +148,8 @@ func Load() (Config, error) {
 		DataDir string `koanf:"data_dir"`
 		// Token 上传鉴权 Token。
 		Token string `koanf:"token"`
+		// MasterKey 主密钥(hex)。
+		MasterKey string `koanf:"master_key"`
 		// MaxUploadMB 单图上限(MB)。
 		MaxUploadMB int64 `koanf:"max_upload_mb"`
 		// MaxConcurrentUploads 上传并发上限。
@@ -178,6 +185,7 @@ func Load() (Config, error) {
 		Listen:               raw.Listen,
 		DataDir:              raw.DataDir,
 		Token:                raw.Token,
+		MasterKey:            raw.MasterKey,
 		MaxUploadBytes:       raw.MaxUploadMB << 20,
 		MaxConcurrentUploads: raw.MaxConcurrentUploads,
 		BaseURL:              strings.TrimRight(raw.BaseURL, "/"),

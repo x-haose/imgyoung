@@ -11,7 +11,7 @@ import (
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		envConfig, envListen, envDataDir, envToken, envMaxUploadMB,
+		envConfig, envListen, envDataDir, envToken, envMasterKey, envMaxUploadMB,
 		envBaseURL, envMaxPixelsMP, envRefererWhitelist, envAllowEmptyReferer,
 	} {
 		t.Setenv(k, "")

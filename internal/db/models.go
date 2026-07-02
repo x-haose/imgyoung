@@ -39,7 +39,7 @@ type Channel struct {
 	ConfigSealed    string
 	Priority        int64
 	Healthy         int64
-	Encrypted       string
+	Encrypted       int64
 	AllowDirectLink int64
 	CreatedAt       string
 }

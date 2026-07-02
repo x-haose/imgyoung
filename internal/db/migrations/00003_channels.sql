@@ -13,8 +13,9 @@ CREATE TABLE channels (
     priority INTEGER NOT NULL DEFAULT 100,
     -- 健康标记,由健康检查维护,参与渠道筛选
     healthy INTEGER NOT NULL DEFAULT 1,
-    -- 存储加密(crypt 包裹):inherit=继承全局 / on=强制开 / off=强制关
-    encrypted TEXT NOT NULL DEFAULT 'inherit',
+    -- 存储加密(crypt 包裹):0/1,创建渠道时解析全局默认后固化,
+    -- 建后不可变——变更会使该渠道既有对象不可读
+    encrypted INTEGER NOT NULL DEFAULT 0,
     -- 是否允许 302 直链(密文渠道与本地渠道应为 0)
     allow_direct_link INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))

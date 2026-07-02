@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/x-haose/imgyoung/internal/imaging"
-	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/upload"
 )
 
@@ -133,17 +132,33 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rc, err := s.cfg.Driver.Open(r.Context(), row.StorageKey)
-	if errors.Is(err, storage.ErrNotFound) {
-		// DB 有记录但渠道无对象:数据不一致,记录告警并对外 404;
-		// 一致性由对账任务兜底(见设计定稿·可靠性与灾备)。
-		s.cfg.Logger.Warn("引用存在但渠道对象缺失", "id", imageID, "key", row.StorageKey)
-		http.NotFound(w, r)
+	candidates, err := s.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)
+	if err != nil {
+		s.cfg.Logger.Error("查询渠道候选失败", "id", imageID, "err", err)
+		http.Error(w, "服务内部错误", http.StatusInternalServerError)
 		return
 	}
-	if err != nil {
-		s.cfg.Logger.Error("打开渠道对象失败", "id", imageID, "err", err)
-		http.Error(w, "服务内部错误", http.StatusInternalServerError)
+	if len(candidates) == 0 {
+		// 引用存在但当前无健康渠道持有就绪副本;一致性由对账任务兜底
+		// (见设计定稿·可靠性与灾备)。
+		s.cfg.Logger.Warn("无可用渠道服务该图", "id", imageID)
+		http.Error(w, "渠道暂不可用", http.StatusServiceUnavailable)
+		return
+	}
+
+	// 访问容灾:按优先级逐个尝试,取第一个能打开的渠道(设计定稿·自动切换)。
+	var rc io.ReadCloser
+	for _, cand := range candidates {
+		rc, err = cand.Driver.Open(r.Context(), row.StorageKey)
+		if err == nil {
+			break
+		}
+		rc = nil
+		s.cfg.Logger.Warn("渠道读取失败,切换下一候选", "id", imageID, "channel", cand.Name, "err", err)
+	}
+	if rc == nil {
+		s.cfg.Logger.Error("全部候选渠道读取失败", "id", imageID, "key", row.StorageKey)
+		http.Error(w, "渠道暂不可用", http.StatusServiceUnavailable)
 		return
 	}
 	defer func() {

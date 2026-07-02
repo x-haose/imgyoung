@@ -16,10 +16,10 @@ import (
 
 	"github.com/corona10/goimagehash"
 
+	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/id"
 	"github.com/x-haose/imgyoung/internal/imaging"
-	"github.com/x-haose/imgyoung/internal/storage"
 
 	// 注册白名单格式的解码器(gif/jpeg/png 标准库,webp 仅解码)。
 	_ "image/gif"
@@ -67,14 +67,22 @@ var (
 	ErrInvalidImage = errors.New("upload: 图片内容无法解析")
 )
 
+// ChannelSelector 写入目标的选择与枚举(由 channel.Manager 实现)。
+type ChannelSelector interface {
+	// Primary 返回主渠道:健康渠道中优先级最高者。
+	Primary() (channel.Handle, error)
+	// All 返回全部渠道句柄,按优先级降序。
+	All() []channel.Handle
+}
+
 // Config Service 的全部依赖与参数。
 type Config struct {
 	// Conn 数据库连接(事务用)。
 	Conn *sql.DB
 	// Queries sqlc 查询集。
 	Queries *db.Queries
-	// Driver 目标渠道存储驱动。
-	Driver storage.Driver
+	// Channels 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐。
+	Channels ChannelSelector
 	// MaxPixels 像素预算(width × height 上限)。
 	MaxPixels int64
 }
@@ -176,23 +184,29 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段(设计定稿·命名)。
 	key := shortID + "_" + hex.EncodeToString(sum[:4])
 
-	if err = s.cfg.Driver.Put(ctx, key, bytes.NewReader(data), int64(len(data))); err != nil {
-		return Result{}, fmt.Errorf("写入渠道: %w", err)
+	// 写入语义:主渠道成功即返回,其余渠道由补齐任务异步复制(设计定稿·上传管理)。
+	primary, err := s.cfg.Channels.Primary()
+	if err != nil {
+		return Result{}, fmt.Errorf("选择主渠道: %w", err)
+	}
+	if err = primary.Driver.Put(ctx, key, bytes.NewReader(data), int64(len(data))); err != nil {
+		return Result{}, fmt.Errorf("写入渠道 %q: %w", primary.Name, err)
 	}
 
 	// Put 成功而落库失败会产生孤儿对象,由对账任务回收(见设计定稿·对账 GC),
 	// 此处不回滚渠道写入。
 	err = s.persist(ctx, persistParams{
-		shortID:  shortID,
-		fileName: fileName,
-		idemKey:  idemKey,
-		sha256:   hex.EncodeToString(sum[:]),
-		phash:    int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
-		key:      key,
-		mime:     mime,
-		size:     int64(len(data)),
-		width:    int64(meta.Width),
-		height:   int64(meta.Height),
+		shortID:   shortID,
+		fileName:  fileName,
+		idemKey:   idemKey,
+		primaryID: primary.ID,
+		sha256:    hex.EncodeToString(sum[:]),
+		phash:     int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
+		key:       key,
+		mime:      mime,
+		size:      int64(len(data)),
+		width:     int64(meta.Width),
+		height:    int64(meta.Height),
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -240,6 +254,8 @@ type persistParams struct {
 	fileName string
 	// idemKey 幂等键,可为空。
 	idemKey string
+	// primaryID 已同步写入的主渠道 ID。
+	primaryID int64
 	// sha256 净化后字节哈希(十六进制)。
 	sha256 string
 	// phash 感知哈希(按位存入 int64)。
@@ -283,6 +299,18 @@ func (s *Service) persist(ctx context.Context, p persistParams) error {
 		FileName: p.fileName,
 	}); err != nil {
 		return fmt.Errorf("写入引用记录: %w", err)
+	}
+	// 副本状态:主渠道已就绪,其余渠道待补齐(outbox,补齐任务据此驱动)。
+	for _, h := range s.cfg.Channels.All() {
+		state := channel.StatePending
+		if h.ID == p.primaryID {
+			state = channel.StateDone
+		}
+		if err = q.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{
+			BlobID: blobID, ChannelID: h.ID, State: state,
+		}); err != nil {
+			return fmt.Errorf("写入副本状态(渠道 %d): %w", h.ID, err)
+		}
 	}
 	if p.idemKey != "" {
 		if err = q.CreateIdempotencyKey(ctx, db.CreateIdempotencyKeyParams{

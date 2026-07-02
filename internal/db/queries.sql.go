@@ -51,7 +51,7 @@ type CreateChannelParams struct {
 	Driver          string
 	ConfigSealed    string
 	Priority        int64
-	Encrypted       string
+	Encrypted       int64
 	AllowDirectLink int64
 }
 
@@ -147,7 +147,7 @@ func (q *Queries) GetIdempotencyImage(ctx context.Context, key string) (string, 
 }
 
 const getImageBlob = `-- name: GetImageBlob :one
-SELECT i.id, i.file_name, b.storage_key, b.mime, b.size
+SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?
@@ -156,6 +156,7 @@ WHERE i.id = ?
 type GetImageBlobRow struct {
 	ID         string
 	FileName   string
+	BlobID     int64
 	StorageKey string
 	Mime       string
 	Size       int64
@@ -167,6 +168,7 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 	err := row.Scan(
 		&i.ID,
 		&i.FileName,
+		&i.BlobID,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
