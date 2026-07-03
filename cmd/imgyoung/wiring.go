@@ -22,6 +22,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
@@ -210,10 +211,21 @@ func provideUpload(cfg config.Config, conn *sql.DB, queries *db.Queries,
 	})
 }
 
+// provideMetrics 构造指标集,并挂上读取渠道健康的量表(闭包依赖 core,留在装配根)。
+// @return 指标集
+func provideMetrics(manager *channel.Manager) *observability.Metrics {
+	m := observability.New()
+	m.RegisterGauge("channels_healthy_total", "当前健康渠道数。",
+		func() float64 { return float64(len(manager.Healthy())) })
+	m.RegisterGauge("channels_total", "已加载渠道总数(含不健康)。",
+		func() float64 { return float64(len(manager.All())) })
+	return m
+}
+
 // provideServer 构造 HTTP 业务处理器集合。
 // @return HTTP 服务处理器
 func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Manager,
-	uploadSvc *upload.Service, token string, logger *slog.Logger) *server.Server {
+	uploadSvc *upload.Service, token string, metrics *observability.Metrics, logger *slog.Logger) *server.Server {
 	return server.New(server.Config{
 		Queries:              queries,
 		Channels:             manager,
@@ -228,6 +240,7 @@ func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Mana
 		DefaultEXIFPolicy:    cfg.EXIFPolicy,
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
+		Metrics:              metrics,
 		Logger:               logger,
 	})
 }

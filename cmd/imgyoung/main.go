@@ -23,6 +23,7 @@ func main() {
 			provideManager,
 			provideRunner,
 			provideUpload,
+			provideMetrics,
 			provideServer,
 			provideHTTPServer,
 		),

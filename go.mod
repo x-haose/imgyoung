@@ -11,6 +11,7 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.3.5
 	github.com/pressly/goose/v3 v3.27.2
+	github.com/prometheus/client_golang v1.23.2
 	github.com/rclone/rclone v1.74.3
 	github.com/riverqueue/river v0.39.0
 	github.com/riverqueue/river/riverdriver/riversqlite v0.39.0
@@ -95,7 +96,6 @@ require (
 	github.com/pkg/xattr v0.4.12 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect

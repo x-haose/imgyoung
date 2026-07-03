@@ -20,6 +20,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
+	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
@@ -78,6 +79,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		MaxConcurrentUploads: 4,
 		AllowEmptyReferer:    true,
 		DefaultEXIFPolicy:    imaging.PolicyPassthrough,
+		Metrics:              observability.New(),
 		Logger:               slog.New(slog.DiscardHandler),
 	}
 	if mutate != nil {
@@ -479,6 +481,35 @@ func TestRedirectMode(t *testing.T) {
 	loc := resp.Header.Get("Location")
 	if !strings.HasPrefix(loc, "https://cdn.example.com/pub/") {
 		t.Fatalf("Location = %q, 期望 public_base_url 前缀", loc)
+	}
+}
+
+// TestMetricsEndpoint 验证 /metrics 暴露 Prometheus 指标,且请求经中间件计入。
+func TestMetricsEndpoint(t *testing.T) {
+	ts := newTestServer(t, nil)
+	// 先产生一次上传请求,让 /api/upload 路由计入。
+	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	closeBody(t, up)
+
+	resp, err := ts.Client().Get(ts.URL + "/metrics")
+	if err != nil {
+		t.Fatalf("访问 /metrics: %v", err)
+	}
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics 状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读取 /metrics: %v", err)
+	}
+	// 上传路由已计入,且用的是路由模板而非原始路径(无高基数)。
+	if !bytes.Contains(body, []byte(`imgyoung_http_requests_total{method="POST",route="/api/upload"`)) {
+		t.Fatalf("/metrics 未见上传路由计数:\n%s", body)
+	}
+	// /metrics 自身不计入(避免自我观测噪音)。
+	if bytes.Contains(body, []byte(`route="/metrics"`)) {
+		t.Error("/metrics 请求不应计入自身指标")
 	}
 }
 

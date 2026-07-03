@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
+	"github.com/x-haose/imgyoung/internal/infra/observability"
 )
 
 // BlobChannels 按 blob 提供可服务的渠道候选(由 channel.Manager 实现)。
@@ -50,6 +51,8 @@ type Config struct {
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行。
 	AllowEmptyReferer bool
+	// Metrics 指标集,用于请求计数/时延与 /metrics 暴露。
+	Metrics *observability.Metrics
 	// Logger 结构化日志。
 	Logger *slog.Logger
 }
@@ -70,7 +73,9 @@ func New(cfg Config) *Server {
 // @return 可直接挂载到 http.Server 的处理器
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
+	r.Use(s.metricsMiddleware)
 	r.Get("/healthz", s.handleHealth)
+	r.Handle("/metrics", s.cfg.Metrics.Handler())
 	r.Group(func(g chi.Router) {
 		g.Use(s.requireToken)
 		g.Use(func(next http.Handler) http.Handler {
