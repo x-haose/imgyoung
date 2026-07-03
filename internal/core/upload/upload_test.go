@@ -23,14 +23,14 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
-	"github.com/x-haose/imgyoung/internal/storage"
+	storagedriver "github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // testEnv 上传服务测试环境:临时 DB + 临时 local 渠道。
 type testEnv struct {
 	svc     *upload.Service
 	queries *db.Queries
-	driver  storage.Driver
+	driver  storagedriver.Driver
 	mgr     *channel.Manager
 }
 

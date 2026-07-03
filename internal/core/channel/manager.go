@@ -14,7 +14,8 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
-	"github.com/x-haose/imgyoung/internal/storage"
+	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/internal/store/rclone"
 )
 
 // ErrNoHealthyChannel 当前没有任何健康渠道可用。
@@ -30,7 +31,7 @@ type Handle struct {
 	// Name 渠道名。
 	Name string
 	// Driver 就绪的存储驱动(加密渠道已含 crypt 包裹)。
-	Driver storage.Driver
+	Driver driver.Driver
 	// Encrypted 是否为加密渠道(密文不可直链)。
 	Encrypted bool
 	// AllowDirectLink 是否允许 302 直链。
@@ -209,7 +210,7 @@ func (m *Manager) SealConfig(plain string) (string, error) {
 // @param row 渠道记录
 // @return 就绪的驱动与解密后的原始参数表(含约定键)
 // @return 解密、解析或后端初始化失败时的错误
-func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driver, map[string]string, error) {
+func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (driver.Driver, map[string]string, error) {
 	params := map[string]string{}
 	if row.ConfigSealed != "" {
 		plain, err := m.cfg.Master.DecryptString(row.ConfigSealed)
@@ -248,7 +249,7 @@ func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driv
 			return nil, nil, err
 		}
 	}
-	driver, err := storage.NewRcloneDriver(ctx, remote)
+	driver, err := rclone.New(ctx, remote)
 	if err != nil {
 		return nil, nil, err
 	}

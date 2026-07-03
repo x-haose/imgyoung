@@ -1,4 +1,4 @@
-package storage
+package rclone
 
 import (
 	"bytes"
@@ -6,15 +6,17 @@ import (
 	"io"
 	"testing"
 	"time"
+
+	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // TestRcloneDriverRoundTrip 验证 Put → Stat → Open → Delete 全链路行为正确。
 // @Description: 使用 rclone local backend + 临时目录,零外部依赖(见设计定稿·测试策略)。
 func TestRcloneDriverRoundTrip(t *testing.T) {
 	ctx := t.Context()
-	d, err := NewRcloneDriver(ctx, t.TempDir())
+	d, err := New(ctx, t.TempDir())
 	if err != nil {
-		t.Fatalf("NewRcloneDriver 返回错误: %v", err)
+		t.Fatalf("New 返回错误: %v", err)
 	}
 
 	const key = "ab/test.bin"
@@ -50,17 +52,17 @@ func TestRcloneDriverRoundTrip(t *testing.T) {
 	if err := d.Delete(ctx, key); err != nil {
 		t.Fatalf("Delete 返回错误: %v", err)
 	}
-	if _, err := d.Stat(ctx, key); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("删除后 Stat 错误 = %v, 期望 ErrNotFound", err)
+	if _, err := d.Stat(ctx, key); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("删除后 Stat 错误 = %v, 期望 driver.ErrNotFound", err)
 	}
 }
 
 // TestRcloneDriverList 验证递归列举:返回全部对象的键/大小/修改时间,空目录返回空。
 func TestRcloneDriverList(t *testing.T) {
 	ctx := t.Context()
-	d, err := NewRcloneDriver(ctx, t.TempDir())
+	d, err := New(ctx, t.TempDir())
 	if err != nil {
-		t.Fatalf("NewRcloneDriver 返回错误: %v", err)
+		t.Fatalf("New 返回错误: %v", err)
 	}
 
 	empty, err := d.List(ctx, "")
@@ -86,7 +88,7 @@ func TestRcloneDriverList(t *testing.T) {
 	if len(all) != 3 {
 		t.Fatalf("对象数 = %d, 期望 3(递归含子目录)", len(all))
 	}
-	seen := map[string]ObjectInfo{}
+	seen := map[string]driver.ObjectInfo{}
 	for _, o := range all {
 		seen[o.Key] = o
 	}
@@ -107,14 +109,14 @@ func TestRcloneDriverList(t *testing.T) {
 	}
 }
 
-// TestRcloneDriverOpenMissing 验证读取不存在的对象返回 ErrNotFound 哨兵错误。
+// TestRcloneDriverOpenMissing 验证读取不存在的对象返回 driver.ErrNotFound 哨兵错误。
 func TestRcloneDriverOpenMissing(t *testing.T) {
 	ctx := t.Context()
-	d, err := NewRcloneDriver(ctx, t.TempDir())
+	d, err := New(ctx, t.TempDir())
 	if err != nil {
-		t.Fatalf("NewRcloneDriver 返回错误: %v", err)
+		t.Fatalf("New 返回错误: %v", err)
 	}
-	if _, err := d.Open(ctx, "no/such/object"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Open 缺失对象错误 = %v, 期望 ErrNotFound", err)
+	if _, err := d.Open(ctx, "no/such/object"); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("Open 缺失对象错误 = %v, 期望 driver.ErrNotFound", err)
 	}
 }

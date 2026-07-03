@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db"
-	"github.com/x-haose/imgyoung/internal/storage"
+	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // ErrInvalidChannel 渠道创建参数非法(名称/后端为空或后端无法初始化)。
@@ -229,9 +229,9 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 // probe 探测单个渠道可达性(独立超时)。
 // @param d 渠道驱动
 // @return 是否健康
-func probe(ctx context.Context, d storage.Driver) bool {
+func probe(ctx context.Context, d driver.Driver) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	_, err := d.Stat(probeCtx, HealthProbeKey)
-	return err == nil || errors.Is(err, storage.ErrNotFound)
+	return err == nil || errors.Is(err, driver.ErrNotFound)
 }

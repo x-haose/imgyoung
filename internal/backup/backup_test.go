@@ -10,7 +10,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
-	"github.com/x-haose/imgyoung/internal/storage"
+	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // testEnv 备份测试环境。
@@ -75,7 +75,7 @@ func newTestEnv(t *testing.T) *testEnv {
 }
 
 // listBackups 列出主渠道上的备份对象键。
-func listBackups(t *testing.T, env *testEnv) []storage.ObjectInfo {
+func listBackups(t *testing.T, env *testEnv) []driver.ObjectInfo {
 	t.Helper()
 	primary, err := env.mgr.Primary()
 	if err != nil {

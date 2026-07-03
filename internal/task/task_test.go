@@ -13,7 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
-	"github.com/x-haose/imgyoung/internal/storage"
+	"github.com/x-haose/imgyoung/internal/store/driver"
 	"github.com/x-haose/imgyoung/internal/task"
 )
 
@@ -215,7 +215,7 @@ func TestGCRemovesExpiredOrphans(t *testing.T) {
 		t.Fatalf("RunGC 返回错误: %v", err)
 	}
 
-	if _, err := env.local.Driver.Stat(ctx, "stale-orphan.bin"); !errors.Is(err, storage.ErrNotFound) {
+	if _, err := env.local.Driver.Stat(ctx, "stale-orphan.bin"); !errors.Is(err, driver.ErrNotFound) {
 		t.Errorf("过期孤儿未被回收: %v", err)
 	}
 	if _, err := env.local.Driver.Stat(ctx, "fresh-orphan.bin"); err != nil {

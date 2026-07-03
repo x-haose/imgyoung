@@ -1,10 +1,10 @@
-// Package storage 定义 StorageDriver 抽象层及其实现(设计定稿·StorageDriver 抽象层)。
+// Package driver 定义 StorageDriver 抽象层(设计定稿·StorageDriver 抽象层)。
 //
 // 抽象层只负责"把字节存到某后端 / 取回 / 查存在性 / 删除",
-// 不承载任何业务语义(去重、TTL、主备等全部在 Service 层)。
-// 接口设计不假设 rclone 存在:未来的原生 driver(S3 直连、第三方图床 API)与
-// RcloneDriver 并存(设计定稿·两条升级缝之外的既定扩展点)。
-package storage
+// 不承载任何业务语义(去重、TTL、主备等全部在 core 层);且不 import 任何具体后端,
+// 是可复用存储引擎的接口缝——rclone.Driver 等实现依赖本包,而本包不反向依赖它们
+// (设计定稿·7.4 库化边界)。
+package driver
 
 import (
 	"context"
