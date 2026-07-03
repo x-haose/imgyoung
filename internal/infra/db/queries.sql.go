@@ -313,7 +313,7 @@ func (q *Queries) GetIdempotencyImage(ctx context.Context, key string) (string, 
 }
 
 const getImageBlob = `-- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size
+SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?
@@ -326,6 +326,7 @@ type GetImageBlobRow struct {
 	StorageKey string
 	Mime       string
 	Size       int64
+	Sha256     string
 }
 
 func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow, error) {
@@ -338,6 +339,7 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
+		&i.Sha256,
 	)
 	return i, err
 }

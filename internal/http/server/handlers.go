@@ -173,6 +173,15 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 	// 真实公开访问:记活跃度(仅内存,批量落库);后台入口不走此路径,天然不计。
 	s.cfg.Activity.Touch(imageID)
 
+	// 内容不可变,以 sha256 作强 ETag;客户端 If-None-Match 命中直接 304,省流量。
+	etag := `"` + row.Sha256 + `"`
+	if match := r.Header.Get("If-None-Match"); match == etag {
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
 	candidates, err := s.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)
 	if err != nil {
 		s.cfg.Logger.Error("查询渠道候选失败", "id", imageID, "err", err)
@@ -224,6 +233,7 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 	h.Set("Content-Length", strconv.FormatInt(row.Size, 10))
 	// 内容不可变(URL 即版本),缓存一年;nosniff 强制浏览器信任服务端类型判定。
 	h.Set("Cache-Control", "public, max-age=31536000, immutable")
+	h.Set("ETag", etag)
 	h.Set("X-Content-Type-Options", "nosniff")
 	if _, err := io.Copy(w, rc); err != nil {
 		// 多为客户端提前断开,记 debug 即可。

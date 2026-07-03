@@ -488,6 +488,39 @@ func TestRedirectMode(t *testing.T) {
 	}
 }
 
+// TestServeETag 验证访问响应带强 ETag,且 If-None-Match 命中返回 304。
+func TestServeETag(t *testing.T) {
+	ts := newTestServer(t, nil)
+	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	defer closeBody(t, resp)
+	_, imgURL := decodeUpload(t, resp)
+
+	get, err := ts.Client().Get(ts.URL + imgURL)
+	if err != nil {
+		t.Fatalf("访问图片: %v", err)
+	}
+	defer closeBody(t, get)
+	etag := get.Header.Get("ETag")
+	if etag == "" || etag[0] != '"' {
+		t.Fatalf("ETag = %q, 期望带引号的强 ETag", etag)
+	}
+
+	// 带 If-None-Match 命中 → 304。
+	req, err := http.NewRequest(http.MethodGet, ts.URL+imgURL, nil)
+	if err != nil {
+		t.Fatalf("构造条件请求: %v", err)
+	}
+	req.Header.Set("If-None-Match", etag)
+	cond, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("条件访问: %v", err)
+	}
+	defer closeBody(t, cond)
+	if cond.StatusCode != http.StatusNotModified {
+		t.Fatalf("If-None-Match 命中状态码 = %d, 期望 304", cond.StatusCode)
+	}
+}
+
 // TestMetricsEndpoint 验证 /metrics 暴露 Prometheus 指标,且请求经中间件计入。
 func TestMetricsEndpoint(t *testing.T) {
 	ts := newTestServer(t, nil)
