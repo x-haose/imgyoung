@@ -74,40 +74,13 @@ type Config struct {
 // @return 配置文件读取失败或数值非法时的错误
 func Load() (Config, error) {
 	k := koanf.New(".")
-	// 第一层:内嵌默认配置(config.yml)。
-	base, err := yaml.Parser().Unmarshal(defaultConfigYAML)
-	if err != nil {
-		return Config{}, fmt.Errorf("解析内嵌默认配置: %w", err)
+	if err := loadDefaults(k); err != nil {
+		return Config{}, err
 	}
-	if err := k.Load(confmap.Provider(base, "."), nil); err != nil {
-		return Config{}, fmt.Errorf("加载默认配置: %w", err)
+	if err := loadFile(k); err != nil {
+		return Config{}, err
 	}
-
-	// 第二层:可选外部 yaml 配置文件,覆盖内嵌默认。
-	path := os.Getenv(envConfig)
-	explicit := path != ""
-	if !explicit {
-		path = defaultConfigFile
-	}
-	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
-		// 自动发现模式下文件缺失属正常;显式指定或解析失败必须报错。
-		if explicit || !errors.Is(err, os.ErrNotExist) {
-			return Config{}, fmt.Errorf("读取配置文件 %q: %w", path, err)
-		}
-	}
-
-	// 第三层:环境变量覆盖(空值视为未设置,IMGYOUNG_CONFIG 只定位文件不参与合并)。
-	provider := env.ProviderWithValue(envPrefix, ".", func(key, value string) (string, any) {
-		name := strings.ToLower(strings.TrimPrefix(key, envPrefix))
-		if value == "" || name == "config" {
-			return "", nil
-		}
-		if name == "referer_whitelist" {
-			return name, splitCSV(value)
-		}
-		return name, value
-	})
-	if err := k.Load(provider, nil); err != nil {
+	if err := k.Load(envProvider(), nil); err != nil {
 		return Config{}, fmt.Errorf("读取环境变量: %w", err)
 	}
 
@@ -122,6 +95,54 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// loadDefaults 把内嵌的 config.yml 作为最底层默认加载进 k。
+// @return 内嵌配置解析或加载失败时的错误(属打包问题,正常不会发生)
+func loadDefaults(k *koanf.Koanf) error {
+	base, err := yaml.Parser().Unmarshal(defaultConfigYAML)
+	if err != nil {
+		return fmt.Errorf("解析内嵌默认配置: %w", err)
+	}
+	if err := k.Load(confmap.Provider(base, "."), nil); err != nil {
+		return fmt.Errorf("加载默认配置: %w", err)
+	}
+	return nil
+}
+
+// loadFile 把可选的外部 yaml 配置叠加到 k(覆盖内嵌默认)。
+// @Description: IMGYOUNG_CONFIG 显式指定则文件必须存在;否则自动发现
+// configs/config.yml,缺失属正常、静默跳过(内嵌默认已兜底)。
+// @return 显式文件缺失或任一文件解析失败时的错误
+func loadFile(k *koanf.Koanf) error {
+	path := os.Getenv(envConfig)
+	explicit := path != ""
+	if !explicit {
+		path = defaultConfigFile
+	}
+	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
+		if explicit || !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("读取配置文件 %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// envProvider 构造 IMGYOUNG_ 前缀的环境变量覆盖层。
+// @Description: 键名剥前缀小写即配置键;空值视为未设置(不覆盖下层),
+// IMGYOUNG_CONFIG 只定位文件不参与合并,列表型键按逗号切分。
+// @return koanf 环境变量 provider
+func envProvider() koanf.Provider {
+	return env.ProviderWithValue(envPrefix, ".", func(key, value string) (string, any) {
+		name := strings.ToLower(strings.TrimPrefix(key, envPrefix))
+		if value == "" || name == "config" {
+			return "", nil
+		}
+		if name == "referer_whitelist" {
+			return name, splitCommaList(value)
+		}
+		return name, value
+	})
 }
 
 // validate 校验数值边界与枚举,首个非法项即返回(设计定稿·输入验证)。
@@ -153,8 +174,12 @@ func (c Config) validate() error {
 	return nil
 }
 
-// splitCSV 按逗号切分并去除各项首尾空白,丢弃空项。
-func splitCSV(s string) []string {
+// splitCommaList 把环境变量里逗号分隔的多值切成切片,去首尾空白、丢空项。
+// @Description: 环境变量只能是扁平字符串,列表型配置(如 referer_whitelist)约定
+// 用逗号分隔;yaml 中它是原生列表,不经过这里。
+// @param s 逗号分隔的原始值
+// @return 切分后的非空项切片
+func splitCommaList(s string) []string {
 	parts := strings.Split(s, ",")
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
