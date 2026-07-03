@@ -29,8 +29,8 @@ type Blob struct {
 	Height        int64
 	RefCount      int64
 	PendingDelete int64
-	CreatedAt     string
 	DeleteAfter   sql.NullString
+	CreatedAt     string
 }
 
 type BlobChannel struct {
@@ -65,10 +65,10 @@ type Image struct {
 	BlobID             int64
 	UserID             sql.NullString
 	FileName           string
-	CreatedAt          string
 	ExpireAt           sql.NullString
 	LastPublicAccessAt sql.NullString
 	PendingCleanup     int64
+	CreatedAt          string
 }
 
 type User struct {

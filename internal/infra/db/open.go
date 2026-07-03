@@ -3,19 +3,11 @@ package db
 
 import (
 	"database/sql"
-	"embed"
 	"fmt"
-
-	"github.com/pressly/goose/v3"
 
 	// 注册 modernc 纯 Go SQLite 驱动(driver 名 "sqlite",保住 CGO_ENABLED=0)。
 	_ "modernc.org/sqlite"
 )
-
-// migrationsFS 打进二进制的迁移文件(goose + go:embed)。
-//
-//go:embed migrations/*.sql
-var migrationsFS embed.FS
 
 // Open 打开(必要时创建)SQLite 数据库并完成连接配置。
 // @Description: DSN 内置三个 pragma——WAL(读写并发)、busy_timeout 5s(单写者
@@ -36,20 +28,4 @@ func Open(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("连接数据库 %q: %w", path, err)
 	}
 	return conn, nil
-}
-
-// Migrate 将数据库 schema 迁移到最新版本。
-// @Description: 迁移文件来自内嵌 FS,启动时调用,幂等。
-// @param conn 已打开的数据库连接
-// @return 迁移失败时的错误
-func Migrate(conn *sql.DB) error {
-	goose.SetBaseFS(migrationsFS)
-	goose.SetLogger(goose.NopLogger())
-	if err := goose.SetDialect("sqlite3"); err != nil {
-		return fmt.Errorf("设置 goose 方言: %w", err)
-	}
-	if err := goose.Up(conn, "migrations"); err != nil {
-		return fmt.Errorf("执行 schema 迁移: %w", err)
-	}
-	return nil
 }
