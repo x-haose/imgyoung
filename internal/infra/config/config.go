@@ -65,6 +65,7 @@ type Config struct {
 	ColdCleanupDays      int                `koanf:"cold_cleanup_days"`      // 冷图待清理阈值(天),0 = 不启用
 	UsageReportSeconds   int                `koanf:"usage_report_seconds"`   // 渠道用量上报间隔(秒)
 	ChannelQuotaGB       int                `koanf:"channel_quota_gb"`       // 单渠道用量告警阈值(GB),0 = 不告警
+	DedupScanSeconds     int                `koanf:"dedup_scan_seconds"`     // 后台精确查重扫描间隔(秒)
 	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
 	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
 }
@@ -182,6 +183,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("usage_report_seconds=%d 非法: 需要正整数", c.UsageReportSeconds)
 	case c.ChannelQuotaGB < 0:
 		return fmt.Errorf("channel_quota_gb=%d 非法: 不可为负", c.ChannelQuotaGB)
+	case c.DedupScanSeconds < 1:
+		return fmt.Errorf("dedup_scan_seconds=%d 非法: 需要正整数", c.DedupScanSeconds)
 	}
 	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
 	if err := imaging.ValidatePolicy(c.EXIFPolicy); err != nil {

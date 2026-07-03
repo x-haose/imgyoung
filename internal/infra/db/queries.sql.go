@@ -10,6 +10,22 @@ import (
 	"database/sql"
 )
 
+const addBlobRef = `-- name: AddBlobRef :exec
+UPDATE blobs
+SET ref_count = ref_count + ?
+WHERE id = ?
+`
+
+type AddBlobRefParams struct {
+	RefCount int64
+	ID       int64
+}
+
+func (q *Queries) AddBlobRef(ctx context.Context, arg AddBlobRefParams) error {
+	_, err := q.db.ExecContext(ctx, addBlobRef, arg.RefCount, arg.ID)
+	return err
+}
+
 const channelStorageUsage = `-- name: ChannelStorageUsage :many
 SELECT c.id, c.name, CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
 FROM channels c
@@ -470,6 +486,41 @@ func (q *Queries) ListBlobChannels(ctx context.Context, blobID int64) ([]ListBlo
 	return items, nil
 }
 
+const listBlobsBySha256 = `-- name: ListBlobsBySha256 :many
+SELECT id, ref_count
+FROM blobs
+WHERE sha256 = ? AND pending_delete = 0
+ORDER BY id
+`
+
+type ListBlobsBySha256Row struct {
+	ID       int64
+	RefCount int64
+}
+
+func (q *Queries) ListBlobsBySha256(ctx context.Context, sha256 string) ([]ListBlobsBySha256Row, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobsBySha256, sha256)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlobsBySha256Row
+	for rows.Next() {
+		var i ListBlobsBySha256Row
+		if err := rows.Scan(&i.ID, &i.RefCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBlobsToDelete = `-- name: ListBlobsToDelete :many
 SELECT id, storage_key
 FROM blobs
@@ -574,6 +625,37 @@ func (q *Queries) ListDoneBlobChannelsForChannel(ctx context.Context, channelID 
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDuplicateSha256 = `-- name: ListDuplicateSha256 :many
+SELECT sha256
+FROM blobs
+WHERE pending_delete = 0
+GROUP BY sha256
+HAVING COUNT(*) > 1
+`
+
+func (q *Queries) ListDuplicateSha256(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listDuplicateSha256)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var sha256 string
+		if err := rows.Scan(&sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, sha256)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
@@ -707,6 +789,38 @@ type MarkBlobForDeleteParams struct {
 
 func (q *Queries) MarkBlobForDelete(ctx context.Context, arg MarkBlobForDeleteParams) error {
 	_, err := q.db.ExecContext(ctx, markBlobForDelete, arg.DeleteAfter, arg.ID)
+	return err
+}
+
+const markBlobMergedAway = `-- name: MarkBlobMergedAway :exec
+UPDATE blobs
+SET ref_count = 0, pending_delete = 1, delete_after = ?
+WHERE id = ?
+`
+
+type MarkBlobMergedAwayParams struct {
+	DeleteAfter sql.NullString
+	ID          int64
+}
+
+func (q *Queries) MarkBlobMergedAway(ctx context.Context, arg MarkBlobMergedAwayParams) error {
+	_, err := q.db.ExecContext(ctx, markBlobMergedAway, arg.DeleteAfter, arg.ID)
+	return err
+}
+
+const repointImages = `-- name: RepointImages :exec
+UPDATE images
+SET blob_id = ?
+WHERE blob_id = ?
+`
+
+type RepointImagesParams struct {
+	BlobID   int64
+	BlobID_2 int64
+}
+
+func (q *Queries) RepointImages(ctx context.Context, arg RepointImagesParams) error {
+	_, err := q.db.ExecContext(ctx, repointImages, arg.BlobID, arg.BlobID_2)
 	return err
 }
 

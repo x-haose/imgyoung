@@ -177,3 +177,31 @@ FROM channels c
 LEFT JOIN blob_channels bc ON bc.channel_id = c.id AND bc.state = 'done'
 LEFT JOIN blobs b ON b.id = bc.blob_id
 GROUP BY c.id, c.name;
+
+-- name: ListDuplicateSha256 :many
+SELECT sha256
+FROM blobs
+WHERE pending_delete = 0
+GROUP BY sha256
+HAVING COUNT(*) > 1;
+
+-- name: ListBlobsBySha256 :many
+SELECT id, ref_count
+FROM blobs
+WHERE sha256 = ? AND pending_delete = 0
+ORDER BY id;
+
+-- name: RepointImages :exec
+UPDATE images
+SET blob_id = ?
+WHERE blob_id = ?;
+
+-- name: AddBlobRef :exec
+UPDATE blobs
+SET ref_count = ref_count + ?
+WHERE id = ?;
+
+-- name: MarkBlobMergedAway :exec
+UPDATE blobs
+SET ref_count = 0, pending_delete = 1, delete_after = ?
+WHERE id = ?;

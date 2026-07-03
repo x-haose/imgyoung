@@ -17,6 +17,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/dedup"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
@@ -279,6 +280,17 @@ func provideTracker(conn *sql.DB, queries *db.Queries, logger *slog.Logger) *lif
 // bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。
 const bytesPerGB = 1 << 30
 
+// provideMerger 构造精确查重合并器(冗余 blob 的物理删宽限与生命周期一致)。
+// @return 查重合并器
+func provideMerger(cfg config.Config, conn *sql.DB, queries *db.Queries, logger *slog.Logger) *dedup.Merger {
+	return dedup.New(dedup.Config{
+		Conn:    conn,
+		Queries: queries,
+		Grace:   time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
+		Logger:  logger,
+	})
+}
+
 // provideUsageReporter 构造渠道用量上报器(用量量表走 observability)。
 // @return 用量上报器
 func provideUsageReporter(cfg config.Config, queries *db.Queries,
@@ -323,7 +335,7 @@ func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, srv *server.Server, l
 // @Description: 各自持长生命周期 context,OnStop 取消。二者均为兜底型循环,启动即先跑一轮。
 func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
 	manager *channel.Manager, sweeper *lifecycle.Sweeper, tracker *lifecycle.Tracker,
-	reporter *usage.Reporter, logger *slog.Logger) {
+	reporter *usage.Reporter, merger *dedup.Merger, logger *slog.Logger) {
 	usageCtx, usageCancel := context.WithCancel(context.Background())
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
@@ -331,6 +343,15 @@ func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
 			return nil
 		},
 		OnStop: func(context.Context) error { usageCancel(); return nil },
+	})
+
+	dedupCtx, dedupCancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go merger.Run(dedupCtx, time.Duration(cfg.DedupScanSeconds)*time.Second)
+			return nil
+		},
+		OnStop: func(context.Context) error { dedupCancel(); return nil },
 	})
 
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
