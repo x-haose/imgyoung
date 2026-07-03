@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/channel"
-	"github.com/x-haose/imgyoung/internal/db"
+	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/db"
 )
 
 // gcInterval 对账 GC 周期(设计定稿·对账 GC:每日低频任务)。

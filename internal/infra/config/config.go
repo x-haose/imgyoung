@@ -18,7 +18,7 @@ import (
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 
-	"github.com/x-haose/imgyoung/internal/imaging"
+	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
 // defaultConfigYAML 内嵌的默认配置(config.yml),作为合并的最底层;

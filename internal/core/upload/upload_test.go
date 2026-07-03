@@ -18,12 +18,12 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/x-haose/imgyoung/internal/channel"
-	"github.com/x-haose/imgyoung/internal/db"
-	"github.com/x-haose/imgyoung/internal/imaging"
-	"github.com/x-haose/imgyoung/internal/secret"
+	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/imaging"
+	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/storage"
-	"github.com/x-haose/imgyoung/internal/upload"
 )
 
 // testEnv 上传服务测试环境:临时 DB + 临时 local 渠道。

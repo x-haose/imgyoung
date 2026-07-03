@@ -14,13 +14,13 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/backup"
-	"github.com/x-haose/imgyoung/internal/channel"
-	"github.com/x-haose/imgyoung/internal/config"
-	"github.com/x-haose/imgyoung/internal/db"
-	"github.com/x-haose/imgyoung/internal/secret"
+	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/server"
 	"github.com/x-haose/imgyoung/internal/task"
-	"github.com/x-haose/imgyoung/internal/upload"
 )
 
 // shutdownTimeout 优雅退出时等待 in-flight 请求完成的上限。

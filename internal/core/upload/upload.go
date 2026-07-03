@@ -18,10 +18,10 @@ import (
 
 	"github.com/corona10/goimagehash"
 
-	"github.com/x-haose/imgyoung/internal/channel"
-	"github.com/x-haose/imgyoung/internal/db"
-	"github.com/x-haose/imgyoung/internal/id"
-	"github.com/x-haose/imgyoung/internal/imaging"
+	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/id"
+	"github.com/x-haose/imgyoung/internal/infra/imaging"
 
 	// 注册白名单格式的解码器(gif/jpeg/png 标准库,webp 仅解码)。
 	_ "image/gif"

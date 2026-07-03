@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/x-haose/imgyoung/internal/channel"
+	"github.com/x-haose/imgyoung/internal/core/channel"
 )
 
 // channelBodyLimit 渠道管理请求体上限。

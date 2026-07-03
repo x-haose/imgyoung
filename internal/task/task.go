@@ -16,8 +16,8 @@ import (
 	"github.com/riverqueue/river/riverdriver/riversqlite"
 	"github.com/riverqueue/river/rivermigrate"
 
-	"github.com/x-haose/imgyoung/internal/channel"
-	"github.com/x-haose/imgyoung/internal/db"
+	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/db"
 )
 
 // reconcileBatch 恢复扫描的分页大小(循环取批直到取尽)。

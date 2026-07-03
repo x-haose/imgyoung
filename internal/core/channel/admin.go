@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/db"
+	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/storage"
 )
 

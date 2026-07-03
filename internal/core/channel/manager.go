@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/x-haose/imgyoung/internal/db"
-	"github.com/x-haose/imgyoung/internal/secret"
+	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/storage"
 )
 
