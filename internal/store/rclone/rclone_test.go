@@ -11,7 +11,7 @@ import (
 )
 
 // TestRcloneDriverRoundTrip 验证 Put → Stat → Open → Delete 全链路行为正确。
-// @Description: 使用 rclone local backend + 临时目录,零外部依赖(见设计定稿·测试策略)。
+// @Description: 使用 rclone local backend + 临时目录,零外部依赖。
 func TestRcloneDriverRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	d, err := New(ctx, t.TempDir())

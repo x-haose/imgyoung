@@ -15,19 +15,14 @@ import (
 // flushStopTimeout 停机前最后一次 flush 的超时预算。
 const flushStopTimeout = 5 * time.Second
 
-// Tracker 访问活跃度追踪:内存聚合 + 周期批量落库(设计定稿·访问活跃度),
+// Tracker 访问活跃度追踪:内存聚合 + 周期批量落库,
 // 避免逐请求 UPDATE 与 SQLite 单写者争锁。并发安全。
 type Tracker struct {
-	// conn 数据库连接(批量事务用)。
-	conn *sql.DB
-	// queries sqlc 查询集。
-	queries *db.Queries
-	// logger 结构化日志。
-	logger *slog.Logger
-	// mu 保护 touched。
-	mu sync.Mutex
-	// touched 自上次 flush 以来被访问的引用 id 集合。
-	touched map[string]struct{}
+	conn    *sql.DB             // 数据库连接(批量事务用)
+	queries *db.Queries         // sqlc 查询集
+	logger  *slog.Logger        // 结构化日志
+	mu      sync.Mutex          // 保护 touched
+	touched map[string]struct{} // 自上次 flush 以来被访问的引用 id 集合
 }
 
 // NewTracker 创建活跃度追踪器。
@@ -47,8 +42,7 @@ func (t *Tracker) Touch(imageID string) {
 	t.mu.Unlock()
 }
 
-// Flush 把累积的访问批量落库:更新 last_public_access_at 并摘除 pending_cleanup 标签
-// (设计定稿·期间有真实访问则自动摘标签)。
+// Flush 把累积的访问批量落库:更新 last_public_access_at 并摘除 pending_cleanup 标签。
 // @Description: 失败时把这批放回,留待下次重试——活跃度丢失只降冷图判定精度,不影响正确性。
 // @return 落库失败时的错误
 func (t *Tracker) Flush(ctx context.Context) error {

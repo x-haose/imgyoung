@@ -3,7 +3,7 @@ package server
 import "net/http"
 
 // limitConcurrency 并发闸中间件:同时处理的请求数不超过 n,满载立即 429。
-// @Description: 内存三道闸之一(设计定稿·内存防护)——上传解码的峰值内存
+// @Description: 内存三道闸之一——上传解码的峰值内存
 // 由"并发数 × 解码位图大小"决定,必须有硬上限。满载快速失败并带
 // Retry-After,把排队决策交给客户端。
 // @param n 最大并发数,必须 > 0

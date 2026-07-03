@@ -1,5 +1,4 @@
-// Package channel 实现渠道管理:配置构造、优先级选择、健康状态与副本编排
-// (设计定稿·渠道管理)。
+// Package channel 实现渠道管理:配置构造、优先级选择、健康状态与副本编排。
 package channel
 
 import (
@@ -11,8 +10,7 @@ import (
 )
 
 // BuildRemote 由后端类型、参数与路径构造 rclone 连接字符串。
-// @Description: 形式为 ":backend,k=v,k2='v2':path"(设计定稿·配置动态注入,
-// 不依赖 rclone 配置文件);值含特殊字符时按 fspath 语法加引号并双写转义。
+// @Description: 形式为 ":backend,k=v,k2='v2':path",配置内联注入、不依赖 rclone 配置文件;值含特殊字符时按 fspath 语法加引号并双写转义。
 // 产物含凭证,严禁写入日志。
 // @param driver rclone 后端名(local/s3/webdav 等)
 // @param params 后端参数,可为 nil
@@ -67,7 +65,7 @@ func quoteValue(v string) string {
 
 // WrapCrypt 将内层连接字符串包进 rclone crypt 后端(渠道存储加密)。
 // @Description: 文件名加密取 standard;password/password2 按 rclone 要求
-// 经 obscure 编码(设计定稿·渠道存储加密:基于 rclone 原生 crypt)。
+// 经 obscure 编码。
 // @param inner 内层连接字符串
 // @param password 内容加密密码(由主密钥派生)
 // @param salt 文件名加密盐(password2,由主密钥派生)

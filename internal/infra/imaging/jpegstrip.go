@@ -1,5 +1,4 @@
-// Package imaging 提供图片字节级处理(JPEG 元数据剥离)与 EXIF 档位定义;
-// 设计定稿中的按需处理管道(升级缝一)同属本包职责。
+// Package imaging 提供图片字节级处理(JPEG 元数据剥离)与 EXIF 档位定义。
 package imaging
 
 import (
@@ -44,9 +43,9 @@ var errMalformedJPEG = errors.New("imaging: 畸形的 JPEG 结构")
 
 // StripJPEGMetadata 移除 JPEG 中的全部元数据段与 EOI 后的尾部附加数据,
 // 返回新的字节切片(不修改输入)。
-// @Description: 纯段级字节操作,不解码、无损、零像素改动(设计定稿·EXIF strip)。
+// @Description: 纯段级字节操作,不解码、无损、零像素改动。
 // 剥离范围见 isMetadataSegment(APPn 白名单 + COM);熵编码数据原样保留;
-// 已知边界:渐进式 JPEG 多次扫描之间的段不再扫描(极少携带元数据)。
+// 已知边界:渐进式 JPEG 多次扫描之间的段不扫描(极少携带元数据)。
 // @param data 完整的 JPEG 字节
 // @return 剥离后的 JPEG 字节
 // @return 输入不是结构完整的 JPEG 时的错误

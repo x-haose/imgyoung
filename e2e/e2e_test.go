@@ -63,14 +63,10 @@ func runMain(m *testing.M) int {
 
 // instance 一个独立运行的服务进程。
 type instance struct {
-	// baseURL 服务地址。
-	baseURL string
-	// dataDir 数据目录。
-	dataDir string
-	// cmd 进程句柄。
-	cmd *exec.Cmd
-	// logPath 服务日志文件路径。
-	logPath string
+	baseURL string    // 服务地址
+	dataDir string    // 数据目录
+	cmd     *exec.Cmd // 进程句柄
+	logPath string    // 服务日志文件路径
 }
 
 // startInstance 以独立数据目录与端口启动一个服务进程,就绪后返回。

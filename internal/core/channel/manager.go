@@ -26,52 +26,36 @@ var ErrHoldsSoleReplicas = errors.New("channel: 渠道持有唯一副本,拒绝�
 
 // Handle 渠道句柄:选择结果的最小载体。
 type Handle struct {
-	// ID 渠道内部主键。
-	ID int64
-	// Name 渠道名。
-	Name string
-	// Driver 就绪的存储驱动(加密渠道已含 crypt 包裹)。
-	Driver driver.Driver
-	// Encrypted 是否为加密渠道(密文不可直链)。
-	Encrypted bool
-	// AllowDirectLink 是否允许 302 直链。
-	AllowDirectLink bool
-	// PublicBaseURL 对外直链前缀(空 = 无直链能力);来自渠道配置键 public_base_url。
-	PublicBaseURL string
+	ID              int64         // 渠道内部主键
+	Name            string        // 渠道名
+	Driver          driver.Driver // 就绪的存储驱动(加密渠道已含 crypt 包裹)
+	Encrypted       bool          // 是否为加密渠道(密文不可直链)
+	AllowDirectLink bool          // 是否允许 302 直链
+	PublicBaseURL   string        // 对外直链前缀(空 = 无直链能力);来自渠道配置键 public_base_url
 }
 
 // ManagerConfig 管理器依赖。
 type ManagerConfig struct {
-	// Conn 数据库连接(删除渠道等需要事务的操作用)。
-	Conn *sql.DB
-	// Queries sqlc 查询集。
-	Queries *db.Queries
-	// Master 主密钥(解密渠道配置、派生 crypt 密码)。
-	Master *secret.MasterKey
-	// DataDir 数据目录(内置 local 渠道的默认存储位置)。
-	DataDir string
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Conn    *sql.DB           // 数据库连接(删除渠道等需要事务的操作用)
+	Queries *db.Queries       // sqlc 查询集
+	Master  *secret.MasterKey // 主密钥(解密渠道配置、派生 crypt 密码)
+	DataDir string            // 数据目录(内置 local 渠道的默认存储位置)
+	Logger  *slog.Logger      // 结构化日志
 }
 
 // managed 一条已加载渠道的运行态。
 type managed struct {
-	// handle 对外句柄。
-	handle Handle
-	// healthy 健康标记(加载时从 DB 读取)。
-	healthy bool
+	handle  Handle // 对外句柄
+	healthy bool   // 健康标记(加载时从 DB 读取)
 }
 
-// Manager 渠道管理器:加载配置、构造驱动、优先级选择(设计定稿·渠道管理)。
+// Manager 渠道管理器:加载配置、构造驱动、优先级选择。
 // @Description: 自持驱动实例(fs.NewFs 无全局缓存),配置变更调 Reload
 // 全量重建,不存在陈旧缓存窗口。读方法并发安全。
 type Manager struct {
-	// cfg 依赖。
-	cfg ManagerConfig
-	// mu 保护 channels。
-	mu sync.RWMutex
-	// channels 已加载渠道,按优先级降序。
-	channels []managed
+	cfg      ManagerConfig // 依赖
+	mu       sync.RWMutex  // 保护 channels
+	channels []managed     // 已加载渠道,按优先级降序
 }
 
 // NewManager 创建管理器并完成首次加载。

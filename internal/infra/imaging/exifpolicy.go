@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// EXIFPolicy EXIF 处理档位(设计定稿·EXIF 三档)。
+// EXIFPolicy EXIF 处理档位。
 // @Description: 枚举的单一真相在本包;配置校验、API 层解析、上传管道均引用
 // 这里的常量与 ValidatePolicy,不得散落字符串字面量。
 type EXIFPolicy string

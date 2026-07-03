@@ -1,5 +1,5 @@
 // Package secret 提供主密钥管理:渠道凭证的静态加密(AES-GCM)与
-// 按用途派生子密钥(HKDF)。主密钥丢失 = 全部密文作废(设计定稿·渠道存储加密)。
+// 按用途派生子密钥(HKDF)。主密钥丢失 = 全部密文作废。
 package secret
 
 import (
@@ -19,8 +19,7 @@ const keyLen = 32
 
 // MasterKey 进程持有的主密钥,所有静态加密与派生的根。
 type MasterKey struct {
-	// key 原始密钥字节。
-	key []byte
+	key []byte // 原始密钥字节
 }
 
 // NewMasterKey 生成一把新的随机主密钥。
@@ -99,7 +98,7 @@ func (k *MasterKey) DecryptString(sealed string) (string, error) {
 
 // Derive 按用途从主密钥派生子密钥(HKDF-SHA256)。
 // @Description: 同一用途派生结果确定;不同用途互相隔离,单个子密钥
-// 泄露不扩散(设计定稿·渠道存储加密:各渠道密钥由主密钥派生)。
+// 泄露不扩散。
 // @param purpose 用途标识(如 "channel:3")
 // @param n 派生字节数
 // @return 派生密钥

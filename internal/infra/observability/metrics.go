@@ -1,5 +1,5 @@
-// Package observability 汇聚可观测性设施:Prometheus 指标注册与暴露
-// (设计定稿·可观测性)。只提供与业务无关的采集原语,读取核心状态的闭包由
+// Package observability 汇聚可观测性设施:Prometheus 指标注册与暴露。
+// 只提供与业务无关的采集原语,读取核心状态的闭包由
 // 装配根注入,故本包不依赖 core。
 package observability
 
@@ -17,14 +17,10 @@ const namespace = "imgyoung"
 
 // Metrics 持有独立 Prometheus 注册表与内置指标;自身并发安全。
 type Metrics struct {
-	// reg 独立注册表(不用全局默认,避免测试/多实例串扰)。
-	reg *prometheus.Registry
-	// httpRequests 按方法/路由模板/状态码计数的请求总量。
-	httpRequests *prometheus.CounterVec
-	// httpDuration 按方法/路由模板的请求时延分布。
-	httpDuration *prometheus.HistogramVec
-	// channelStorage 各渠道逻辑存储用量(字节),按渠道名。
-	channelStorage *prometheus.GaugeVec
+	reg            *prometheus.Registry     // 独立注册表(不用全局默认,避免测试/多实例串扰)
+	httpRequests   *prometheus.CounterVec   // 按方法/路由模板/状态码计数的请求总量
+	httpDuration   *prometheus.HistogramVec // 按方法/路由模板的请求时延分布
+	channelStorage *prometheus.GaugeVec     // 各渠道逻辑存储用量(字节),按渠道名
 }
 
 // New 创建指标集,注册 Go 运行时与进程采集器及内置 HTTP 指标。

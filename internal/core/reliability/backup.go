@@ -1,4 +1,4 @@
-// Package reliability 元数据库快照备份(设计定稿·可靠性与灾备):
+// Package reliability 元数据库快照备份:
 // 定时 VACUUM INTO 产出一致性快照,上传到最高优先级健康渠道并保留最近 N 份。
 // 元数据比图片本身珍贵——渠道里是哈希名对象,映射丢失即全部不可反查。
 package reliability
@@ -24,22 +24,16 @@ const snapshotTmpName = "backup-snapshot.tmp"
 
 // Config 备份服务依赖。
 type Config struct {
-	// Conn 数据库连接(执行 VACUUM INTO)。
-	Conn *sql.DB
-	// Channels 渠道管理器(选择上传目标)。
-	Channels *channel.Manager
-	// DataDir 数据目录(快照临时文件所在)。
-	DataDir string
-	// Keep 保留的备份份数,必须 > 0。
-	Keep int
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Conn     *sql.DB          // 数据库连接(执行 VACUUM INTO)
+	Channels *channel.Manager // 渠道管理器(选择上传目标)
+	DataDir  string           // 数据目录(快照临时文件所在)
+	Keep     int              // 保留的备份份数,必须 > 0
+	Logger   *slog.Logger     // 结构化日志
 }
 
 // Service 备份服务。
 type Service struct {
-	// cfg 依赖。
-	cfg Config
+	cfg Config // 依赖
 }
 
 // New 创建备份服务。
@@ -51,7 +45,7 @@ func New(cfg Config) *Service {
 
 // RunOnce 执行一次备份:快照 → 上传主渠道 → 清理超额旧份。
 // @Description: 快照经渠道驱动写入,加密渠道自动得到密文备份;
-// 恢复 = 从渠道取回快照文件替换 imgyoung.db(README·灾备)。
+// 恢复 = 从渠道取回快照文件替换 imgyoung.db。
 // @return 快照、上传或清理失败时的错误
 func (s *Service) RunOnce(ctx context.Context) error {
 	primary, err := s.cfg.Channels.Primary()

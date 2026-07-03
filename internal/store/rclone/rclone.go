@@ -1,4 +1,4 @@
-// Package rclone 以 rclone 的 fs.Fs 实现 StorageDriver(设计定稿·路线一 Put 流式)。
+// Package rclone 以 rclone 的 fs.Fs 实现 StorageDriver。
 // 依赖 driver 包的接口,是可选(opt-in)后端:仅 import 本包才会拖入 rclone 依赖树。
 package rclone
 
@@ -15,7 +15,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/store/driver"
 
-	// 按需注册 rclone 后端(设计定稿·按需 import 后端):
+	// 按需注册 rclone 后端:
 	// local 为内置渠道;crypt 供渠道存储加密包裹任意后端;
 	// s3(覆盖 AWS/R2/MinIO 等兼容服务)与 webdav 为最常用的远端类型。
 	_ "github.com/rclone/rclone/backend/crypt"
@@ -26,11 +26,10 @@ import (
 
 // Driver 基于 rclone 路线一(直接 import fs 包)的 Driver 实现。
 // @Description: 通过 fs.Fs 流式读写,不落盘、不依赖 rclone 配置文件;
-// remote 以连接字符串形式在运行时动态注入(设计定稿·配置动态注入)。
+// remote 以连接字符串形式在运行时动态注入。
 // fs.Fs 本身并发安全,故本类型无内部状态锁。
 type Driver struct {
-	// f 已初始化的 rclone 文件系统句柄。
-	f fs.Fs
+	f fs.Fs // 已初始化的 rclone 文件系统句柄
 }
 
 // 编译期断言:Driver 必须完整实现 Driver 接口。

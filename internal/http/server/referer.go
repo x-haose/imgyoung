@@ -29,7 +29,7 @@ func matchRefererHost(patterns []string, host string) bool {
 	return false
 }
 
-// checkReferer 防盗链中间件(设计定稿·防盗链白名单)。
+// checkReferer 防盗链中间件。
 // @Description: 白名单为空 = 不启用;空 Referer 按 AllowEmptyReferer 决定;
 // Referer 主机未命中白名单返回 403。仅挂在对外图片访问路由上。
 func (s *Server) checkReferer(next http.Handler) http.Handler {

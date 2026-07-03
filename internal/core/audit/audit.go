@@ -1,4 +1,4 @@
-// Package audit 记录管理操作留痕(设计定稿·可观测性/审计)。
+// Package audit 记录管理操作留痕。
 // 机器发现、人做不可逆决定的配套:删除/合并/渠道变更/Token 事件均在此留痕,后台可查。
 package audit
 
@@ -19,8 +19,7 @@ const (
 
 // Recorder 审计记录器,追加写 audit_log。
 type Recorder struct {
-	// q sqlc 查询句柄。
-	q *db.Queries
+	q *db.Queries // sqlc 查询句柄
 }
 
 // New 创建审计记录器。

@@ -1,4 +1,4 @@
-// Package upload 实现上传链路的 Service 层编排(设计定稿·上传链路):
+// Package upload 实现上传链路的 Service 层编排:
 // 格式校验 → 像素预算 → 净化(strip)→ 哈希(SHA256 + pHash)→ 存渠道 → 落库。
 package upload
 
@@ -39,8 +39,8 @@ const (
 	mimeWebP = "image/webp"
 )
 
-// allowedMIME 图片格式白名单(设计定稿·滥用防护:格式白名单)。
-// SVG 刻意不在列(XSS 风险,设计定稿·格式安全)。
+// allowedMIME 图片格式白名单。
+// SVG 刻意不在列(XSS 风险)。
 var allowedMIME = map[string]struct{}{
 	mimeJPEG: {},
 	mimePNG:  {},
@@ -100,20 +100,13 @@ type ReplicationEnqueuer interface {
 
 // Config Service 的全部依赖与参数。
 type Config struct {
-	// Conn 数据库连接(事务用)。
-	Conn *sql.DB
-	// Queries sqlc 查询集。
-	Queries *db.Queries
-	// Channels 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐。
-	Channels ChannelSelector
-	// Replicator 补齐入队口;可为 nil(pending 行由恢复扫描兜底)。
-	Replicator ReplicationEnqueuer
-	// MaxPixels 像素预算(width × height 上限)。
-	MaxPixels int64
-	// MinSuccess 返回成功所需的最少副本数,小于 1 视为 1(设计定稿·写入语义)。
-	MinSuccess int
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Conn       *sql.DB             // 数据库连接(事务用)
+	Queries    *db.Queries         // sqlc 查询集
+	Channels   ChannelSelector     // 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐
+	Replicator ReplicationEnqueuer // 补齐入队口;可为 nil(pending 行由恢复扫描兜底)
+	MaxPixels  int64               // 像素预算(width × height 上限)
+	MinSuccess int                 // 返回成功所需的最少副本数,小于 1 视为 1
+	Logger     *slog.Logger        // 结构化日志
 }
 
 // ErrInsufficientReplicas 同步副本数不足 MinSuccess 要求。
@@ -121,18 +114,10 @@ var ErrInsufficientReplicas = errors.New("upload: 副本数不足")
 
 // Options 一次上传的可选参数。
 type Options struct {
-	// FileName 原始文件名(仅存元数据,不参与任何逻辑)。
-	FileName string
-	// IdempotencyKey 客户端幂等键,可为空。
-	IdempotencyKey string
-	// EXIFPolicy 本次上传生效的 EXIF 档位,必填——由调用方解析
-	// "单次指定 > 全局默认"后传入明确值,本包不做隐式回退。
-	// 注意:strip 目前仅对 JPEG 生效,PNG/WebP/GIF 的元数据块原样保留
-	// (README·已知限制)。
-	EXIFPolicy imaging.EXIFPolicy
-	// ExpireAt 本次上传引用的到期时刻;零值表示永不过期。
-	// 由调用方按"单次指定 > 全局默认"解析后传入(设计定稿·TTL 三层粒度)。
-	ExpireAt time.Time
+	FileName       string             // 原始文件名(仅存元数据,不参与任何逻辑)
+	IdempotencyKey string             // 客户端幂等键,可为空
+	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入,本包不做隐式回退;strip 仅对 JPEG 生效
+	ExpireAt       time.Time          // 本次上传引用的到期时刻,零值表示永不过期;调用方按"单次指定 > 全局默认"解析后传入
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -142,8 +127,7 @@ type Service struct {
 
 // Result 一次上传的结果。
 type Result struct {
-	// ImageID 对外短 ID。
-	ImageID string
+	ImageID string // 对外短 ID
 }
 
 // New 创建上传服务。
@@ -175,7 +159,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		}
 	}
 
-	// 只信 magic bytes,不信扩展名与客户端声明(设计定稿·格式校验)。
+	// 只信 magic bytes,不信扩展名与客户端声明。
 	mime := http.DetectContentType(data)
 	if _, ok := allowedMIME[mime]; !ok {
 		return Result{}, ErrUnsupportedType
@@ -193,7 +177,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, ErrTooManyPixels
 	}
 
-	// 净化在前、哈希在后:哈希对象 = 实际存储字节(设计定稿·数据流)。
+	// 净化在前、哈希在后:哈希对象 = 实际存储字节。
 	if opts.EXIFPolicy == imaging.PolicyStrip && mime == mimeJPEG {
 		stripped, serr := imaging.StripJPEGMetadata(data)
 		if serr != nil {
@@ -216,11 +200,11 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	if err != nil {
 		return Result{}, fmt.Errorf("生成短 ID: %w", err)
 	}
-	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段(设计定稿·命名)。
+	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段。
 	key := shortID + "_" + hex.EncodeToString(sum[:4])
 
 	// 写入语义:按优先级向健康渠道同步写入,首个成功者即本次主渠道,
-	// 写入失败自动顺延下一渠道(设计定稿·渠道管理:上传失败→降级下一渠道);
+	// 写入失败自动顺延下一渠道;
 	// min_success 可要求更多同步副本,其余渠道由补齐任务异步复制。
 	healthy := s.cfg.Channels.Healthy()
 	if len(healthy) == 0 {
@@ -242,8 +226,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	}
 	all := s.cfg.Channels.All()
 
-	// Put 成功而落库失败会产生孤儿对象,由对账任务回收(见设计定稿·对账 GC),
-	// 此处不回滚渠道写入。
+	// Put 成功而落库失败会产生孤儿对象,由对账任务回收,此处不回滚渠道写入。
 	blobID, err := s.persist(ctx, persistParams{
 		shortID:  shortID,
 		fileName: fileName,
@@ -310,7 +293,7 @@ func pendingIDs(all []channel.Handle, doneIDs []int64) []int64 {
 const maxFileNameBytes = 255
 
 // truncateName 清洗并截断客户端提交的文件名(不可信输入,仅作元数据)。
-// @Description: 移除控制字符(防止将来输出到响应头/日志时被注入),
+// @Description: 移除控制字符(防止输出到响应头/日志时被注入),
 // 再按 UTF-8 安全截断到 maxFileNameBytes 字节以内(多字节字符不截半)。
 // @param name 客户端提交的原始文件名
 // @return 清洗截断后的文件名
@@ -334,30 +317,18 @@ func truncateName(name string) string {
 
 // persistParams 一次落库所需的全部字段。
 type persistParams struct {
-	// shortID 对外短 ID。
-	shortID string
-	// fileName 原始文件名。
-	fileName string
-	// idemKey 幂等键,可为空。
-	idemKey string
-	// doneIDs 已同步写入的渠道 ID(至少含主渠道)。
-	doneIDs []int64
-	// channels 本次上传使用的渠道快照(与 doneIDs 同源,避免两次取集合不一致)。
-	channels []channel.Handle
-	// sha256 净化后字节哈希(十六进制)。
-	sha256 string
-	// phash 感知哈希(按位存入 int64)。
-	phash int64
-	// key 渠道对象键。
-	key string
-	// mime 真实 MIME。
-	mime string
-	// size 存储字节大小。
-	size int64
-	// width/height 像素尺寸。
-	width, height int64
-	// expireAt 到期时刻;零值表示永不过期。
-	expireAt time.Time
+	shortID       string           // 对外短 ID
+	fileName      string           // 原始文件名
+	idemKey       string           // 幂等键,可为空
+	doneIDs       []int64          // 已同步写入的渠道 ID(至少含主渠道)
+	channels      []channel.Handle // 本次上传使用的渠道快照(与 doneIDs 同源,避免两次取集合不一致)
+	sha256        string           // 净化后字节哈希(十六进制)
+	phash         int64            // 感知哈希(按位存入 int64)
+	key           string           // 渠道对象键
+	mime          string           // 真实 MIME
+	size          int64            // 存储字节大小
+	width, height int64            // 像素尺寸
+	expireAt      time.Time        // 到期时刻,零值表示永不过期
 }
 
 // persist 在单事务内写入 blob、引用、副本状态与幂等键。

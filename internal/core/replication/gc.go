@@ -10,7 +10,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db"
 )
 
-// gcInterval 对账 GC 周期(设计定稿·对账 GC:每日低频任务)。
+// gcInterval 对账 GC 周期(每日低频任务)。
 const gcInterval = 24 * time.Hour
 
 // orphanGrace 孤儿对象宽限期:修改时间在此窗口内的未知对象不回收,
@@ -23,19 +23,14 @@ const systemPrefix = "_imgyoung/"
 
 // GCResult 单渠道一轮对账的结果统计。
 type GCResult struct {
-	// Channel 渠道名。
-	Channel string
-	// Objects 渠道对象总数(不含系统对象)。
-	Objects int
-	// Bytes 渠道对象总字节(不含系统对象)。
-	Bytes int64
-	// OrphansDeleted 回收的孤儿对象数。
-	OrphansDeleted int
-	// PhantomsRequeued 重置补齐的幻影副本数。
-	PhantomsRequeued int
+	Channel          string // 渠道名
+	Objects          int    // 渠道对象总数(不含系统对象)
+	Bytes            int64  // 渠道对象总字节(不含系统对象)
+	OrphansDeleted   int    // 回收的孤儿对象数
+	PhantomsRequeued int    // 重置补齐的幻影副本数
 }
 
-// RunGC 对全部健康渠道执行一轮双向对账(设计定稿·对账 GC)。
+// RunGC 对全部健康渠道执行一轮双向对账。
 // @Description: 孤儿 = 渠道有、DB 无(超宽限期即回收,按量付费渠道防烧钱);
 // 幻影 = DB 记为就绪、渠道实际缺失(回退 pending 并重新入队补齐)。
 // 顺带产出各渠道用量统计。单渠道失败跳过,不中断其余渠道。

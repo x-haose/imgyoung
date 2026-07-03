@@ -1,4 +1,4 @@
-// Package usage 渠道用量监控与配额告警(设计定稿·渠道用量监控):
+// Package usage 渠道用量监控与配额告警:
 // 周期统计各渠道逻辑存储用量,暴露为指标;超过配额阈值时告警,防按量付费渠道账单爆炸。
 package usage
 
@@ -21,20 +21,15 @@ type StorageGauge interface {
 
 // Config Reporter 依赖与参数。
 type Config struct {
-	// Queries sqlc 查询集。
-	Queries *db.Queries
-	// Gauge 存储用量量表设置口。
-	Gauge StorageGauge
-	// QuotaBytes 单渠道用量告警阈值(字节);<=0 表示不告警,仅上报指标。
-	QuotaBytes int64
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Queries    *db.Queries  // sqlc 查询集
+	Gauge      StorageGauge // 存储用量量表设置口
+	QuotaBytes int64        // 单渠道用量告警阈值(字节);<=0 表示不告警,仅上报指标
+	Logger     *slog.Logger // 结构化日志
 }
 
 // Reporter 用量上报器,无可变状态、并发安全。
 type Reporter struct {
-	// cfg 依赖。
-	cfg Config
+	cfg Config // 依赖
 }
 
 // New 创建用量上报器。

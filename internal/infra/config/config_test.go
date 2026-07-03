@@ -61,7 +61,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Errorf("RefererWhitelist = %v, 期望空(不启用防盗链)", cfg.RefererWhitelist)
 	}
 	if !cfg.AllowEmptyReferer {
-		t.Error("AllowEmptyReferer = false, 期望默认 true(设计定稿:空 Referer 默认放行)")
+		t.Error("AllowEmptyReferer = false, 期望默认 true(空 Referer 默认放行)")
 	}
 	if cfg.EXIFPolicy != "passthrough" {
 		t.Errorf("EXIFPolicy = %q, 期望默认 passthrough(默认不动用户原图)", cfg.EXIFPolicy)
@@ -213,7 +213,7 @@ func TestLoadDefaultConfigFile(t *testing.T) {
 	}
 }
 
-// TestLoadInvalidMaxUpload 验证非法的上传上限快速失败(设计定稿·输入验证)。
+// TestLoadInvalidMaxUpload 验证非法的上传上限快速失败。
 func TestLoadInvalidMaxUpload(t *testing.T) {
 	for name, v := range map[string]string{"非数字": "abc", "零": "0", "负数": "-3"} {
 		t.Run(name, func(t *testing.T) {

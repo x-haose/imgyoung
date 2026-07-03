@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// migrationsFS 打进二进制的迁移文件(设计定稿·依赖清单:goose + go:embed)。
+// migrationsFS 打进二进制的迁移文件(goose + go:embed)。
 //
 //go:embed migrations/*.sql
 var migrationsFS embed.FS

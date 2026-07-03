@@ -1,4 +1,4 @@
-// Package server 实现 API 层:上传、访问、鉴权与防盗链(设计定稿·整体分层架构)。
+// Package server 实现 API 层:上传、访问、鉴权与防盗链。
 // 业务编排在 Service 层(internal/upload 等),本包只做 HTTP 翻译。
 package server
 
@@ -32,43 +32,24 @@ type AccessTracker interface {
 
 // Config Server 的全部依赖与参数。
 type Config struct {
-	// Queries sqlc 生成的类型安全查询集(访问路径用)。
-	Queries *db.Queries
-	// Channels 访问路径的渠道候选来源(容灾切换依据)。
-	Channels BlobChannels
-	// Admin 渠道管理操作。
-	Admin ChannelAdmin
-	// EncryptNewChannels 新建渠道未指定 encrypted 时的全局默认(创建时固化)。
-	EncryptNewChannels bool
-	// RedirectMode 302 省流量模式:候选渠道允许直链时重定向,否则回退代理。
-	RedirectMode bool
-	// Upload 上传编排服务。
-	Upload *upload.Service
-	// Token 上传鉴权 Token,单 Token 模型(多 Token 体系见设计定稿·鉴权与滥用防护)。
-	Token string
-	// MaxUploadBytes 单图字节上限(内存三道闸之一)。
-	MaxUploadBytes int64
-	// MaxConcurrentUploads 上传并发上限(内存三道闸之一),必须 > 0。
-	MaxConcurrentUploads int
-	// BaseURL 对外站点地址(无尾部斜杠);为空时响应返回相对路径。
-	BaseURL string
-	// DefaultEXIFPolicy 全局默认 EXIF 档位;单次上传的表单字段可覆盖。
-	// 档位决策在本层完成,传给 Service 的必须是明确档位。
-	DefaultEXIFPolicy imaging.EXIFPolicy
-	// RefererWhitelist 防盗链白名单;为空表示不启用。
-	RefererWhitelist []string
-	// AllowEmptyReferer 空 Referer 是否放行。
-	AllowEmptyReferer bool
-	// DefaultTTL 全局默认 TTL;<=0 表示永不过期。单次上传的 ttl 字段可覆盖。
-	DefaultTTL time.Duration
-	// Activity 公开访问活跃度追踪器(设计定稿·区分后台浏览 vs 真实访问)。
-	Activity AccessTracker
-	// Metrics 指标集,用于请求计数/时延与 /metrics 暴露。
-	Metrics *observability.Metrics
-	// Audit 管理操作审计记录器。
-	Audit *audit.Recorder
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Queries              *db.Queries            // sqlc 生成的类型安全查询集(访问路径用)
+	Channels             BlobChannels           // 访问路径的渠道候选来源(容灾切换依据)
+	Admin                ChannelAdmin           // 渠道管理操作
+	EncryptNewChannels   bool                   // 新建渠道未指定 encrypted 时的全局默认(创建时固化)
+	RedirectMode         bool                   // 302 省流量模式:候选渠道允许直链时重定向,否则回退代理
+	Upload               *upload.Service        // 上传编排服务
+	Token                string                 // 上传鉴权 Token,单 Token 模型
+	MaxUploadBytes       int64                  // 单图字节上限(内存三道闸之一)
+	MaxConcurrentUploads int                    // 上传并发上限(内存三道闸之一),必须 > 0
+	BaseURL              string                 // 对外站点地址(无尾部斜杠);为空时响应返回相对路径
+	DefaultEXIFPolicy    imaging.EXIFPolicy     // 全局默认 EXIF 档位;单次上传的表单字段可覆盖;档位决策在本层完成,传给 Service 的必须是明确档位
+	RefererWhitelist     []string               // 防盗链白名单;为空表示不启用
+	AllowEmptyReferer    bool                   // 空 Referer 是否放行
+	DefaultTTL           time.Duration          // 全局默认 TTL;<=0 表示永不过期;单次上传的 ttl 字段可覆盖
+	Activity             AccessTracker          // 公开访问活跃度追踪器
+	Metrics              *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
+	Audit                *audit.Recorder        // 管理操作审计记录器
+	Logger               *slog.Logger           // 结构化日志
 }
 
 // Server HTTP 服务,持有全部依赖,自身无可变状态、并发安全。
@@ -104,7 +85,7 @@ func (s *Server) Handler() http.Handler {
 		g.Delete("/api/channels/{id}", s.handleChannelDelete)
 	})
 	r.Group(func(g chi.Router) {
-		// 防盗链只作用于对外公开图片入口(设计定稿·区分后台浏览 vs 真实访问)。
+		// 防盗链只作用于对外公开图片入口。
 		g.Use(s.checkReferer)
 		g.Get("/i/{id}", s.handleServe)
 	})

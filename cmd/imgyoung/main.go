@@ -1,5 +1,5 @@
 // ImgYoung 图床服务入口:以 uber/fx 装配配置、数据库、存储、任务与 HTTP 服务。
-// fx 仅在本装配根(composition root)出现,业务包保持零 fx 依赖(设计定稿·二/7.4)。
+// fx 仅在本装配根(composition root)出现,业务包保持零 fx 依赖。
 package main
 
 import (

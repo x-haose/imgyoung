@@ -18,18 +18,12 @@ var ErrInvalidChannel = errors.New("channel: 渠道参数非法")
 
 // CreateParams 创建渠道的参数。
 type CreateParams struct {
-	// Name 渠道名(唯一)。
-	Name string
-	// Driver rclone 后端名。
-	Driver string
-	// Config 后端参数(含约定键 path / public_base_url),可为 nil。
-	Config map[string]string
-	// Priority 优先级,越大越优先。
-	Priority int64
-	// Encrypted 是否为加密渠道;创建时固化,建后不可变。
-	Encrypted bool
-	// AllowDirectLink 是否允许 302 直链。
-	AllowDirectLink bool
+	Name            string            // 渠道名(唯一)
+	Driver          string            // rclone 后端名
+	Config          map[string]string // 后端参数(含约定键 path / public_base_url),可为 nil
+	Priority        int64             // 优先级,越大越优先
+	Encrypted       bool              // 是否为加密渠道;创建时固化,建后不可变
+	AllowDirectLink bool              // 是否允许 302 直链
 }
 
 // nameMaxLen 渠道名长度上限。
@@ -66,20 +60,13 @@ func validateCreateParams(p CreateParams) error {
 
 // Info 渠道的对外描述(不含任何配置与凭证)。
 type Info struct {
-	// ID 渠道主键。
-	ID int64 `json:"id"`
-	// Name 渠道名。
-	Name string `json:"name"`
-	// Driver 后端名。
-	Driver string `json:"driver"`
-	// Priority 优先级。
-	Priority int64 `json:"priority"`
-	// Healthy 健康状态。
-	Healthy bool `json:"healthy"`
-	// Encrypted 是否加密渠道。
-	Encrypted bool `json:"encrypted"`
-	// AllowDirectLink 是否允许直链。
-	AllowDirectLink bool `json:"allow_direct_link"`
+	ID              int64  `json:"id"`                // 渠道主键
+	Name            string `json:"name"`              // 渠道名
+	Driver          string `json:"driver"`            // 后端名
+	Priority        int64  `json:"priority"`          // 优先级
+	Healthy         bool   `json:"healthy"`           // 健康状态
+	Encrypted       bool   `json:"encrypted"`         // 是否加密渠道
+	AllowDirectLink bool   `json:"allow_direct_link"` // 是否允许直链
 }
 
 // Create 创建渠道:先试构造驱动验证配置可用,再落库并重载。
@@ -193,7 +180,7 @@ const HealthProbeKey = ".imgyoung-health-probe"
 
 // CheckAll 对全部渠道做一次健康探测,状态变化写回 DB 并更新内存标记。
 // @Description: 探测 = Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
-// 健康(后端可达),其余错误视为不健康(设计定稿·健康检查+自动切换)。
+// 健康(后端可达),其余错误视为不健康。
 // 健康翻转只改标记、不重建驱动;单渠道异常(含记录已被删)跳过不中断整轮。
 // @return 本次健康状态翻转的渠道名列表
 // @return 探测本身无法进行时的错误

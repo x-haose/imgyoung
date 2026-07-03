@@ -1,7 +1,7 @@
 package channel
 
 // 副本状态机取值(blob_channels.state):pending → uploading → done / failed。
-// 业务表是唯一真相(outbox),异步补齐任务只是幂等触发器(设计定稿·数据模型)。
+// 业务表是唯一真相(outbox),异步补齐任务只是幂等触发器。
 const (
 	// StatePending 待补齐。
 	StatePending = "pending"

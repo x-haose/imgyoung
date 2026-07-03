@@ -349,7 +349,7 @@ func TestRefererProtection(t *testing.T) {
 	}
 }
 
-// TestUploadTooLarge 验证超过单图上限的上传返回 413(内存闸门,见设计定稿)。
+// TestUploadTooLarge 验证超过单图上限的上传返回 413(内存闸门)。
 func TestUploadTooLarge(t *testing.T) {
 	ts := newTestServer(t, nil)
 	// 测试服务上限为 1MB,构造 2MB 载荷(以 PNG 头开头以排除 415 干扰)。

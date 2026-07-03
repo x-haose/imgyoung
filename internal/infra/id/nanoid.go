@@ -1,4 +1,4 @@
-// Package id 提供对外短 ID 的生成(自实现 nanoid,见设计定稿·依赖清单)。
+// Package id 提供对外短 ID 的生成(自实现 nanoid)。
 package id
 
 import (
@@ -8,7 +8,7 @@ import (
 
 // Length 短 ID 的固定长度。
 // @Description: 62^10 ≈ 8.4e17 个组合,对自部署规模碰撞概率可忽略;
-// 对外 URL 的私密性不依赖 ID 熵(见设计定稿·图片存储与命名)。
+// 对外 URL 的私密性不依赖 ID 熵。
 const Length = 10
 
 // alphabet 短 ID 字符集,仅含 URL 安全的字母数字,避免 -_ 以便双击全选。

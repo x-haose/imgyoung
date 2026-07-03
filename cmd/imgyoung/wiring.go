@@ -36,8 +36,7 @@ const readHeaderTimeout = 10 * time.Second
 // fxErrorLogger 安静版 fxevent.Logger:只把带错误的事件写进 slog,略过逐条装配噪音。
 // 保证生产日志干净,又绝不吞掉启动/停机错误(NopLogger 会吞,不可取)。
 type fxErrorLogger struct {
-	// log 项目结构化日志。
-	log *slog.Logger
+	log *slog.Logger // 项目结构化日志
 }
 
 // LogEvent 仅在事件携带错误时记录,其余静默。
@@ -148,7 +147,7 @@ func provideMasterKey(cfg config.Config, logger *slog.Logger) (*secret.MasterKey
 
 // provideToken 提供上传鉴权 Token;必填,未配置即拒绝启动(fail-fast)。
 // @Description: 鉴权凭证不做"自动生成"兜底——每次重启都变的临时 Token 是运维陷阱,
-// 且与本项目快速失败红线一致。多用户具名 Token(哈希入库)见迭代 5。
+// 且与本项目快速失败红线一致。
 // @return 上传鉴权 Token
 // @return 未配置 Token 时的错误
 func provideToken(cfg config.Config) (string, error) {

@@ -1,6 +1,6 @@
-// Package dedup 后台查重与合并(设计定稿·查重与合并):机器发现,人做不可逆决定。
+// Package dedup 后台查重与合并:机器发现,人做不可逆决定。
 // 精确重复(SHA256 相同、字节完全一致)零风险自动合并;相似重复(pHash 汉明距离)
-// 走人工裁决(后台 UI,迭代 5 补)。查重是纯 DB 操作,不在上传热路径。
+// 走人工裁决。查重是纯 DB 操作,不在上传热路径。
 package dedup
 
 import (
@@ -16,20 +16,15 @@ import (
 
 // Config Merger 依赖与参数。
 type Config struct {
-	// Conn 数据库连接(合并事务用)。
-	Conn *sql.DB
-	// Queries sqlc 查询集。
-	Queries *db.Queries
-	// Grace 冗余 blob 物理删宽限(与生命周期一致);合并后冗余 blob 交 sweeper 物理删。
-	Grace time.Duration
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Conn    *sql.DB       // 数据库连接(合并事务用)
+	Queries *db.Queries   // sqlc 查询集
+	Grace   time.Duration // 冗余 blob 物理删宽限(与生命周期一致);合并后冗余 blob 交 sweeper 物理删
+	Logger  *slog.Logger  // 结构化日志
 }
 
 // Merger 精确重复合并器,无可变状态、并发安全。
 type Merger struct {
-	// cfg 依赖。
-	cfg Config
+	cfg Config // 依赖
 }
 
 // New 创建合并器。

@@ -1,5 +1,5 @@
 // Package replication 副本补齐与对账:River 驱动"确保 blob X 在渠道 Y 有副本",
-// 并含 blob_channels 双向对账 GC(设计定稿·上传管理/可靠性)。
+// 并含 blob_channels 双向对账 GC。
 // 围栏设计:blob_channels 业务表是唯一真相,River 任务只是幂等触发器——
 // 任务表损坏或丢失时,Reconcile 可从业务表完整重建队列。
 package replication
@@ -36,10 +36,8 @@ const replicateJobTimeout = 15 * time.Minute
 
 // ReplicateArgs 补齐一份副本的任务参数。
 type ReplicateArgs struct {
-	// BlobID 物理图主键。
-	BlobID int64 `json:"blob_id"`
-	// ChannelID 目标渠道主键。
-	ChannelID int64 `json:"channel_id"`
+	BlobID    int64 `json:"blob_id"`    // 物理图主键
+	ChannelID int64 `json:"channel_id"` // 目标渠道主键
 }
 
 // Kind 任务类型标识(River 要求)。
@@ -52,10 +50,8 @@ func (ReplicateArgs) InsertOpts() river.InsertOpts {
 
 // DeleteObjectArgs 删除某渠道内一个对象的任务参数(三段式删除的级联执行)。
 type DeleteObjectArgs struct {
-	// ChannelID 目标渠道主键。
-	ChannelID int64 `json:"channel_id"`
-	// StorageKey 待删对象键。
-	StorageKey string `json:"storage_key"`
+	ChannelID  int64  `json:"channel_id"`  // 目标渠道主键
+	StorageKey string `json:"storage_key"` // 待删对象键
 }
 
 // Kind 任务类型标识(River 要求)。
@@ -68,22 +64,16 @@ func (DeleteObjectArgs) InsertOpts() river.InsertOpts {
 
 // RunnerConfig Runner 的全部依赖。
 type RunnerConfig struct {
-	// Conn 数据库连接(River 复用同一 SQLite)。
-	Conn *sql.DB
-	// Queries sqlc 查询集。
-	Queries *db.Queries
-	// Manager 渠道管理器(取源/目标驱动)。
-	Manager *channel.Manager
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Conn    *sql.DB          // 数据库连接(River 复用同一 SQLite)
+	Queries *db.Queries      // sqlc 查询集
+	Manager *channel.Manager // 渠道管理器(取源/目标驱动)
+	Logger  *slog.Logger     // 结构化日志
 }
 
 // Runner 补齐子系统:封装 River client 的生命周期与入队/恢复扫描。
 type Runner struct {
-	// cfg 依赖。
-	cfg RunnerConfig
-	// client River 客户端。
-	client *river.Client[*sql.Tx]
+	cfg    RunnerConfig           // 依赖
+	client *river.Client[*sql.Tx] // River 客户端
 }
 
 // NewRunner 创建 Runner:执行 River 自身迁移并注册 worker。
@@ -220,8 +210,7 @@ func (r *Runner) Reconcile(ctx context.Context) error {
 // replicateWorker 单份副本的复制执行器。
 type replicateWorker struct {
 	river.WorkerDefaults[ReplicateArgs]
-	// cfg Runner 依赖(共享)。
-	cfg RunnerConfig
+	cfg RunnerConfig // Runner 依赖(共享)
 }
 
 // Timeout 单任务执行超时(River 到时中断,防慢渠道占死 worker)。
@@ -316,8 +305,7 @@ func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, sta
 // deleteObjectWorker 渠道对象删除执行器(三段式删除的物理级联)。
 type deleteObjectWorker struct {
 	river.WorkerDefaults[DeleteObjectArgs]
-	// cfg Runner 依赖(共享)。
-	cfg RunnerConfig
+	cfg RunnerConfig // Runner 依赖(共享)
 }
 
 // Timeout 单任务执行超时。
@@ -328,7 +316,7 @@ func (w *deleteObjectWorker) Timeout(*river.Job[DeleteObjectArgs]) time.Duration
 // Work 从目标渠道删除一个对象。
 // @Description: 幂等——对象已不存在(ErrNotFound)视为删除成功;渠道已被删则任务作废
 // (对象随渠道消失或成孤儿由对账 GC 兜底)。其余错误交 River 重试,永久失败后对象
-// 成为孤儿,由对账 GC 最终回收(设计定稿·删除重试队列由对账兜底)。
+// 成为孤儿,由对账 GC 最终回收。
 func (w *deleteObjectWorker) Work(ctx context.Context, job *river.Job[DeleteObjectArgs]) error {
 	args := job.Args
 	h, ok := w.cfg.Manager.Get(args.ChannelID)

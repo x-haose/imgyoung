@@ -1,9 +1,8 @@
-// Package driver 定义 StorageDriver 抽象层(设计定稿·StorageDriver 抽象层)。
+// Package driver 定义 StorageDriver 抽象层。
 //
 // 抽象层只负责"把字节存到某后端 / 取回 / 查存在性 / 删除",
 // 不承载任何业务语义(去重、TTL、主备等全部在 core 层);且不 import 任何具体后端,
-// 是可复用存储引擎的接口缝——rclone.Driver 等实现依赖本包,而本包不反向依赖它们
-// (设计定稿·7.4 库化边界)。
+// 是可复用存储引擎的接口缝——rclone.Driver 等实现依赖本包,而本包不反向依赖它们。
 package driver
 
 import (
@@ -19,12 +18,9 @@ var ErrNotFound = errors.New("storage: object not found")
 
 // ObjectInfo 渠道内对象的基本信息。
 type ObjectInfo struct {
-	// Key 渠道内对象键(相对路径形式)。
-	Key string
-	// Size 对象字节大小。
-	Size int64
-	// ModTime 对象修改时间(对账宽限期与备份保留判断依据)。
-	ModTime time.Time
+	Key     string    // 渠道内对象键(相对路径形式)
+	Size    int64     // 对象字节大小
+	ModTime time.Time // 对象修改时间(对账宽限期与备份保留判断依据)
 }
 
 // Driver 存储执行器抽象。

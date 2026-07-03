@@ -162,7 +162,7 @@ func TestProcessStoresPNG(t *testing.T) {
 }
 
 // TestProcessStripsJPEGMetadata 验证 JPEG 上传时 EXIF 被剥离,
-// 且哈希基于净化后的字节(设计定稿:先净化后哈希)。
+// 且哈希基于净化后的字节(先净化后哈希)。
 func TestProcessStripsJPEGMetadata(t *testing.T) {
 	env := newTestEnv(t, 1<<20)
 	payload := jpegWithEXIF(t)
@@ -279,7 +279,7 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 }
 
 // TestProcessFallsBackWhenPrimaryFails 验证上传降级:主渠道写入失败时
-// 自动顺延下一健康渠道,不整体报错(设计定稿·上传失败→降级下一渠道)。
+// 自动顺延下一健康渠道,不整体报错。
 func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
 	env := newTestEnv(t, 1<<20)
 	brokenDir := t.TempDir()

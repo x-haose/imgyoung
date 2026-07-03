@@ -26,16 +26,13 @@ const idempotencyHeader = "Idempotency-Key"
 
 // uploadResponse 上传成功的响应体。
 type uploadResponse struct {
-	// ID 对外短 ID。
-	ID string `json:"id"`
-	// URL 图片访问地址;配置了 base_url 时为绝对地址,否则为相对路径。
-	URL string `json:"url"`
+	ID  string `json:"id"`  // 对外短 ID
+	URL string `json:"url"` // 图片访问地址;配置了 base_url 时为绝对地址,否则为相对路径
 }
 
 // errorResponse API 错误的统一信封。
 type errorResponse struct {
-	// Error 面向用户的错误描述,不泄露内部细节。
-	Error string `json:"error"`
+	Error string `json:"error"` // 面向用户的错误描述,不泄露内部细节
 }
 
 // requireToken 上传鉴权中间件。
@@ -60,7 +57,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// resolveExpiry 解析本次上传的到期时刻:单次 ttl 字段 > 全局默认(设计定稿·TTL 三层粒度)。
+// resolveExpiry 解析本次上传的到期时刻:单次 ttl 字段 > 全局默认。
 // @Description: ttl 单位秒;"never" 或 0 显式永久;空则用全局默认(默认为 0 亦永久)。
 // @param r 上传请求
 // @return 到期时刻(零值表示永不过期)
@@ -156,7 +153,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleServe 按短 ID 代理输出图片(设计定稿·默认代理)。
+// handleServe 按短 ID 代理输出图片。
 func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 	imageID := chi.URLParam(r, "id")
 
@@ -189,14 +186,13 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(candidates) == 0 {
-		// 引用存在但当前无健康渠道持有就绪副本;一致性由对账任务兜底
-		// (见设计定稿·可靠性与灾备)。
+		// 引用存在但当前无健康渠道持有就绪副本;一致性由对账任务兜底。
 		s.cfg.Logger.Warn("无可用渠道服务该图", "id", imageID)
 		http.Error(w, "渠道暂不可用", http.StatusServiceUnavailable)
 		return
 	}
 
-	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向(设计定稿·访问管理)。
+	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向。
 	if s.cfg.RedirectMode {
 		for _, cand := range candidates {
 			if cand.AllowDirectLink && !cand.Encrypted && cand.PublicBaseURL != "" {
@@ -207,7 +203,7 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		// 无直链候选,回退代理。
 	}
 
-	// 访问容灾:按优先级逐个尝试,取第一个能打开的渠道(设计定稿·自动切换)。
+	// 访问容灾:按优先级逐个尝试,取第一个能打开的渠道。
 	var rc io.ReadCloser
 	for _, cand := range candidates {
 		rc, err = cand.Driver.Open(r.Context(), row.StorageKey)

@@ -1,5 +1,5 @@
 // Package config 装配运行配置,优先级由低到高:内嵌默认 config.yml < 外部
-// configs/config.yml < 环境变量(IMGYOUNG_*)。基于 koanf(设计定稿·依赖清单);
+// configs/config.yml < 环境变量(IMGYOUNG_*)。基于 koanf;
 // 渠道等业务配置存 DB,本包只管进程级配置。
 package config
 
@@ -47,10 +47,10 @@ type Config struct {
 	DataDir              string             `koanf:"data_dir"`               // 数据目录(SQLite 与本地渠道)
 	Token                string             `koanf:"token"`                  // 上传鉴权 Token,必填;未配置则启动失败
 	MasterKey            string             `koanf:"master_key"`             // 主密钥(64 位 hex);为空则用数据目录文件
-	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限(设计定稿·内存防护)
+	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限
 	BaseURL              string             `koanf:"base_url"`               // 对外站点地址(去尾斜杠);空则返回相对路径
 	RefererWhitelist     []string           `koanf:"referer_whitelist"`      // 防盗链白名单;空表示不启用
-	AllowEmptyReferer    bool               `koanf:"allow_empty_referer"`    // 空 Referer 是否放行(设计定稿·防盗链)
+	AllowEmptyReferer    bool               `koanf:"allow_empty_referer"`    // 空 Referer 是否放行
 	EXIFPolicy           imaging.EXIFPolicy `koanf:"exif_policy"`            // 全局默认 EXIF 档位,单次上传可覆盖;枚举见 imaging
 	MinSuccess           int                `koanf:"min_success"`            // 上传返回成功所需的最少同步副本数
 	AccessMode           string             `koanf:"access_mode"`            // 访问模式:proxy(代理)/ redirect(302 省流量)
@@ -148,7 +148,7 @@ func envProvider() koanf.Provider {
 	})
 }
 
-// validate 校验数值边界与枚举,首个非法项即返回(设计定稿·输入验证)。
+// validate 校验数值边界与枚举,首个非法项即返回。
 // @Description: 单位化字段的错误按原始单位(MB / 百万像素)提示,便于用户定位。
 // @return 非法配置的错误;全部合法时为 nil
 func (c Config) validate() error {

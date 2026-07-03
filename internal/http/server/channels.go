@@ -31,18 +31,12 @@ type ChannelAdmin interface {
 
 // channelCreateRequest 创建渠道的请求体。
 type channelCreateRequest struct {
-	// Name 渠道名(唯一)。
-	Name string `json:"name"`
-	// Driver rclone 后端名。
-	Driver string `json:"driver"`
-	// Priority 优先级,越大越优先。
-	Priority int64 `json:"priority"`
-	// Encrypted 是否加密渠道;缺省用全局默认(创建时固化)。
-	Encrypted *bool `json:"encrypted"`
-	// AllowDirectLink 是否允许 302 直链。
-	AllowDirectLink bool `json:"allow_direct_link"`
-	// Config 后端参数(含约定键 path / public_base_url)。
-	Config map[string]string `json:"config"`
+	Name            string            `json:"name"`              // 渠道名(唯一)
+	Driver          string            `json:"driver"`            // rclone 后端名
+	Priority        int64             `json:"priority"`          // 优先级,越大越优先
+	Encrypted       *bool             `json:"encrypted"`         // 是否加密渠道;缺省用全局默认(创建时固化)
+	AllowDirectLink bool              `json:"allow_direct_link"` // 是否允许 302 直链
+	Config          map[string]string `json:"config"`            // 后端参数(含约定键 path / public_base_url)
 }
 
 // handleChannelCreate 创建渠道。
@@ -72,7 +66,7 @@ func (s *Server) handleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, channel.ErrInvalidChannel):
 		s.writeError(w, http.StatusBadRequest, "渠道参数非法或后端无法初始化")
 		return
-	// SQLite 无类型化的唯一约束错误,按消息识别(见 CLAUDE.md 注释红线的例外:约束说明)。
+	// SQLite 无类型化的唯一约束错误,按消息识别。
 	case err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed"):
 		s.writeError(w, http.StatusConflict, "渠道名已存在")
 		return

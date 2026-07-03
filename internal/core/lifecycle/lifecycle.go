@@ -1,4 +1,4 @@
-// Package lifecycle 生命周期与清理(设计定稿·生命周期与清理):
+// Package lifecycle 生命周期与清理:
 // TTL 到期扫描 → 引用计数递减 → 三段式物理删(标记 → 宽限 → 物理删)级联渠道副本。
 // 基于查询兜底——进程宕机漏扫,重启后按 expire_at / delete_after 自动追赶。
 package lifecycle
@@ -25,25 +25,17 @@ type Deleter interface {
 
 // Config Sweeper 的依赖与参数。
 type Config struct {
-	// Conn 数据库连接(多步删除的事务用)。
-	Conn *sql.DB
-	// Queries sqlc 查询集。
-	Queries *db.Queries
-	// Deleter 渠道对象删除入队口。
-	Deleter Deleter
-	// Grace 物理删宽限:引用归零打标到实际物理删的等待,可为 0(设计定稿·删除三段式)。
-	Grace time.Duration
-	// ColdThreshold 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;
-	// <=0 表示不启用(设计定稿·待清理标签:机器发现,人做不可逆决定)。
-	ColdThreshold time.Duration
-	// Logger 结构化日志。
-	Logger *slog.Logger
+	Conn          *sql.DB       // 数据库连接(多步删除的事务用)
+	Queries       *db.Queries   // sqlc 查询集
+	Deleter       Deleter       // 渠道对象删除入队口
+	Grace         time.Duration // 物理删宽限:引用归零打标到实际物理删的等待,可为 0
+	ColdThreshold time.Duration // 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;<=0 表示不启用
+	Logger        *slog.Logger  // 结构化日志
 }
 
 // Sweeper 清理器,无可变状态、并发安全。
 type Sweeper struct {
-	// cfg 依赖。
-	cfg Config
+	cfg Config // 依赖
 }
 
 // New 创建清理器。
@@ -174,8 +166,8 @@ func (s *Sweeper) physicalDelete(ctx context.Context) error {
 }
 
 // deleteBlob 物理删一个物理图:先取副本渠道清单,事务内删业务行,再级联入队删渠道对象。
-// @Description: 渠道对象删除走 best-effort 入队——失败即对象成孤儿,由对账 GC 最终回收
-// (设计定稿·删除重试队列由对账兜底),不阻塞逻辑删。
+// @Description: 渠道对象删除走 best-effort 入队——失败即对象成孤儿,由对账 GC 最终回收,
+// 不阻塞逻辑删。
 // @return 事务失败时的错误
 func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey string) error {
 	// 删业务行前取副本渠道清单(删后就查不到了)。
