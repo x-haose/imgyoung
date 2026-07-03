@@ -19,7 +19,7 @@ import (
 	"github.com/corona10/goimagehash"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 
@@ -101,7 +101,7 @@ type ReplicationEnqueuer interface {
 // Config Service 的全部依赖与参数。
 type Config struct {
 	Conn       *sql.DB             // 数据库连接(事务用)
-	Queries    *db.Queries         // sqlc 查询集
+	Queries    *sqlc.Queries       // sqlc 查询集
 	Channels   ChannelSelector     // 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐
 	Replicator ReplicationEnqueuer // 补齐入队口;可为 nil(pending 行由恢复扫描兜底)
 	MaxPixels  int64               // 像素预算(width × height 上限)
@@ -343,7 +343,7 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 
 	q := s.cfg.Queries.WithTx(tx)
-	blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
 		Sha256:     p.sha256,
 		Phash:      p.phash,
 		StorageKey: p.key,
@@ -357,12 +357,12 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	}
 	expireAt := sql.NullString{}
 	if !p.expireAt.IsZero() {
-		expireAt = sql.NullString{String: db.TimeText(p.expireAt), Valid: true}
+		expireAt = sql.NullString{String: sqlc.TimeText(p.expireAt), Valid: true}
 	}
-	if err = q.CreateImage(ctx, db.CreateImageParams{
+	if err = q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID:       p.shortID,
 		BlobID:   blobID,
-		UserID:   sql.NullString{String: db.DefaultUserID, Valid: true},
+		UserID:   sql.NullString{String: sqlc.DefaultUserID, Valid: true},
 		FileName: p.fileName,
 		ExpireAt: expireAt,
 	}); err != nil {
@@ -378,14 +378,14 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 		if _, ok := done[h.ID]; ok {
 			state = channel.StateDone
 		}
-		if err = q.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{
+		if err = q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
 			BlobID: blobID, ChannelID: h.ID, State: state,
 		}); err != nil {
 			return 0, fmt.Errorf("写入副本状态(渠道 %d): %w", h.ID, err)
 		}
 	}
 	if p.idemKey != "" {
-		if err = q.CreateIdempotencyKey(ctx, db.CreateIdempotencyKeyParams{
+		if err = q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
 			Key:     p.idemKey,
 			ImageID: p.shortID,
 		}); err != nil {

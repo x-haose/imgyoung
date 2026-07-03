@@ -21,6 +21,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	storagedriver "github.com/x-haose/imgyoung/internal/store/driver"
@@ -29,7 +30,7 @@ import (
 // testEnv 上传服务测试环境:临时 DB + 临时 local 渠道。
 type testEnv struct {
 	svc     *upload.Service
-	queries *db.Queries
+	queries *sqlc.Queries
 	driver  storagedriver.Driver
 	mgr     *channel.Manager
 }
@@ -54,7 +55,7 @@ func newTestEnv(t *testing.T, maxPixels int64) *testEnv {
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := db.New(conn)
+	queries := sqlc.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn:    conn,
 		Queries: queries,
@@ -237,7 +238,7 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加密渠道配置: %v", err)
 	}
-	primaryID, err := env.queries.CreateChannel(t.Context(), db.CreateChannelParams{
+	primaryID, err := env.queries.CreateChannel(t.Context(), sqlc.CreateChannelParams{
 		Name: "fast", Driver: "local", ConfigSealed: sealed, Priority: 200,
 	})
 	if err != nil {
@@ -291,7 +292,7 @@ func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("加密渠道配置: %v", err)
 	}
-	brokenID, err := env.queries.CreateChannel(t.Context(), db.CreateChannelParams{
+	brokenID, err := env.queries.CreateChannel(t.Context(), sqlc.CreateChannelParams{
 		Name: "broken-primary", Driver: "local", ConfigSealed: sealed, Priority: 300,
 	})
 	if err != nil {

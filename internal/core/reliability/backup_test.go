@@ -9,6 +9,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
@@ -16,7 +17,7 @@ import (
 // testEnv 备份测试环境。
 type testEnv struct {
 	svc     *reliability.Service
-	queries *db.Queries
+	queries *sqlc.Queries
 	mgr     *channel.Manager
 	dataDir string
 }
@@ -41,7 +42,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := db.New(conn)
+	queries := sqlc.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn: conn, Queries: queries, Master: master, DataDir: dir,
 		Logger: slog.New(slog.DiscardHandler),
@@ -51,14 +52,14 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 
 	// 造一条可供恢复校验的记录。
-	blobID, err := queries.CreateBlob(t.Context(), db.CreateBlobParams{
+	blobID, err := queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: "backuphash", Phash: 1, StorageKey: "k_00000000",
 		Mime: "image/png", Size: 1, Width: 1, Height: 1,
 	})
 	if err != nil {
 		t.Fatalf("创建 blob: %v", err)
 	}
-	if err := queries.CreateImage(t.Context(), db.CreateImageParams{
+	if err := queries.CreateImage(t.Context(), sqlc.CreateImageParams{
 		ID: "restoreme01", BlobID: blobID, FileName: "a.png",
 	}); err != nil {
 		t.Fatalf("创建引用: %v", err)
@@ -115,7 +116,7 @@ func TestRunOnceUploadsSnapshot(t *testing.T) {
 			t.Errorf("关闭快照数据库: %v", cerr)
 		}
 	}()
-	row, err := db.New(restored).GetImageBlob(t.Context(), "restoreme01")
+	row, err := sqlc.New(restored).GetImageBlob(t.Context(), "restoreme01")
 	if err != nil || row.StorageKey != "k_00000000" {
 		t.Fatalf("快照中查询引用失败: %v (%+v)", err, row)
 	}

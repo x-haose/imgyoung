@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 	"github.com/x-haose/imgyoung/internal/store/rclone"
@@ -37,7 +37,7 @@ type Handle struct {
 // ManagerConfig 管理器依赖。
 type ManagerConfig struct {
 	Conn    *sql.DB           // 数据库连接(删除渠道等需要事务的操作用)
-	Queries *db.Queries       // sqlc 查询集
+	Queries *sqlc.Queries     // sqlc 查询集
 	Master  *secret.MasterKey // 主密钥(解密渠道配置、派生 crypt 密码)
 	DataDir string            // 数据目录(内置 local 渠道的默认存储位置)
 	Logger  *slog.Logger      // 结构化日志
@@ -194,7 +194,7 @@ func (m *Manager) SealConfig(plain string) (string, error) {
 // @param row 渠道记录
 // @return 就绪的驱动与解密后的原始参数表(含约定键)
 // @return 解密、解析或后端初始化失败时的错误
-func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (driver.Driver, map[string]string, error) {
+func (m *Manager) buildDriver(ctx context.Context, row sqlc.Channel) (driver.Driver, map[string]string, error) {
 	params := map[string]string{}
 	if row.ConfigSealed != "" {
 		plain, err := m.cfg.Master.DecryptString(row.ConfigSealed)
@@ -261,7 +261,7 @@ func (m *Manager) Get(channelID int64) (Handle, bool) {
 // @param usage 用途后缀
 // @return 64 位 hex 字符串
 // @return 派生失败时的错误
-func (m *Manager) deriveHex(row db.Channel, usage string) (string, error) {
+func (m *Manager) deriveHex(row sqlc.Channel, usage string) (string, error) {
 	purpose := fmt.Sprintf("channel:%d:%s:%s", row.ID, row.CreatedAt, usage)
 	raw, err := m.cfg.Master.Derive(purpose, 32)
 	if err != nil {

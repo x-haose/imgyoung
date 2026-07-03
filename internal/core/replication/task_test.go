@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
@@ -20,7 +21,7 @@ import (
 // testEnv 补齐任务测试环境:两个 local 渠道 + River Runner。
 type testEnv struct {
 	runner  *replication.Runner
-	queries *db.Queries
+	queries *sqlc.Queries
 	mgr     *channel.Manager
 	dataDir string
 	local   channel.Handle // 内置 local(低优先级)
@@ -47,7 +48,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := db.New(conn)
+	queries := sqlc.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn: conn, Queries: queries, Master: master, DataDir: dir,
 		Logger: slog.New(slog.DiscardHandler),
@@ -101,7 +102,7 @@ func seedBlob(t *testing.T, env *testEnv) (int64, string) {
 	if err := env.local.Driver.Put(t.Context(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
 		t.Fatalf("写源对象: %v", err)
 	}
-	blobID, err := env.queries.CreateBlob(t.Context(), db.CreateBlobParams{
+	blobID, err := env.queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: "seedhash", Phash: 1, StorageKey: key, Mime: "image/png",
 		Size: int64(len(payload)), Width: 1, Height: 1,
 	})
@@ -110,7 +111,7 @@ func seedBlob(t *testing.T, env *testEnv) (int64, string) {
 	}
 	mustUpsert := func(chID int64, state string) {
 		t.Helper()
-		if err := env.queries.UpsertBlobChannel(t.Context(), db.UpsertBlobChannelParams{
+		if err := env.queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
 			BlobID: blobID, ChannelID: chID, State: state,
 		}); err != nil {
 			t.Fatalf("写副本状态: %v", err)
@@ -126,7 +127,7 @@ func waitDone(t *testing.T, env *testEnv, blobID, chID int64) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		row, err := env.queries.GetBlobChannel(t.Context(), db.GetBlobChannelParams{
+		row, err := env.queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{
 			BlobID: blobID, ChannelID: chID,
 		})
 		if err == nil && row.State == channel.StateDone {
@@ -177,7 +178,7 @@ func TestReconcileRequeuesPending(t *testing.T) {
 func TestReconcileResetsFailedOnHealthyChannel(t *testing.T) {
 	env := newTestEnv(t)
 	blobID, _ := seedBlob(t, env)
-	if err := env.queries.UpsertBlobChannel(t.Context(), db.UpsertBlobChannelParams{
+	if err := env.queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
 		BlobID: blobID, ChannelID: env.backup.ID, State: channel.StateFailed,
 	}); err != nil {
 		t.Fatalf("标记副本失败态: %v", err)
@@ -233,7 +234,7 @@ func TestGCRecoversPhantom(t *testing.T) {
 	ctx := t.Context()
 	blobID, key := seedBlob(t, env)
 	// 把 backup 渠道标成就绪,但从不真正写入对象 → 幻影。
-	if err := env.queries.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{
+	if err := env.queries.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
 		BlobID: blobID, ChannelID: env.backup.ID, State: channel.StateDone,
 	}); err != nil {
 		t.Fatalf("伪造幻影副本: %v", err)

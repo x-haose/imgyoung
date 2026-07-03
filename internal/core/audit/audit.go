@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // 动作标识常量(action 列取值),形如 "领域.动作"。
@@ -19,13 +19,13 @@ const (
 
 // Recorder 审计记录器,追加写 audit_log。
 type Recorder struct {
-	q *db.Queries // sqlc 查询句柄
+	q *sqlc.Queries // sqlc 查询句柄
 }
 
 // New 创建审计记录器。
 // @param q 查询句柄
 // @return 就绪的记录器
-func New(q *db.Queries) *Recorder { return &Recorder{q: q} }
+func New(q *sqlc.Queries) *Recorder { return &Recorder{q: q} }
 
 // Record 追加一条审计记录。
 // @Description: 调用方决定失败是否阻断主操作;管理操作通常以 best-effort 记录,
@@ -37,7 +37,7 @@ func New(q *db.Queries) *Recorder { return &Recorder{q: q} }
 // @param detail 附加说明,可空
 // @return 写入失败时的错误
 func (r *Recorder) Record(ctx context.Context, actor, action, target, detail string) error {
-	if err := r.q.CreateAuditLog(ctx, db.CreateAuditLogParams{
+	if err := r.q.CreateAuditLog(ctx, sqlc.CreateAuditLogParams{
 		Actor: actor, Action: action, Target: target, Detail: detail,
 	}); err != nil {
 		return fmt.Errorf("写入审计记录: %w", err)

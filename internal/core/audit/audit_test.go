@@ -6,6 +6,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // TestRecordAppendsRow 验证 Record 写入的字段完整落库。
@@ -23,7 +24,7 @@ func TestRecordAppendsRow(t *testing.T) {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
 
-	rec := audit.New(db.New(conn))
+	rec := audit.New(sqlc.New(conn))
 	if err := rec.Record(t.Context(), "default", audit.ActionChannelCreate, "r2", "id=2 encrypted=true"); err != nil {
 		t.Fatalf("Record 返回错误: %v", err)
 	}

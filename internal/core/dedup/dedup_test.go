@@ -9,10 +9,11 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/dedup"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // setup 打开临时库并迁移。
-func setup(t *testing.T) (*sql.DB, *db.Queries) {
+func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -22,21 +23,21 @@ func setup(t *testing.T) (*sql.DB, *db.Queries) {
 	if err := db.Migrate(conn); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
-	return conn, db.New(conn)
+	return conn, sqlc.New(conn)
 }
 
 // mkBlobWithImage 造一个 blob(指定 sha256/key)及其一条引用。
 // @return blob 主键
-func mkBlobWithImage(t *testing.T, ctx context.Context, q *db.Queries, sha, key, imageID string) int64 {
+func mkBlobWithImage(t *testing.T, ctx context.Context, q *sqlc.Queries, sha, key, imageID string) int64 {
 	t.Helper()
-	blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
 		Sha256: sha, Phash: 1, StorageKey: key, Mime: "image/png", Size: 3, Width: 1, Height: 1,
 	})
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
-	if err := q.CreateImage(ctx, db.CreateImageParams{
-		ID: imageID, BlobID: blobID, UserID: sql.NullString{String: db.DefaultUserID, Valid: true},
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: imageID, BlobID: blobID, UserID: sql.NullString{String: sqlc.DefaultUserID, Valid: true},
 	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}

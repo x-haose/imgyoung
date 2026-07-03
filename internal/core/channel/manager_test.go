@@ -12,13 +12,14 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
 // testEnv 管理器测试环境。
 type testEnv struct {
 	mgr     *channel.Manager
-	queries *db.Queries
+	queries *sqlc.Queries
 	dataDir string
 }
 
@@ -42,7 +43,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := db.New(conn)
+	queries := sqlc.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn:    conn,
 		Queries: queries,
@@ -73,7 +74,7 @@ func addChannel(t *testing.T, env *testEnv, name string, priority int64, encrypt
 	if encrypted {
 		enc = 1
 	}
-	id, err := env.queries.CreateChannel(t.Context(), db.CreateChannelParams{
+	id, err := env.queries.CreateChannel(t.Context(), sqlc.CreateChannelParams{
 		Name:         name,
 		Driver:       "local",
 		ConfigSealed: sealed,
@@ -130,7 +131,7 @@ func TestManagerPrimaryByPriority(t *testing.T) {
 func TestManagerSkipsUnhealthyPrimary(t *testing.T) {
 	env := newTestEnv(t)
 	id, _ := addChannel(t, env, "backup-high", 200, false)
-	if err := env.queries.UpdateChannelHealth(t.Context(), db.UpdateChannelHealthParams{Healthy: 0, ID: id}); err != nil {
+	if err := env.queries.UpdateChannelHealth(t.Context(), sqlc.UpdateChannelHealthParams{Healthy: 0, ID: id}); err != nil {
 		t.Fatalf("标记渠道不健康: %v", err)
 	}
 	if err := env.mgr.Reload(t.Context()); err != nil {
@@ -200,7 +201,7 @@ func TestManagerCandidatesForBlob(t *testing.T) {
 	highID, _ := addChannel(t, env, "backup-high", 300, false)
 
 	// 造一个 blob:副本只在内置 local(done),高优先级渠道为 pending。
-	blobID, err := env.queries.CreateBlob(t.Context(), db.CreateBlobParams{
+	blobID, err := env.queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: "ab", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
 	})
 	if err != nil {
@@ -220,7 +221,7 @@ func TestManagerCandidatesForBlob(t *testing.T) {
 	}
 	mustUpsert := func(chID int64, state string) {
 		t.Helper()
-		if err := env.queries.UpsertBlobChannel(t.Context(), db.UpsertBlobChannelParams{
+		if err := env.queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
 			BlobID: blobID, ChannelID: chID, State: state,
 		}); err != nil {
 			t.Fatalf("写副本状态: %v", err)
@@ -306,7 +307,7 @@ func TestManagerCheckAll(t *testing.T) {
 func TestManagerNoHealthyChannel(t *testing.T) {
 	env := newTestEnv(t)
 	for _, h := range env.mgr.All() {
-		if err := env.queries.UpdateChannelHealth(t.Context(), db.UpdateChannelHealthParams{Healthy: 0, ID: h.ID}); err != nil {
+		if err := env.queries.UpdateChannelHealth(t.Context(), sqlc.UpdateChannelHealthParams{Healthy: 0, ID: h.ID}); err != nil {
 			t.Fatalf("标记不健康: %v", err)
 		}
 	}

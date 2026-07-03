@@ -11,7 +11,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // sweepBatch 单轮扫描处理的上限;超出的留待下一轮,避免长事务与无限循环。
@@ -26,7 +26,7 @@ type Deleter interface {
 // Config Sweeper 的依赖与参数。
 type Config struct {
 	Conn          *sql.DB       // 数据库连接(多步删除的事务用)
-	Queries       *db.Queries   // sqlc 查询集
+	Queries       *sqlc.Queries // sqlc 查询集
 	Deleter       Deleter       // 渠道对象删除入队口
 	Grace         time.Duration // 物理删宽限:引用归零打标到实际物理删的等待,可为 0
 	ColdThreshold time.Duration // 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;<=0 表示不启用
@@ -84,7 +84,7 @@ func (s *Sweeper) labelColdImages(ctx context.Context) error {
 	if s.cfg.ColdThreshold <= 0 {
 		return nil
 	}
-	cutoff := sql.NullString{String: db.TimeText(time.Now().Add(-s.cfg.ColdThreshold)), Valid: true}
+	cutoff := sql.NullString{String: sqlc.TimeText(time.Now().Add(-s.cfg.ColdThreshold)), Valid: true}
 	n, err := s.cfg.Queries.LabelColdImages(ctx, cutoff)
 	if err != nil {
 		return fmt.Errorf("标记冷图待清理: %w", err)
@@ -98,8 +98,8 @@ func (s *Sweeper) labelColdImages(ctx context.Context) error {
 // expireImages 回收到期引用:删引用与其幂等键、递减物理图引用计数,归零则打物理删标记。
 // @return 扫描失败时的错误
 func (s *Sweeper) expireImages(ctx context.Context) error {
-	now := sql.NullString{String: db.TimeText(time.Now()), Valid: true}
-	rows, err := s.cfg.Queries.ListExpiredImages(ctx, db.ListExpiredImagesParams{ExpireAt: now, Limit: sweepBatch})
+	now := sql.NullString{String: sqlc.TimeText(time.Now()), Valid: true}
+	rows, err := s.cfg.Queries.ListExpiredImages(ctx, sqlc.ListExpiredImagesParams{ExpireAt: now, Limit: sweepBatch})
 	if err != nil {
 		return fmt.Errorf("扫描到期引用: %w", err)
 	}
@@ -135,8 +135,8 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 		return fmt.Errorf("递减引用计数: %w", err)
 	}
 	if refCount <= 0 {
-		deleteAfter := sql.NullString{String: db.TimeText(time.Now().Add(s.cfg.Grace)), Valid: true}
-		if err := q.MarkBlobForDelete(ctx, db.MarkBlobForDeleteParams{DeleteAfter: deleteAfter, ID: blobID}); err != nil {
+		deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(s.cfg.Grace)), Valid: true}
+		if err := q.MarkBlobForDelete(ctx, sqlc.MarkBlobForDeleteParams{DeleteAfter: deleteAfter, ID: blobID}); err != nil {
 			return fmt.Errorf("标记物理图待删: %w", err)
 		}
 	}
@@ -149,8 +149,8 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 // physicalDelete 物理删已过宽限的物理图:事务内删业务行,再级联入队删渠道对象。
 // @return 扫描失败时的错误
 func (s *Sweeper) physicalDelete(ctx context.Context) error {
-	now := sql.NullString{String: db.TimeText(time.Now()), Valid: true}
-	rows, err := s.cfg.Queries.ListBlobsToDelete(ctx, db.ListBlobsToDeleteParams{DeleteAfter: now, Limit: sweepBatch})
+	now := sql.NullString{String: sqlc.TimeText(time.Now()), Valid: true}
+	rows, err := s.cfg.Queries.ListBlobsToDelete(ctx, sqlc.ListBlobsToDeleteParams{DeleteAfter: now, Limit: sweepBatch})
 	if err != nil {
 		return fmt.Errorf("扫描待物理删物理图: %w", err)
 	}

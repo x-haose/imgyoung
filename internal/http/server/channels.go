@@ -13,7 +13,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // channelBodyLimit 渠道管理请求体上限。
@@ -121,7 +121,7 @@ func (s *Server) handleChannelDelete(w http.ResponseWriter, r *http.Request) {
 // @param target 操作目标标识
 // @param detail 附加说明
 func (s *Server) recordAudit(ctx context.Context, action, target, detail string) {
-	if err := s.cfg.Audit.Record(ctx, db.DefaultUserID, action, target, detail); err != nil {
+	if err := s.cfg.Audit.Record(ctx, sqlc.DefaultUserID, action, target, detail); err != nil {
 		s.cfg.Logger.Warn("审计记录失败", "action", action, "target", target, "err", err)
 	}
 }

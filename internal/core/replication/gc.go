@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // gcInterval 对账 GC 周期(每日低频任务)。
@@ -103,7 +103,7 @@ func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, err
 		if _, ok := onChannel[key]; ok {
 			continue
 		}
-		if merr := r.cfg.Queries.MarkBlobChannel(ctx, db.MarkBlobChannelParams{
+		if merr := r.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
 			State: channel.StatePending, LastError: "对账:渠道对象缺失", Attempts: 0,
 			BlobID: blobID, ChannelID: h.ID,
 		}); merr != nil {

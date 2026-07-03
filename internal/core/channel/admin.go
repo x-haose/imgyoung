@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
@@ -93,12 +93,12 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	}
 	// 试构造:落库前验证后端名与参数能初始化(crypt 派生依赖渠道 ID,
 	// 加密渠道以明文形态试构造,包裹层在 Reload 时再生效)。
-	trial := db.Channel{Name: p.Name, Driver: p.Driver, ConfigSealed: sealed}
+	trial := sqlc.Channel{Name: p.Name, Driver: p.Driver, ConfigSealed: sealed}
 	if _, _, err := m.buildDriver(ctx, trial); err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 
-	channelID, err := m.cfg.Queries.CreateChannel(ctx, db.CreateChannelParams{
+	channelID, err := m.cfg.Queries.CreateChannel(ctx, sqlc.CreateChannelParams{
 		Name:            p.Name,
 		Driver:          p.Driver,
 		ConfigSealed:    sealed,
@@ -202,7 +202,7 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 		if healthy {
 			state = 1
 		}
-		if err := m.cfg.Queries.UpdateChannelHealth(ctx, db.UpdateChannelHealthParams{
+		if err := m.cfg.Queries.UpdateChannelHealth(ctx, sqlc.UpdateChannelHealthParams{
 			Healthy: state, ID: c.ID,
 		}); err != nil {
 			return changed, fmt.Errorf("更新渠道 %q 健康状态: %w", c.Name, err)

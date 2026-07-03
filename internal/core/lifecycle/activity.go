@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // flushStopTimeout 停机前最后一次 flush 的超时预算。
@@ -19,7 +19,7 @@ const flushStopTimeout = 5 * time.Second
 // 避免逐请求 UPDATE 与 SQLite 单写者争锁。并发安全。
 type Tracker struct {
 	conn    *sql.DB             // 数据库连接(批量事务用)
-	queries *db.Queries         // sqlc 查询集
+	queries *sqlc.Queries       // sqlc 查询集
 	logger  *slog.Logger        // 结构化日志
 	mu      sync.Mutex          // 保护 touched
 	touched map[string]struct{} // 自上次 flush 以来被访问的引用 id 集合
@@ -30,7 +30,7 @@ type Tracker struct {
 // @param queries 查询集
 // @param logger 日志
 // @return 就绪的追踪器
-func NewTracker(conn *sql.DB, queries *db.Queries, logger *slog.Logger) *Tracker {
+func NewTracker(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *Tracker {
 	return &Tracker{conn: conn, queries: queries, logger: logger, touched: make(map[string]struct{})}
 }
 
@@ -55,7 +55,7 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	t.touched = make(map[string]struct{})
 	t.mu.Unlock()
 
-	now := sql.NullString{String: db.TimeText(time.Now()), Valid: true}
+	now := sql.NullString{String: sqlc.TimeText(time.Now()), Valid: true}
 	tx, err := t.conn.BeginTx(ctx, nil)
 	if err != nil {
 		t.requeue(batch)
@@ -65,7 +65,7 @@ func (t *Tracker) Flush(ctx context.Context) error {
 
 	q := t.queries.WithTx(tx)
 	for id := range batch {
-		if err := q.TouchImageAccess(ctx, db.TouchImageAccessParams{LastPublicAccessAt: now, ID: id}); err != nil {
+		if err := q.TouchImageAccess(ctx, sqlc.TouchImageAccessParams{LastPublicAccessAt: now, ID: id}); err != nil {
 			t.requeue(batch)
 			return fmt.Errorf("更新活跃度: %w", err)
 		}

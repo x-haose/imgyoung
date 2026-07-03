@@ -1,4 +1,6 @@
-package db
+// Package sqlc 提供 sqlc 生成的类型安全查询层,及与之同包的手写辅助。
+// db.go/models.go/queries.sql.go 由 sqlc 生成,勿手改;本文件为手写扩展。
+package sqlc
 
 import "time"
 

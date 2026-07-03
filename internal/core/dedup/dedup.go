@@ -11,13 +11,13 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // Config Merger 依赖与参数。
 type Config struct {
 	Conn    *sql.DB       // 数据库连接(合并事务用)
-	Queries *db.Queries   // sqlc 查询集
+	Queries *sqlc.Queries // sqlc 查询集
 	Grace   time.Duration // 冗余 blob 物理删宽限(与生命周期一致);合并后冗余 blob 交 sweeper 物理删
 	Logger  *slog.Logger  // 结构化日志
 }
@@ -69,7 +69,7 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 		return 0, nil // 竞态下已被其他轮合并
 	}
 	keeper := blobs[0]
-	deleteAfter := sql.NullString{String: db.TimeText(time.Now().Add(m.cfg.Grace)), Valid: true}
+	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(m.cfg.Grace)), Valid: true}
 
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -80,15 +80,15 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 
 	for _, other := range blobs[1:] {
 		// 引用改指向 keeper(内容一致,服务哪个物理副本无差别)。
-		if err := q.RepointImages(ctx, db.RepointImagesParams{BlobID: keeper.ID, BlobID_2: other.ID}); err != nil {
+		if err := q.RepointImages(ctx, sqlc.RepointImagesParams{BlobID: keeper.ID, BlobID_2: other.ID}); err != nil {
 			return 0, fmt.Errorf("改指向 keeper: %w", err)
 		}
 		// 冗余 blob 的引用计数并入 keeper。
-		if err := q.AddBlobRef(ctx, db.AddBlobRefParams{RefCount: other.RefCount, ID: keeper.ID}); err != nil {
+		if err := q.AddBlobRef(ctx, sqlc.AddBlobRefParams{RefCount: other.RefCount, ID: keeper.ID}); err != nil {
 			return 0, fmt.Errorf("并入引用计数: %w", err)
 		}
 		// 冗余 blob 打物理删标记,其对象由 sweeper 级联清除。
-		if err := q.MarkBlobMergedAway(ctx, db.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: other.ID}); err != nil {
+		if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: other.ID}); err != nil {
 			return 0, fmt.Errorf("标记冗余 blob 待删: %w", err)
 		}
 	}

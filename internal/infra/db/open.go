@@ -1,5 +1,4 @@
-// Package db 提供数据库连接、schema 迁移与 sqlc 生成的类型安全查询。
-// 本文件为手写代码;db.go/models.go/queries.sql.go 由 sqlc 生成,勿手改。
+// Package db 提供数据库连接与 schema 迁移;类型安全查询层见子包 sqlc。
 package db
 
 import (

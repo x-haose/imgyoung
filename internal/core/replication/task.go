@@ -18,7 +18,7 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
@@ -65,7 +65,7 @@ func (DeleteObjectArgs) InsertOpts() river.InsertOpts {
 // RunnerConfig Runner 的全部依赖。
 type RunnerConfig struct {
 	Conn    *sql.DB          // 数据库连接(River 复用同一 SQLite)
-	Queries *db.Queries      // sqlc 查询集
+	Queries *sqlc.Queries    // sqlc 查询集
 	Manager *channel.Manager // 渠道管理器(取源/目标驱动)
 	Logger  *slog.Logger     // 结构化日志
 }
@@ -185,7 +185,7 @@ func (r *Runner) Reconcile(ctx context.Context) error {
 	}
 	total := 0
 	for offset := int64(0); ; offset += reconcileBatch {
-		rows, err := r.cfg.Queries.ListPendingBlobChannelsPage(ctx, db.ListPendingBlobChannelsPageParams{
+		rows, err := r.cfg.Queries.ListPendingBlobChannelsPage(ctx, sqlc.ListPendingBlobChannelsPageParams{
 			Limit: reconcileBatch, Offset: offset,
 		})
 		if err != nil {
@@ -225,7 +225,7 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 	args := job.Args
 	q := w.cfg.Queries
 
-	current, err := q.GetBlobChannel(ctx, db.GetBlobChannelParams{BlobID: args.BlobID, ChannelID: args.ChannelID})
+	current, err := q.GetBlobChannel(ctx, sqlc.GetBlobChannelParams{BlobID: args.BlobID, ChannelID: args.ChannelID})
 	if errors.Is(err, sql.ErrNoRows) {
 		// 副本记录已不存在(渠道被删),任务作废。
 		return river.JobCancel(fmt.Errorf("副本记录不存在: blob %d → 渠道 %d", args.BlobID, args.ChannelID))
@@ -265,7 +265,7 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 // @param blob 物理图记录
 // @param target 目标渠道
 // @return 无可用源或读写失败时的错误
-func (w *replicateWorker) copyBlob(ctx context.Context, blob db.Blob, target channel.Handle) error {
+func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target channel.Handle) error {
 	sources, err := w.cfg.Manager.CandidatesForBlob(ctx, blob.ID)
 	if err != nil {
 		return err
@@ -294,7 +294,7 @@ func (w *replicateWorker) copyBlob(ctx context.Context, blob db.Blob, target cha
 // markState 写回副本状态,失败仅告警(业务表兜底,不阻断任务流转)。
 // @param attemptsDelta 尝试计数增量(仅置 uploading 时为 1,保证计数=实际尝试次数)
 func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, state, lastError string, attemptsDelta int64) {
-	if err := w.cfg.Queries.MarkBlobChannel(ctx, db.MarkBlobChannelParams{
+	if err := w.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
 		State: state, LastError: lastError, Attempts: attemptsDelta,
 		BlobID: args.BlobID, ChannelID: args.ChannelID,
 	}); err != nil {

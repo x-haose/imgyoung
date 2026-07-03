@@ -13,7 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 )
@@ -32,7 +32,7 @@ type AccessTracker interface {
 
 // Config Server 的全部依赖与参数。
 type Config struct {
-	Queries              *db.Queries            // sqlc 生成的类型安全查询集(访问路径用)
+	Queries              *sqlc.Queries          // sqlc 生成的类型安全查询集(访问路径用)
 	Channels             BlobChannels           // 访问路径的渠道候选来源(容灾切换依据)
 	Admin                ChannelAdmin           // 渠道管理操作
 	EncryptNewChannels   bool                   // 新建渠道未指定 encrypted 时的全局默认(创建时固化)

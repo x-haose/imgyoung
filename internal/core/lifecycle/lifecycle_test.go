@@ -11,6 +11,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // fakeDeleter 记录级联删除的入队调用。
@@ -31,7 +32,7 @@ func (f *fakeDeleter) EnqueueDelete(_ context.Context, channelID int64, storageK
 }
 
 // setup 打开临时库并迁移,返回连接与查询句柄。
-func setup(t *testing.T) (*sql.DB, *db.Queries) {
+func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -45,7 +46,7 @@ func setup(t *testing.T) (*sql.DB, *db.Queries) {
 	if err := db.Migrate(conn); err != nil {
 		t.Fatalf("迁移测试数据库: %v", err)
 	}
-	return conn, db.New(conn)
+	return conn, sqlc.New(conn)
 }
 
 // TestSweepExpiresAndCascades 验证到期引用被回收、引用归零的物理图被物理删,
@@ -54,22 +55,22 @@ func TestSweepExpiresAndCascades(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
 
-	blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
 		Sha256: "h", Phash: 1, StorageKey: "obj_key", Mime: "image/png", Size: 3, Width: 1, Height: 1,
 	})
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
 	// 已到期的引用(expire_at 在过去)。
-	past := sql.NullString{String: db.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, db.CreateImageParams{
+	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID: "img0000001", BlobID: blobID,
-		UserID: sql.NullString{String: db.DefaultUserID, Valid: true}, ExpireAt: past,
+		UserID: sql.NullString{String: sqlc.DefaultUserID, Valid: true}, ExpireAt: past,
 	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
 	// 一条副本记录(渠道 1 = 内置 local),供级联删除。
-	if err := q.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{
+	if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
 		BlobID: blobID, ChannelID: 1, State: "done",
 	}); err != nil {
 		t.Fatalf("建副本记录: %v", err)
@@ -102,7 +103,7 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
 
-	blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
 		Sha256: "h", Phash: 1, StorageKey: "shared_key", Mime: "image/png", Size: 3, Width: 1, Height: 1,
 	})
 	if err != nil {
@@ -112,12 +113,12 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET ref_count = 2 WHERE id = ?", blobID); err != nil {
 		t.Fatalf("提升引用计数: %v", err)
 	}
-	uid := sql.NullString{String: db.DefaultUserID, Valid: true}
-	past := sql.NullString{String: db.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, db.CreateImageParams{ID: "expiring01", BlobID: blobID, UserID: uid, ExpireAt: past}); err != nil {
+	uid := sql.NullString{String: sqlc.DefaultUserID, Valid: true}
+	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "expiring01", BlobID: blobID, UserID: uid, ExpireAt: past}); err != nil {
 		t.Fatalf("建到期 image: %v", err)
 	}
-	if err := q.CreateImage(ctx, db.CreateImageParams{ID: "permanent1", BlobID: blobID, UserID: uid}); err != nil {
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "permanent1", BlobID: blobID, UserID: uid}); err != nil {
 		t.Fatalf("建永久 image: %v", err)
 	}
 
@@ -144,12 +145,12 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1})
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1})
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
-	uid := sql.NullString{String: db.DefaultUserID, Valid: true}
-	if err := q.CreateImage(ctx, db.CreateImageParams{ID: "img0000001", BlobID: blobID, UserID: uid}); err != nil {
+	uid := sql.NullString{String: sqlc.DefaultUserID, Valid: true}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "img0000001", BlobID: blobID, UserID: uid}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
 	// 预置为待清理,验证访问后摘标签。
@@ -181,20 +182,20 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 func TestLabelColdImages(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	uid := sql.NullString{String: db.DefaultUserID, Valid: true}
+	uid := sql.NullString{String: sqlc.DefaultUserID, Valid: true}
 	mk := func(id, key string) {
-		blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1})
+		blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1})
 		if err != nil {
 			t.Fatalf("建 blob: %v", err)
 		}
-		if err := q.CreateImage(ctx, db.CreateImageParams{ID: id, BlobID: blobID, UserID: uid}); err != nil {
+		if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: id, BlobID: blobID, UserID: uid}); err != nil {
 			t.Fatalf("建 image: %v", err)
 		}
 	}
 	mk("coldimg001", "k1")
 	mk("freshimg01", "k2")
 	// 把冷图的 created_at 拨到 100 天前(它从未被访问,冷判据取 created_at)。
-	old := db.TimeText(time.Now().Add(-100 * 24 * time.Hour))
+	old := sqlc.TimeText(time.Now().Add(-100 * 24 * time.Hour))
 	if _, err := conn.ExecContext(ctx, "UPDATE images SET created_at = ? WHERE id = ?", old, "coldimg001"); err != nil {
 		t.Fatalf("回拨创建时间: %v", err)
 	}

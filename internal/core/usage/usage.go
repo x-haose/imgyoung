@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // StorageGauge 渠道存储用量量表设置口(由 observability.Metrics 实现);
@@ -21,10 +21,10 @@ type StorageGauge interface {
 
 // Config Reporter 依赖与参数。
 type Config struct {
-	Queries    *db.Queries  // sqlc 查询集
-	Gauge      StorageGauge // 存储用量量表设置口
-	QuotaBytes int64        // 单渠道用量告警阈值(字节);<=0 表示不告警,仅上报指标
-	Logger     *slog.Logger // 结构化日志
+	Queries    *sqlc.Queries // sqlc 查询集
+	Gauge      StorageGauge  // 存储用量量表设置口
+	QuotaBytes int64         // 单渠道用量告警阈值(字节);<=0 表示不告警,仅上报指标
+	Logger     *slog.Logger  // 结构化日志
 }
 
 // Reporter 用量上报器,无可变状态、并发安全。

@@ -26,6 +26,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
@@ -121,7 +122,7 @@ func provideDB(lc fx.Lifecycle, cfg config.Config, logger *slog.Logger) (*sql.DB
 
 // provideQueries 提供 sqlc 查询句柄。
 // @return 查询句柄
-func provideQueries(conn *sql.DB) *db.Queries { return db.New(conn) }
+func provideQueries(conn *sql.DB) *sqlc.Queries { return sqlc.New(conn) }
 
 // provideMasterKey 解析主密钥:配置(hex)优先,否则数据目录文件(首启生成)。
 // @return 主密钥
@@ -160,7 +161,7 @@ func provideToken(cfg config.Config) (string, error) {
 // provideManager 构造渠道管理器(首次加载用后台 context)。
 // @return 渠道管理器
 // @return 加载或驱动构造失败时的错误
-func provideManager(cfg config.Config, conn *sql.DB, queries *db.Queries,
+func provideManager(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 	master *secret.MasterKey, logger *slog.Logger) (*channel.Manager, error) {
 	return channel.NewManager(context.Background(), channel.ManagerConfig{
 		Conn:    conn,
@@ -176,7 +177,7 @@ func provideManager(cfg config.Config, conn *sql.DB, queries *db.Queries,
 // 而非信号直接砍断在途复制。
 // @return 补齐 Runner
 // @return River 初始化失败时的错误
-func provideRunner(lc fx.Lifecycle, conn *sql.DB, queries *db.Queries,
+func provideRunner(lc fx.Lifecycle, conn *sql.DB, queries *sqlc.Queries,
 	manager *channel.Manager, logger *slog.Logger) (*replication.Runner, error) {
 	runner, err := replication.NewRunner(replication.RunnerConfig{
 		Conn:    conn,
@@ -201,7 +202,7 @@ func provideRunner(lc fx.Lifecycle, conn *sql.DB, queries *db.Queries,
 
 // provideUpload 构造上传服务。
 // @return 上传服务
-func provideUpload(cfg config.Config, conn *sql.DB, queries *db.Queries,
+func provideUpload(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 	manager *channel.Manager, runner *replication.Runner, logger *slog.Logger) *upload.Service {
 	return upload.New(upload.Config{
 		Conn:       conn,
@@ -227,11 +228,11 @@ func provideMetrics(manager *channel.Manager) *observability.Metrics {
 
 // provideAudit 构造审计记录器。
 // @return 审计记录器
-func provideAudit(queries *db.Queries) *audit.Recorder { return audit.New(queries) }
+func provideAudit(queries *sqlc.Queries) *audit.Recorder { return audit.New(queries) }
 
 // provideServer 构造 HTTP 业务处理器集合。
 // @return HTTP 服务处理器
-func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Manager,
+func provideServer(cfg config.Config, queries *sqlc.Queries, manager *channel.Manager,
 	uploadSvc *upload.Service, token string, metrics *observability.Metrics,
 	auditRec *audit.Recorder, tracker *lifecycle.Tracker, logger *slog.Logger) *server.Server {
 	return server.New(server.Config{
@@ -258,7 +259,7 @@ func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Mana
 
 // provideSweeper 构造生命周期清理器(渠道对象删除走 replication 入队口)。
 // @return 清理器
-func provideSweeper(cfg config.Config, conn *sql.DB, queries *db.Queries,
+func provideSweeper(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 	runner *replication.Runner, logger *slog.Logger) *lifecycle.Sweeper {
 	return lifecycle.New(lifecycle.Config{
 		Conn:          conn,
@@ -272,7 +273,7 @@ func provideSweeper(cfg config.Config, conn *sql.DB, queries *db.Queries,
 
 // provideTracker 构造访问活跃度追踪器。
 // @return 活跃度追踪器
-func provideTracker(conn *sql.DB, queries *db.Queries, logger *slog.Logger) *lifecycle.Tracker {
+func provideTracker(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *lifecycle.Tracker {
 	return lifecycle.NewTracker(conn, queries, logger)
 }
 
@@ -281,7 +282,7 @@ const bytesPerGB = 1 << 30
 
 // provideMerger 构造精确查重合并器(冗余 blob 的物理删宽限与生命周期一致)。
 // @return 查重合并器
-func provideMerger(cfg config.Config, conn *sql.DB, queries *db.Queries, logger *slog.Logger) *dedup.Merger {
+func provideMerger(cfg config.Config, conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *dedup.Merger {
 	return dedup.New(dedup.Config{
 		Conn:    conn,
 		Queries: queries,
@@ -292,7 +293,7 @@ func provideMerger(cfg config.Config, conn *sql.DB, queries *db.Queries, logger 
 
 // provideUsageReporter 构造渠道用量上报器(用量量表走 observability)。
 // @return 用量上报器
-func provideUsageReporter(cfg config.Config, queries *db.Queries,
+func provideUsageReporter(cfg config.Config, queries *sqlc.Queries,
 	metrics *observability.Metrics, logger *slog.Logger) *usage.Reporter {
 	return usage.New(usage.Config{
 		Queries:    queries,

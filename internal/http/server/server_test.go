@@ -21,6 +21,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
@@ -52,7 +53,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := db.New(conn)
+	queries := sqlc.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn:    conn,
 		Queries: queries,
