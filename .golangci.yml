@@ -10,6 +10,7 @@ linters:
   default: standard
   enable:
     - copyloopvar # 循环变量误捕获
+    - depguard    # 层间依赖方向(设计定稿·7.3)机器强制
     - errorlint   # 错误比较必须走 errors.Is/As
     - gocritic    # 通用代码体检
     - gosec       # 安全静态分析
@@ -18,6 +19,38 @@ linters:
     - unconvert   # 冗余类型转换
     - unparam     # 无用参数
   settings:
+    # 依赖方向:http·worker → core → infra;store 自成一体不 import 任何 internal 包
+    # (设计定稿·7.3/7.4)。deny 只列同项目内的越界目标,外部依赖不受限。
+    depguard:
+      rules:
+        store:
+          files: ["**/internal/store/**"]
+          deny:
+            - pkg: github.com/x-haose/imgyoung/internal/core
+              desc: store 是可复用存储引擎,不得依赖 App(7.4 库化前提)
+            - pkg: github.com/x-haose/imgyoung/internal/infra
+              desc: store 自成一体,不得依赖 App 基建
+            - pkg: github.com/x-haose/imgyoung/internal/http
+              desc: store 不得依赖传输层
+        infra:
+          files: ["**/internal/infra/**"]
+          deny:
+            - pkg: github.com/x-haose/imgyoung/internal/core
+              desc: infra 是基建叶子,不得依赖 core
+            - pkg: github.com/x-haose/imgyoung/internal/store
+              desc: infra 不得依赖 store
+            - pkg: github.com/x-haose/imgyoung/internal/http
+              desc: infra 不得依赖传输层
+        core:
+          files: ["**/internal/core/**"]
+          deny:
+            - pkg: github.com/x-haose/imgyoung/internal/http
+              desc: core 不得依赖传输层(入站适配器只能反向依赖 core)
+        http:
+          files: ["**/internal/http/**"]
+          deny:
+            - pkg: github.com/x-haose/imgyoung/internal/worker
+              desc: http 与 worker 是并列入站适配器,不得互相依赖
     revive:
       rules:
         # 导出标识符必须有以其命名开头的注释(注释全覆盖红线的机器检查)
