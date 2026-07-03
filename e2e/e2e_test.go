@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -306,6 +307,22 @@ func dirHasFiles(dir string) bool {
 	return err == nil && len(entries) > 0
 }
 
+// dirHasObjectFile 目录下是否已有顶层普通文件(渠道内的图片对象)。
+// @Description: 排除备份等系统对象——它们落在 _imgyoung/ 子目录下,仅表现为目录项;
+// 用于等待异步副本真正到达,而非被启动快照误判为已补齐。
+func dirHasObjectFile(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
 // TestUploadServeRoundTrip 核心闭环:上传 → 访问,字节一致且响应头正确。
 func TestUploadServeRoundTrip(t *testing.T) {
 	inst := startInstance(t, nil)
@@ -418,8 +435,8 @@ func TestMultiChannelReplicationAndFailover(t *testing.T) {
 
 	// 主渠道(fast)同步写入,内置 local 由补齐任务异步复制。
 	localDir := filepath.Join(inst.dataDir, "blobs")
-	waitUntil(t, 15*time.Second, "副本补齐到 local", func() bool { return dirHasFiles(localDir) })
-	if !dirHasFiles(fastDir) {
+	waitUntil(t, 15*time.Second, "副本补齐到 local", func() bool { return dirHasObjectFile(localDir) })
+	if !dirHasObjectFile(fastDir) {
 		t.Fatal("主渠道 fast 没有对象")
 	}
 
@@ -555,6 +572,61 @@ func TestRestartRecovery(t *testing.T) {
 		t.Fatal("重启后既有图不可访问或字节不一致")
 	}
 	_, _ = mustUpload(t, inst2, payload, nil, nil)
+}
+
+// TestBackupSnapshotRestore 验证迭代 3 灾备验收:启动时元数据库自动快照上传到渠道,
+// 删掉本地 DB 后用渠道内快照替换重启,既有图的元数据完好、仍可访问。
+func TestBackupSnapshotRestore(t *testing.T) {
+	inst := startInstance(t, nil)
+	payload := pngBytes(t)
+	_, url := mustUpload(t, inst, payload, nil, nil)
+
+	listen := strings.TrimPrefix(inst.baseURL, "http://")
+	stopInstance(t, inst)
+
+	// 重启触发一次启动备份,此时快照已含刚上传的图。
+	inst2 := startInstanceAt(t, inst.dataDir, listen)
+	backupDir := filepath.Join(inst.dataDir, "blobs", "_imgyoung", "backup")
+	waitUntil(t, 15*time.Second, "启动快照落到渠道", func() bool { return dirHasFiles(backupDir) })
+	snapshots, err := filepath.Glob(filepath.Join(backupDir, "imgyoung-*.db"))
+	if err != nil || len(snapshots) == 0 {
+		t.Fatalf("未在渠道备份目录发现快照: err=%v files=%v", err, snapshots)
+	}
+	sort.Strings(snapshots) // 文件名含时间戳,字典序末位即最新。
+	newest := snapshots[len(snapshots)-1]
+	stopInstance(t, inst2)
+
+	// 灾难演练:抹掉本地元数据库(含 WAL 边车),用渠道快照恢复。
+	dbPath := filepath.Join(inst.dataDir, "imgyoung.db")
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if rerr := os.Remove(dbPath + suffix); rerr != nil && !os.IsNotExist(rerr) {
+			t.Fatalf("删除 %s: %v", dbPath+suffix, rerr)
+		}
+	}
+	snap, err := os.ReadFile(newest)
+	if err != nil {
+		t.Fatalf("读取快照: %v", err)
+	}
+	// nolint:gosec // dbPath 由 t.TempDir() 派生、文件名固定,非外部输入。
+	if werr := os.WriteFile(dbPath, snap, 0o600); werr != nil {
+		t.Fatalf("以快照恢复数据库: %v", werr)
+	}
+
+	inst3 := startInstanceAt(t, inst.dataDir, listen)
+	if got := fetchBytes(t, inst3, url); !bytes.Equal(got, payload) {
+		t.Fatal("从渠道快照恢复元数据后,既有图不可访问或字节不一致")
+	}
+}
+
+// stopInstance 向实例发 SIGTERM 并等待退出(重启前的优雅停机)。
+func stopInstance(t *testing.T, inst *instance) {
+	t.Helper()
+	if err := inst.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("发送 SIGTERM: %v", err)
+	}
+	if _, err := inst.cmd.Process.Wait(); err != nil {
+		t.Fatalf("等待退出: %v", err)
+	}
 }
 
 // startInstanceAt 用既有数据目录与监听地址启动实例(重启场景)。

@@ -39,6 +39,21 @@ func BuildRemote(driver string, params map[string]string, path string) string {
 	return b.String()
 }
 
+// applyDriverDefaults 为后端参数补上图床场景下的稳妥默认值(原地修改 params)。
+// @Description: S3 兼容后端(R2/MinIO 等)多用作用域凭证,无建桶权限;rclone 上传前
+// 默认会 CreateBucket 探测,桶已存在且无权限时返回 403 让写入直接失败,而只读的
+// 健康探测(Stat)探不到——表现为"健康却写不进"。图床对接的是预建桶,故默认跳过
+// 桶检查;确需 rclone 自动建桶者可在渠道配置显式置 no_check_bucket=false。
+// @param driver rclone 后端名
+// @param params 后端参数表,原地补默认
+func applyDriverDefaults(driver string, params map[string]string) {
+	if driver == "s3" {
+		if _, ok := params["no_check_bucket"]; !ok {
+			params["no_check_bucket"] = "true"
+		}
+	}
+}
+
 // quoteValue 按 fspath 语法为参数值加引号:含分隔符或引号时用单引号包裹,
 // 内部单引号双写转义(见 rclone fs/fspath 的状态机解析规则)。
 // @param v 原始参数值

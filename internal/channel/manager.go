@@ -232,6 +232,7 @@ func (m *Manager) buildDriver(ctx context.Context, row db.Channel) (storage.Driv
 	if row.Driver == "local" && path == "" {
 		path = filepath.Join(m.cfg.DataDir, "blobs")
 	}
+	applyDriverDefaults(row.Driver, params)
 
 	remote := BuildRemote(row.Driver, params, path)
 	if row.Encrypted != 0 {

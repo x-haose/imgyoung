@@ -62,6 +62,27 @@ func TestBuildRemoteNoParams(t *testing.T) {
 	}
 }
 
+// TestApplyDriverDefaults 验证 s3 默认跳过桶检查,且不覆盖用户显式值、不波及其他后端。
+func TestApplyDriverDefaults(t *testing.T) {
+	s3 := map[string]string{"access_key_id": "AK"}
+	applyDriverDefaults("s3", s3)
+	if s3["no_check_bucket"] != "true" {
+		t.Errorf("s3 默认 no_check_bucket = %q, 期望 true", s3["no_check_bucket"])
+	}
+
+	override := map[string]string{"no_check_bucket": "false"}
+	applyDriverDefaults("s3", override)
+	if override["no_check_bucket"] != "false" {
+		t.Errorf("用户显式值被覆盖 = %q, 期望保留 false", override["no_check_bucket"])
+	}
+
+	local := map[string]string{}
+	applyDriverDefaults("local", local)
+	if _, ok := local["no_check_bucket"]; ok {
+		t.Error("非 s3 后端不应被注入 no_check_bucket")
+	}
+}
+
 // TestWrapCrypt 验证 crypt 包裹:内层连接字符串完整嵌套、密码经 obscure 可还原。
 func TestWrapCrypt(t *testing.T) {
 	inner := BuildRemote("s3", map[string]string{"access_key_id": "AK,ID"}, "bucket/x")
