@@ -110,3 +110,7 @@ VALUES (?, ?);
 SELECT image_id
 FROM idempotency_keys
 WHERE key = ?;
+
+-- name: CreateAuditLog :exec
+INSERT INTO audit_log (actor, action, target, detail)
+VALUES (?, ?, ?, ?);

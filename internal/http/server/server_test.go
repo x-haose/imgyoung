@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/server"
@@ -80,6 +81,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		AllowEmptyReferer:    true,
 		DefaultEXIFPolicy:    imaging.PolicyPassthrough,
 		Metrics:              observability.New(),
+		Audit:                audit.New(queries),
 		Logger:               slog.New(slog.DiscardHandler),
 	}
 	if mutate != nil {

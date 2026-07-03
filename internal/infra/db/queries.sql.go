@@ -29,6 +29,28 @@ func (q *Queries) CountSoleReplicas(ctx context.Context, channelID int64) (int64
 	return count, err
 }
 
+const createAuditLog = `-- name: CreateAuditLog :exec
+INSERT INTO audit_log (actor, action, target, detail)
+VALUES (?, ?, ?, ?)
+`
+
+type CreateAuditLogParams struct {
+	Actor  string
+	Action string
+	Target string
+	Detail string
+}
+
+func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error {
+	_, err := q.db.ExecContext(ctx, createAuditLog,
+		arg.Actor,
+		arg.Action,
+		arg.Target,
+		arg.Detail,
+	)
+	return err
+}
+
 const createBlob = `-- name: CreateBlob :one
 INSERT INTO blobs (sha256, phash, storage_key, mime, size, width, height)
 VALUES (?, ?, ?, ?, ?, ?, ?)

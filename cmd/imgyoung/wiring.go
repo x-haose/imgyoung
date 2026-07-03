@@ -15,6 +15,7 @@ import (
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 
+	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
@@ -222,10 +223,15 @@ func provideMetrics(manager *channel.Manager) *observability.Metrics {
 	return m
 }
 
+// provideAudit 构造审计记录器。
+// @return 审计记录器
+func provideAudit(queries *db.Queries) *audit.Recorder { return audit.New(queries) }
+
 // provideServer 构造 HTTP 业务处理器集合。
 // @return HTTP 服务处理器
 func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Manager,
-	uploadSvc *upload.Service, token string, metrics *observability.Metrics, logger *slog.Logger) *server.Server {
+	uploadSvc *upload.Service, token string, metrics *observability.Metrics,
+	auditRec *audit.Recorder, logger *slog.Logger) *server.Server {
 	return server.New(server.Config{
 		Queries:              queries,
 		Channels:             manager,
@@ -241,6 +247,7 @@ func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Mana
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
 		Metrics:              metrics,
+		Audit:                auditRec,
 		Logger:               logger,
 	})
 }

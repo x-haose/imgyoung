@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/db"
 )
 
 // channelBodyLimit 渠道管理请求体上限。
@@ -79,6 +82,8 @@ func (s *Server) handleChannelCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfg.Logger.Info("渠道已创建", "id", channelID, "name", req.Name, "encrypted", encrypted)
+	s.recordAudit(r.Context(), audit.ActionChannelCreate, req.Name,
+		fmt.Sprintf("id=%d encrypted=%v", channelID, encrypted))
 	s.writeJSON(w, http.StatusCreated, map[string]int64{"id": channelID})
 }
 
@@ -111,5 +116,18 @@ func (s *Server) handleChannelDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfg.Logger.Info("渠道已删除", "id", channelID)
+	s.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10), "")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordAudit best-effort 记录管理操作;审计写入失败只告警,不阻断主操作
+// (留痕缺失优于因日志失败而拒绝合法管理操作)。单用户期操作者恒为默认用户。
+// @param ctx 请求上下文
+// @param action 动作标识(见 audit 包常量)
+// @param target 操作目标标识
+// @param detail 附加说明
+func (s *Server) recordAudit(ctx context.Context, action, target, detail string) {
+	if err := s.cfg.Audit.Record(ctx, db.DefaultUserID, action, target, detail); err != nil {
+		s.cfg.Logger.Warn("审计记录失败", "action", action, "target", target, "err", err)
+	}
 }

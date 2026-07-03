@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/infra/db"
@@ -53,6 +54,8 @@ type Config struct {
 	AllowEmptyReferer bool
 	// Metrics 指标集,用于请求计数/时延与 /metrics 暴露。
 	Metrics *observability.Metrics
+	// Audit 管理操作审计记录器。
+	Audit *audit.Recorder
 	// Logger 结构化日志。
 	Logger *slog.Logger
 }

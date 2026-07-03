@@ -8,6 +8,15 @@ import (
 	"database/sql"
 )
 
+type AuditLog struct {
+	ID        int64
+	Actor     string
+	Action    string
+	Target    string
+	Detail    string
+	CreatedAt string
+}
+
 type Blob struct {
 	ID            int64
 	Sha256        string
