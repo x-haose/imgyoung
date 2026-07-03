@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const countSoleReplicas = `-- name: CountSoleReplicas :one
@@ -104,18 +105,24 @@ func (q *Queries) CreateIdempotencyKey(ctx context.Context, arg CreateIdempotenc
 }
 
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, blob_id, file_name)
-VALUES (?, ?, ?)
+INSERT INTO images (id, blob_id, user_id, file_name)
+VALUES (?, ?, ?, ?)
 `
 
 type CreateImageParams struct {
 	ID       string
 	BlobID   int64
+	UserID   sql.NullString
 	FileName string
 }
 
 func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
-	_, err := q.db.ExecContext(ctx, createImage, arg.ID, arg.BlobID, arg.FileName)
+	_, err := q.db.ExecContext(ctx, createImage,
+		arg.ID,
+		arg.BlobID,
+		arg.UserID,
+		arg.FileName,
+	)
 	return err
 }
 

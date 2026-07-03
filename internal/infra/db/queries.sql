@@ -4,8 +4,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: CreateImage :exec
-INSERT INTO images (id, blob_id, file_name)
-VALUES (?, ?, ?);
+INSERT INTO images (id, blob_id, user_id, file_name)
+VALUES (?, ?, ?, ?);
 
 -- name: GetImageBlob :one
 SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size

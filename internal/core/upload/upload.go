@@ -381,6 +381,7 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	if err = q.CreateImage(ctx, db.CreateImageParams{
 		ID:       p.shortID,
 		BlobID:   blobID,
+		UserID:   sql.NullString{String: db.DefaultUserID, Valid: true},
 		FileName: p.fileName,
 	}); err != nil {
 		return 0, fmt.Errorf("写入引用记录: %w", err)

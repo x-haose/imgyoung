@@ -57,3 +57,9 @@ type Image struct {
 	FileName  string
 	CreatedAt string
 }
+
+type User struct {
+	ID        string
+	Name      string
+	CreatedAt string
+}
