@@ -46,6 +46,8 @@ open http://localhost:8080/i/R0RjUyP1UW
 | `IMGYOUNG_ACCESS_MODE` | `access_mode` | `proxy` | `proxy`(代理,容灾即时)/ `redirect`(302 省流量,需渠道允许直链) |
 | `IMGYOUNG_ENCRYPT_NEW_CHANNELS` | `encrypt_new_channels` | `false` | 新建渠道未显式指定时的加密默认值(创建时固化) |
 | `IMGYOUNG_HEALTH_CHECK_SECONDS` | `health_check_seconds` | `60` | 渠道健康检查间隔(秒) |
+| `IMGYOUNG_BACKUP_INTERVAL_HOURS` | `backup_interval_hours` | `24` | 元数据库自动备份间隔(小时);快照上传到最高优先级健康渠道 |
+| `IMGYOUNG_BACKUP_KEEP` | `backup_keep` | `7` | 备份保留份数,超出的旧快照自动清理 |
 | `IMGYOUNG_EXIF_POLICY` | `exif_policy` | `passthrough` | 全局默认 EXIF 档位:`passthrough`(原样保留)/ `strip`(剥离元数据);`spoof` 为实验特性尚未开放。单次上传可用表单字段 `exif_policy` 覆盖 |
 
 ```yaml

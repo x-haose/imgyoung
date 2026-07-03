@@ -340,6 +340,41 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 	return items, nil
 }
 
+const listDoneBlobChannelsForChannel = `-- name: ListDoneBlobChannelsForChannel :many
+SELECT bc.blob_id, b.storage_key
+FROM blob_channels bc
+JOIN blobs b ON b.id = bc.blob_id
+WHERE bc.channel_id = ? AND bc.state = 'done'
+`
+
+type ListDoneBlobChannelsForChannelRow struct {
+	BlobID     int64
+	StorageKey string
+}
+
+func (q *Queries) ListDoneBlobChannelsForChannel(ctx context.Context, channelID int64) ([]ListDoneBlobChannelsForChannelRow, error) {
+	rows, err := q.db.QueryContext(ctx, listDoneBlobChannelsForChannel, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListDoneBlobChannelsForChannelRow
+	for rows.Next() {
+		var i ListDoneBlobChannelsForChannelRow
+		if err := rows.Scan(&i.BlobID, &i.StorageKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingBlobChannelsPage = `-- name: ListPendingBlobChannelsPage :many
 SELECT blob_id, channel_id
 FROM blob_channels

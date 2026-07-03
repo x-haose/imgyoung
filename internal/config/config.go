@@ -53,6 +53,10 @@ const (
 	envEncryptNewChannels = "IMGYOUNG_ENCRYPT_NEW_CHANNELS"
 	// envHealthCheckSeconds 渠道健康检查间隔(秒)。
 	envHealthCheckSeconds = "IMGYOUNG_HEALTH_CHECK_SECONDS"
+	// envBackupIntervalHours 元数据库自动备份间隔(小时)。
+	envBackupIntervalHours = "IMGYOUNG_BACKUP_INTERVAL_HOURS"
+	// envBackupKeep 备份保留份数。
+	envBackupKeep = "IMGYOUNG_BACKUP_KEEP"
 )
 
 // megapixel 一百万像素。
@@ -97,6 +101,10 @@ type Config struct {
 	EncryptNewChannels bool
 	// HealthCheckSeconds 渠道健康检查间隔(秒),默认 60。
 	HealthCheckSeconds int
+	// BackupIntervalHours 元数据库自动备份间隔(小时),默认 24。
+	BackupIntervalHours int
+	// BackupKeep 备份保留份数,默认 7;丢失映射即全部不可反查,宁多勿少。
+	BackupKeep int
 }
 
 // envPrefix 环境变量统一前缀,剥掉后小写即为配置键(IMGYOUNG_DATA_DIR → data_dir)。
@@ -127,6 +135,8 @@ func Load() (Config, error) {
 		"access_mode":            "proxy",
 		"encrypt_new_channels":   false,
 		"health_check_seconds":   60,
+		"backup_interval_hours":  24,
+		"backup_keep":            7,
 	}, ".")
 	if err := k.Load(defaults, nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)
@@ -192,6 +202,10 @@ func Load() (Config, error) {
 		EncryptNewChannels bool `koanf:"encrypt_new_channels"`
 		// HealthCheckSeconds 健康检查间隔(秒)。
 		HealthCheckSeconds int `koanf:"health_check_seconds"`
+		// BackupIntervalHours 元数据库自动备份间隔(小时)。
+		BackupIntervalHours int `koanf:"backup_interval_hours"`
+		// BackupKeep 备份保留份数。
+		BackupKeep int `koanf:"backup_keep"`
 	}
 	if err := k.Unmarshal("", &raw); err != nil {
 		return Config{}, fmt.Errorf("解析配置: %w", err)
@@ -218,6 +232,12 @@ func Load() (Config, error) {
 	if raw.HealthCheckSeconds < 1 {
 		return Config{}, fmt.Errorf("health_check_seconds=%d 非法: 需要正整数", raw.HealthCheckSeconds)
 	}
+	if raw.BackupIntervalHours < 1 {
+		return Config{}, fmt.Errorf("backup_interval_hours=%d 非法: 需要正整数", raw.BackupIntervalHours)
+	}
+	if raw.BackupKeep < 1 {
+		return Config{}, fmt.Errorf("backup_keep=%d 非法: 需要正整数", raw.BackupKeep)
+	}
 	return Config{
 		Listen:               raw.Listen,
 		DataDir:              raw.DataDir,
@@ -234,6 +254,8 @@ func Load() (Config, error) {
 		AccessMode:           raw.AccessMode,
 		EncryptNewChannels:   raw.EncryptNewChannels,
 		HealthCheckSeconds:   raw.HealthCheckSeconds,
+		BackupIntervalHours:  raw.BackupIntervalHours,
+		BackupKeep:           raw.BackupKeep,
 	}, nil
 }
 

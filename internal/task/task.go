@@ -108,15 +108,21 @@ func (r *Runner) Start(ctx context.Context) error {
 		return err
 	}
 	go func() {
-		ticker := time.NewTicker(reconcileInterval)
-		defer ticker.Stop()
+		reconcileTicker := time.NewTicker(reconcileInterval)
+		defer reconcileTicker.Stop()
+		gcTicker := time.NewTicker(gcInterval)
+		defer gcTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-reconcileTicker.C:
 				if err := r.Reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
 					r.cfg.Logger.Warn("定期对账未完成", "err", err)
+				}
+			case <-gcTicker.C:
+				if _, err := r.RunGC(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					r.cfg.Logger.Warn("对账 GC 未完成", "err", err)
 				}
 			}
 		}

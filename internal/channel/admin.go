@@ -188,6 +188,9 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 // probeTimeout 单渠道健康探测超时;各渠道独立计时,慢渠道不拖累其他渠道。
 const probeTimeout = 10 * time.Second
 
+// HealthProbeKey 健康探测使用的约定对象键(从不真正写入;对账 GC 应豁免)。
+const HealthProbeKey = ".imgyoung-health-probe"
+
 // CheckAll 对全部渠道做一次健康探测,状态变化写回 DB 并更新内存标记。
 // @Description: 探测 = Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
 // 健康(后端可达),其余错误视为不健康(设计定稿·健康检查+自动切换)。
@@ -229,6 +232,6 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 func probe(ctx context.Context, d storage.Driver) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	_, err := d.Stat(probeCtx, ".imgyoung-health-probe")
+	_, err := d.Stat(probeCtx, HealthProbeKey)
 	return err == nil || errors.Is(err, storage.ErrNotFound)
 }

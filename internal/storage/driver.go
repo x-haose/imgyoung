@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 )
 
 // ErrNotFound 表示目标对象在该渠道中不存在。
@@ -22,6 +23,8 @@ type ObjectInfo struct {
 	Key string
 	// Size 对象字节大小。
 	Size int64
+	// ModTime 对象修改时间(对账宽限期与备份保留判断依据)。
+	ModTime time.Time
 }
 
 // Driver 存储执行器抽象。
@@ -44,4 +47,9 @@ type Driver interface {
 	// Delete 删除 key 对应的对象。
 	// @Description: 删除不存在的对象返回 ErrNotFound,由调用方决定是否视为成功。
 	Delete(ctx context.Context, key string) error
+
+	// List 递归列举 dir 目录下的全部对象(dir 为空表示整个渠道)。
+	// @Description: 返回键为相对渠道根的完整路径;目录不存在视为空。
+	// 供备份保留与对账 GC 使用,属低频操作。
+	List(ctx context.Context, dir string) ([]ObjectInfo, error)
 }

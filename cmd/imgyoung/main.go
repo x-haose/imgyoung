@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/backup"
 	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/config"
 	"github.com/x-haose/imgyoung/internal/db"
@@ -160,6 +161,16 @@ func run() error {
 			}
 		}
 	}()
+
+	// 元数据库自动备份循环(设计定稿·可靠性与灾备)。
+	backupSvc := backup.New(backup.Config{
+		Conn:     conn,
+		Channels: channels,
+		DataDir:  cfg.DataDir,
+		Keep:     cfg.BackupKeep,
+		Logger:   logger,
+	})
+	go backupSvc.Run(ctx, time.Duration(cfg.BackupIntervalHours)*time.Hour)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()

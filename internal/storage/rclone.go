@@ -9,6 +9,7 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/object"
+	"github.com/rclone/rclone/fs/walk"
 
 	// 按需注册 rclone 后端(设计定稿·按需 import 后端):
 	// local 为内置渠道;crypt 供渠道存储加密包裹任意后端;
@@ -84,6 +85,28 @@ func (d *RcloneDriver) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("删除对象 %q: %w", key, err)
 	}
 	return nil
+}
+
+// List 递归列举 dir 目录下的全部对象(dir 为空表示整个渠道)。
+func (d *RcloneDriver) List(ctx context.Context, dir string) ([]ObjectInfo, error) {
+	var out []ObjectInfo
+	err := walk.ListR(ctx, d.f, dir, false, -1, walk.ListObjects, func(entries fs.DirEntries) error {
+		entries.ForObject(func(o fs.Object) {
+			out = append(out, ObjectInfo{
+				Key:     o.Remote(),
+				Size:    o.Size(),
+				ModTime: o.ModTime(ctx),
+			})
+		})
+		return nil
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrorDirNotFound) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("列举目录 %q: %w", dir, err)
+	}
+	return out, nil
 }
 
 // object 查找 key 对应的 rclone 对象,并把"不存在"统一映射为 ErrNotFound。

@@ -2,8 +2,10 @@ package task_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -11,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/channel"
 	"github.com/x-haose/imgyoung/internal/db"
 	"github.com/x-haose/imgyoung/internal/secret"
+	"github.com/x-haose/imgyoung/internal/storage"
 	"github.com/x-haose/imgyoung/internal/task"
 )
 
@@ -19,6 +22,7 @@ type testEnv struct {
 	runner  *task.Runner
 	queries *db.Queries
 	mgr     *channel.Manager
+	dataDir string
 	local   channel.Handle // 内置 local(低优先级)
 	backup  channel.Handle // 新增渠道(高优先级)
 }
@@ -77,7 +81,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		}
 	})
 
-	env := &testEnv{runner: runner, queries: queries, mgr: mgr}
+	env := &testEnv{runner: runner, queries: queries, mgr: mgr, dataDir: dir}
 	for _, h := range mgr.All() {
 		if h.Name == "local" {
 			env.local = h
@@ -117,20 +121,20 @@ func seedBlob(t *testing.T, env *testEnv) (int64, string) {
 	return blobID, key
 }
 
-// waitState 轮询等待副本达到目标状态。
-func waitState(t *testing.T, env *testEnv, blobID, chID int64, want string) {
+// waitDone 轮询等待副本进入 done 状态。
+func waitDone(t *testing.T, env *testEnv, blobID, chID int64) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		row, err := env.queries.GetBlobChannel(t.Context(), db.GetBlobChannelParams{
 			BlobID: blobID, ChannelID: chID,
 		})
-		if err == nil && row.State == want {
+		if err == nil && row.State == channel.StateDone {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("等待副本状态 %q 超时", want)
+	t.Fatalf("等待副本状态 %q 超时", channel.StateDone)
 }
 
 // TestEnqueueReplicationCopiesBlob 验证补齐链路:入队 → worker 复制 → 状态 done,
@@ -142,7 +146,7 @@ func TestEnqueueReplicationCopiesBlob(t *testing.T) {
 	if err := env.runner.EnqueueReplication(t.Context(), blobID, []int64{env.backup.ID}); err != nil {
 		t.Fatalf("入队补齐任务: %v", err)
 	}
-	waitState(t, env, blobID, env.backup.ID, channel.StateDone)
+	waitDone(t, env, blobID, env.backup.ID)
 
 	rc, err := env.backup.Driver.Open(t.Context(), key)
 	if err != nil {
@@ -165,7 +169,7 @@ func TestReconcileRequeuesPending(t *testing.T) {
 	if err := env.runner.Reconcile(t.Context()); err != nil {
 		t.Fatalf("恢复扫描: %v", err)
 	}
-	waitState(t, env, blobID, env.backup.ID, channel.StateDone)
+	waitDone(t, env, blobID, env.backup.ID)
 }
 
 // TestReconcileResetsFailedOnHealthyChannel 验证对账把健康渠道上的 failed 副本
@@ -182,5 +186,70 @@ func TestReconcileResetsFailedOnHealthyChannel(t *testing.T) {
 	if err := env.runner.Reconcile(t.Context()); err != nil {
 		t.Fatalf("对账扫描: %v", err)
 	}
-	waitState(t, env, blobID, env.backup.ID, channel.StateDone)
+	waitDone(t, env, blobID, env.backup.ID)
+}
+
+// TestGCRemovesExpiredOrphans 验证孤儿回收:超宽限期的未知对象被删,
+// 新鲜对象与系统目录对象豁免。
+func TestGCRemovesExpiredOrphans(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := t.Context()
+	put := func(key string) {
+		t.Helper()
+		payload := []byte("orphan")
+		if err := env.local.Driver.Put(ctx, key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+			t.Fatalf("写入对象 %s: %v", key, err)
+		}
+	}
+	put("stale-orphan.bin")
+	put("fresh-orphan.bin")
+	put("_imgyoung/backup/keep.db")
+	// 把 stale 对象的修改时间拨回宽限期之外(local 后端以文件 mtime 为准)。
+	stalePath := localObjectPath(t, env, "stale-orphan.bin")
+	old := time.Now().Add(-72 * time.Hour)
+	if err := os.Chtimes(stalePath, old, old); err != nil {
+		t.Fatalf("回拨对象时间: %v", err)
+	}
+
+	if _, err := env.runner.RunGC(ctx); err != nil {
+		t.Fatalf("RunGC 返回错误: %v", err)
+	}
+
+	if _, err := env.local.Driver.Stat(ctx, "stale-orphan.bin"); !errors.Is(err, storage.ErrNotFound) {
+		t.Errorf("过期孤儿未被回收: %v", err)
+	}
+	if _, err := env.local.Driver.Stat(ctx, "fresh-orphan.bin"); err != nil {
+		t.Errorf("宽限期内对象被误删: %v", err)
+	}
+	if _, err := env.local.Driver.Stat(ctx, "_imgyoung/backup/keep.db"); err != nil {
+		t.Errorf("系统目录对象被误删: %v", err)
+	}
+}
+
+// TestGCRecoversPhantom 验证幻影恢复:DB 记为就绪但渠道缺失的副本被
+// 回退并重新补齐。
+func TestGCRecoversPhantom(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := t.Context()
+	blobID, key := seedBlob(t, env)
+	// 把 backup 渠道标成就绪,但从不真正写入对象 → 幻影。
+	if err := env.queries.UpsertBlobChannel(ctx, db.UpsertBlobChannelParams{
+		BlobID: blobID, ChannelID: env.backup.ID, State: channel.StateDone,
+	}); err != nil {
+		t.Fatalf("伪造幻影副本: %v", err)
+	}
+
+	if _, err := env.runner.RunGC(ctx); err != nil {
+		t.Fatalf("RunGC 返回错误: %v", err)
+	}
+	waitDone(t, env, blobID, env.backup.ID)
+	if _, err := env.backup.Driver.Stat(ctx, key); err != nil {
+		t.Fatalf("幻影副本未被真实补齐: %v", err)
+	}
+}
+
+// localObjectPath 计算 local 渠道内对象的磁盘路径(内置渠道位于 dataDir/blobs)。
+func localObjectPath(t *testing.T, env *testEnv, key string) string {
+	t.Helper()
+	return filepath.Join(env.dataDir, "blobs", key)
 }

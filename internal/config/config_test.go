@@ -15,6 +15,7 @@ func clearEnv(t *testing.T) {
 		envBaseURL, envMaxPixelsMP, envRefererWhitelist, envAllowEmptyReferer,
 		envEXIFPolicy, envMinSuccess, envAccessMode, envEncryptNewChannels,
 		envHealthCheckSeconds, envMaxConcurrentUploads,
+		envBackupIntervalHours, envBackupKeep,
 	} {
 		t.Setenv(k, "")
 	}
@@ -70,6 +71,10 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.MinSuccess != 1 || cfg.AccessMode != "proxy" || cfg.EncryptNewChannels || cfg.HealthCheckSeconds != 60 {
 		t.Errorf("多渠道相关默认值异常: min_success=%d access_mode=%q encrypt_new=%v health=%d",
 			cfg.MinSuccess, cfg.AccessMode, cfg.EncryptNewChannels, cfg.HealthCheckSeconds)
+	}
+	if cfg.BackupIntervalHours != 24 || cfg.BackupKeep != 7 {
+		t.Errorf("备份默认值异常: interval_hours=%d keep=%d, 期望 24 / 7",
+			cfg.BackupIntervalHours, cfg.BackupKeep)
 	}
 }
 
@@ -225,6 +230,20 @@ func TestLoadInvalidMaxConcurrentUploads(t *testing.T) {
 	t.Setenv(envMaxConcurrentUploads, "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("max_concurrent_uploads=0 应返回错误")
+	}
+}
+
+// TestLoadInvalidBackup 验证非正的备份间隔与保留份数快速失败。
+func TestLoadInvalidBackup(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envBackupKeep, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("backup_keep=0 应返回错误")
+	}
+	clearEnv(t)
+	t.Setenv(envBackupIntervalHours, "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("backup_interval_hours=0 应返回错误")
 	}
 }
 
