@@ -21,3 +21,5 @@ backup_keep: 7               # 备份保留份数
 cleanup_sweep_seconds: 60    # 生命周期清理扫描间隔(秒)
 delete_grace_minutes: 0      # 引用归零到物理删的宽限(分钟),0 = 立即
 default_ttl_hours: 0         # 全局默认 TTL(小时),0 = 永不过期;单次上传可覆盖
+activity_flush_seconds: 60   # 访问活跃度批量落库间隔(秒)
+cold_cleanup_days: 90        # 冷图待清理阈值(天),超期未访问打标签;0 = 不启用

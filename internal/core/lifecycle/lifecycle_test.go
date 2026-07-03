@@ -138,3 +138,83 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 		t.Errorf("仍被引用的物理图不应级联删除: %+v", deleter.calls)
 	}
 }
+
+// TestTrackerFlushTouchesAndUnlabels 验证活跃度 flush 落库 last_public_access_at,
+// 且摘除 pending_cleanup 标签(有真实访问则不再算冷图)。
+func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+	blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	uid := sql.NullString{String: db.DefaultUserID, Valid: true}
+	if err := q.CreateImage(ctx, db.CreateImageParams{ID: "img0000001", BlobID: blobID, UserID: uid}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+	// 预置为待清理,验证访问后摘标签。
+	if _, err := conn.ExecContext(ctx, "UPDATE images SET pending_cleanup = 1 WHERE id = ?", "img0000001"); err != nil {
+		t.Fatalf("预置标签: %v", err)
+	}
+
+	tr := lifecycle.NewTracker(conn, q, slog.New(slog.DiscardHandler))
+	tr.Touch("img0000001")
+	if err := tr.Flush(ctx); err != nil {
+		t.Fatalf("Flush 返回错误: %v", err)
+	}
+
+	var access sql.NullString
+	var pending int
+	row := conn.QueryRowContext(ctx, "SELECT last_public_access_at, pending_cleanup FROM images WHERE id = ?", "img0000001")
+	if err := row.Scan(&access, &pending); err != nil {
+		t.Fatalf("读取 image: %v", err)
+	}
+	if !access.Valid {
+		t.Error("last_public_access_at 未落库")
+	}
+	if pending != 0 {
+		t.Error("访问后 pending_cleanup 未摘除")
+	}
+}
+
+// TestLabelColdImages 验证冷图打标:超阈值未访问的引用打 pending_cleanup,新鲜引用不打。
+func TestLabelColdImages(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+	uid := sql.NullString{String: db.DefaultUserID, Valid: true}
+	mk := func(id, key string) {
+		blobID, err := q.CreateBlob(ctx, db.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1})
+		if err != nil {
+			t.Fatalf("建 blob: %v", err)
+		}
+		if err := q.CreateImage(ctx, db.CreateImageParams{ID: id, BlobID: blobID, UserID: uid}); err != nil {
+			t.Fatalf("建 image: %v", err)
+		}
+	}
+	mk("coldimg001", "k1")
+	mk("freshimg01", "k2")
+	// 把冷图的 created_at 拨到 100 天前(它从未被访问,冷判据取 created_at)。
+	old := db.TimeText(time.Now().Add(-100 * 24 * time.Hour))
+	if _, err := conn.ExecContext(ctx, "UPDATE images SET created_at = ? WHERE id = ?", old, "coldimg001"); err != nil {
+		t.Fatalf("回拨创建时间: %v", err)
+	}
+
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, ColdThreshold: 90 * 24 * time.Hour, Logger: slog.New(slog.DiscardHandler)})
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce 返回错误: %v", err)
+	}
+
+	labeled := func(id string) int {
+		var p int
+		if err := conn.QueryRowContext(ctx, "SELECT pending_cleanup FROM images WHERE id = ?", id).Scan(&p); err != nil {
+			t.Fatalf("读取标签: %v", err)
+		}
+		return p
+	}
+	if labeled("coldimg001") != 1 {
+		t.Error("冷图未打 pending_cleanup 标签")
+	}
+	if labeled("freshimg01") != 0 {
+		t.Error("新鲜图被误打标签")
+	}
+}

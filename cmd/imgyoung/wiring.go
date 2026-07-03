@@ -232,7 +232,7 @@ func provideAudit(queries *db.Queries) *audit.Recorder { return audit.New(querie
 // @return HTTP 服务处理器
 func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Manager,
 	uploadSvc *upload.Service, token string, metrics *observability.Metrics,
-	auditRec *audit.Recorder, logger *slog.Logger) *server.Server {
+	auditRec *audit.Recorder, tracker *lifecycle.Tracker, logger *slog.Logger) *server.Server {
 	return server.New(server.Config{
 		Queries:              queries,
 		Channels:             manager,
@@ -248,6 +248,7 @@ func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Mana
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
 		DefaultTTL:           time.Duration(cfg.DefaultTTLHours) * time.Hour,
+		Activity:             tracker,
 		Metrics:              metrics,
 		Audit:                auditRec,
 		Logger:               logger,
@@ -259,12 +260,19 @@ func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Mana
 func provideSweeper(cfg config.Config, conn *sql.DB, queries *db.Queries,
 	runner *replication.Runner, logger *slog.Logger) *lifecycle.Sweeper {
 	return lifecycle.New(lifecycle.Config{
-		Conn:    conn,
-		Queries: queries,
-		Deleter: runner,
-		Grace:   time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
-		Logger:  logger,
+		Conn:          conn,
+		Queries:       queries,
+		Deleter:       runner,
+		Grace:         time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
+		ColdThreshold: time.Duration(cfg.ColdCleanupDays) * 24 * time.Hour,
+		Logger:        logger,
 	})
+}
+
+// provideTracker 构造访问活跃度追踪器。
+// @return 活跃度追踪器
+func provideTracker(conn *sql.DB, queries *db.Queries, logger *slog.Logger) *lifecycle.Tracker {
+	return lifecycle.NewTracker(conn, queries, logger)
 }
 
 // provideHTTPServer 组装 net/http.Server,监听与优雅停机挂到 fx 生命周期。
@@ -298,7 +306,7 @@ func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, srv *server.Server, l
 // registerBackgroundLoops 注册渠道健康检查与元数据库备份两个周期循环。
 // @Description: 各自持长生命周期 context,OnStop 取消。二者均为兜底型循环,启动即先跑一轮。
 func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
-	manager *channel.Manager, sweeper *lifecycle.Sweeper, logger *slog.Logger) {
+	manager *channel.Manager, sweeper *lifecycle.Sweeper, tracker *lifecycle.Tracker, logger *slog.Logger) {
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
@@ -306,6 +314,15 @@ func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
 			return nil
 		},
 		OnStop: func(context.Context) error { sweepCancel(); return nil },
+	})
+
+	activityCtx, activityCancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go tracker.Run(activityCtx, time.Duration(cfg.ActivityFlushSeconds)*time.Second)
+			return nil
+		},
+		OnStop: func(context.Context) error { activityCancel(); return nil },
 	})
 
 	healthCtx, healthCancel := context.WithCancel(context.Background())

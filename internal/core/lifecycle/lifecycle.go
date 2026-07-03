@@ -33,6 +33,9 @@ type Config struct {
 	Deleter Deleter
 	// Grace 物理删宽限:引用归零打标到实际物理删的等待,可为 0(设计定稿·删除三段式)。
 	Grace time.Duration
+	// ColdThreshold 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;
+	// <=0 表示不启用(设计定稿·待清理标签:机器发现,人做不可逆决定)。
+	ColdThreshold time.Duration
 	// Logger 结构化日志。
 	Logger *slog.Logger
 }
@@ -75,7 +78,29 @@ func (s *Sweeper) SweepOnce(ctx context.Context) error {
 	if err := s.expireImages(ctx); err != nil {
 		return err
 	}
-	return s.physicalDelete(ctx)
+	if err := s.physicalDelete(ctx); err != nil {
+		return err
+	}
+	return s.labelColdImages(ctx)
+}
+
+// labelColdImages 给超阈值未被公开访问的引用打 pending_cleanup 标签(不自动删,进后台待裁决)。
+// @Description: 冷判据取 COALESCE(last_public_access_at, created_at);ColdThreshold<=0 时跳过。
+// 有真实访问会在活跃度 flush 时摘除标签(Tracker)。
+// @return 更新失败时的错误
+func (s *Sweeper) labelColdImages(ctx context.Context) error {
+	if s.cfg.ColdThreshold <= 0 {
+		return nil
+	}
+	cutoff := sql.NullString{String: db.TimeText(time.Now().Add(-s.cfg.ColdThreshold)), Valid: true}
+	n, err := s.cfg.Queries.LabelColdImages(ctx, cutoff)
+	if err != nil {
+		return fmt.Errorf("标记冷图待清理: %w", err)
+	}
+	if n > 0 {
+		s.cfg.Logger.Info("冷图打待清理标签", "count", n)
+	}
+	return nil
 }
 
 // expireImages 回收到期引用:删引用与其幂等键、递减物理图引用计数,归零则打物理删标记。

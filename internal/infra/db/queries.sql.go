@@ -342,6 +342,21 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 	return i, err
 }
 
+const labelColdImages = `-- name: LabelColdImages :execrows
+UPDATE images
+SET pending_cleanup = 1
+WHERE pending_cleanup = 0
+  AND COALESCE(last_public_access_at, created_at) < ?
+`
+
+func (q *Queries) LabelColdImages(ctx context.Context, lastPublicAccessAt sql.NullString) (int64, error) {
+	result, err := q.db.ExecContext(ctx, labelColdImages, lastPublicAccessAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listBlobChannelIDs = `-- name: ListBlobChannelIDs :many
 SELECT channel_id
 FROM blob_channels
@@ -665,6 +680,22 @@ WHERE state = 'failed' AND channel_id = ?
 
 func (q *Queries) ResetFailedBlobChannels(ctx context.Context, channelID int64) error {
 	_, err := q.db.ExecContext(ctx, resetFailedBlobChannels, channelID)
+	return err
+}
+
+const touchImageAccess = `-- name: TouchImageAccess :exec
+UPDATE images
+SET last_public_access_at = ?, pending_cleanup = 0
+WHERE id = ?
+`
+
+type TouchImageAccessParams struct {
+	LastPublicAccessAt sql.NullString
+	ID                 string
+}
+
+func (q *Queries) TouchImageAccess(ctx context.Context, arg TouchImageAccessParams) error {
+	_, err := q.db.ExecContext(ctx, touchImageAccess, arg.LastPublicAccessAt, arg.ID)
 	return err
 }
 

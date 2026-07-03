@@ -24,6 +24,12 @@ type BlobChannels interface {
 	CandidatesForBlob(ctx context.Context, blobID int64) ([]channel.Handle, error)
 }
 
+// AccessTracker 记录公开访问活跃度(由 lifecycle.Tracker 实现);仅内存,极轻量。
+type AccessTracker interface {
+	// Touch 记录一次对该引用的公开访问。
+	Touch(imageID string)
+}
+
 // Config Server 的全部依赖与参数。
 type Config struct {
 	// Queries sqlc 生成的类型安全查询集(访问路径用)。
@@ -55,6 +61,8 @@ type Config struct {
 	AllowEmptyReferer bool
 	// DefaultTTL 全局默认 TTL;<=0 表示永不过期。单次上传的 ttl 字段可覆盖。
 	DefaultTTL time.Duration
+	// Activity 公开访问活跃度追踪器(设计定稿·区分后台浏览 vs 真实访问)。
+	Activity AccessTracker
 	// Metrics 指标集,用于请求计数/时延与 /metrics 暴露。
 	Metrics *observability.Metrics
 	// Audit 管理操作审计记录器。

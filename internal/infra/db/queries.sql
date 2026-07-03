@@ -159,3 +159,14 @@ WHERE blob_id = ?;
 -- name: DeleteBlob :exec
 DELETE FROM blobs
 WHERE id = ?;
+
+-- name: TouchImageAccess :exec
+UPDATE images
+SET last_public_access_at = ?, pending_cleanup = 0
+WHERE id = ?;
+
+-- name: LabelColdImages :execrows
+UPDATE images
+SET pending_cleanup = 1
+WHERE pending_cleanup = 0
+  AND COALESCE(last_public_access_at, created_at) < ?;

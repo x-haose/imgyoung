@@ -17,6 +17,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/db"
@@ -82,6 +83,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		DefaultEXIFPolicy:    imaging.PolicyPassthrough,
 		Metrics:              observability.New(),
 		Audit:                audit.New(queries),
+		Activity:             lifecycle.NewTracker(conn, queries, slog.New(slog.DiscardHandler)),
 		Logger:               slog.New(slog.DiscardHandler),
 	}
 	if mutate != nil {

@@ -61,6 +61,8 @@ type Config struct {
 	CleanupSweepSeconds  int                `koanf:"cleanup_sweep_seconds"`  // 生命周期清理扫描间隔(秒)
 	DeleteGraceMinutes   int                `koanf:"delete_grace_minutes"`   // 引用归零到物理删的宽限(分钟),可为 0
 	DefaultTTLHours      int                `koanf:"default_ttl_hours"`      // 全局默认 TTL(小时),0 = 永不过期
+	ActivityFlushSeconds int                `koanf:"activity_flush_seconds"` // 访问活跃度批量落库间隔(秒)
+	ColdCleanupDays      int                `koanf:"cold_cleanup_days"`      // 冷图待清理阈值(天),0 = 不启用
 	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
 	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
 }
@@ -170,6 +172,10 @@ func (c Config) validate() error {
 		return fmt.Errorf("delete_grace_minutes=%d 非法: 不可为负", c.DeleteGraceMinutes)
 	case c.DefaultTTLHours < 0:
 		return fmt.Errorf("default_ttl_hours=%d 非法: 不可为负", c.DefaultTTLHours)
+	case c.ActivityFlushSeconds < 1:
+		return fmt.Errorf("activity_flush_seconds=%d 非法: 需要正整数", c.ActivityFlushSeconds)
+	case c.ColdCleanupDays < 0:
+		return fmt.Errorf("cold_cleanup_days=%d 非法: 不可为负", c.ColdCleanupDays)
 	}
 	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
 	if err := imaging.ValidatePolicy(c.EXIFPolicy); err != nil {

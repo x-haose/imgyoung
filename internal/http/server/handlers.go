@@ -170,6 +170,8 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "服务内部错误", http.StatusInternalServerError)
 		return
 	}
+	// 真实公开访问:记活跃度(仅内存,批量落库);后台入口不走此路径,天然不计。
+	s.cfg.Activity.Touch(imageID)
 
 	candidates, err := s.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)
 	if err != nil {
