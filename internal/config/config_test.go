@@ -3,21 +3,19 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// clearEnv 清空本包关心的全部环境变量,保证用例间隔离。
-// @Description: t.Setenv 置空即可——Load 将空值视为未设置。
+// clearEnv 置空当前环境里全部 IMGYOUNG_ 变量,保证用例间隔离,
+// 并顺带覆盖开发者本机可能已设置的同前缀变量。
+// @Description: t.Setenv 置空即可——Load 将空值视为未设置,退出时自动还原。
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{
-		envConfig, envListen, envDataDir, envToken, envMasterKey, envMaxUploadMB,
-		envBaseURL, envMaxPixelsMP, envRefererWhitelist, envAllowEmptyReferer,
-		envEXIFPolicy, envMinSuccess, envAccessMode, envEncryptNewChannels,
-		envHealthCheckSeconds, envMaxConcurrentUploads,
-		envBackupIntervalHours, envBackupKeep,
-	} {
-		t.Setenv(k, "")
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, envPrefix) {
+			t.Setenv(k, "")
+		}
 	}
 }
 
@@ -81,7 +79,7 @@ func TestLoadDefaults(t *testing.T) {
 // TestLoadInvalidAccessMode 验证非法访问模式快速失败。
 func TestLoadInvalidAccessMode(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envAccessMode, "cdn")
+	t.Setenv("IMGYOUNG_ACCESS_MODE", "cdn")
 	if _, err := Load(); err == nil {
 		t.Fatal("access_mode=cdn 应返回错误")
 	}
@@ -90,7 +88,7 @@ func TestLoadInvalidAccessMode(t *testing.T) {
 // TestLoadEXIFPolicy 验证 EXIF 档位配置:合法值生效,非法值(含未实现的 spoof)快速失败。
 func TestLoadEXIFPolicy(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envEXIFPolicy, "strip")
+	t.Setenv("IMGYOUNG_EXIF_POLICY", "strip")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load 返回错误: %v", err)
@@ -102,7 +100,7 @@ func TestLoadEXIFPolicy(t *testing.T) {
 	for _, v := range []string{"spoof", "bogus"} {
 		t.Run(v, func(t *testing.T) {
 			clearEnv(t)
-			t.Setenv(envEXIFPolicy, v)
+			t.Setenv("IMGYOUNG_EXIF_POLICY", v)
 			if _, err := Load(); err == nil {
 				t.Fatalf("exif_policy=%q 应返回错误", v)
 			}
@@ -113,10 +111,10 @@ func TestLoadEXIFPolicy(t *testing.T) {
 // TestLoadRefererAndBaseURL 验证防盗链与站点地址相关配置的读取。
 func TestLoadRefererAndBaseURL(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envBaseURL, "https://img.example.com/")
-	t.Setenv(envMaxPixelsMP, "2")
-	t.Setenv(envRefererWhitelist, "*.example.com, blog.foo.dev")
-	t.Setenv(envAllowEmptyReferer, "false")
+	t.Setenv("IMGYOUNG_BASE_URL", "https://img.example.com/")
+	t.Setenv("IMGYOUNG_MAX_PIXELS_MP", "2")
+	t.Setenv("IMGYOUNG_REFERER_WHITELIST", "*.example.com, blog.foo.dev")
+	t.Setenv("IMGYOUNG_ALLOW_EMPTY_REFERER", "false")
 
 	cfg, err := Load()
 	if err != nil {
@@ -140,10 +138,10 @@ func TestLoadRefererAndBaseURL(t *testing.T) {
 // TestLoadEnvOverrides 验证环境变量能覆盖全部默认值。
 func TestLoadEnvOverrides(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envListen, "127.0.0.1:9000")
-	t.Setenv(envDataDir, "/var/lib/imgyoung")
-	t.Setenv(envToken, "secret")
-	t.Setenv(envMaxUploadMB, "8")
+	t.Setenv("IMGYOUNG_LISTEN", "127.0.0.1:9000")
+	t.Setenv("IMGYOUNG_DATA_DIR", "/var/lib/imgyoung")
+	t.Setenv("IMGYOUNG_TOKEN", "secret")
+	t.Setenv("IMGYOUNG_MAX_UPLOAD_MB", "8")
 
 	cfg, err := Load()
 	if err != nil {
@@ -176,7 +174,7 @@ func TestLoadEnvBeatsFile(t *testing.T) {
 	clearEnv(t)
 	path := writeYAML(t, "listen: \":7000\"\nmax_upload_mb: 12\n")
 	t.Setenv(envConfig, path)
-	t.Setenv(envListen, ":9999")
+	t.Setenv("IMGYOUNG_LISTEN", ":9999")
 
 	cfg, err := Load()
 	if err != nil {
@@ -216,9 +214,9 @@ func TestLoadInvalidMaxUpload(t *testing.T) {
 	for name, v := range map[string]string{"非数字": "abc", "零": "0", "负数": "-3"} {
 		t.Run(name, func(t *testing.T) {
 			clearEnv(t)
-			t.Setenv(envMaxUploadMB, v)
+			t.Setenv("IMGYOUNG_MAX_UPLOAD_MB", v)
 			if _, err := Load(); err == nil {
-				t.Fatalf("%s=%q 应返回错误", envMaxUploadMB, v)
+				t.Fatalf("%s=%q 应返回错误", "IMGYOUNG_MAX_UPLOAD_MB", v)
 			}
 		})
 	}
@@ -227,7 +225,7 @@ func TestLoadInvalidMaxUpload(t *testing.T) {
 // TestLoadInvalidMaxConcurrentUploads 验证非法的并发上限快速失败。
 func TestLoadInvalidMaxConcurrentUploads(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envMaxConcurrentUploads, "0")
+	t.Setenv("IMGYOUNG_MAX_CONCURRENT_UPLOADS", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("max_concurrent_uploads=0 应返回错误")
 	}
@@ -236,12 +234,12 @@ func TestLoadInvalidMaxConcurrentUploads(t *testing.T) {
 // TestLoadInvalidBackup 验证非正的备份间隔与保留份数快速失败。
 func TestLoadInvalidBackup(t *testing.T) {
 	clearEnv(t)
-	t.Setenv(envBackupKeep, "0")
+	t.Setenv("IMGYOUNG_BACKUP_KEEP", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("backup_keep=0 应返回错误")
 	}
 	clearEnv(t)
-	t.Setenv(envBackupIntervalHours, "0")
+	t.Setenv("IMGYOUNG_BACKUP_INTERVAL_HOURS", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("backup_interval_hours=0 应返回错误")
 	}
