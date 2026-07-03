@@ -18,3 +18,6 @@ encrypt_new_channels: false  # 新建渠道未显式指定时是否加密
 health_check_seconds: 60     # 渠道健康检查间隔(秒)
 backup_interval_hours: 24    # 元数据库自动备份间隔(小时)
 backup_keep: 7               # 备份保留份数
+cleanup_sweep_seconds: 60    # 生命周期清理扫描间隔(秒)
+delete_grace_minutes: 0      # 引用归零到物理删的宽限(分钟),0 = 立即
+default_ttl_hours: 0         # 全局默认 TTL(小时),0 = 永不过期;单次上传可覆盖

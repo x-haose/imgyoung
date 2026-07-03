@@ -17,6 +17,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -246,9 +247,23 @@ func provideServer(cfg config.Config, queries *db.Queries, manager *channel.Mana
 		DefaultEXIFPolicy:    cfg.EXIFPolicy,
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
+		DefaultTTL:           time.Duration(cfg.DefaultTTLHours) * time.Hour,
 		Metrics:              metrics,
 		Audit:                auditRec,
 		Logger:               logger,
+	})
+}
+
+// provideSweeper 构造生命周期清理器(渠道对象删除走 replication 入队口)。
+// @return 清理器
+func provideSweeper(cfg config.Config, conn *sql.DB, queries *db.Queries,
+	runner *replication.Runner, logger *slog.Logger) *lifecycle.Sweeper {
+	return lifecycle.New(lifecycle.Config{
+		Conn:    conn,
+		Queries: queries,
+		Deleter: runner,
+		Grace:   time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
+		Logger:  logger,
 	})
 }
 
@@ -283,7 +298,16 @@ func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, srv *server.Server, l
 // registerBackgroundLoops 注册渠道健康检查与元数据库备份两个周期循环。
 // @Description: 各自持长生命周期 context,OnStop 取消。二者均为兜底型循环,启动即先跑一轮。
 func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
-	manager *channel.Manager, logger *slog.Logger) {
+	manager *channel.Manager, sweeper *lifecycle.Sweeper, logger *slog.Logger) {
+	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go sweeper.Run(sweepCtx, time.Duration(cfg.CleanupSweepSeconds)*time.Second)
+			return nil
+		},
+		OnStop: func(context.Context) error { sweepCancel(); return nil },
+	})
+
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error { go healthLoop(healthCtx, cfg, manager, logger); return nil },

@@ -19,6 +19,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // reconcileBatch 恢复扫描的分页大小(循环取批直到取尽)。
@@ -46,6 +47,22 @@ func (ReplicateArgs) Kind() string { return "replicate_blob" }
 
 // InsertOpts 按参数去重:同一(blob, channel)不重复入队。
 func (ReplicateArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{UniqueOpts: river.UniqueOpts{ByArgs: true}}
+}
+
+// DeleteObjectArgs 删除某渠道内一个对象的任务参数(三段式删除的级联执行)。
+type DeleteObjectArgs struct {
+	// ChannelID 目标渠道主键。
+	ChannelID int64 `json:"channel_id"`
+	// StorageKey 待删对象键。
+	StorageKey string `json:"storage_key"`
+}
+
+// Kind 任务类型标识(River 要求)。
+func (DeleteObjectArgs) Kind() string { return "delete_object" }
+
+// InsertOpts 按参数去重:同一(渠道, key)不重复入队。
+func (DeleteObjectArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{UniqueOpts: river.UniqueOpts{ByArgs: true}}
 }
 
@@ -85,6 +102,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &replicateWorker{cfg: cfg})
+	river.AddWorker(workers, &deleteObjectWorker{cfg: cfg})
 	client, err := river.NewClient(driver, &river.Config{
 		Logger: cfg.Logger,
 		Queues: map[string]river.QueueConfig{
@@ -152,6 +170,17 @@ func (r *Runner) EnqueueReplication(ctx context.Context, blobID int64, channelID
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// EnqueueDelete 入队一个渠道对象删除任务(幂等,按参数去重)。
+// @param channelID 目标渠道主键
+// @param storageKey 待删对象键
+// @return 入队失败时的错误(失败即对象暂留,由对账 GC 作为孤儿兜底回收)
+func (r *Runner) EnqueueDelete(ctx context.Context, channelID int64, storageKey string) error {
+	if _, err := r.client.Insert(ctx, DeleteObjectArgs{ChannelID: channelID, StorageKey: storageKey}, nil); err != nil {
+		return fmt.Errorf("入队删除任务(渠道 %d, key %q): %w", channelID, storageKey, err)
+	}
+	return nil
 }
 
 // Reconcile 对账兜底:重置已恢复渠道的 failed 副本,再分页扫描全部未完成
@@ -282,4 +311,33 @@ func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, sta
 	}); err != nil {
 		w.cfg.Logger.Error("写回副本状态失败", "blob", args.BlobID, "channel", args.ChannelID, "err", err)
 	}
+}
+
+// deleteObjectWorker 渠道对象删除执行器(三段式删除的物理级联)。
+type deleteObjectWorker struct {
+	river.WorkerDefaults[DeleteObjectArgs]
+	// cfg Runner 依赖(共享)。
+	cfg RunnerConfig
+}
+
+// Timeout 单任务执行超时。
+func (w *deleteObjectWorker) Timeout(*river.Job[DeleteObjectArgs]) time.Duration {
+	return replicateJobTimeout
+}
+
+// Work 从目标渠道删除一个对象。
+// @Description: 幂等——对象已不存在(ErrNotFound)视为删除成功;渠道已被删则任务作废
+// (对象随渠道消失或成孤儿由对账 GC 兜底)。其余错误交 River 重试,永久失败后对象
+// 成为孤儿,由对账 GC 最终回收(设计定稿·删除重试队列由对账兜底)。
+func (w *deleteObjectWorker) Work(ctx context.Context, job *river.Job[DeleteObjectArgs]) error {
+	args := job.Args
+	h, ok := w.cfg.Manager.Get(args.ChannelID)
+	if !ok {
+		return river.JobCancel(fmt.Errorf("目标渠道 %d 不存在", args.ChannelID))
+	}
+	if err := h.Driver.Delete(ctx, args.StorageKey); err != nil && !errors.Is(err, driver.ErrNotFound) {
+		return fmt.Errorf("删除渠道 %q 对象 %q: %w", h.Name, args.StorageKey, err)
+	}
+	w.cfg.Logger.Info("渠道对象已删除", "channel", h.Name, "key", args.StorageKey)
+	return nil
 }

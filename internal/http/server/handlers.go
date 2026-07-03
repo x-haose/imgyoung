@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -59,9 +60,35 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
+// resolveExpiry 解析本次上传的到期时刻:单次 ttl 字段 > 全局默认(设计定稿·TTL 三层粒度)。
+// @Description: ttl 单位秒;"never" 或 0 显式永久;空则用全局默认(默认为 0 亦永久)。
+// @param r 上传请求
+// @return 到期时刻(零值表示永不过期)
+// @return ttl 取值合法为 true;非法(非整数或负数)为 false
+func (s *Server) resolveExpiry(r *http.Request) (time.Time, bool) {
+	switch raw := r.FormValue("ttl"); raw {
+	case "never":
+		return time.Time{}, true
+	case "":
+		if s.cfg.DefaultTTL <= 0 {
+			return time.Time{}, true
+		}
+		return time.Now().Add(s.cfg.DefaultTTL), true
+	default:
+		secs, err := strconv.Atoi(raw)
+		if err != nil || secs < 0 {
+			return time.Time{}, false
+		}
+		if secs == 0 {
+			return time.Time{}, true
+		}
+		return time.Now().Add(time.Duration(secs) * time.Second), true
+	}
+}
+
 // handleUpload 处理图片上传:HTTP 解包 → 交给上传服务 → 翻译结果。
 // @Description: 业务管道(格式校验/像素预算/净化/哈希/落库)在 upload.Service;
-// 本函数只负责 HTTP 层:大小闸、multipart 解析、错误码映射。
+// 本函数只负责 HTTP 层:大小闸、multipart 解析、TTL 解析、错误码映射。
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, s.cfg.MaxUploadBytes)
 
@@ -87,10 +114,17 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		policy = s.cfg.DefaultEXIFPolicy
 	}
 
+	expireAt, ok := s.resolveExpiry(r)
+	if !ok {
+		s.writeError(w, http.StatusBadRequest, "ttl 取值非法(需要非负整数秒,或 never 表示永久)")
+		return
+	}
+
 	res, err := s.cfg.Upload.Process(r.Context(), data, upload.Options{
 		FileName:       header.Filename,
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
 		EXIFPolicy:     policy,
+		ExpireAt:       expireAt,
 	})
 	switch {
 	case errors.Is(err, upload.ErrUnsupportedType):

@@ -618,6 +618,33 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	}
 }
 
+// TestTTLExpiryDeletes 验证迭代 4 验收:设短 TTL 的图到点消失、渠道副本随后被清。
+func TestTTLExpiryDeletes(t *testing.T) {
+	inst := startInstance(t, map[string]string{
+		"IMGYOUNG_CLEANUP_SWEEP_SECONDS": "1",
+		"IMGYOUNG_DELETE_GRACE_MINUTES":  "0",
+	})
+	payload := pngBytes(t)
+	_, url := mustUpload(t, inst, payload, map[string]string{"ttl": "1"}, nil)
+
+	// 到期前可正常访问。
+	if got := fetchBytes(t, inst, url); !bytes.Equal(got, payload) {
+		t.Fatal("上传后到期前应可访问")
+	}
+
+	// 到期 + 清理后访问 404。
+	waitUntil(t, 15*time.Second, "TTL 到期后访问 404", func() bool {
+		resp := fetch(t, inst, url, "")
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusNotFound
+	})
+	// 渠道副本对象随后被级联清除(local 渠道盘上无顶层对象文件)。
+	localDir := filepath.Join(inst.dataDir, "blobs")
+	waitUntil(t, 10*time.Second, "渠道副本对象被清除", func() bool {
+		return !dirHasObjectFile(localDir)
+	})
+}
+
 // stopInstance 向实例发 SIGTERM 并等待退出(重启前的优雅停机)。
 func stopInstance(t *testing.T, inst *instance) {
 	t.Helper()

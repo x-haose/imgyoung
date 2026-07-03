@@ -127,8 +127,8 @@ func (q *Queries) CreateIdempotencyKey(ctx context.Context, arg CreateIdempotenc
 }
 
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, file_name)
-VALUES (?, ?, ?, ?)
+INSERT INTO images (id, blob_id, user_id, file_name, expire_at)
+VALUES (?, ?, ?, ?, ?)
 `
 
 type CreateImageParams struct {
@@ -136,6 +136,7 @@ type CreateImageParams struct {
 	BlobID   int64
 	UserID   sql.NullString
 	FileName string
+	ExpireAt sql.NullString
 }
 
 func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
@@ -144,7 +145,42 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 		arg.BlobID,
 		arg.UserID,
 		arg.FileName,
+		arg.ExpireAt,
 	)
+	return err
+}
+
+const decrementBlobRef = `-- name: DecrementBlobRef :one
+UPDATE blobs
+SET ref_count = ref_count - 1
+WHERE id = ?
+RETURNING ref_count
+`
+
+func (q *Queries) DecrementBlobRef(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, decrementBlobRef, id)
+	var ref_count int64
+	err := row.Scan(&ref_count)
+	return ref_count, err
+}
+
+const deleteBlob = `-- name: DeleteBlob :exec
+DELETE FROM blobs
+WHERE id = ?
+`
+
+func (q *Queries) DeleteBlob(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBlob, id)
+	return err
+}
+
+const deleteBlobChannelsByBlob = `-- name: DeleteBlobChannelsByBlob :exec
+DELETE FROM blob_channels
+WHERE blob_id = ?
+`
+
+func (q *Queries) DeleteBlobChannelsByBlob(ctx context.Context, blobID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBlobChannelsByBlob, blobID)
 	return err
 }
 
@@ -168,8 +204,28 @@ func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteIdempotencyKeysByImage = `-- name: DeleteIdempotencyKeysByImage :exec
+DELETE FROM idempotency_keys
+WHERE image_id = ?
+`
+
+func (q *Queries) DeleteIdempotencyKeysByImage(ctx context.Context, imageID string) error {
+	_, err := q.db.ExecContext(ctx, deleteIdempotencyKeysByImage, imageID)
+	return err
+}
+
+const deleteImage = `-- name: DeleteImage :exec
+DELETE FROM images
+WHERE id = ?
+`
+
+func (q *Queries) DeleteImage(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteImage, id)
+	return err
+}
+
 const getBlob = `-- name: GetBlob :one
-SELECT id, sha256, phash, md5, storage_key, mime, size, width, height, ref_count, pending_delete, created_at
+SELECT id, sha256, phash, md5, storage_key, mime, size, width, height, ref_count, pending_delete, created_at, delete_after
 FROM blobs
 WHERE id = ?
 `
@@ -190,6 +246,7 @@ func (q *Queries) GetBlob(ctx context.Context, id int64) (Blob, error) {
 		&i.RefCount,
 		&i.PendingDelete,
 		&i.CreatedAt,
+		&i.DeleteAfter,
 	)
 	return i, err
 }
@@ -285,6 +342,35 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 	return i, err
 }
 
+const listBlobChannelIDs = `-- name: ListBlobChannelIDs :many
+SELECT channel_id
+FROM blob_channels
+WHERE blob_id = ?
+`
+
+func (q *Queries) ListBlobChannelIDs(ctx context.Context, blobID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobChannelIDs, blobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var channel_id int64
+		if err := rows.Scan(&channel_id); err != nil {
+			return nil, err
+		}
+		items = append(items, channel_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBlobChannels = `-- name: ListBlobChannels :many
 SELECT bc.channel_id, bc.state, c.name, c.priority, c.healthy
 FROM blob_channels bc
@@ -317,6 +403,46 @@ func (q *Queries) ListBlobChannels(ctx context.Context, blobID int64) ([]ListBlo
 			&i.Priority,
 			&i.Healthy,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBlobsToDelete = `-- name: ListBlobsToDelete :many
+SELECT id, storage_key
+FROM blobs
+WHERE pending_delete = 1 AND delete_after IS NOT NULL AND delete_after <= ?
+LIMIT ?
+`
+
+type ListBlobsToDeleteParams struct {
+	DeleteAfter sql.NullString
+	Limit       int64
+}
+
+type ListBlobsToDeleteRow struct {
+	ID         int64
+	StorageKey string
+}
+
+func (q *Queries) ListBlobsToDelete(ctx context.Context, arg ListBlobsToDeleteParams) ([]ListBlobsToDeleteRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobsToDelete, arg.DeleteAfter, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlobsToDeleteRow
+	for rows.Next() {
+		var i ListBlobsToDeleteRow
+		if err := rows.Scan(&i.ID, &i.StorageKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -404,6 +530,47 @@ func (q *Queries) ListDoneBlobChannelsForChannel(ctx context.Context, channelID 
 	return items, nil
 }
 
+const listExpiredImages = `-- name: ListExpiredImages :many
+SELECT id, blob_id
+FROM images
+WHERE expire_at IS NOT NULL AND expire_at < ?
+ORDER BY expire_at
+LIMIT ?
+`
+
+type ListExpiredImagesParams struct {
+	ExpireAt sql.NullString
+	Limit    int64
+}
+
+type ListExpiredImagesRow struct {
+	ID     string
+	BlobID int64
+}
+
+func (q *Queries) ListExpiredImages(ctx context.Context, arg ListExpiredImagesParams) ([]ListExpiredImagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listExpiredImages, arg.ExpireAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredImagesRow
+	for rows.Next() {
+		var i ListExpiredImagesRow
+		if err := rows.Scan(&i.ID, &i.BlobID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingBlobChannelsPage = `-- name: ListPendingBlobChannelsPage :many
 SELECT blob_id, channel_id
 FROM blob_channels
@@ -470,6 +637,22 @@ func (q *Queries) MarkBlobChannel(ctx context.Context, arg MarkBlobChannelParams
 		arg.BlobID,
 		arg.ChannelID,
 	)
+	return err
+}
+
+const markBlobForDelete = `-- name: MarkBlobForDelete :exec
+UPDATE blobs
+SET pending_delete = 1, delete_after = ?
+WHERE id = ? AND ref_count <= 0
+`
+
+type MarkBlobForDeleteParams struct {
+	DeleteAfter sql.NullString
+	ID          int64
+}
+
+func (q *Queries) MarkBlobForDelete(ctx context.Context, arg MarkBlobForDeleteParams) error {
+	_, err := q.db.ExecContext(ctx, markBlobForDelete, arg.DeleteAfter, arg.ID)
 	return err
 }
 

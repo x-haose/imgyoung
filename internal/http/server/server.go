@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -52,6 +53,8 @@ type Config struct {
 	RefererWhitelist []string
 	// AllowEmptyReferer 空 Referer 是否放行。
 	AllowEmptyReferer bool
+	// DefaultTTL 全局默认 TTL;<=0 表示永不过期。单次上传的 ttl 字段可覆盖。
+	DefaultTTL time.Duration
 	// Metrics 指标集,用于请求计数/时延与 /metrics 暴露。
 	Metrics *observability.Metrics
 	// Audit 管理操作审计记录器。

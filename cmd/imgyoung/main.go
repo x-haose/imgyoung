@@ -26,6 +26,7 @@ func main() {
 			provideMetrics,
 			provideAudit,
 			provideServer,
+			provideSweeper,
 			provideHTTPServer,
 		),
 		// fx 只在出错时说话:略过逐条装配噪音,但绝不吞启动/停机错误。

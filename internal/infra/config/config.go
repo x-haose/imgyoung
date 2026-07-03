@@ -58,6 +58,9 @@ type Config struct {
 	HealthCheckSeconds   int                `koanf:"health_check_seconds"`   // 渠道健康检查间隔(秒)
 	BackupIntervalHours  int                `koanf:"backup_interval_hours"`  // 元数据库自动备份间隔(小时)
 	BackupKeep           int                `koanf:"backup_keep"`            // 备份保留份数;丢失映射即全部不可反查,宁多勿少
+	CleanupSweepSeconds  int                `koanf:"cleanup_sweep_seconds"`  // 生命周期清理扫描间隔(秒)
+	DeleteGraceMinutes   int                `koanf:"delete_grace_minutes"`   // 引用归零到物理删的宽限(分钟),可为 0
+	DefaultTTLHours      int                `koanf:"default_ttl_hours"`      // 全局默认 TTL(小时),0 = 永不过期
 	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
 	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
 }
@@ -161,6 +164,12 @@ func (c Config) validate() error {
 		return fmt.Errorf("backup_interval_hours=%d 非法: 需要正整数", c.BackupIntervalHours)
 	case c.BackupKeep < 1:
 		return fmt.Errorf("backup_keep=%d 非法: 需要正整数", c.BackupKeep)
+	case c.CleanupSweepSeconds < 1:
+		return fmt.Errorf("cleanup_sweep_seconds=%d 非法: 需要正整数", c.CleanupSweepSeconds)
+	case c.DeleteGraceMinutes < 0:
+		return fmt.Errorf("delete_grace_minutes=%d 非法: 不可为负", c.DeleteGraceMinutes)
+	case c.DefaultTTLHours < 0:
+		return fmt.Errorf("default_ttl_hours=%d 非法: 不可为负", c.DefaultTTLHours)
 	}
 	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
 	if err := imaging.ValidatePolicy(c.EXIFPolicy); err != nil {

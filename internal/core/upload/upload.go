@@ -130,6 +130,9 @@ type Options struct {
 	// 注意:strip 目前仅对 JPEG 生效,PNG/WebP/GIF 的元数据块原样保留
 	// (README·已知限制)。
 	EXIFPolicy imaging.EXIFPolicy
+	// ExpireAt 本次上传引用的到期时刻;零值表示永不过期。
+	// 由调用方按"单次指定 > 全局默认"解析后传入(设计定稿·TTL 三层粒度)。
+	ExpireAt time.Time
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -254,6 +257,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		size:     int64(len(data)),
 		width:    int64(meta.Width),
 		height:   int64(meta.Height),
+		expireAt: opts.ExpireAt,
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -352,6 +356,8 @@ type persistParams struct {
 	size int64
 	// width/height 像素尺寸。
 	width, height int64
+	// expireAt 到期时刻;零值表示永不过期。
+	expireAt time.Time
 }
 
 // persist 在单事务内写入 blob、引用、副本状态与幂等键。
@@ -378,11 +384,16 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("写入 blob 记录: %w", err)
 	}
+	expireAt := sql.NullString{}
+	if !p.expireAt.IsZero() {
+		expireAt = sql.NullString{String: db.TimeText(p.expireAt), Valid: true}
+	}
 	if err = q.CreateImage(ctx, db.CreateImageParams{
 		ID:       p.shortID,
 		BlobID:   blobID,
 		UserID:   sql.NullString{String: db.DefaultUserID, Valid: true},
 		FileName: p.fileName,
+		ExpireAt: expireAt,
 	}); err != nil {
 		return 0, fmt.Errorf("写入引用记录: %w", err)
 	}

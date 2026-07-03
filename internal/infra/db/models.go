@@ -30,6 +30,7 @@ type Blob struct {
 	RefCount      int64
 	PendingDelete int64
 	CreatedAt     string
+	DeleteAfter   sql.NullString
 }
 
 type BlobChannel struct {
@@ -60,11 +61,14 @@ type IdempotencyKey struct {
 }
 
 type Image struct {
-	ID        string
-	BlobID    int64
-	UserID    sql.NullString
-	FileName  string
-	CreatedAt string
+	ID                 string
+	BlobID             int64
+	UserID             sql.NullString
+	FileName           string
+	CreatedAt          string
+	ExpireAt           sql.NullString
+	LastPublicAccessAt sql.NullString
+	PendingCleanup     int64
 }
 
 type User struct {

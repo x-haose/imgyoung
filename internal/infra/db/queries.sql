@@ -4,8 +4,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, file_name)
-VALUES (?, ?, ?, ?);
+INSERT INTO images (id, blob_id, user_id, file_name, expire_at)
+VALUES (?, ?, ?, ?, ?);
 
 -- name: GetImageBlob :one
 SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size
@@ -114,3 +114,48 @@ WHERE key = ?;
 -- name: CreateAuditLog :exec
 INSERT INTO audit_log (actor, action, target, detail)
 VALUES (?, ?, ?, ?);
+
+-- name: ListExpiredImages :many
+SELECT id, blob_id
+FROM images
+WHERE expire_at IS NOT NULL AND expire_at < ?
+ORDER BY expire_at
+LIMIT ?;
+
+-- name: DeleteIdempotencyKeysByImage :exec
+DELETE FROM idempotency_keys
+WHERE image_id = ?;
+
+-- name: DeleteImage :exec
+DELETE FROM images
+WHERE id = ?;
+
+-- name: DecrementBlobRef :one
+UPDATE blobs
+SET ref_count = ref_count - 1
+WHERE id = ?
+RETURNING ref_count;
+
+-- name: MarkBlobForDelete :exec
+UPDATE blobs
+SET pending_delete = 1, delete_after = ?
+WHERE id = ? AND ref_count <= 0;
+
+-- name: ListBlobsToDelete :many
+SELECT id, storage_key
+FROM blobs
+WHERE pending_delete = 1 AND delete_after IS NOT NULL AND delete_after <= ?
+LIMIT ?;
+
+-- name: ListBlobChannelIDs :many
+SELECT channel_id
+FROM blob_channels
+WHERE blob_id = ?;
+
+-- name: DeleteBlobChannelsByBlob :exec
+DELETE FROM blob_channels
+WHERE blob_id = ?;
+
+-- name: DeleteBlob :exec
+DELETE FROM blobs
+WHERE id = ?;
