@@ -4,9 +4,7 @@
 package config
 
 import (
-	"crypto/rand"
 	_ "embed"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -41,16 +39,13 @@ const defaultConfigFile = "configs/config.yml"
 // megapixel 一百万像素。
 const megapixel = 1_000_000
 
-// tokenHexLen 随机 Token 的十六进制字符长度(24 字节熵)。
-const tokenHexLen = 48
-
 // Config 进程级运行配置。字段经 koanf 标签直接从合并后的配置反序列化;
 // 末两个 koanf:"-" 字段为派生量,由 max_upload_mb / max_pixels_mp 换算而来。
 // 默认值见内嵌的 config.yml,不在此重复。
 type Config struct {
 	Listen               string             `koanf:"listen"`                 // HTTP 监听地址
 	DataDir              string             `koanf:"data_dir"`               // 数据目录(SQLite 与本地渠道)
-	Token                string             `koanf:"token"`                  // 上传鉴权 Token;为空则由 main 生成随机值
+	Token                string             `koanf:"token"`                  // 上传鉴权 Token,必填;未配置则启动失败
 	MasterKey            string             `koanf:"master_key"`             // 主密钥(64 位 hex);为空则用数据目录文件
 	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限(设计定稿·内存防护)
 	BaseURL              string             `koanf:"base_url"`               // 对外站点地址(去尾斜杠);空则返回相对路径
@@ -188,15 +183,4 @@ func splitCommaList(s string) []string {
 		}
 	}
 	return out
-}
-
-// GenerateToken 生成加密安全的随机上传 Token。
-// @return 十六进制 Token 字符串(tokenHexLen 位)
-// @return 随机源不可用时的错误
-func GenerateToken() (string, error) {
-	buf := make([]byte, tokenHexLen/2)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("读取随机源: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
 }

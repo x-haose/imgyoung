@@ -257,21 +257,3 @@ func TestLoadMissingConfigFile(t *testing.T) {
 		t.Fatal("指向不存在的配置文件应返回错误")
 	}
 }
-
-// TestGenerateToken 验证随机 Token 的长度与唯一性。
-func TestGenerateToken(t *testing.T) {
-	a, err := GenerateToken()
-	if err != nil {
-		t.Fatalf("GenerateToken 返回错误: %v", err)
-	}
-	b, err := GenerateToken()
-	if err != nil {
-		t.Fatalf("GenerateToken 返回错误: %v", err)
-	}
-	if len(a) != tokenHexLen {
-		t.Fatalf("Token 长度 = %d, 期望 %d", len(a), tokenHexLen)
-	}
-	if a == b {
-		t.Fatalf("两次生成的 Token 相同: %q", a)
-	}
-}

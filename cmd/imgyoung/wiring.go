@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -140,19 +141,16 @@ func provideMasterKey(cfg config.Config, logger *slog.Logger) (*secret.MasterKey
 	return key, nil
 }
 
-// provideToken 解析上传 Token:未配置则生成随机值(仅本次运行有效)。
+// provideToken 提供上传鉴权 Token;必填,未配置即拒绝启动(fail-fast)。
+// @Description: 鉴权凭证不做"自动生成"兜底——每次重启都变的临时 Token 是运维陷阱,
+// 且与本项目快速失败红线一致。多用户具名 Token(哈希入库)见迭代 5。
 // @return 上传鉴权 Token
-// @return 随机源不可用时的错误
-func provideToken(cfg config.Config, logger *slog.Logger) (string, error) {
-	if cfg.Token != "" {
-		return cfg.Token, nil
+// @return 未配置 Token 时的错误
+func provideToken(cfg config.Config) (string, error) {
+	if cfg.Token == "" {
+		return "", errors.New("未配置 IMGYOUNG_TOKEN:上传鉴权 Token 必填,请设置后重启")
 	}
-	token, err := config.GenerateToken()
-	if err != nil {
-		return "", err
-	}
-	logger.Info("未配置 IMGYOUNG_TOKEN,已生成随机上传 Token(仅本次运行有效)", "token", token)
-	return token, nil
+	return cfg.Token, nil
 }
 
 // provideManager 构造渠道管理器(首次加载用后台 context)。
