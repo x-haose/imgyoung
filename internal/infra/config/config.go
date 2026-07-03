@@ -63,6 +63,8 @@ type Config struct {
 	DefaultTTLHours      int                `koanf:"default_ttl_hours"`      // 全局默认 TTL(小时),0 = 永不过期
 	ActivityFlushSeconds int                `koanf:"activity_flush_seconds"` // 访问活跃度批量落库间隔(秒)
 	ColdCleanupDays      int                `koanf:"cold_cleanup_days"`      // 冷图待清理阈值(天),0 = 不启用
+	UsageReportSeconds   int                `koanf:"usage_report_seconds"`   // 渠道用量上报间隔(秒)
+	ChannelQuotaGB       int                `koanf:"channel_quota_gb"`       // 单渠道用量告警阈值(GB),0 = 不告警
 	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
 	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
 }
@@ -176,6 +178,10 @@ func (c Config) validate() error {
 		return fmt.Errorf("activity_flush_seconds=%d 非法: 需要正整数", c.ActivityFlushSeconds)
 	case c.ColdCleanupDays < 0:
 		return fmt.Errorf("cold_cleanup_days=%d 非法: 不可为负", c.ColdCleanupDays)
+	case c.UsageReportSeconds < 1:
+		return fmt.Errorf("usage_report_seconds=%d 非法: 需要正整数", c.UsageReportSeconds)
+	case c.ChannelQuotaGB < 0:
+		return fmt.Errorf("channel_quota_gb=%d 非法: 不可为负", c.ChannelQuotaGB)
 	}
 	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
 	if err := imaging.ValidatePolicy(c.EXIFPolicy); err != nil {

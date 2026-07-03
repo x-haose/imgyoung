@@ -21,6 +21,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/core/usage"
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
@@ -275,6 +276,21 @@ func provideTracker(conn *sql.DB, queries *db.Queries, logger *slog.Logger) *lif
 	return lifecycle.NewTracker(conn, queries, logger)
 }
 
+// bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。
+const bytesPerGB = 1 << 30
+
+// provideUsageReporter 构造渠道用量上报器(用量量表走 observability)。
+// @return 用量上报器
+func provideUsageReporter(cfg config.Config, queries *db.Queries,
+	metrics *observability.Metrics, logger *slog.Logger) *usage.Reporter {
+	return usage.New(usage.Config{
+		Queries:    queries,
+		Gauge:      metrics,
+		QuotaBytes: int64(cfg.ChannelQuotaGB) * bytesPerGB,
+		Logger:     logger,
+	})
+}
+
 // provideHTTPServer 组装 net/http.Server,监听与优雅停机挂到 fx 生命周期。
 // @Description: OnStart 先建监听(绑定失败即启动失败),再后台 Serve;OnStop 走 Shutdown。
 // @return HTTP 服务器
@@ -306,7 +322,17 @@ func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, srv *server.Server, l
 // registerBackgroundLoops 注册渠道健康检查与元数据库备份两个周期循环。
 // @Description: 各自持长生命周期 context,OnStop 取消。二者均为兜底型循环,启动即先跑一轮。
 func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
-	manager *channel.Manager, sweeper *lifecycle.Sweeper, tracker *lifecycle.Tracker, logger *slog.Logger) {
+	manager *channel.Manager, sweeper *lifecycle.Sweeper, tracker *lifecycle.Tracker,
+	reporter *usage.Reporter, logger *slog.Logger) {
+	usageCtx, usageCancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error {
+			go reporter.Run(usageCtx, time.Duration(cfg.UsageReportSeconds)*time.Second)
+			return nil
+		},
+		OnStop: func(context.Context) error { usageCancel(); return nil },
+	})
+
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {

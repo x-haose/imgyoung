@@ -10,6 +10,43 @@ import (
 	"database/sql"
 )
 
+const channelStorageUsage = `-- name: ChannelStorageUsage :many
+SELECT c.id, c.name, CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
+FROM channels c
+LEFT JOIN blob_channels bc ON bc.channel_id = c.id AND bc.state = 'done'
+LEFT JOIN blobs b ON b.id = bc.blob_id
+GROUP BY c.id, c.name
+`
+
+type ChannelStorageUsageRow struct {
+	ID    int64
+	Name  string
+	Bytes int64
+}
+
+func (q *Queries) ChannelStorageUsage(ctx context.Context) ([]ChannelStorageUsageRow, error) {
+	rows, err := q.db.QueryContext(ctx, channelStorageUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelStorageUsageRow
+	for rows.Next() {
+		var i ChannelStorageUsageRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countSoleReplicas = `-- name: CountSoleReplicas :one
 SELECT COUNT(*)
 FROM blob_channels bc

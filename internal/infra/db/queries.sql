@@ -170,3 +170,10 @@ UPDATE images
 SET pending_cleanup = 1
 WHERE pending_cleanup = 0
   AND COALESCE(last_public_access_at, created_at) < ?;
+
+-- name: ChannelStorageUsage :many
+SELECT c.id, c.name, CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
+FROM channels c
+LEFT JOIN blob_channels bc ON bc.channel_id = c.id AND bc.state = 'done'
+LEFT JOIN blobs b ON b.id = bc.blob_id
+GROUP BY c.id, c.name;

@@ -23,3 +23,5 @@ delete_grace_minutes: 0      # 引用归零到物理删的宽限(分钟),0 = 立
 default_ttl_hours: 0         # 全局默认 TTL(小时),0 = 永不过期;单次上传可覆盖
 activity_flush_seconds: 60   # 访问活跃度批量落库间隔(秒)
 cold_cleanup_days: 90        # 冷图待清理阈值(天),超期未访问打标签;0 = 不启用
+usage_report_seconds: 300    # 渠道用量上报间隔(秒)
+channel_quota_gb: 0          # 单渠道用量告警阈值(GB),超过则告警;0 = 不告警仅上报

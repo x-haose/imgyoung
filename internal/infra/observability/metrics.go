@@ -23,6 +23,8 @@ type Metrics struct {
 	httpRequests *prometheus.CounterVec
 	// httpDuration 按方法/路由模板的请求时延分布。
 	httpDuration *prometheus.HistogramVec
+	// channelStorage 各渠道逻辑存储用量(字节),按渠道名。
+	channelStorage *prometheus.GaugeVec
 }
 
 // New 创建指标集,注册 Go 运行时与进程采集器及内置 HTTP 指标。
@@ -40,9 +42,22 @@ func New() *Metrics {
 		Namespace: namespace, Subsystem: "http", Name: "request_duration_seconds",
 		Help: "HTTP 请求处理时延(秒),按方法、路由模板。", Buckets: prometheus.DefBuckets,
 	}, []string{"method", "route"})
-	reg.MustRegister(httpRequests, httpDuration)
+	channelStorage := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: namespace, Subsystem: "channel", Name: "storage_bytes",
+		Help: "各渠道逻辑存储用量(字节,按已就绪副本的图片大小求和)。",
+	}, []string{"channel"})
+	reg.MustRegister(httpRequests, httpDuration, channelStorage)
 
-	return &Metrics{reg: reg, httpRequests: httpRequests, httpDuration: httpDuration}
+	return &Metrics{
+		reg: reg, httpRequests: httpRequests, httpDuration: httpDuration, channelStorage: channelStorage,
+	}
+}
+
+// SetChannelStorage 设置某渠道的存储用量量表值(由用量上报器周期调用)。
+// @param channel 渠道名
+// @param bytes 逻辑存储字节数
+func (m *Metrics) SetChannelStorage(channel string, bytes float64) {
+	m.channelStorage.WithLabelValues(channel).Set(bytes)
 }
 
 // RecordRequest 记录一次 HTTP 请求的计数与时延。
