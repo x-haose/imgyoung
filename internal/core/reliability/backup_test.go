@@ -1,4 +1,4 @@
-package backup_test
+package reliability_test
 
 import (
 	"log/slog"
@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/x-haose/imgyoung/internal/backup"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
@@ -15,7 +15,7 @@ import (
 
 // testEnv 备份测试环境。
 type testEnv struct {
-	svc     *backup.Service
+	svc     *reliability.Service
 	queries *db.Queries
 	mgr     *channel.Manager
 	dataDir string
@@ -64,7 +64,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("创建引用: %v", err)
 	}
 
-	svc := backup.New(backup.Config{
+	svc := reliability.New(reliability.Config{
 		Conn:     conn,
 		Channels: mgr,
 		DataDir:  dir,
@@ -81,7 +81,7 @@ func listBackups(t *testing.T, env *testEnv) []driver.ObjectInfo {
 	if err != nil {
 		t.Fatalf("取主渠道: %v", err)
 	}
-	objs, err := primary.Driver.List(t.Context(), backup.Dir)
+	objs, err := primary.Driver.List(t.Context(), reliability.Dir)
 	if err != nil {
 		t.Fatalf("列举备份目录: %v", err)
 	}

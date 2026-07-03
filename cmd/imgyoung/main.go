@@ -13,14 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/backup"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/reliability"
+	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
-	"github.com/x-haose/imgyoung/internal/server"
-	"github.com/x-haose/imgyoung/internal/task"
 )
 
 // shutdownTimeout 优雅退出时等待 in-flight 请求完成的上限。
@@ -93,7 +93,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	runner, err := task.NewRunner(task.RunnerConfig{
+	runner, err := replication.NewRunner(replication.RunnerConfig{
 		Conn:    conn,
 		Queries: queries,
 		Manager: channels,
@@ -163,7 +163,7 @@ func run() error {
 	}()
 
 	// 元数据库自动备份循环(设计定稿·可靠性与灾备)。
-	backupSvc := backup.New(backup.Config{
+	backupSvc := reliability.New(reliability.Config{
 		Conn:     conn,
 		Channels: channels,
 		DataDir:  cfg.DataDir,

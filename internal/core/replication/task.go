@@ -1,7 +1,8 @@
-// Package task 异步任务执行层:River 驱动的副本补齐(设计定稿·上传管理/数据模型)。
+// Package replication 副本补齐与对账:River 驱动"确保 blob X 在渠道 Y 有副本",
+// 并含 blob_channels 双向对账 GC(设计定稿·上传管理/可靠性)。
 // 围栏设计:blob_channels 业务表是唯一真相,River 任务只是幂等触发器——
 // 任务表损坏或丢失时,Reconcile 可从业务表完整重建队列。
-package task
+package replication
 
 import (
 	"context"

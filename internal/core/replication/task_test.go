@@ -1,4 +1,4 @@
-package task_test
+package replication_test
 
 import (
 	"bytes"
@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
-	"github.com/x-haose/imgyoung/internal/task"
 )
 
 // testEnv 补齐任务测试环境:两个 local 渠道 + River Runner。
 type testEnv struct {
-	runner  *task.Runner
+	runner  *replication.Runner
 	queries *db.Queries
 	mgr     *channel.Manager
 	dataDir string
@@ -63,7 +63,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("创建备份渠道: %v", err)
 	}
 
-	runner, err := task.NewRunner(task.RunnerConfig{
+	runner, err := replication.NewRunner(replication.RunnerConfig{
 		Conn:    conn,
 		Queries: queries,
 		Manager: mgr,

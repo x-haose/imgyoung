@@ -17,10 +17,10 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
-	"github.com/x-haose/imgyoung/internal/server"
 )
 
 // testToken 测试用上传 Token。

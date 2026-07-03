@@ -92,7 +92,7 @@ func putWithTimeout(ctx context.Context, h channel.Handle, key string, data []by
 	return h.Driver.Put(putCtx, key, bytes.NewReader(data), int64(len(data)))
 }
 
-// ReplicationEnqueuer 副本补齐任务的入队口(由 task.Runner 实现)。
+// ReplicationEnqueuer 副本补齐任务的入队口(由 replication.Runner 实现)。
 type ReplicationEnqueuer interface {
 	// EnqueueReplication 为目标渠道入队补齐任务(幂等)。
 	EnqueueReplication(ctx context.Context, blobID int64, channelIDs []int64) error

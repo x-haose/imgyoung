@@ -1,4 +1,4 @@
-package task
+package replication
 
 import (
 	"context"
@@ -18,7 +18,7 @@ const gcInterval = 24 * time.Hour
 const orphanGrace = 48 * time.Hour
 
 // systemPrefix 渠道内系统对象目录前缀,对账一律豁免;
-// backup.Dir 等系统目录均约定置于该前缀之下。
+// reliability.Dir 等系统目录均约定置于该前缀之下。
 const systemPrefix = "_imgyoung/"
 
 // GCResult 单渠道一轮对账的结果统计。

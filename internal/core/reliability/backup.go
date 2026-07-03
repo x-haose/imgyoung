@@ -1,7 +1,7 @@
-// Package backup 元数据库快照备份(设计定稿·可靠性与灾备):
+// Package reliability 元数据库快照备份(设计定稿·可靠性与灾备):
 // 定时 VACUUM INTO 产出一致性快照,上传到最高优先级健康渠道并保留最近 N 份。
 // 元数据比图片本身珍贵——渠道里是哈希名对象,映射丢失即全部不可反查。
-package backup
+package reliability
 
 import (
 	"context"
