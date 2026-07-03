@@ -28,7 +28,7 @@ open http://localhost:8080/i/R0RjUyP1UW
 
 ## 配置
 
-三层优先级:**环境变量 > 配置文件(yaml)> 默认值**。配置文件通过 `IMGYOUNG_CONFIG` 指定,或自动发现工作目录下的 `imgyoung.yml`。
+三层优先级(由低到高):**内嵌默认 `config.yml`(编译进二进制)< 外部配置文件 < 环境变量**。外部配置文件通过 `IMGYOUNG_CONFIG` 指定,或自动发现工作目录下的 `configs/config.yml`;两者都缺省时靠内嵌默认兜底,单文件即可运行。
 
 | 环境变量 | yaml 键 | 默认 | 说明 |
 |---|---|---|---|
@@ -51,7 +51,7 @@ open http://localhost:8080/i/R0RjUyP1UW
 | `IMGYOUNG_EXIF_POLICY` | `exif_policy` | `passthrough` | 全局默认 EXIF 档位:`passthrough`(原样保留)/ `strip`(剥离元数据);`spoof` 为实验特性尚未开放。单次上传可用表单字段 `exif_policy` 覆盖 |
 
 ```yaml
-# imgyoung.yml 示例
+# configs/config.yml 示例(只需写要覆盖的项)
 listen: ":8080"
 data_dir: /srv/imgyoung
 token: my-token

@@ -1,9 +1,11 @@
-// Package config 装配运行配置,三层优先级:环境变量 > 配置文件(yaml)> 默认值。
-// 基于 koanf(设计定稿·依赖清单);渠道等业务配置存 DB,本包只管进程级配置。
+// Package config 装配运行配置,优先级由低到高:内嵌默认 config.yml < 外部
+// configs/config.yml < 环境变量(IMGYOUNG_*)。基于 koanf(设计定稿·依赖清单);
+// 渠道等业务配置存 DB,本包只管进程级配置。
 package config
 
 import (
 	"crypto/rand"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +21,12 @@ import (
 	"github.com/x-haose/imgyoung/internal/imaging"
 )
 
+// defaultConfigYAML 内嵌的默认配置(config.yml),作为合并的最底层;
+// 用文件而非 Go 字面量承载默认值,让默认既可读又随二进制自带、不依赖运行时文件。
+//
+//go:embed config.yml
+var defaultConfigYAML []byte
+
 // envPrefix 环境变量统一前缀,剥掉后小写即为配置键(IMGYOUNG_DATA_DIR → data_dir);
 // koanf 的 env provider 据此自动映射,无需为每个键单列常量。
 const envPrefix = "IMGYOUNG_"
@@ -27,8 +35,8 @@ const envPrefix = "IMGYOUNG_"
 // 它只定位文件、不作为配置键参与合并,故单列。
 const envConfig = envPrefix + "CONFIG"
 
-// defaultConfigFile 自动发现的默认配置文件名(相对工作目录)。
-const defaultConfigFile = "imgyoung.yml"
+// defaultConfigFile 自动发现的外部配置文件路径(相对工作目录),可选,覆盖内嵌默认。
+const defaultConfigFile = "configs/config.yml"
 
 // megapixel 一百万像素。
 const megapixel = 1_000_000
@@ -38,78 +46,44 @@ const tokenHexLen = 48
 
 // Config 进程级运行配置。字段经 koanf 标签直接从合并后的配置反序列化;
 // 末两个 koanf:"-" 字段为派生量,由 max_upload_mb / max_pixels_mp 换算而来。
+// 默认值见内嵌的 config.yml,不在此重复。
 type Config struct {
-	// Listen HTTP 监听地址,默认 ":8080"。
-	Listen string `koanf:"listen"`
-	// DataDir 数据目录,默认 "data"。
-	DataDir string `koanf:"data_dir"`
-	// Token 上传鉴权 Token;为空表示需要 main 生成随机值。
-	Token string `koanf:"token"`
-	// MasterKey 主密钥(64 位 hex);为空表示使用数据目录文件(首启生成)。
-	MasterKey string `koanf:"master_key"`
-	// MaxConcurrentUploads 上传并发上限,默认 8(设计定稿·内存防护)。
-	MaxConcurrentUploads int `koanf:"max_concurrent_uploads"`
-	// BaseURL 对外站点地址(去尾部斜杠);为空时上传响应返回相对路径。
-	BaseURL string `koanf:"base_url"`
-	// RefererWhitelist 防盗链白名单;为空表示不启用防盗链。
-	RefererWhitelist []string `koanf:"referer_whitelist"`
-	// AllowEmptyReferer 空 Referer 是否放行,默认 true(设计定稿·防盗链)。
-	AllowEmptyReferer bool `koanf:"allow_empty_referer"`
-	// EXIFPolicy 全局默认 EXIF 档位,默认 passthrough(不动用户原图);
-	// 单次上传可覆盖。枚举见 imaging 包。
-	EXIFPolicy imaging.EXIFPolicy `koanf:"exif_policy"`
-	// MinSuccess 上传返回成功所需的最少同步副本数,默认 1。
-	MinSuccess int `koanf:"min_success"`
-	// AccessMode 访问模式:proxy(默认,代理)/ redirect(302 省流量)。
-	AccessMode string `koanf:"access_mode"`
-	// EncryptNewChannels 新建渠道未显式指定 encrypted 时的默认值,默认 false。
-	EncryptNewChannels bool `koanf:"encrypt_new_channels"`
-	// HealthCheckSeconds 渠道健康检查间隔(秒),默认 60。
-	HealthCheckSeconds int `koanf:"health_check_seconds"`
-	// BackupIntervalHours 元数据库自动备份间隔(小时),默认 24。
-	BackupIntervalHours int `koanf:"backup_interval_hours"`
-	// BackupKeep 备份保留份数,默认 7;丢失映射即全部不可反查,宁多勿少。
-	BackupKeep int `koanf:"backup_keep"`
-	// MaxUploadBytes 单图字节上限,由 max_upload_mb 换算,默认 50MB。
-	MaxUploadBytes int64 `koanf:"-"`
-	// MaxPixels 像素预算(width × height 上限),由 max_pixels_mp 换算,默认 50MP。
-	MaxPixels int64 `koanf:"-"`
+	Listen               string             `koanf:"listen"`                 // HTTP 监听地址
+	DataDir              string             `koanf:"data_dir"`               // 数据目录(SQLite 与本地渠道)
+	Token                string             `koanf:"token"`                  // 上传鉴权 Token;为空则由 main 生成随机值
+	MasterKey            string             `koanf:"master_key"`             // 主密钥(64 位 hex);为空则用数据目录文件
+	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限(设计定稿·内存防护)
+	BaseURL              string             `koanf:"base_url"`               // 对外站点地址(去尾斜杠);空则返回相对路径
+	RefererWhitelist     []string           `koanf:"referer_whitelist"`      // 防盗链白名单;空表示不启用
+	AllowEmptyReferer    bool               `koanf:"allow_empty_referer"`    // 空 Referer 是否放行(设计定稿·防盗链)
+	EXIFPolicy           imaging.EXIFPolicy `koanf:"exif_policy"`            // 全局默认 EXIF 档位,单次上传可覆盖;枚举见 imaging
+	MinSuccess           int                `koanf:"min_success"`            // 上传返回成功所需的最少同步副本数
+	AccessMode           string             `koanf:"access_mode"`            // 访问模式:proxy(代理)/ redirect(302 省流量)
+	EncryptNewChannels   bool               `koanf:"encrypt_new_channels"`   // 新建渠道未显式指定 encrypted 时的默认值
+	HealthCheckSeconds   int                `koanf:"health_check_seconds"`   // 渠道健康检查间隔(秒)
+	BackupIntervalHours  int                `koanf:"backup_interval_hours"`  // 元数据库自动备份间隔(小时)
+	BackupKeep           int                `koanf:"backup_keep"`            // 备份保留份数;丢失映射即全部不可反查,宁多勿少
+	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
+	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
 }
 
-// defaults 各配置键的默认值;键与 Config 的 koanf 标签一致,
-// max_upload_mb / max_pixels_mp 不直接绑定字段,仅供派生量换算。
-var defaults = map[string]any{
-	"listen":                 ":8080",
-	"data_dir":               "data",
-	"token":                  "",
-	"master_key":             "",
-	"max_upload_mb":          int64(50),
-	"max_concurrent_uploads": 8,
-	"base_url":               "",
-	"max_pixels_mp":          int64(50),
-	"referer_whitelist":      []string{},
-	"allow_empty_referer":    true,
-	"exif_policy":            "passthrough",
-	"min_success":            1,
-	"access_mode":            "proxy",
-	"encrypt_new_channels":   false,
-	"health_check_seconds":   60,
-	"backup_interval_hours":  24,
-	"backup_keep":            7,
-}
-
-// Load 按"默认值 → 配置文件 → 环境变量"三层合并出最终配置,非法值快速失败。
+// Load 按"内嵌默认 → 外部配置文件 → 环境变量"三层合并出最终配置,非法值快速失败。
 // @Description: 空字符串环境变量视为未设置;显式指定的配置文件不存在时报错,
-// 自动发现的 imgyoung.yml 不存在则静默跳过。
+// 自动发现的 configs/config.yml 不存在则静默跳过(内嵌默认已兜底)。
 // @return 完整配置
 // @return 配置文件读取失败或数值非法时的错误
 func Load() (Config, error) {
 	k := koanf.New(".")
-	if err := k.Load(confmap.Provider(defaults, "."), nil); err != nil {
+	// 第一层:内嵌默认配置(config.yml)。
+	base, err := yaml.Parser().Unmarshal(defaultConfigYAML)
+	if err != nil {
+		return Config{}, fmt.Errorf("解析内嵌默认配置: %w", err)
+	}
+	if err := k.Load(confmap.Provider(base, "."), nil); err != nil {
 		return Config{}, fmt.Errorf("加载默认配置: %w", err)
 	}
 
-	// 第二层:可选 yaml 配置文件。
+	// 第二层:可选外部 yaml 配置文件,覆盖内嵌默认。
 	path := os.Getenv(envConfig)
 	explicit := path != ""
 	if !explicit {

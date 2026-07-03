@@ -1,0 +1,20 @@
+# ImgYoung 内嵌默认配置(编译进二进制,随单文件分发)。
+# 覆盖优先级:本文件(默认) < 外部 configs/config.yml < 环境变量(IMGYOUNG_*)。
+# 各项语义与单位见 README 配置表;此处只承载默认值。
+listen: ":8080"              # HTTP 监听地址
+data_dir: "data"             # 数据目录(SQLite 与本地渠道)
+token: ""                    # 上传 Token;留空则启动时生成随机值
+master_key: ""               # 主密钥(64 位 hex);留空则用 data/master.key
+max_upload_mb: 50            # 单图上限(MB)
+max_concurrent_uploads: 8    # 上传并发上限
+base_url: ""                 # 对外站点地址;留空则上传响应返回相对路径
+max_pixels_mp: 50            # 像素预算(百万像素)
+referer_whitelist: []        # 防盗链白名单;空表示不启用
+allow_empty_referer: true    # 空 Referer 是否放行
+exif_policy: "passthrough"   # 全局 EXIF 档位:passthrough / strip
+min_success: 1               # 上传成功所需的最少同步副本数
+access_mode: "proxy"         # 访问模式:proxy / redirect
+encrypt_new_channels: false  # 新建渠道未显式指定时是否加密
+health_check_seconds: 60     # 渠道健康检查间隔(秒)
+backup_interval_hours: 24    # 元数据库自动备份间隔(小时)
+backup_keep: 7               # 备份保留份数

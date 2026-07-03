@@ -191,11 +191,15 @@ func TestLoadEnvBeatsFile(t *testing.T) {
 	}
 }
 
-// TestLoadDefaultConfigFile 验证工作目录下的 imgyoung.yml 会被自动发现。
+// TestLoadDefaultConfigFile 验证工作目录下的 configs/config.yml 会被自动发现。
 func TestLoadDefaultConfigFile(t *testing.T) {
 	clearEnv(t)
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, defaultConfigFile), []byte("listen: \":6000\"\n"), 0o600); err != nil {
+	confPath := filepath.Join(dir, defaultConfigFile)
+	if err := os.MkdirAll(filepath.Dir(confPath), 0o750); err != nil {
+		t.Fatalf("创建配置目录: %v", err)
+	}
+	if err := os.WriteFile(confPath, []byte("listen: \":6000\"\n"), 0o600); err != nil {
 		t.Fatalf("写默认配置文件: %v", err)
 	}
 	t.Chdir(dir)
