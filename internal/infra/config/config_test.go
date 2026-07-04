@@ -74,6 +74,45 @@ func TestLoadDefaults(t *testing.T) {
 		t.Errorf("备份默认值异常: interval_hours=%d keep=%d, 期望 24 / 7",
 			cfg.BackupIntervalHours, cfg.BackupKeep)
 	}
+	if len(cfg.ProcessWidths) != 5 || cfg.ProcessWidths[0] != 100 || cfg.ProcessWidths[4] != 1600 {
+		t.Errorf("ProcessWidths = %v, 期望 [100 200 400 800 1600]", cfg.ProcessWidths)
+	}
+	if len(cfg.ProcessFormats) != 3 {
+		t.Errorf("ProcessFormats = %v, 期望三格式(webp/jpeg/png)", cfg.ProcessFormats)
+	}
+	if cfg.ProcessWebPMethod != 4 || cfg.ProcessWorkers != 4 || cfg.VariantsCacheMB != 10240 {
+		t.Errorf("处理默认值异常: webp_method=%d workers=%d cache_mb=%d, 期望 4 / 4 / 10240",
+			cfg.ProcessWebPMethod, cfg.ProcessWorkers, cfg.VariantsCacheMB)
+	}
+}
+
+// TestLoadProcessWhitelist 验证处理档位:环境变量覆盖档位、非法格式与档位快速失败。
+func TestLoadProcessWhitelist(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("IMGYOUNG_PROCESS_WIDTHS", "320, 640")
+	t.Setenv("IMGYOUNG_PROCESS_FORMATS", "webp, jpeg")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load 返回错误: %v", err)
+	}
+	if len(cfg.ProcessWidths) != 2 || cfg.ProcessWidths[1] != 640 {
+		t.Errorf("ProcessWidths = %v, 期望 [320 640]", cfg.ProcessWidths)
+	}
+	if len(cfg.ProcessFormats) != 2 || cfg.ProcessFormats[0] != "webp" {
+		t.Errorf("ProcessFormats = %v, 期望 [webp jpeg]", cfg.ProcessFormats)
+	}
+
+	clearEnv(t)
+	t.Setenv("IMGYOUNG_PROCESS_FORMATS", "webp, tiff")
+	if _, err := Load(); err == nil {
+		t.Fatal("process_formats 含非法格式 tiff 应返回错误")
+	}
+
+	clearEnv(t)
+	t.Setenv("IMGYOUNG_PROCESS_WEBP_METHOD", "9")
+	if _, err := Load(); err == nil {
+		t.Fatal("process_webp_method=9 越界应返回错误")
+	}
 }
 
 // TestLoadInvalidAccessMode 验证非法访问模式快速失败。

@@ -15,6 +15,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -170,13 +171,38 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 	// 真实公开访问:记活跃度(仅内存,批量落库);后台入口不走此路径,天然不计。
 	s.cfg.Activity.Touch(imageID)
 
-	// 内容不可变,以 sha256 作强 ETag;客户端 If-None-Match 命中直接 304,省流量。
-	etag := `"` + row.Sha256 + `"`
-	if match := r.Header.Get("If-None-Match"); match == etag {
-		w.Header().Set("ETag", etag)
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		w.WriteHeader(http.StatusNotModified)
-		return
+	// 按需处理:解析档位参数,命中则走处理路径(即便 redirect 省流量模式也强制代理)。
+	if s.cfg.Variants != nil {
+		params, want, ok, varyAccept := s.parseVariantRequest(r, row.Mime)
+		if !ok {
+			s.writeError(w, http.StatusBadRequest, "非法的处理参数:宽度或格式不在允许档位")
+			return
+		}
+		if want {
+			s.serveVariant(w, r, row, params, varyAccept)
+			return
+		}
+	}
+	s.serveOriginal(w, r, row, false)
+}
+
+// serveOriginal 代理或重定向原图字节:ETag/304 协商、302 省流量、按渠道优先级容灾读取。
+// @param w 响应写入器
+// @param r 请求
+// @param row 引用与物理图信息
+func (s *Server) serveOriginal(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow, degraded bool) {
+	imageID := row.ID
+	// 非降级路径:内容不可变,以 sha256 作强 ETag;If-None-Match 命中直接 304。
+	// 降级路径(处理失败回退):服务的是全尺寸原图而非目标衍生图,绝不能按 URL 强缓存/302 直链,
+	// 否则会把"临时降级"当"规范内容"永久绑定到带处理参数的 URL(缓存投毒),故跳过 304/302,改 no-store。
+	if !degraded {
+		etag := `"` + row.Sha256 + `"`
+		if match := r.Header.Get("If-None-Match"); match == etag {
+			w.Header().Set("ETag", etag)
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 	}
 
 	candidates, err := s.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)
@@ -192,8 +218,8 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向。
-	if s.cfg.RedirectMode {
+	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向;降级路径强制代理不 302。
+	if !degraded && s.cfg.RedirectMode {
 		for _, cand := range candidates {
 			if cand.AllowDirectLink && !cand.Encrypted && cand.PublicBaseURL != "" {
 				http.Redirect(w, r, cand.PublicBaseURL+"/"+row.StorageKey, http.StatusFound)
@@ -227,10 +253,15 @@ func (s *Server) handleServe(w http.ResponseWriter, r *http.Request) {
 	h := w.Header()
 	h.Set("Content-Type", row.Mime)
 	h.Set("Content-Length", strconv.FormatInt(row.Size, 10))
-	// 内容不可变(URL 即版本),缓存一年;nosniff 强制浏览器信任服务端类型判定。
-	h.Set("Cache-Control", "public, max-age=31536000, immutable")
-	h.Set("ETag", etag)
 	h.Set("X-Content-Type-Options", "nosniff")
+	if degraded {
+		// 降级响应不可被缓存,否则会污染带处理参数的 URL。
+		h.Set("Cache-Control", "no-store")
+	} else {
+		// 内容不可变(URL 即版本),缓存一年;nosniff 强制浏览器信任服务端类型判定。
+		h.Set("Cache-Control", "public, max-age=31536000, immutable")
+		h.Set("ETag", `"`+row.Sha256+`"`)
+	}
 	if _, err := io.Copy(w, rc); err != nil {
 		// 多为客户端提前断开,记 debug 即可。
 		s.cfg.Logger.Debug("输出图片中断", "id", imageID, "err", err)

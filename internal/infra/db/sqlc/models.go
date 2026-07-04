@@ -76,3 +76,13 @@ type User struct {
 	Name      string
 	CreatedAt string
 }
+
+type Variant struct {
+	ID         int64
+	BlobID     int64
+	ParamsHash string
+	Format     string
+	Size       int64
+	LastAccess string
+	CreatedAt  string
+}

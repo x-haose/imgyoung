@@ -23,14 +23,21 @@ type Deleter interface {
 	EnqueueDelete(ctx context.Context, channelID int64, storageKey string) error
 }
 
+// VariantCleaner 删除某物理图的全部衍生图缓存(文件+索引,由 variants.Store 实现)。
+type VariantCleaner interface {
+	// DeleteByBlob 删除某物理图的全部衍生图缓存。
+	DeleteByBlob(ctx context.Context, blobID int64) error
+}
+
 // Config Sweeper 的依赖与参数。
 type Config struct {
-	Conn          *sql.DB       // 数据库连接(多步删除的事务用)
-	Queries       *sqlc.Queries // sqlc 查询集
-	Deleter       Deleter       // 渠道对象删除入队口
-	Grace         time.Duration // 物理删宽限:引用归零打标到实际物理删的等待,可为 0
-	ColdThreshold time.Duration // 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;<=0 表示不启用
-	Logger        *slog.Logger  // 结构化日志
+	Conn          *sql.DB        // 数据库连接(多步删除的事务用)
+	Queries       *sqlc.Queries  // sqlc 查询集
+	Deleter       Deleter        // 渠道对象删除入队口
+	Variants      VariantCleaner // 衍生图缓存清理;为 nil 时跳过
+	Grace         time.Duration  // 物理删宽限:引用归零打标到实际物理删的等待,可为 0
+	ColdThreshold time.Duration  // 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;<=0 表示不启用
+	Logger        *slog.Logger   // 结构化日志
 }
 
 // Sweeper 清理器,无可变状态、并发安全。
@@ -170,6 +177,14 @@ func (s *Sweeper) physicalDelete(ctx context.Context) error {
 // 不阻塞逻辑删。
 // @return 事务失败时的错误
 func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey string) error {
+	// 先清衍生图缓存(文件+索引):variants 有外键指向 blobs,不先删其行,下面的 DeleteBlob 会被外键约束拦下。
+	// 缓存是可重建的派生物,即便后续事务回滚也只是让其冷启,无数据风险。
+	if s.cfg.Variants != nil {
+		if err := s.cfg.Variants.DeleteByBlob(ctx, blobID); err != nil {
+			return fmt.Errorf("清理衍生图缓存: %w", err)
+		}
+	}
+
 	// 删业务行前取副本渠道清单(删后就查不到了)。
 	channelIDs, err := s.cfg.Queries.ListBlobChannelIDs(ctx, blobID)
 	if err != nil {
@@ -184,6 +199,11 @@ func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey strin
 	q := s.cfg.Queries.WithTx(tx)
 	if err := q.DeleteBlobChannelsByBlob(ctx, blobID); err != nil {
 		return fmt.Errorf("删除副本记录: %w", err)
+	}
+	// 无条件删 variant 索引行作外键兜底:上面 DeleteByBlob 已删则此处 0 行;若 Variants 为 nil 而有残留行,
+	// 这里兜住,避免 DeleteBlob 撞外键约束致该物理图每轮重试删不掉(文件清理仍依赖 DeleteByBlob)。
+	if err := q.DeleteVariantsByBlob(ctx, blobID); err != nil {
+		return fmt.Errorf("删除衍生图索引: %w", err)
 	}
 	if err := q.DeleteBlob(ctx, blobID); err != nil {
 		return fmt.Errorf("删除物理图: %w", err)

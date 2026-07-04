@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/variants"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -95,6 +96,54 @@ func TestSweepExpiresAndCascades(t *testing.T) {
 	// 渠道副本应级联入队删除。
 	if len(deleter.calls) != 1 || deleter.calls[0].channelID != 1 || deleter.calls[0].storageKey != "obj_key" {
 		t.Errorf("级联删除入队异常: %+v", deleter.calls)
+	}
+}
+
+// TestSweepCascadesVariants 验证物理删 blob 时级联清理其衍生图缓存;
+// 兼验 variants 外键不会拦下 DeleteBlob(必须先删变体行)。
+func TestSweepCascadesVariants(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "obj_key", Mime: "image/png", Size: 3, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "img0000002", BlobID: blobID,
+		UserID: sql.NullString{String: sqlc.DefaultUserID, Valid: true}, ExpireAt: past,
+	}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+	// 造一条衍生图缓存索引(外键指向该 blob)。
+	key := variants.Key(blobID, 200, "webp", 80, 4)
+	if err := q.UpsertVariant(ctx, sqlc.UpsertVariantParams{
+		BlobID: blobID, ParamsHash: key, Format: "webp", Size: 10,
+	}); err != nil {
+		t.Fatalf("建变体索引: %v", err)
+	}
+
+	store := variants.New(variants.Config{
+		Dir: t.TempDir(), Capacity: 1 << 30, Queries: q, Logger: slog.New(slog.DiscardHandler),
+	})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Variants: store, Grace: 0,
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce 返回错误: %v", err)
+	}
+
+	// blob 应已物理删(变体行先删,外键未拦)。
+	if _, err := q.GetBlob(ctx, blobID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("blob 未物理删(疑被外键拦下): err=%v", err)
+	}
+	// 变体索引应级联删除。
+	if _, err := q.GetVariant(ctx, sqlc.GetVariantParams{BlobID: blobID, ParamsHash: key}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("变体索引未级联删除: err=%v", err)
 	}
 }
 

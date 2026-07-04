@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/core/variants"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
@@ -47,6 +48,9 @@ type Config struct {
 	AllowEmptyReferer    bool                   // 空 Referer 是否放行
 	DefaultTTL           time.Duration          // 全局默认 TTL;<=0 表示永不过期;单次上传的 ttl 字段可覆盖
 	Activity             AccessTracker          // 公开访问活跃度追踪器
+	Variants             *variants.Service      // 按需处理服务;为 nil 表示不启用(仅代理原图)
+	ProcessWidths        []int                  // 允许的宽度档白名单,档外请求 400
+	ProcessFormats       []string               // 允许的目标格式白名单,档外请求 400
 	Metrics              *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
 	Audit                *audit.Recorder        // 管理操作审计记录器
 	Logger               *slog.Logger           // 结构化日志

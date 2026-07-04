@@ -25,6 +25,8 @@ func main() {
 			provideUpload,
 			provideMetrics,
 			provideAudit,
+			provideVariantStore,
+			provideVariants,
 			provideServer,
 			provideSweeper,
 			provideTracker,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/knadh/koanf/parsers/yaml"
@@ -66,8 +67,16 @@ type Config struct {
 	UsageReportSeconds   int                `koanf:"usage_report_seconds"`   // 渠道用量上报间隔(秒)
 	ChannelQuotaGB       int                `koanf:"channel_quota_gb"`       // 单渠道用量告警阈值(GB),0 = 不告警
 	DedupScanSeconds     int                `koanf:"dedup_scan_seconds"`     // 后台精确查重扫描间隔(秒)
+	ProcessQualityWebP   int                `koanf:"process_quality_webp"`   // 按需处理 webp 质量档[0,100]
+	ProcessQualityJPEG   int                `koanf:"process_quality_jpeg"`   // 按需处理 jpeg 质量档[1,100]
+	ProcessWebPMethod    int                `koanf:"process_webp_method"`    // webp 质量/速度权衡[0,6]
+	ProcessWorkers       int                `koanf:"process_workers"`        // 处理并发上限(信号量)
+	ProcessTimeoutMS     int                `koanf:"process_timeout_ms"`     // 单请求处理超时(毫秒)
+	VariantsCacheMB      int64              `koanf:"variants_cache_mb"`      // variant 磁盘缓存上限(MB),超则 LRU 淘汰
 	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
 	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
+	ProcessWidths        []int              `koanf:"-"`                      // 允许的宽度档白名单,由 process_widths 读入
+	ProcessFormats       []string           `koanf:"-"`                      // 允许的目标格式白名单,由 process_formats 读入
 }
 
 // Load 按"内嵌默认 → 外部配置文件 → 环境变量"三层合并出最终配置,非法值快速失败。
@@ -94,6 +103,10 @@ func Load() (Config, error) {
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	cfg.MaxUploadBytes = k.Int64("max_upload_mb") << 20
 	cfg.MaxPixels = k.Int64("max_pixels_mp") * megapixel
+	// 列表型档位单列读取:yaml 原生列表由 koanf 保型,逗号环境变量已在 envProvider 预切成 []int/[]string;
+	// 这里 Ints/Strings 只是从已定型的切片取值,不做跨类型强转。
+	cfg.ProcessWidths = k.Ints("process_widths")
+	cfg.ProcessFormats = k.Strings("process_formats")
 	if err := cfg.validate(); err != nil {
 		return Config{}, err
 	}
@@ -141,7 +154,10 @@ func envProvider() koanf.Provider {
 		if value == "" || name == "config" {
 			return "", nil
 		}
-		if name == "referer_whitelist" {
+		if name == "process_widths" {
+			return name, splitCommaInts(value)
+		}
+		if name == "referer_whitelist" || name == "process_formats" {
 			return name, splitCommaList(value)
 		}
 		return name, value
@@ -185,12 +201,53 @@ func (c Config) validate() error {
 		return fmt.Errorf("channel_quota_gb=%d 非法: 不可为负", c.ChannelQuotaGB)
 	case c.DedupScanSeconds < 1:
 		return fmt.Errorf("dedup_scan_seconds=%d 非法: 需要正整数", c.DedupScanSeconds)
+	case c.ProcessQualityWebP < 0 || c.ProcessQualityWebP > 100:
+		return fmt.Errorf("process_quality_webp=%d 非法: 需要 [0,100]", c.ProcessQualityWebP)
+	case c.ProcessQualityJPEG < 1 || c.ProcessQualityJPEG > 100:
+		return fmt.Errorf("process_quality_jpeg=%d 非法: 需要 [1,100]", c.ProcessQualityJPEG)
+	case c.ProcessWebPMethod < 0 || c.ProcessWebPMethod > 6:
+		return fmt.Errorf("process_webp_method=%d 非法: 需要 [0,6]", c.ProcessWebPMethod)
+	case c.ProcessWorkers < 1:
+		return fmt.Errorf("process_workers=%d 非法: 需要正整数", c.ProcessWorkers)
+	case c.ProcessTimeoutMS < 1:
+		return fmt.Errorf("process_timeout_ms=%d 非法: 需要正整数", c.ProcessTimeoutMS)
+	case c.VariantsCacheMB < 1:
+		return fmt.Errorf("variants_cache_mb=%d 非法: 需要正整数", c.VariantsCacheMB)
+	}
+	for _, w := range c.ProcessWidths {
+		if w < 1 {
+			return fmt.Errorf("process_widths 含非法档位 %d: 需要正整数", w)
+		}
+	}
+	if len(c.ProcessFormats) == 0 {
+		return errors.New("process_formats 不可为空: 至少允许一种目标格式")
+	}
+	for _, f := range c.ProcessFormats {
+		if err := imaging.ValidateFormat(f); err != nil {
+			return fmt.Errorf("process_formats 配置非法: %w", err)
+		}
 	}
 	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
 	if err := imaging.ValidatePolicy(c.EXIFPolicy); err != nil {
 		return fmt.Errorf("exif_policy 配置非法: %w", err)
 	}
 	return nil
+}
+
+// splitCommaInts 把环境变量里逗号分隔的整数切成 []int,非整数项跳过。
+// @Description: koanf 的 Ints 对环境变量来的 []string 强转不稳,故 process_widths 直接解析为 []int;
+// 非法项在此静默跳过,数值边界由 validate 兜底(负数/零档位报错)。
+// @param s 逗号分隔的原始值
+// @return 解析出的整数切片
+func splitCommaInts(s string) []int {
+	parts := strings.Split(s, ",")
+	out := make([]int, 0, len(parts))
+	for _, p := range parts {
+		if n, err := strconv.Atoi(strings.TrimSpace(p)); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // splitCommaList 把环境变量里逗号分隔的多值切成切片,去首尾空白、丢空项。

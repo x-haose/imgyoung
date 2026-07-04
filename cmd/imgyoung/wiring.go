@@ -23,10 +23,12 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/core/usage"
+	"github.com/x-haose/imgyoung/internal/core/variants"
 	"github.com/x-haose/imgyoung/internal/http/server"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
@@ -230,11 +232,49 @@ func provideMetrics(manager *channel.Manager) *observability.Metrics {
 // @return 审计记录器
 func provideAudit(queries *sqlc.Queries) *audit.Recorder { return audit.New(queries) }
 
+// encodeSettingsFrom 从运行配置组装编码档位,供处理引擎与缓存键计算共用。
+// @param cfg 运行配置
+// @return 编码档位
+func encodeSettingsFrom(cfg config.Config) imaging.EncodeSettings {
+	return imaging.EncodeSettings{
+		QualityWebP: cfg.ProcessQualityWebP,
+		QualityJPEG: cfg.ProcessQualityJPEG,
+		WebPMethod:  cfg.ProcessWebPMethod,
+		MaxPixels:   cfg.MaxPixels,
+	}
+}
+
+// provideVariantStore 构造衍生图磁盘缓存存储(供服务与删除级联共用)。
+// @return 缓存存储
+func provideVariantStore(cfg config.Config, queries *sqlc.Queries, logger *slog.Logger) *variants.Store {
+	return variants.New(variants.Config{
+		Dir:      filepath.Join(cfg.DataDir, "variants"),
+		Capacity: cfg.VariantsCacheMB << 20,
+		Queries:  queries,
+		Logger:   logger,
+	})
+}
+
+// provideVariants 构造按需处理服务。
+// @return 处理服务
+func provideVariants(cfg config.Config, store *variants.Store, logger *slog.Logger) *variants.Service {
+	set := encodeSettingsFrom(cfg)
+	return variants.NewService(variants.ServiceConfig{
+		Store:    store,
+		Proc:     imaging.NewProcessor(set),
+		Settings: set,
+		Workers:  cfg.ProcessWorkers,
+		Timeout:  time.Duration(cfg.ProcessTimeoutMS) * time.Millisecond,
+		Logger:   logger,
+	})
+}
+
 // provideServer 构造 HTTP 业务处理器集合。
 // @return HTTP 服务处理器
 func provideServer(cfg config.Config, queries *sqlc.Queries, manager *channel.Manager,
 	uploadSvc *upload.Service, token string, metrics *observability.Metrics,
-	auditRec *audit.Recorder, tracker *lifecycle.Tracker, logger *slog.Logger) *server.Server {
+	auditRec *audit.Recorder, tracker *lifecycle.Tracker, variantSvc *variants.Service,
+	logger *slog.Logger) *server.Server {
 	return server.New(server.Config{
 		Queries:              queries,
 		Channels:             manager,
@@ -251,6 +291,9 @@ func provideServer(cfg config.Config, queries *sqlc.Queries, manager *channel.Ma
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
 		DefaultTTL:           time.Duration(cfg.DefaultTTLHours) * time.Hour,
 		Activity:             tracker,
+		Variants:             variantSvc,
+		ProcessWidths:        cfg.ProcessWidths,
+		ProcessFormats:       cfg.ProcessFormats,
 		Metrics:              metrics,
 		Audit:                auditRec,
 		Logger:               logger,
@@ -260,11 +303,12 @@ func provideServer(cfg config.Config, queries *sqlc.Queries, manager *channel.Ma
 // provideSweeper 构造生命周期清理器(渠道对象删除走 replication 入队口)。
 // @return 清理器
 func provideSweeper(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
-	runner *replication.Runner, logger *slog.Logger) *lifecycle.Sweeper {
+	runner *replication.Runner, store *variants.Store, logger *slog.Logger) *lifecycle.Sweeper {
 	return lifecycle.New(lifecycle.Config{
 		Conn:          conn,
 		Queries:       queries,
 		Deleter:       runner,
+		Variants:      store,
 		Grace:         time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
 		ColdThreshold: time.Duration(cfg.ColdCleanupDays) * 24 * time.Hour,
 		Logger:        logger,
