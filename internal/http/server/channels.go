@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -66,8 +65,7 @@ func (s *Server) handleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, channel.ErrInvalidChannel):
 		s.writeError(w, http.StatusBadRequest, "渠道参数非法或后端无法初始化")
 		return
-	// SQLite 无类型化的唯一约束错误,按消息识别。
-	case err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed"):
+	case errors.Is(err, channel.ErrChannelNameExists):
 		s.writeError(w, http.StatusConflict, "渠道名已存在")
 		return
 	case err != nil:

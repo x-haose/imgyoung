@@ -71,11 +71,17 @@ func (proc *Processor) Process(src []byte, p ProcessParams) ([]byte, string, err
 		return nil, "", ErrProcTooManyPixels
 	}
 
-	img, _, err := image.Decode(bytes.NewReader(src))
+	img, format, err := image.Decode(bytes.NewReader(src))
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: %w", ErrProcInvalidImage, err)
 	}
-	if p.Width > 0 && p.Width < cfg.Width {
+	// JPEG 按 EXIF 方向校正到视觉正确姿态,使目标宽度作用于呈现方向;标准库解码器不自动处理方向。
+	if format == "jpeg" {
+		img = applyOrientation(img, jpegOrientation(src))
+	}
+	// 缩放判据用校正后的实际宽(方向 5–8 会交换宽高),而非解码头的原始宽。
+	srcWidth := img.Bounds().Dx()
+	if p.Width > 0 && p.Width < srcWidth {
 		img = resizeToWidth(img, p.Width) // 缩放输出即 RGBA
 	} else {
 		img = toRGBA(img) // 不缩放时也归一化,规避编码器对非连续布局的损坏

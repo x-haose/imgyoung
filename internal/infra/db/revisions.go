@@ -148,9 +148,11 @@ func scanRevision(s rowScanner) (*migrate.Revision, error) {
 	}
 	rev.Type = migrate.RevisionType(typ)
 	rev.ExecutionTime = time.Duration(execNanos)
-	if t, perr := time.Parse(time.RFC3339Nano, executed); perr == nil {
-		rev.ExecutedAt = t
+	parsed, perr := time.Parse(time.RFC3339Nano, executed)
+	if perr != nil {
+		return nil, fmt.Errorf("解析迁移执行时刻 %q: %w", executed, perr)
 	}
+	rev.ExecutedAt = parsed
 	if err := json.Unmarshal([]byte(hashes), &rev.PartialHashes); err != nil {
 		return nil, fmt.Errorf("解码分段哈希: %w", err)
 	}

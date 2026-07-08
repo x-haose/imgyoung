@@ -36,6 +36,10 @@ import (
 // readHeaderTimeout 读取请求头的上限,防慢速连接占用。
 const readHeaderTimeout = 10 * time.Second
 
+// idleTimeout keep-alive 空闲连接的回收上限;无它则慢速读客户端可长期占用 goroutine
+// (访问路径无并发闸兜底)。上传/下载本体不设 WriteTimeout,大图过慢链路由此放宽。
+const idleTimeout = 120 * time.Second
+
 // fxErrorLogger 安静版 fxevent.Logger:只把带错误的事件写进 slog,略过逐条装配噪音。
 // 保证生产日志干净,又绝不吞掉启动/停机错误(NopLogger 会吞,不可取)。
 type fxErrorLogger struct {
@@ -355,6 +359,7 @@ func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, srv *server.Server, l
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
 	}
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {

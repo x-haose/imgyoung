@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -15,6 +16,10 @@ import (
 
 // ErrInvalidChannel 渠道创建参数非法(名称/后端为空或后端无法初始化)。
 var ErrInvalidChannel = errors.New("channel: 渠道参数非法")
+
+// ErrChannelNameExists 渠道名已存在(唯一约束冲突);由 Create 收敛底层 DB 错误得来,
+// 调用方以 errors.Is 判定,不必自行匹配驱动错误文本。
+var ErrChannelNameExists = errors.New("channel: 渠道名已存在")
 
 // CreateParams 创建渠道的参数。
 type CreateParams struct {
@@ -107,6 +112,10 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 		AllowDirectLink: toInt(p.AllowDirectLink),
 	})
 	if err != nil {
+		// SQLite 驱动不暴露类型化的约束错误,按消息收敛为哨兵——匹配集中此一处,不外泄到 HTTP 层。
+		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			return 0, ErrChannelNameExists
+		}
 		return 0, fmt.Errorf("写入渠道记录: %w", err)
 	}
 	// 渠道已落库;装载失败只告警(客户端已获 ID,重启或下次 Reload 可恢复)。

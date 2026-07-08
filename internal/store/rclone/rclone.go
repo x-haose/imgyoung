@@ -75,7 +75,7 @@ func (d *Driver) Stat(ctx context.Context, key string) (*driver.ObjectInfo, erro
 	if err != nil {
 		return nil, err
 	}
-	return &driver.ObjectInfo{Key: key, Size: obj.Size()}, nil
+	return &driver.ObjectInfo{Key: key, Size: obj.Size(), ModTime: obj.ModTime(ctx)}, nil
 }
 
 // Delete 删除 key 对应的对象。
