@@ -2,6 +2,7 @@
 package router
 
 import (
+	"io/fs"
 	"log/slog"
 	"net/http"
 
@@ -24,6 +25,7 @@ type Config struct {
 	RefererWhitelist     []string               // 防盗链白名单;为空表示不启用
 	AllowEmptyReferer    bool                   // 空 Referer 是否放行
 	Metrics              *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
+	Web                  fs.FS                  // 后台前端产物;nil 表示不服务页面
 	Logger               *slog.Logger           // 结构化日志
 }
 
@@ -86,5 +88,9 @@ func New(cfg Config) http.Handler {
 		g.Use(middleware.RefererCheck(cfg.RefererWhitelist, cfg.AllowEmptyReferer))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
 	})
+	if cfg.Web != nil {
+		// 其余路径交给内嵌 SPA(静态文件 + history 路由回落)。
+		r.NotFound(spaHandler(cfg.Web, cfg.Logger))
+	}
 	return r
 }

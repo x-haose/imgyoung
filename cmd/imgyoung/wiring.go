@@ -33,6 +33,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
+	"github.com/x-haose/imgyoung/web"
 )
 
 // readHeaderTimeout 读取请求头的上限,防慢速连接占用。
@@ -352,6 +353,7 @@ func provideRouter(cfg config.Config, pub *publicapi.Handlers, adm *adminapi.Han
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
 		Metrics:              metrics,
+		Web:                  web.Dist(),
 		Logger:               logger,
 	})
 }

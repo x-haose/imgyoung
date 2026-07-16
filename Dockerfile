@@ -1,9 +1,19 @@
-# 构建阶段:纯 Go 静态编译,并预创建数据目录(属主 nonroot)
+# 前端阶段:构建管理后台产物,交给下方 go:embed
+FROM node:22-alpine AS web
+WORKDIR /src/web
+RUN corepack enable pnpm
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ ./
+RUN pnpm build
+
+# 构建阶段:纯 Go 静态编译(内嵌前端产物),并预创建数据目录(属主 nonroot)
 FROM golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+COPY --from=web /src/web/dist ./web/dist
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/imgyoung ./cmd/imgyoung \
     && mkdir -p /out/data && chown 65532:65532 /out/data
 

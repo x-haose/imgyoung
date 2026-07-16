@@ -2,8 +2,16 @@
 version: '3'
 
 tasks:
+  web:
+    desc: 构建管理后台前端(产物进 web/dist,随 go:embed 打进二进制)
+    dir: web
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm build
+
   build:
-    desc: 构建单二进制(纯 Go,无 cgo)
+    desc: 构建单二进制(纯 Go,无 cgo;含后台前端产物)
+    deps: [web]
     env:
       CGO_ENABLED: '0'
     cmds:
@@ -15,7 +23,8 @@ tasks:
       - go test -race ./...
 
   e2e:
-    desc: 端到端测试(编译真实二进制并启动进程)
+    desc: 端到端测试(编译真实二进制并启动进程;先构建前端以覆盖 SPA 冒烟)
+    deps: [web]
     cmds:
       - go test -tags e2e -count=1 ./e2e/ -timeout 300s
 

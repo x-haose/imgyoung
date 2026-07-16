@@ -14,6 +14,19 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Web
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
       - name: Lint
         uses: golangci/golangci-lint-action@v8
         with:

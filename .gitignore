@@ -11,3 +11,8 @@ coverage.out
 # ide / os
 .idea/
 .DS_Store
+
+# web(前端产物与依赖;.gitkeep 保住 go:embed 编译)
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
