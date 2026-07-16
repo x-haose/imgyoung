@@ -1,4 +1,4 @@
-package server
+package publicapi
 
 import (
 	"bytes"
@@ -25,7 +25,7 @@ const cacheImmutable = "public, max-age=31536000, immutable"
 // @return 处理参数
 // @return 是否需要处理
 // @return 参数是否合法(false 表示应回 400)
-func (s *Server) parseVariantRequest(r *http.Request, mime string) (params imaging.ProcessParams, want, ok, varyAccept bool) {
+func (h *Handlers) parseVariantRequest(r *http.Request, mime string) (params imaging.ProcessParams, want, ok, varyAccept bool) {
 	// 源不可重编码(gif 动图等):一律发原图,绝不因显式 format/协商被解码首帧转成静图、丢动画。
 	orig := originalProcessableFormat(mime)
 	if orig == "" {
@@ -39,7 +39,7 @@ func (s *Server) parseVariantRequest(r *http.Request, mime string) (params imagi
 	var width int
 	if widthStr != "" {
 		n, err := strconv.Atoi(widthStr)
-		if err != nil || !s.widthAllowed(n) {
+		if err != nil || !h.widthAllowed(n) {
 			return imaging.ProcessParams{}, false, false, false
 		}
 		width = n
@@ -50,11 +50,11 @@ func (s *Server) parseVariantRequest(r *http.Request, mime string) (params imagi
 	format := formatParam
 	switch {
 	case negotiated:
-		format = negotiateFormat(r.Header.Get("Accept"), s.formatAllowed)
+		format = negotiateFormat(r.Header.Get("Accept"), h.formatAllowed)
 		if format == "" {
 			format = orig // 无更优格式,保持原格式(已确保可重编码)
 		}
-	case !s.formatAllowed(format):
+	case !h.formatAllowed(format):
 		return imaging.ProcessParams{}, false, false, false
 	}
 
@@ -96,8 +96,8 @@ func originalProcessableFormat(mime string) string {
 // widthAllowed 判定宽度是否在档位白名单内。
 // @param w 目标宽度
 // @return 是否允许
-func (s *Server) widthAllowed(w int) bool {
-	for _, aw := range s.cfg.ProcessWidths {
+func (h *Handlers) widthAllowed(w int) bool {
+	for _, aw := range h.cfg.ProcessWidths {
 		if aw == w {
 			return true
 		}
@@ -108,8 +108,8 @@ func (s *Server) widthAllowed(w int) bool {
 // formatAllowed 判定格式是否在白名单内。
 // @param f 目标格式
 // @return 是否允许
-func (s *Server) formatAllowed(f string) bool {
-	for _, af := range s.cfg.ProcessFormats {
+func (h *Handlers) formatAllowed(f string) bool {
+	for _, af := range h.cfg.ProcessFormats {
 		if af == f {
 			return true
 		}
@@ -123,37 +123,37 @@ func (s *Server) formatAllowed(f string) bool {
 // @param row 引用与物理图信息
 // @param params 处理参数
 // @param varyAccept 目标格式是否由 Accept 协商决定(是则响应须 Vary: Accept)
-func (s *Server) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow, params imaging.ProcessParams, varyAccept bool) {
+func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow, params imaging.ProcessParams, varyAccept bool) {
 	// 衍生图内容由(原图 + 宽度 + 格式)唯一决定,据此构造强 ETag。
 	etag := `"` + row.Sha256 + "-" + strconv.Itoa(params.Width) + "-" + params.Format + `"`
 	if match := r.Header.Get("If-None-Match"); match == etag {
-		h := w.Header()
-		h.Set("ETag", etag)
-		setVary(h, varyAccept)
-		h.Set("Cache-Control", cacheImmutable)
+		hd := w.Header()
+		hd.Set("ETag", etag)
+		setVary(hd, varyAccept)
+		hd.Set("Cache-Control", cacheImmutable)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 
-	srcFn := func(ctx context.Context) ([]byte, error) { return s.fetchBlobBytes(ctx, row) }
-	data, mime, err := s.cfg.Variants.GetOrProcess(r.Context(), row.BlobID, params, srcFn)
+	srcFn := func(ctx context.Context) ([]byte, error) { return h.fetchBlobBytes(ctx, row) }
+	data, mime, err := h.cfg.Variants.GetOrProcess(r.Context(), row.BlobID, params, srcFn)
 	if err != nil {
 		// 处理繁忙或失败:降级回退原图,保证可用性;degraded=true 确保不把全尺寸原图当衍生图缓存。
-		s.cfg.Logger.Warn("按需处理失败,降级回退原图", "id", row.ID, "err", err)
-		s.serveOriginal(w, r, row, true)
+		h.cfg.Logger.Warn("按需处理失败,降级回退原图", "id", row.ID, "err", err)
+		h.serveOriginal(w, r, row, true)
 		return
 	}
 
-	h := w.Header()
-	h.Set("Content-Type", mime)
-	h.Set("Content-Length", strconv.Itoa(len(data)))
-	h.Set("Cache-Control", cacheImmutable)
-	h.Set("ETag", etag)
-	setVary(h, varyAccept)
-	h.Set("X-Content-Type-Options", "nosniff")
+	hd := w.Header()
+	hd.Set("Content-Type", mime)
+	hd.Set("Content-Length", strconv.Itoa(len(data)))
+	hd.Set("Cache-Control", cacheImmutable)
+	hd.Set("ETag", etag)
+	setVary(hd, varyAccept)
+	hd.Set("X-Content-Type-Options", "nosniff")
 	// 与原图路径一致用流式拷贝输出二进制图像;nosniff + 显式 Content-Type 已排除嗅探风险。
 	if _, werr := io.Copy(w, bytes.NewReader(data)); werr != nil {
-		s.cfg.Logger.Debug("输出衍生图中断", "id", row.ID, "err", werr)
+		h.cfg.Logger.Debug("输出衍生图中断", "id", row.ID, "err", werr)
 	}
 }
 
@@ -171,25 +171,25 @@ func setVary(h http.Header, varyAccept bool) {
 // @param row 引用与物理图信息
 // @return 原图字节
 // @return 错误
-func (s *Server) fetchBlobBytes(ctx context.Context, row sqlc.GetImageBlobRow) ([]byte, error) {
-	candidates, err := s.cfg.Channels.CandidatesForBlob(ctx, row.BlobID)
+func (h *Handlers) fetchBlobBytes(ctx context.Context, row sqlc.GetImageBlobRow) ([]byte, error) {
+	candidates, err := h.cfg.Channels.CandidatesForBlob(ctx, row.BlobID)
 	if err != nil {
 		return nil, fmt.Errorf("查询渠道候选: %w", err)
 	}
 	for _, cand := range candidates {
 		rc, oerr := cand.Driver.Open(ctx, row.StorageKey)
 		if oerr != nil {
-			s.cfg.Logger.Warn("处理取源:渠道读取失败,切换下一候选", "id", row.ID, "channel", cand.Name, "err", oerr)
+			h.cfg.Logger.Warn("处理取源:渠道读取失败,切换下一候选", "id", row.ID, "channel", cand.Name, "err", oerr)
 			continue
 		}
 		// 多读 1 字节以区分"恰好足额"与"超限被截断":截断的残缺字节喂解码器会误判为坏图。
-		data, rerr := io.ReadAll(io.LimitReader(rc, s.cfg.MaxUploadBytes+1))
+		data, rerr := io.ReadAll(io.LimitReader(rc, h.cfg.MaxUploadBytes+1))
 		_ = rc.Close()
 		if rerr != nil {
 			return nil, fmt.Errorf("读取源图字节: %w", rerr)
 		}
-		if int64(len(data)) > s.cfg.MaxUploadBytes {
-			return nil, fmt.Errorf("源图字节超上限 %d", s.cfg.MaxUploadBytes)
+		if int64(len(data)) > h.cfg.MaxUploadBytes {
+			return nil, fmt.Errorf("源图字节超上限 %d", h.cfg.MaxUploadBytes)
 		}
 		return data, nil
 	}

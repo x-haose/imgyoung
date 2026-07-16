@@ -1,4 +1,4 @@
-package server_test
+package router_test
 
 import (
 	"bytes"
@@ -17,68 +17,29 @@ import (
 	"testing"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/core/audit"
-	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/core/lifecycle"
-	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/core/variants"
-	"github.com/x-haose/imgyoung/internal/http/server"
-	"github.com/x-haose/imgyoung/internal/infra/db"
-	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
-	"github.com/x-haose/imgyoung/internal/infra/observability"
-	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
 // setupVariants 组装一个启用按需处理的测试服务,返回服务与 variant 文件目录(供断言缓存状态)。
 // @param procMaxPixels 处理引擎像素预算(独立于上传预算),置小可强制处理失败以测降级回退。
 func setupVariants(t *testing.T, procMaxPixels int64) (*httptest.Server, string) {
 	t.Helper()
-	dir := t.TempDir()
-	discard := slog.New(slog.DiscardHandler)
-
-	conn, err := db.Open(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("打开数据库: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移: %v", err)
-	}
-	master, err := secret.NewMasterKey()
-	if err != nil {
-		t.Fatalf("主密钥: %v", err)
-	}
-	queries := sqlc.New(conn)
-	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
-		Conn: conn, Queries: queries, Master: master, DataDir: dir, Logger: discard,
+	var vdir string
+	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
+		discard := slog.New(slog.DiscardHandler)
+		vdir = filepath.Join(env.Dir, "variants")
+		set := imaging.EncodeSettings{
+			QualityWebP: 80, QualityJPEG: 85, WebPMethod: 4, MaxPixels: procMaxPixels,
+		}
+		store := variants.New(variants.Config{Dir: vdir, Capacity: 1 << 30, Queries: env.Queries, Logger: discard})
+		tc.Public.Variants = variants.NewService(variants.ServiceConfig{
+			Store: store, Proc: imaging.NewProcessor(set), Settings: set,
+			Workers: 4, Timeout: 3 * time.Second, Logger: discard,
+		})
+		tc.Public.ProcessWidths = []int{100, 200, 400}
+		tc.Public.ProcessFormats = []string{"webp", "jpeg", "png"}
 	})
-	if err != nil {
-		t.Fatalf("渠道管理器: %v", err)
-	}
-	uploadSvc := upload.New(upload.Config{
-		Conn: conn, Queries: queries, Channels: mgr, MaxPixels: 1 << 20, Logger: discard,
-	})
-
-	vdir := filepath.Join(dir, "variants")
-	set := imaging.EncodeSettings{
-		QualityWebP: 80, QualityJPEG: 85, WebPMethod: 4, MaxPixels: procMaxPixels,
-	}
-	store := variants.New(variants.Config{Dir: vdir, Capacity: 1 << 30, Queries: queries, Logger: discard})
-	vsvc := variants.NewService(variants.ServiceConfig{
-		Store: store, Proc: imaging.NewProcessor(set), Settings: set,
-		Workers: 4, Timeout: 3 * time.Second, Logger: discard,
-	})
-
-	ts := httptest.NewServer(server.New(server.Config{
-		Queries: queries, Channels: mgr, Admin: mgr, Upload: uploadSvc, Token: testToken,
-		MaxUploadBytes: 1 << 20, MaxConcurrentUploads: 4, AllowEmptyReferer: true,
-		DefaultEXIFPolicy: imaging.PolicyPassthrough, Metrics: observability.New(),
-		Audit: audit.New(queries), Activity: lifecycle.NewTracker(conn, queries, discard),
-		Variants: vsvc, ProcessWidths: []int{100, 200, 400}, ProcessFormats: []string{"webp", "jpeg", "png"},
-		Logger: discard,
-	}).Handler())
-	t.Cleanup(ts.Close)
 	return ts, vdir
 }
 

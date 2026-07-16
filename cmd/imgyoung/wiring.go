@@ -24,7 +24,9 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/core/usage"
 	"github.com/x-haose/imgyoung/internal/core/variants"
-	"github.com/x-haose/imgyoung/internal/http/server"
+	"github.com/x-haose/imgyoung/internal/http/adminapi"
+	"github.com/x-haose/imgyoung/internal/http/publicapi"
+	"github.com/x-haose/imgyoung/internal/http/router"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -273,33 +275,52 @@ func provideVariants(cfg config.Config, store *variants.Store, logger *slog.Logg
 	})
 }
 
-// provideServer 构造 HTTP 业务处理器集合。
-// @return HTTP 服务处理器
-func provideServer(cfg config.Config, queries *sqlc.Queries, manager *channel.Manager,
-	uploadSvc *upload.Service, token string, metrics *observability.Metrics,
-	auditRec *audit.Recorder, tracker *lifecycle.Tracker, variantSvc *variants.Service,
-	logger *slog.Logger) *server.Server {
-	return server.New(server.Config{
-		Queries:              queries,
-		Channels:             manager,
-		Admin:                manager,
-		EncryptNewChannels:   cfg.EncryptNewChannels,
-		RedirectMode:         cfg.AccessMode == "redirect",
-		Upload:               uploadSvc,
+// providePublicAPI 构造数据面处理器集(上传与公开访问)。
+// @return 数据面处理器集
+func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel.Manager,
+	uploadSvc *upload.Service, tracker *lifecycle.Tracker, variantSvc *variants.Service,
+	logger *slog.Logger) *publicapi.Handlers {
+	return publicapi.New(publicapi.Config{
+		Queries:           queries,
+		Channels:          manager,
+		RedirectMode:      cfg.AccessMode == "redirect",
+		Upload:            uploadSvc,
+		MaxUploadBytes:    cfg.MaxUploadBytes,
+		BaseURL:           cfg.BaseURL,
+		DefaultEXIFPolicy: cfg.EXIFPolicy,
+		DefaultTTL:        time.Duration(cfg.DefaultTTLHours) * time.Hour,
+		Activity:          tracker,
+		Variants:          variantSvc,
+		ProcessWidths:     cfg.ProcessWidths,
+		ProcessFormats:    cfg.ProcessFormats,
+		Logger:            logger,
+	})
+}
+
+// provideAdminAPI 构造管理面处理器集(渠道管理与审计留痕)。
+// @return 管理面处理器集
+func provideAdminAPI(cfg config.Config, manager *channel.Manager,
+	auditRec *audit.Recorder, logger *slog.Logger) *adminapi.Handlers {
+	return adminapi.New(adminapi.Config{
+		Admin:              manager,
+		EncryptNewChannels: cfg.EncryptNewChannels,
+		Audit:              auditRec,
+		Logger:             logger,
+	})
+}
+
+// provideRouter 组装完整 HTTP 路由。
+// @return 可挂载到 http.Server 的处理器
+func provideRouter(cfg config.Config, pub *publicapi.Handlers, adm *adminapi.Handlers,
+	token string, metrics *observability.Metrics, logger *slog.Logger) http.Handler {
+	return router.New(router.Config{
+		Public:               pub,
+		Admin:                adm,
 		Token:                token,
-		MaxUploadBytes:       cfg.MaxUploadBytes,
 		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
-		BaseURL:              cfg.BaseURL,
-		DefaultEXIFPolicy:    cfg.EXIFPolicy,
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
-		DefaultTTL:           time.Duration(cfg.DefaultTTLHours) * time.Hour,
-		Activity:             tracker,
-		Variants:             variantSvc,
-		ProcessWidths:        cfg.ProcessWidths,
-		ProcessFormats:       cfg.ProcessFormats,
 		Metrics:              metrics,
-		Audit:                auditRec,
 		Logger:               logger,
 	})
 }
@@ -354,10 +375,10 @@ func provideUsageReporter(cfg config.Config, queries *sqlc.Queries,
 // provideHTTPServer 组装 net/http.Server,监听与优雅停机挂到 fx 生命周期。
 // @Description: OnStart 先建监听(绑定失败即启动失败),再后台 Serve;OnStop 走 Shutdown。
 // @return HTTP 服务器
-func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, srv *server.Server, logger *slog.Logger) *http.Server {
+func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, handler http.Handler, logger *slog.Logger) *http.Server {
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           srv.Handler(),
+		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 	}

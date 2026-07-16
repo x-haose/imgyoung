@@ -1,7 +1,8 @@
-package server_test
+package router_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -19,7 +20,9 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/upload"
-	"github.com/x-haose/imgyoung/internal/http/server"
+	"github.com/x-haose/imgyoung/internal/http/adminapi"
+	"github.com/x-haose/imgyoung/internal/http/publicapi"
+	"github.com/x-haose/imgyoung/internal/http/router"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
@@ -30,11 +33,27 @@ import (
 // testToken 测试用上传 Token。
 const testToken = "test-token"
 
+// testEnv 测试服务的底层构件,供 mutate 回调按用例定制(如构建 variants 服务)。
+type testEnv struct {
+	Dir     string           // 临时数据目录
+	Conn    *sql.DB          // 数据库连接
+	Queries *sqlc.Queries    // sqlc 查询集
+	Mgr     *channel.Manager // 渠道管理器
+}
+
+// testConfig 三面配置的聚合,mutate 回调据此按用例定制。
+type testConfig struct {
+	Public publicapi.Config // 数据面配置
+	Admin  adminapi.Config  // 管理面配置
+	Router router.Config    // 路由级配置(Public/Admin 字段由助手最终填充)
+}
+
 // newTestServer 组装一个使用临时目录(DB + local 渠道)的完整测试服务。
-// @param mutate 可选的配置修改器,用于按用例定制防盗链/BaseURL 等
-func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
+// @param mutate 可选的配置修改器,用于按用例定制防盗链/BaseURL/按需处理等
+func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Server {
 	t.Helper()
 	dir := t.TempDir()
+	discard := slog.New(slog.DiscardHandler)
 
 	conn, err := db.Open(filepath.Join(dir, "test.db"))
 	if err != nil {
@@ -59,7 +78,7 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		Queries: queries,
 		Master:  master,
 		DataDir: dir,
-		Logger:  slog.New(slog.DiscardHandler),
+		Logger:  discard,
 	})
 	if err != nil {
 		t.Fatalf("创建渠道管理器: %v", err)
@@ -69,28 +88,38 @@ func newTestServer(t *testing.T, mutate func(*server.Config)) *httptest.Server {
 		Queries:   queries,
 		Channels:  mgr,
 		MaxPixels: 1 << 20,
-		Logger:    slog.New(slog.DiscardHandler),
+		Logger:    discard,
 	})
 
-	cfg := server.Config{
-		Queries:              queries,
-		Channels:             mgr,
-		Admin:                mgr,
-		Upload:               svc,
-		Token:                testToken,
-		MaxUploadBytes:       1 << 20,
-		MaxConcurrentUploads: 4,
-		AllowEmptyReferer:    true,
-		DefaultEXIFPolicy:    imaging.PolicyPassthrough,
-		Metrics:              observability.New(),
-		Audit:                audit.New(queries),
-		Activity:             lifecycle.NewTracker(conn, queries, slog.New(slog.DiscardHandler)),
-		Logger:               slog.New(slog.DiscardHandler),
+	tc := testConfig{
+		Public: publicapi.Config{
+			Queries:           queries,
+			Channels:          mgr,
+			Upload:            svc,
+			MaxUploadBytes:    1 << 20,
+			DefaultEXIFPolicy: imaging.PolicyPassthrough,
+			Activity:          lifecycle.NewTracker(conn, queries, discard),
+			Logger:            discard,
+		},
+		Admin: adminapi.Config{
+			Admin:  mgr,
+			Audit:  audit.New(queries),
+			Logger: discard,
+		},
+		Router: router.Config{
+			Token:                testToken,
+			MaxConcurrentUploads: 4,
+			AllowEmptyReferer:    true,
+			Metrics:              observability.New(),
+			Logger:               discard,
+		},
 	}
 	if mutate != nil {
-		mutate(&cfg)
+		mutate(&tc, testEnv{Dir: dir, Conn: conn, Queries: queries, Mgr: mgr})
 	}
-	ts := httptest.NewServer(server.New(cfg).Handler())
+	tc.Router.Public = publicapi.New(tc.Public)
+	tc.Router.Admin = adminapi.New(tc.Admin)
+	ts := httptest.NewServer(router.New(tc.Router))
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -124,7 +153,7 @@ func multipartBody(t *testing.T, filename string, payload []byte) (*bytes.Buffer
 	return &buf, w.FormDataContentType()
 }
 
-// upload 向测试服务发起一次上传请求;extraHeaders 追加请求头。
+// uploadReq 向测试服务发起一次上传请求;extraHeaders 追加请求头。
 func uploadReq(t *testing.T, ts *httptest.Server, token, filename string, payload []byte, extraHeaders map[string]string) *http.Response {
 	t.Helper()
 	body, contentType := multipartBody(t, filename, payload)
@@ -304,7 +333,7 @@ func TestUploadEXIFPolicyField(t *testing.T) {
 
 // TestUploadBaseURL 验证配置 BaseURL 后响应返回绝对地址(PicGo 等客户端需要)。
 func TestUploadBaseURL(t *testing.T) {
-	ts := newTestServer(t, func(c *server.Config) { c.BaseURL = "https://img.example.com" })
+	ts := newTestServer(t, func(tc *testConfig, _ testEnv) { tc.Public.BaseURL = "https://img.example.com" })
 	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
 	defer closeBody(t, resp)
 	_, imgURL := decodeUpload(t, resp)
@@ -315,9 +344,9 @@ func TestUploadBaseURL(t *testing.T) {
 
 // TestRefererProtection 验证防盗链:白名单命中放行、未命中 403、空 Referer 按配置。
 func TestRefererProtection(t *testing.T) {
-	ts := newTestServer(t, func(c *server.Config) {
-		c.RefererWhitelist = []string{"*.ok.com"}
-		c.AllowEmptyReferer = true
+	ts := newTestServer(t, func(tc *testConfig, _ testEnv) {
+		tc.Router.RefererWhitelist = []string{"*.ok.com"}
+		tc.Router.AllowEmptyReferer = true
 	})
 	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
 	defer closeBody(t, resp)
@@ -456,7 +485,7 @@ func TestChannelCRUD(t *testing.T) {
 
 // TestRedirectMode 验证 302 省流量模式:允许直链的候选渠道返回重定向。
 func TestRedirectMode(t *testing.T) {
-	ts := newTestServer(t, func(c *server.Config) { c.RedirectMode = true })
+	ts := newTestServer(t, func(tc *testConfig, _ testEnv) { tc.Public.RedirectMode = true })
 
 	// 高优先级 + 允许直链的渠道成为主渠道,上传即落在它上面。
 	body := fmt.Sprintf(

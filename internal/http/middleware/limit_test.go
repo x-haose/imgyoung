@@ -1,15 +1,16 @@
-package server
+package middleware
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 )
 
-// TestLimitConcurrencyRejectsWhenFull 验证并发闸:占满槽位后新请求立即 429,
+// TestConcurrencyLimitRejectsWhenFull 验证并发闸:占满槽位后新请求立即 429,
 // 释放后恢复放行。
-func TestLimitConcurrencyRejectsWhenFull(t *testing.T) {
+func TestConcurrencyLimitRejectsWhenFull(t *testing.T) {
 	release := make(chan struct{})
 	// 缓冲容量覆盖所有会真正进入 handler 的请求(第一与第三),避免测试自身阻塞。
 	entered := make(chan struct{}, 2)
@@ -19,8 +20,7 @@ func TestLimitConcurrencyRejectsWhenFull(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	s := New(Config{})
-	handler := s.limitConcurrency(1, blocked)
+	handler := ConcurrencyLimit(1, slog.New(slog.DiscardHandler))(blocked)
 
 	// 第一个请求占住唯一槽位。
 	var wg sync.WaitGroup
