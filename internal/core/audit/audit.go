@@ -29,6 +29,12 @@ const (
 	ActionImageDelete = "image.delete"
 	// ActionDataExport 元数据导出。
 	ActionDataExport = "data.export"
+	// ActionDedupMerge 相似候选人工合并。
+	ActionDedupMerge = "dedup.merge"
+	// ActionDedupDismiss 相似候选忽略。
+	ActionDedupDismiss = "dedup.dismiss"
+	// ActionCleanupKeep 待清理引用裁决保留(清理豁免)。
+	ActionCleanupKeep = "cleanup.keep"
 )
 
 // Recorder 审计记录器,追加写 audit_log。

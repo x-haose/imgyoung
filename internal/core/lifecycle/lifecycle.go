@@ -225,6 +225,12 @@ func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey strin
 	if err := q.DeleteVariantsByBlob(ctx, blobID); err != nil {
 		return fmt.Errorf("删除衍生图索引: %w", err)
 	}
+	// 相似候选随物理图消亡(候选是工作队列不是历史,留痕在 audit_log)。
+	if err := q.DeleteDedupCandidatesByBlob(ctx, sqlc.DeleteDedupCandidatesByBlobParams{
+		BlobA: blobID, BlobB: blobID,
+	}); err != nil {
+		return fmt.Errorf("删除相似候选: %w", err)
+	}
 	if err := q.DeleteBlob(ctx, blobID); err != nil {
 		return fmt.Errorf("删除物理图: %w", err)
 	}

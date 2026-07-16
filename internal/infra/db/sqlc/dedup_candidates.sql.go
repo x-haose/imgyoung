@@ -22,7 +22,7 @@ func (q *Queries) CountPendingDedupCandidates(ctx context.Context) (int64, error
 	return count, err
 }
 
-const createDedupCandidate = `-- name: CreateDedupCandidate :exec
+const createDedupCandidate = `-- name: CreateDedupCandidate :execrows
 INSERT OR IGNORE INTO dedup_candidates (blob_a, blob_b, distance)
 VALUES (?, ?, ?)
 `
@@ -33,9 +33,12 @@ type CreateDedupCandidateParams struct {
 	Distance int64
 }
 
-func (q *Queries) CreateDedupCandidate(ctx context.Context, arg CreateDedupCandidateParams) error {
-	_, err := q.db.ExecContext(ctx, createDedupCandidate, arg.BlobA, arg.BlobB, arg.Distance)
-	return err
+func (q *Queries) CreateDedupCandidate(ctx context.Context, arg CreateDedupCandidateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createDedupCandidate, arg.BlobA, arg.BlobB, arg.Distance)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteDedupCandidatesByBlob = `-- name: DeleteDedupCandidatesByBlob :exec
@@ -71,6 +74,88 @@ func (q *Queries) GetDedupCandidate(ctx context.Context, id int64) (DedupCandida
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listPendingDedupCandidateDetails = `-- name: ListPendingDedupCandidateDetails :many
+SELECT dc.id, dc.distance, dc.created_at,
+       a.id AS blob_a, a.mime AS mime_a, a.size AS size_a, a.width AS width_a,
+       a.height AS height_a, a.ref_count AS refs_a,
+       CAST(COALESCE((SELECT i.id FROM images i WHERE i.blob_id = a.id LIMIT 1), '') AS TEXT) AS image_a,
+       b.id AS blob_b, b.mime AS mime_b, b.size AS size_b, b.width AS width_b,
+       b.height AS height_b, b.ref_count AS refs_b,
+       CAST(COALESCE((SELECT i.id FROM images i WHERE i.blob_id = b.id LIMIT 1), '') AS TEXT) AS image_b
+FROM dedup_candidates dc
+JOIN blobs a ON a.id = dc.blob_a
+JOIN blobs b ON b.id = dc.blob_b
+WHERE dc.status = 'pending'
+ORDER BY dc.distance, dc.id
+LIMIT ? OFFSET ?
+`
+
+type ListPendingDedupCandidateDetailsParams struct {
+	Limit  int64
+	Offset int64
+}
+
+type ListPendingDedupCandidateDetailsRow struct {
+	ID        int64
+	Distance  int64
+	CreatedAt string
+	BlobA     int64
+	MimeA     string
+	SizeA     int64
+	WidthA    int64
+	HeightA   int64
+	RefsA     int64
+	ImageA    string
+	BlobB     int64
+	MimeB     string
+	SizeB     int64
+	WidthB    int64
+	HeightB   int64
+	RefsB     int64
+	ImageB    string
+}
+
+func (q *Queries) ListPendingDedupCandidateDetails(ctx context.Context, arg ListPendingDedupCandidateDetailsParams) ([]ListPendingDedupCandidateDetailsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingDedupCandidateDetails, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingDedupCandidateDetailsRow
+	for rows.Next() {
+		var i ListPendingDedupCandidateDetailsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Distance,
+			&i.CreatedAt,
+			&i.BlobA,
+			&i.MimeA,
+			&i.SizeA,
+			&i.WidthA,
+			&i.HeightA,
+			&i.RefsA,
+			&i.ImageA,
+			&i.BlobB,
+			&i.MimeB,
+			&i.SizeB,
+			&i.WidthB,
+			&i.HeightB,
+			&i.RefsB,
+			&i.ImageB,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listPendingDedupCandidates = `-- name: ListPendingDedupCandidates :many

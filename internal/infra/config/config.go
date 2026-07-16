@@ -44,41 +44,42 @@ const megapixel = 1_000_000
 // 末两个 koanf:"-" 字段为派生量,由 max_upload_mb / max_pixels_mp 换算而来。
 // 默认值见内嵌的 config.yml,不在此重复。
 type Config struct {
-	Listen               string             `koanf:"listen"`                 // HTTP 监听地址
-	DataDir              string             `koanf:"data_dir"`               // 数据目录(SQLite 与本地渠道)
-	Token                string             `koanf:"token"`                  // 引导 Token;非空则首启幂等植入为管理员名下 bootstrap Token
-	AdminPassword        string             `koanf:"admin_password"`         // 管理员初始密码;仅在管理员尚未设密时生效
-	MasterKey            string             `koanf:"master_key"`             // 主密钥(64 位 hex);为空则用数据目录文件
-	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限
-	UploadRatePerMin     int                `koanf:"upload_rate_per_min"`    // 每用户每分钟上传次数上限;0 = 不启用
-	BaseURL              string             `koanf:"base_url"`               // 对外站点地址(去尾斜杠);空则返回相对路径
-	RefererWhitelist     []string           `koanf:"referer_whitelist"`      // 防盗链白名单;空表示不启用
-	AllowEmptyReferer    bool               `koanf:"allow_empty_referer"`    // 空 Referer 是否放行
-	EXIFPolicy           imaging.EXIFPolicy `koanf:"exif_policy"`            // 全局默认 EXIF 档位,单次上传可覆盖;枚举见 imaging
-	MinSuccess           int                `koanf:"min_success"`            // 上传返回成功所需的最少同步副本数
-	AccessMode           string             `koanf:"access_mode"`            // 访问模式:proxy(代理)/ redirect(302 省流量)
-	EncryptNewChannels   bool               `koanf:"encrypt_new_channels"`   // 新建渠道未显式指定 encrypted 时的默认值
-	HealthCheckSeconds   int                `koanf:"health_check_seconds"`   // 渠道健康检查间隔(秒)
-	BackupIntervalHours  int                `koanf:"backup_interval_hours"`  // 元数据库自动备份间隔(小时)
-	BackupKeep           int                `koanf:"backup_keep"`            // 备份保留份数;丢失映射即全部不可反查,宁多勿少
-	CleanupSweepSeconds  int                `koanf:"cleanup_sweep_seconds"`  // 生命周期清理扫描间隔(秒)
-	DeleteGraceMinutes   int                `koanf:"delete_grace_minutes"`   // 引用归零到物理删的宽限(分钟),可为 0
-	DefaultTTLHours      int                `koanf:"default_ttl_hours"`      // 全局默认 TTL(小时),0 = 永不过期
-	ActivityFlushSeconds int                `koanf:"activity_flush_seconds"` // 访问活跃度批量落库间隔(秒)
-	ColdCleanupDays      int                `koanf:"cold_cleanup_days"`      // 冷图待清理阈值(天),0 = 不启用
-	UsageReportSeconds   int                `koanf:"usage_report_seconds"`   // 渠道用量上报间隔(秒)
-	ChannelQuotaGB       int                `koanf:"channel_quota_gb"`       // 单渠道用量告警阈值(GB),0 = 不告警
-	DedupScanSeconds     int                `koanf:"dedup_scan_seconds"`     // 后台精确查重扫描间隔(秒)
-	ProcessQualityWebP   int                `koanf:"process_quality_webp"`   // 按需处理 webp 质量档[0,100]
-	ProcessQualityJPEG   int                `koanf:"process_quality_jpeg"`   // 按需处理 jpeg 质量档[1,100]
-	ProcessWebPMethod    int                `koanf:"process_webp_method"`    // webp 质量/速度权衡[0,6]
-	ProcessWorkers       int                `koanf:"process_workers"`        // 处理并发上限(信号量)
-	ProcessTimeoutMS     int                `koanf:"process_timeout_ms"`     // 单请求处理超时(毫秒)
-	VariantsCacheMB      int64              `koanf:"variants_cache_mb"`      // variant 磁盘缓存上限(MB),超则 LRU 淘汰
-	MaxUploadBytes       int64              `koanf:"-"`                      // 单图字节上限,由 max_upload_mb 换算
-	MaxPixels            int64              `koanf:"-"`                      // 像素预算(w×h 上限),由 max_pixels_mp 换算
-	ProcessWidths        []int              `koanf:"-"`                      // 允许的宽度档白名单,由 process_widths 读入
-	ProcessFormats       []string           `koanf:"-"`                      // 允许的目标格式白名单,由 process_formats 读入
+	Listen                string             `koanf:"listen"`                   // HTTP 监听地址
+	DataDir               string             `koanf:"data_dir"`                 // 数据目录(SQLite 与本地渠道)
+	Token                 string             `koanf:"token"`                    // 引导 Token;非空则首启幂等植入为管理员名下 bootstrap Token
+	AdminPassword         string             `koanf:"admin_password"`           // 管理员初始密码;仅在管理员尚未设密时生效
+	MasterKey             string             `koanf:"master_key"`               // 主密钥(64 位 hex);为空则用数据目录文件
+	MaxConcurrentUploads  int                `koanf:"max_concurrent_uploads"`   // 上传并发上限
+	UploadRatePerMin      int                `koanf:"upload_rate_per_min"`      // 每用户每分钟上传次数上限;0 = 不启用
+	BaseURL               string             `koanf:"base_url"`                 // 对外站点地址(去尾斜杠);空则返回相对路径
+	RefererWhitelist      []string           `koanf:"referer_whitelist"`        // 防盗链白名单;空表示不启用
+	AllowEmptyReferer     bool               `koanf:"allow_empty_referer"`      // 空 Referer 是否放行
+	EXIFPolicy            imaging.EXIFPolicy `koanf:"exif_policy"`              // 全局默认 EXIF 档位,单次上传可覆盖;枚举见 imaging
+	MinSuccess            int                `koanf:"min_success"`              // 上传返回成功所需的最少同步副本数
+	AccessMode            string             `koanf:"access_mode"`              // 访问模式:proxy(代理)/ redirect(302 省流量)
+	EncryptNewChannels    bool               `koanf:"encrypt_new_channels"`     // 新建渠道未显式指定 encrypted 时的默认值
+	HealthCheckSeconds    int                `koanf:"health_check_seconds"`     // 渠道健康检查间隔(秒)
+	BackupIntervalHours   int                `koanf:"backup_interval_hours"`    // 元数据库自动备份间隔(小时)
+	BackupKeep            int                `koanf:"backup_keep"`              // 备份保留份数;丢失映射即全部不可反查,宁多勿少
+	CleanupSweepSeconds   int                `koanf:"cleanup_sweep_seconds"`    // 生命周期清理扫描间隔(秒)
+	DeleteGraceMinutes    int                `koanf:"delete_grace_minutes"`     // 引用归零到物理删的宽限(分钟),可为 0
+	DefaultTTLHours       int                `koanf:"default_ttl_hours"`        // 全局默认 TTL(小时),0 = 永不过期
+	ActivityFlushSeconds  int                `koanf:"activity_flush_seconds"`   // 访问活跃度批量落库间隔(秒)
+	ColdCleanupDays       int                `koanf:"cold_cleanup_days"`        // 冷图待清理阈值(天),0 = 不启用
+	UsageReportSeconds    int                `koanf:"usage_report_seconds"`     // 渠道用量上报间隔(秒)
+	ChannelQuotaGB        int                `koanf:"channel_quota_gb"`         // 单渠道用量告警阈值(GB),0 = 不告警
+	DedupScanSeconds      int                `koanf:"dedup_scan_seconds"`       // 后台查重扫描间隔(秒)
+	DedupPhashMaxDistance int                `koanf:"dedup_phash_max_distance"` // pHash 相似判定的汉明距离上限;0 = 不做相似扫描
+	ProcessQualityWebP    int                `koanf:"process_quality_webp"`     // 按需处理 webp 质量档[0,100]
+	ProcessQualityJPEG    int                `koanf:"process_quality_jpeg"`     // 按需处理 jpeg 质量档[1,100]
+	ProcessWebPMethod     int                `koanf:"process_webp_method"`      // webp 质量/速度权衡[0,6]
+	ProcessWorkers        int                `koanf:"process_workers"`          // 处理并发上限(信号量)
+	ProcessTimeoutMS      int                `koanf:"process_timeout_ms"`       // 单请求处理超时(毫秒)
+	VariantsCacheMB       int64              `koanf:"variants_cache_mb"`        // variant 磁盘缓存上限(MB),超则 LRU 淘汰
+	MaxUploadBytes        int64              `koanf:"-"`                        // 单图字节上限,由 max_upload_mb 换算
+	MaxPixels             int64              `koanf:"-"`                        // 像素预算(w×h 上限),由 max_pixels_mp 换算
+	ProcessWidths         []int              `koanf:"-"`                        // 允许的宽度档白名单,由 process_widths 读入
+	ProcessFormats        []string           `koanf:"-"`                        // 允许的目标格式白名单,由 process_formats 读入
 }
 
 // Load 按"内嵌默认 → 外部配置文件 → 环境变量"三层合并出最终配置,非法值快速失败。

@@ -325,13 +325,14 @@ func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel
 // provideAdminAPI 构造管理面处理器集(认证、用户/Token/图片/渠道管理与审计)。
 // @return 管理面处理器集
 func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.Service,
-	sweeper *lifecycle.Sweeper, queries *sqlc.Queries,
+	sweeper *lifecycle.Sweeper, merger *dedup.Merger, queries *sqlc.Queries,
 	auditRec *audit.Recorder, logger *slog.Logger) *adminapi.Handlers {
 	return adminapi.New(adminapi.Config{
 		Admin:              manager,
 		EncryptNewChannels: cfg.EncryptNewChannels,
 		Auth:               authSvc,
 		Images:             sweeper,
+		Dedup:              merger,
 		Queries:            queries,
 		Audit:              auditRec,
 		Logger:             logger,
@@ -379,14 +380,15 @@ func provideTracker(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *l
 // bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。
 const bytesPerGB = 1 << 30
 
-// provideMerger 构造精确查重合并器(冗余 blob 的物理删宽限与生命周期一致)。
-// @return 查重合并器
+// provideMerger 构造查重执行器(冗余 blob 的物理删宽限与生命周期一致)。
+// @return 查重执行器
 func provideMerger(cfg config.Config, conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *dedup.Merger {
 	return dedup.New(dedup.Config{
-		Conn:    conn,
-		Queries: queries,
-		Grace:   time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
-		Logger:  logger,
+		Conn:                conn,
+		Queries:             queries,
+		Grace:               time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
+		SimilarityThreshold: cfg.DedupPhashMaxDistance,
+		Logger:              logger,
 	})
 }
 

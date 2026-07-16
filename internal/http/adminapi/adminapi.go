@@ -37,6 +37,7 @@ type Config struct {
 	EncryptNewChannels bool            // 新建渠道未指定 encrypted 时的全局默认(创建时固化)
 	Auth               *auth.Service   // 认证服务(登录/会话/用户/Token 管理)
 	Images             ImageAdmin      // 图片删除入口
+	Dedup              DedupAdmin      // 相似候选裁决执行口
 	Queries            *sqlc.Queries   // 列表与统计查询
 	Audit              *audit.Recorder // 管理操作审计记录器
 	Logger             *slog.Logger    // 结构化日志

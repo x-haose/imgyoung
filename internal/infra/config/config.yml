@@ -27,7 +27,8 @@ activity_flush_seconds: 60   # 访问活跃度批量落库间隔(秒)
 cold_cleanup_days: 90        # 冷图待清理阈值(天),超期未访问打标签;0 = 不启用
 usage_report_seconds: 300    # 渠道用量上报间隔(秒)
 channel_quota_gb: 0          # 单渠道用量告警阈值(GB),超过则告警;0 = 不告警仅上报
-dedup_scan_seconds: 300      # 后台精确查重扫描间隔(秒)
+dedup_scan_seconds: 300      # 后台查重扫描间隔(秒),精确合并与相似扫描同轮执行
+dedup_phash_max_distance: 10 # pHash 相似判定的汉明距离上限,越大越宽松;0 = 不做相似扫描
 # 按需处理(仅 access_mode=proxy 生效):参数档位白名单化,防任意参数打满 CPU、提高缓存命中
 process_widths: [100, 200, 400, 800, 1600]  # 允许的宽度档(像素),档外请求 400;空列表=不允许缩放
 process_formats: ["webp", "jpeg", "png"]    # 允许的目标格式,档外 400;gif 仅收发原图不做处理

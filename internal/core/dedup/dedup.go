@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -16,20 +17,23 @@ import (
 
 // Config Merger 依赖与参数。
 type Config struct {
-	Conn    *sql.DB       // 数据库连接(合并事务用)
-	Queries *sqlc.Queries // sqlc 查询集
-	Grace   time.Duration // 冗余 blob 物理删宽限(与生命周期一致);合并后冗余 blob 交 sweeper 物理删
-	Logger  *slog.Logger  // 结构化日志
+	Conn                *sql.DB       // 数据库连接(合并事务用)
+	Queries             *sqlc.Queries // sqlc 查询集
+	Grace               time.Duration // 冗余 blob 物理删宽限(与生命周期一致);合并后冗余 blob 交 sweeper 物理删
+	SimilarityThreshold int           // pHash 汉明距离阈值,距离 ≤ 阈值入候选;<= 0 表示不启用相似扫描
+	Logger              *slog.Logger  // 结构化日志
 }
 
-// Merger 精确重复合并器,无可变状态、并发安全。
+// Merger 查重执行器:精确重复自动合并 + 相似候选发现与人工裁决执行,并发安全。
 type Merger struct {
-	cfg Config // 依赖
+	cfg         Config     // 依赖
+	mu          sync.Mutex // 保护 lastScanned
+	lastScanned int64      // 相似扫描水位:已比较过的最大 blob id,进程重启归零全量重扫
 }
 
-// New 创建合并器。
+// New 创建查重执行器。
 // @param cfg 依赖,字段均必填
-// @return 就绪的合并器
+// @return 就绪的执行器
 func New(cfg Config) *Merger { return &Merger{cfg: cfg} }
 
 // MergeExactOnce 扫描并合并全部精确重复组;返回合并掉的冗余 blob 数。
@@ -98,12 +102,11 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 	return len(blobs) - 1, nil
 }
 
-// Run 按 interval 周期合并,直至 ctx 取消;启动即先跑一轮。
+// Run 按 interval 周期查重(先精确合并,再相似扫描),直至 ctx 取消;启动即先跑一轮。
+// @Description: 精确合并先行,把字节相同的组收敛掉,相似扫描只对幸存 blob 工作。
 // @param interval 扫描间隔
 func (m *Merger) Run(ctx context.Context, interval time.Duration) {
-	if _, err := m.MergeExactOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		m.cfg.Logger.Warn("启动查重合并未完成", "err", err)
-	}
+	m.runOnce(ctx, "启动")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -111,9 +114,18 @@ func (m *Merger) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := m.MergeExactOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				m.cfg.Logger.Warn("定期查重合并未完成", "err", err)
-			}
+			m.runOnce(ctx, "定期")
 		}
+	}
+}
+
+// runOnce 执行一轮完整查重;失败只告警,循环继续。
+// @param phase 日志用阶段名
+func (m *Merger) runOnce(ctx context.Context, phase string) {
+	if _, err := m.MergeExactOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		m.cfg.Logger.Warn(phase+"查重合并未完成", "err", err)
+	}
+	if _, err := m.ScanSimilarOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		m.cfg.Logger.Warn(phase+"相似扫描未完成", "err", err)
 	}
 }
