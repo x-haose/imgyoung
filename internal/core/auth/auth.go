@@ -126,6 +126,9 @@ func (s *Service) Login(ctx context.Context, name, password, clientIP string) (L
 	if user.Disabled != 0 {
 		return LoginResult{}, ErrUserDisabled
 	}
+	// 凭证正确即清空限速计数:限速只针对失败尝试,不误伤合法用户的正常登录。
+	s.limiter.Reset("ip:" + clientIP)
+	s.limiter.Reset("user:" + name)
 	sessionID, err := randomString()
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("生成会话 id: %w", err)

@@ -19,22 +19,18 @@ import (
 	"time"
 )
 
-// channelInfo 对应 /api/channels 返回项。
+// channelInfo 对应 /api/admin/channels 返回项。
 type channelInfo struct {
 	Name    string `json:"name"`
 	Driver  string `json:"driver"`
 	Healthy bool   `json:"healthy"`
 }
 
-// listChannels 带 token 拉取渠道列表。
+// listChannels 以管理员会话拉取渠道列表。
 func listChannels(t *testing.T, inst *instance) []channelInfo {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodGet, inst.baseURL+"/api/channels", nil)
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("列出渠道: %v", err)
-	}
+	client, csrf := adminSession(t, inst)
+	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/channels", "")
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var out []channelInfo

@@ -17,6 +17,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,8 +28,11 @@ import (
 	"time"
 )
 
-// testToken 全部实例共用的上传 Token。
+// testToken 全部实例共用的上传 Token(经 IMGYOUNG_TOKEN 首启植入 DB)。
 const testToken = "e2e-token"
+
+// testAdminPass 全部实例共用的管理员密码(经 IMGYOUNG_ADMIN_PASSWORD 首启初始化)。
+const testAdminPass = "e2e-admin-pass" //nolint:gosec // 测试专用常量,非真实凭证
 
 // bootDeadline 等待实例就绪的上限。
 const bootDeadline = 10 * time.Second
@@ -88,6 +92,7 @@ func startInstance(t *testing.T, extraEnv map[string]string) *instance {
 
 	env := map[string]string{
 		"IMGYOUNG_TOKEN":                testToken,
+		"IMGYOUNG_ADMIN_PASSWORD":       testAdminPass,
 		"IMGYOUNG_DATA_DIR":             dataDir,
 		"IMGYOUNG_LISTEN":               fmt.Sprintf("127.0.0.1:%d", port),
 		"IMGYOUNG_HEALTH_CHECK_SECONDS": "1",
@@ -277,19 +282,63 @@ func fetchBytes(t *testing.T, inst *instance, url string) []byte {
 	return data
 }
 
-// createChannel 通过管理 API 创建渠道并断言 201。
+// adminSession 登录管理员,返回带会话 cookie 的客户端与 CSRF 令牌。
+func adminSession(t *testing.T, inst *instance) (*http.Client, string) {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("创建 cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+	body := fmt.Sprintf(`{"name":"admin","password":%q}`, testAdminPass)
+	resp, err := client.Post(inst.baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("发送登录请求: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("登录状态码 = %d, 期望 200; body=%s", resp.StatusCode, raw)
+	}
+	var lr struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
+		t.Fatalf("解析登录响应: %v", err)
+	}
+	return client, lr.CSRFToken
+}
+
+// adminReq 以管理员会话发送管理 API 请求(状态变更自动带 CSRF 头)。
+// @return 响应对象(调用方负责关闭与断言)
+func adminReq(t *testing.T, client *http.Client, csrf, method, url, body string) *http.Response {
+	t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, rd)
+	if err != nil {
+		t.Fatalf("构造管理请求: %v", err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if method != http.MethodGet {
+		req.Header.Set("X-CSRF-Token", csrf)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("发送管理请求: %v", err)
+	}
+	return resp
+}
+
+// createChannel 通过管理 API 创建渠道并断言 201(自动登录管理员)。
 func createChannel(t *testing.T, inst *instance, body string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, inst.baseURL+"/api/channels", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("构造创建渠道请求: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("创建渠道: %v", err)
-	}
+	client, csrf := adminSession(t, inst)
+	resp := adminReq(t, client, csrf, http.MethodPost, inst.baseURL+"/api/admin/channels", body)
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusCreated {
 		raw, _ := io.ReadAll(resp.Body)
@@ -512,15 +561,8 @@ func TestChannelGuards(t *testing.T) {
 	inst := startInstance(t, nil)
 	_, _ = mustUpload(t, inst, pngBytes(t), nil, nil)
 
-	del, err := http.NewRequest(http.MethodDelete, inst.baseURL+"/api/channels/1", nil)
-	if err != nil {
-		t.Fatalf("构造删除请求: %v", err)
-	}
-	del.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := http.DefaultClient.Do(del)
-	if err != nil {
-		t.Fatalf("删除渠道: %v", err)
-	}
+	client, csrf := adminSession(t, inst)
+	resp := adminReq(t, client, csrf, http.MethodDelete, inst.baseURL+"/api/admin/channels/1", "")
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("删除唯一副本渠道状态码 = %d, 期望 409", resp.StatusCode)
@@ -667,6 +709,7 @@ func startInstanceAt(t *testing.T, dataDir, listen string) *instance {
 	cmd := exec.Command(binPath)
 	cmd.Env = append(os.Environ(),
 		"IMGYOUNG_TOKEN="+testToken,
+		"IMGYOUNG_ADMIN_PASSWORD="+testAdminPass,
 		"IMGYOUNG_DATA_DIR="+dataDir,
 		"IMGYOUNG_LISTEN="+listen,
 		"IMGYOUNG_HEALTH_CHECK_SECONDS=1",

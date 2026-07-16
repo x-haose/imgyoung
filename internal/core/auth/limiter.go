@@ -53,6 +53,16 @@ func (l *LoginLimiter) Allow(key string) bool {
 	return e.lim.AllowN(now, 1)
 }
 
+// Reset 清空指定键的限速状态。
+// @Description: 凭证校验成功后调用,限速只惩罚失败尝试——合法用户的正常登录
+// 不消耗额度,爆破者的连续失败照常收敛。
+// @param key 限速键
+func (l *LoginLimiter) Reset(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.entries, key)
+}
+
 // prune 回收闲置键;须在持锁状态下调用。
 // @param now 当前时刻
 func (l *LoginLimiter) prune(now time.Time) {

@@ -2,11 +2,9 @@
 package middleware
 
 import (
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,24 +16,6 @@ import (
 
 // bearerPrefix Authorization 头的 Bearer 方案前缀。
 const bearerPrefix = "Bearer "
-
-// RequireToken 上传鉴权中间件。
-// @Description: 校验 Authorization: Bearer <token>,常数时间比较防时序侧信道。
-// @param token 期望的 Token 明文
-// @param l 结构化日志
-// @return 中间件
-func RequireToken(token string, l *slog.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			got, ok := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
-			if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "无效的上传 Token")
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
 
 // ConcurrencyLimit 并发闸中间件:同时处理的请求数不超过 n,满载立即 429。
 // @Description: 内存三道闸之一——上传解码的峰值内存由"并发数 × 解码位图大小"

@@ -10,6 +10,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -58,8 +59,16 @@ func (h *Handlers) resolveExpiry(r *http.Request) (time.Time, bool) {
 
 // HandleUpload 处理图片上传:HTTP 解包 → 交给上传服务 → 翻译结果。
 // @Description: 业务管道(格式校验/像素预算/净化/哈希/落库)在 upload.Service;
-// 本函数只负责 HTTP 层:大小闸、multipart 解析、TTL 解析、错误码映射。
+// 本函数只负责 HTTP 层:大小闸、multipart 解析、TTL 解析、错误码映射;
+// 归属用户与来源 Token 由认证中间件解析、此处显式传参进 core。
 func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
+	tp, ok := middleware.TokenPrincipalFrom(r.Context())
+	if !ok {
+		// 路由保证本 handler 挂在 Token 认证之后,取不到主体属装配错误。
+		h.cfg.Logger.Error("上传请求缺少认证主体,检查路由装配")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.MaxUploadBytes)
 
 	file, header, err := r.FormFile("file")
@@ -91,6 +100,8 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.cfg.Upload.Process(r.Context(), data, upload.Options{
+		UserID:         tp.UserID,
+		TokenID:        tp.TokenID,
 		FileName:       header.Filename,
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
 		EXIFPolicy:     policy,

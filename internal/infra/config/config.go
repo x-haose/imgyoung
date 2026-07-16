@@ -46,7 +46,8 @@ const megapixel = 1_000_000
 type Config struct {
 	Listen               string             `koanf:"listen"`                 // HTTP 监听地址
 	DataDir              string             `koanf:"data_dir"`               // 数据目录(SQLite 与本地渠道)
-	Token                string             `koanf:"token"`                  // 上传鉴权 Token,必填;未配置则启动失败
+	Token                string             `koanf:"token"`                  // 引导 Token;非空则首启幂等植入为管理员名下 bootstrap Token
+	AdminPassword        string             `koanf:"admin_password"`         // 管理员初始密码;仅在管理员尚未设密时生效
 	MasterKey            string             `koanf:"master_key"`             // 主密钥(64 位 hex);为空则用数据目录文件
 	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限
 	BaseURL              string             `koanf:"base_url"`               // 对外站点地址(去尾斜杠);空则返回相对路径

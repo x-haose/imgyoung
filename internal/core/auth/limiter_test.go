@@ -29,6 +29,22 @@ func TestLimiterBurstAndRefill(t *testing.T) {
 	}
 }
 
+// TestLimiterReset 重置后额度恢复,其余键不受影响。
+func TestLimiterReset(t *testing.T) {
+	l := NewLoginLimiter()
+	for range loginBurst {
+		l.Allow("ip:a")
+		l.Allow("ip:b")
+	}
+	l.Reset("ip:a")
+	if !l.Allow("ip:a") {
+		t.Fatal("重置后应恢复额度")
+	}
+	if l.Allow("ip:b") {
+		t.Fatal("未重置的键不应恢复")
+	}
+}
+
 // TestLimiterPrune 键表达到容量上限时回收闲置键,容量有界。
 func TestLimiterPrune(t *testing.T) {
 	now := time.Now()

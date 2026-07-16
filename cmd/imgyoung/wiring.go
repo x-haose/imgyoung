@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -16,6 +15,7 @@ import (
 	"go.uber.org/fx/fxevent"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
+	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/dedup"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
@@ -154,16 +154,41 @@ func provideMasterKey(cfg config.Config, logger *slog.Logger) (*secret.MasterKey
 	return key, nil
 }
 
-// provideToken 提供上传鉴权 Token;必填,未配置即拒绝启动(fail-fast)。
-// @Description: 鉴权凭证不做"自动生成"兜底——每次重启都变的临时 Token 是运维陷阱,
-// 且与本项目快速失败红线一致。
-// @return 上传鉴权 Token
-// @return 未配置 Token 时的错误
-func provideToken(cfg config.Config) (string, error) {
-	if cfg.Token == "" {
-		return "", errors.New("未配置 IMGYOUNG_TOKEN:上传鉴权 Token 必填,请设置后重启")
+// provideAuth 构造认证服务。
+// @return 认证服务
+func provideAuth(queries *sqlc.Queries, logger *slog.Logger) *auth.Service {
+	return auth.New(auth.Config{Queries: queries, Logger: logger})
+}
+
+// bootstrapCredentials 首启凭证播种:管理员初始密码与引导 Token,均幂等。
+// @Description: 播种失败即启动失败,避免以"配置了凭证却未生效"的状态对外服务。
+// 管理员已设密后 admin_password 不再生效,以后台修改为准。
+// @param cfg 运行配置
+// @param queries 查询集
+// @param authSvc 认证服务
+// @param logger 结构化日志
+// @return 播种失败时的错误
+func bootstrapCredentials(cfg config.Config, queries *sqlc.Queries,
+	authSvc *auth.Service, logger *slog.Logger) error {
+	ctx := context.Background()
+	if cfg.AdminPassword != "" {
+		admin, err := queries.GetUser(ctx, sqlc.DefaultUserID)
+		if err != nil {
+			return fmt.Errorf("读取内置管理员: %w", err)
+		}
+		if admin.PasswordHash == "" {
+			if err := authSvc.SetPassword(ctx, sqlc.DefaultUserID, cfg.AdminPassword); err != nil {
+				return fmt.Errorf("初始化管理员密码: %w", err)
+			}
+			logger.Info("已按 admin_password 配置初始化管理员密码", "user", "admin")
+		}
 	}
-	return cfg.Token, nil
+	if cfg.Token != "" {
+		if err := authSvc.EnsureBootstrapToken(ctx, sqlc.DefaultUserID, cfg.Token); err != nil {
+			return fmt.Errorf("植入引导 Token: %w", err)
+		}
+	}
+	return nil
 }
 
 // provideManager 构造渠道管理器(首次加载用后台 context)。
@@ -297,13 +322,14 @@ func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel
 	})
 }
 
-// provideAdminAPI 构造管理面处理器集(渠道管理与审计留痕)。
+// provideAdminAPI 构造管理面处理器集(认证、渠道管理与审计留痕)。
 // @return 管理面处理器集
-func provideAdminAPI(cfg config.Config, manager *channel.Manager,
+func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.Service,
 	auditRec *audit.Recorder, logger *slog.Logger) *adminapi.Handlers {
 	return adminapi.New(adminapi.Config{
 		Admin:              manager,
 		EncryptNewChannels: cfg.EncryptNewChannels,
+		Auth:               authSvc,
 		Audit:              auditRec,
 		Logger:             logger,
 	})
@@ -312,11 +338,11 @@ func provideAdminAPI(cfg config.Config, manager *channel.Manager,
 // provideRouter 组装完整 HTTP 路由。
 // @return 可挂载到 http.Server 的处理器
 func provideRouter(cfg config.Config, pub *publicapi.Handlers, adm *adminapi.Handlers,
-	token string, metrics *observability.Metrics, logger *slog.Logger) http.Handler {
+	authSvc *auth.Service, metrics *observability.Metrics, logger *slog.Logger) http.Handler {
 	return router.New(router.Config{
 		Public:               pub,
 		Admin:                adm,
-		Token:                token,
+		Auth:                 authSvc,
 		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
@@ -401,11 +427,17 @@ func provideHTTPServer(lc fx.Lifecycle, cfg config.Config, handler http.Handler,
 	return httpSrv
 }
 
-// registerBackgroundLoops 注册渠道健康检查与元数据库备份两个周期循环。
-// @Description: 各自持长生命周期 context,OnStop 取消。二者均为兜底型循环,启动即先跑一轮。
+// registerBackgroundLoops 注册全部后台周期循环(用量/查重/清理/活跃度/健康/备份/认证维护)。
+// @Description: 各自持长生命周期 context,OnStop 取消。均为兜底型循环。
 func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
 	manager *channel.Manager, sweeper *lifecycle.Sweeper, tracker *lifecycle.Tracker,
-	reporter *usage.Reporter, merger *dedup.Merger, logger *slog.Logger) {
+	reporter *usage.Reporter, merger *dedup.Merger, authSvc *auth.Service, logger *slog.Logger) {
+	authCtx, authCancel := context.WithCancel(context.Background())
+	lc.Append(fx.Hook{
+		OnStart: func(context.Context) error { go authMaintenanceLoop(authCtx, authSvc, logger); return nil },
+		OnStop:  func(context.Context) error { authCancel(); return nil },
+	})
+
 	usageCtx, usageCancel := context.WithCancel(context.Background())
 	lc.Append(fx.Hook{
 		OnStart: func(context.Context) error {
@@ -459,6 +491,39 @@ func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
 		},
 		OnStop: func(context.Context) error { backupCancel(); return nil },
 	})
+}
+
+// tokenUsageFlushInterval Token 使用时刻批量回写间隔。
+const tokenUsageFlushInterval = time.Minute
+
+// sessionCleanupInterval 过期会话回收间隔。
+const sessionCleanupInterval = time.Hour
+
+// authMaintenanceLoop 认证维护循环:周期回写 Token 使用时刻、回收过期会话。
+// @param ctx 控制循环生命周期
+// @param authSvc 认证服务
+// @param logger 结构化日志
+func authMaintenanceLoop(ctx context.Context, authSvc *auth.Service, logger *slog.Logger) {
+	usageTicker := time.NewTicker(tokenUsageFlushInterval)
+	defer usageTicker.Stop()
+	sessionTicker := time.NewTicker(sessionCleanupInterval)
+	defer sessionTicker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			// 停机前把内存中的使用时刻冲干净,不丢最后一批;沿用原 ctx 的值但脱离其取消。
+			authSvc.FlushTokenUsage(context.WithoutCancel(ctx))
+			return
+		case <-usageTicker.C:
+			authSvc.FlushTokenUsage(ctx)
+		case <-sessionTicker.C:
+			if n, err := authSvc.DeleteExpiredSessions(ctx); err != nil {
+				logger.Warn("回收过期会话失败", "err", err)
+			} else if n > 0 {
+				logger.Info("已回收过期会话", "count", n)
+			}
+		}
+	}
 }
 
 // healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记。

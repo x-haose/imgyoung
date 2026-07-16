@@ -112,10 +112,12 @@ type Config struct {
 // ErrInsufficientReplicas 同步副本数不足 MinSuccess 要求。
 var ErrInsufficientReplicas = errors.New("upload: 副本数不足")
 
-// Options 一次上传的可选参数。
+// Options 一次上传的参数。
 type Options struct {
+	UserID         string             // 归属用户 id,必填;由认证中间件解析后显式传入,多租户隔离据此强制
+	TokenID        int64              // 上传所经 Token 的记录 id,0 表示非 Token 途径
 	FileName       string             // 原始文件名(仅存元数据,不参与任何逻辑)
-	IdempotencyKey string             // 客户端幂等键,可为空
+	IdempotencyKey string             // 客户端幂等键,可为空;按用户隔离
 	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入,本包不做隐式回退;strip 仅对 JPEG 生效
 	ExpireAt       time.Time          // 本次上传引用的到期时刻,零值表示永不过期;调用方按"单次指定 > 全局默认"解析后传入
 }
@@ -144,14 +146,18 @@ func New(cfg Config) *Service {
 // @return 上传结果
 // @return 业务错误(见哨兵)或基础设施错误
 func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Result, error) {
-	// 输入验证先行:档位必须是明确合法值,文件名限长(仅元数据,不影响逻辑)。
+	// 输入验证先行:归属用户必填(多租户隔离的前提),档位必须是明确合法值,
+	// 文件名限长(仅元数据,不影响逻辑)。
+	if opts.UserID == "" {
+		return Result{}, errors.New("upload: 缺少归属用户")
+	}
 	if err := imaging.ValidatePolicy(opts.EXIFPolicy); err != nil {
 		return Result{}, err
 	}
 	fileName, idemKey := truncateName(opts.FileName), opts.IdempotencyKey
 	if idemKey != "" {
 		imageID, err := s.cfg.Queries.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{
-			UserID: sqlc.DefaultUserID, Key: idemKey,
+			UserID: opts.UserID, Key: idemKey,
 		})
 		if err == nil {
 			return Result{ImageID: imageID}, nil
@@ -231,6 +237,8 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	// Put 成功而落库失败会产生孤儿对象,由对账任务回收,此处不回滚渠道写入。
 	blobID, err := s.persist(ctx, persistParams{
 		shortID:  shortID,
+		userID:   opts.UserID,
+		tokenID:  opts.TokenID,
 		fileName: fileName,
 		idemKey:  idemKey,
 		doneIDs:  doneIDs,
@@ -248,7 +256,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
 		if idemKey != "" {
 			if imageID, qerr := s.cfg.Queries.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{
-				UserID: sqlc.DefaultUserID, Key: idemKey,
+				UserID: opts.UserID, Key: idemKey,
 			}); qerr == nil {
 				return Result{ImageID: imageID}, nil
 			}
@@ -322,8 +330,10 @@ func truncateName(name string) string {
 // persistParams 一次落库所需的全部字段。
 type persistParams struct {
 	shortID       string           // 对外短 ID
+	userID        string           // 归属用户 id
+	tokenID       int64            // 上传所经 Token 记录 id,0 表示非 Token 途径
 	fileName      string           // 原始文件名
-	idemKey       string           // 幂等键,可为空
+	idemKey       string           // 幂等键,可为空;按用户隔离
 	doneIDs       []int64          // 已同步写入的渠道 ID(至少含主渠道)
 	channels      []channel.Handle // 本次上传使用的渠道快照(与 doneIDs 同源,避免两次取集合不一致)
 	sha256        string           // 净化后字节哈希(十六进制)
@@ -366,7 +376,8 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	if err = q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID:       p.shortID,
 		BlobID:   blobID,
-		UserID:   sqlc.DefaultUserID,
+		UserID:   p.userID,
+		TokenID:  sql.NullInt64{Int64: p.tokenID, Valid: p.tokenID != 0},
 		FileName: p.fileName,
 		ExpireAt: expireAt,
 	}); err != nil {
@@ -390,7 +401,7 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	}
 	if p.idemKey != "" {
 		if err = q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
-			UserID:  sqlc.DefaultUserID,
+			UserID:  p.userID,
 			Key:     p.idemKey,
 			ImageID: p.shortID,
 		}); err != nil {

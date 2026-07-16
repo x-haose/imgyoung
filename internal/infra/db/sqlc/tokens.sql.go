@@ -146,6 +146,26 @@ func (q *Queries) RevokeToken(ctx context.Context, arg RevokeTokenParams) (int64
 	return result.RowsAffected()
 }
 
+const revokeTokenByName = `-- name: RevokeTokenByName :execrows
+UPDATE tokens
+SET revoked_at = ?
+WHERE user_id = ? AND name = ? AND revoked_at IS NULL
+`
+
+type RevokeTokenByNameParams struct {
+	RevokedAt sql.NullString
+	UserID    string
+	Name      string
+}
+
+func (q *Queries) RevokeTokenByName(ctx context.Context, arg RevokeTokenByNameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeTokenByName, arg.RevokedAt, arg.UserID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const touchTokenUsed = `-- name: TouchTokenUsed :exec
 UPDATE tokens
 SET last_used_at = ?

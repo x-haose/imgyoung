@@ -19,7 +19,7 @@ func main() {
 			provideDB,
 			provideQueries,
 			provideMasterKey,
-			provideToken,
+			provideAuth,
 			provideManager,
 			provideRunner,
 			provideUpload,
@@ -41,6 +41,7 @@ func main() {
 			return fxErrorLogger{log: logger}
 		}),
 		// 强制实例化:HTTP 服务器拉起整条依赖链;后台循环单独注册。
+		fx.Invoke(bootstrapCredentials),
 		fx.Invoke(func(*http.Server) {}),
 		fx.Invoke(registerBackgroundLoops),
 	).Run()

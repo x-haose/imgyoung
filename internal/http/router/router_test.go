@@ -2,6 +2,7 @@ package router_test
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -11,12 +12,14 @@ import (
 	"log/slog"
 	"mime/multipart"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
+	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -30,8 +33,11 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
-// testToken 测试用上传 Token。
+// testToken 测试用上传 Token(经 bootstrap 植入)。
 const testToken = "test-token"
+
+// testAdminPass 测试用管理员密码。
+const testAdminPass = "test-admin-pass"
 
 // testEnv 测试服务的底层构件,供 mutate 回调按用例定制(如构建 variants 服务)。
 type testEnv struct {
@@ -90,6 +96,13 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 		MaxPixels: 1 << 20,
 		Logger:    discard,
 	})
+	authSvc := auth.New(auth.Config{Queries: queries, Logger: discard})
+	if err := authSvc.EnsureBootstrapToken(t.Context(), sqlc.DefaultUserID, testToken); err != nil {
+		t.Fatalf("植入测试 Token: %v", err)
+	}
+	if err := authSvc.SetPassword(t.Context(), sqlc.DefaultUserID, testAdminPass); err != nil {
+		t.Fatalf("设置管理员密码: %v", err)
+	}
 
 	tc := testConfig{
 		Public: publicapi.Config{
@@ -103,11 +116,12 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 		},
 		Admin: adminapi.Config{
 			Admin:  mgr,
+			Auth:   authSvc,
 			Audit:  audit.New(queries),
 			Logger: discard,
 		},
 		Router: router.Config{
-			Token:                testToken,
+			Auth:                 authSvc,
 			MaxConcurrentUploads: 4,
 			AllowEmptyReferer:    true,
 			Metrics:              observability.New(),
@@ -404,30 +418,78 @@ func TestServeUnknownID(t *testing.T) {
 	}
 }
 
-// postChannel 通过管理 API 创建渠道。
+// adminSession 登录管理员,返回带会话 cookie 的客户端与 CSRF 令牌。
+func adminSession(t *testing.T, ts *httptest.Server) (*http.Client, string) {
+	t.Helper()
+	return loginAs(t, ts, "admin", testAdminPass)
+}
+
+// loginAs 以指定用户登录,返回带会话 cookie 的客户端与 CSRF 令牌。
+func loginAs(t *testing.T, ts *httptest.Server, name, password string) (*http.Client, string) {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("创建 cookie jar: %v", err)
+	}
+	client := &http.Client{Jar: jar}
+	body := fmt.Sprintf(`{"name":%q,"password":%q}`, name, password)
+	resp, err := client.Post(ts.URL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("发送登录请求: %v", err)
+	}
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("登录状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	var lr struct {
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
+		t.Fatalf("解析登录响应: %v", err)
+	}
+	return client, lr.CSRFToken
+}
+
+// adminReq 以管理员会话发送请求(状态变更自动带 CSRF 头)。
+func adminReq(t *testing.T, client *http.Client, csrf, method, url, body string) *http.Response {
+	t.Helper()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, rd)
+	if err != nil {
+		t.Fatalf("构造管理请求: %v", err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if method != http.MethodGet {
+		req.Header.Set("X-CSRF-Token", csrf)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("发送管理请求: %v", err)
+	}
+	return resp
+}
+
+// postChannel 通过管理 API 创建渠道(自动登录管理员)。
 // @return 响应对象(调用方负责关闭与断言)
 func postChannel(t *testing.T, ts *httptest.Server, body string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/channels", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("构造创建渠道请求: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	resp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatalf("发送创建渠道请求: %v", err)
-	}
-	return resp
+	client, csrf := adminSession(t, ts)
+	return adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels", body)
 }
 
 // TestChannelCRUD 验证渠道管理 API:创建、列表、删除与唯一副本守卫。
 func TestChannelCRUD(t *testing.T) {
 	ts := newTestServer(t, nil)
+	client, csrf := adminSession(t, ts)
 
 	// 创建第二个渠道(低优先级,不参与上传主写)。
 	body := fmt.Sprintf(`{"name":"backup","driver":"local","priority":10,"config":{"path":%q}}`, t.TempDir())
-	created := postChannel(t, ts, body)
+	created := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels", body)
 	defer closeBody(t, created)
 	if created.StatusCode != http.StatusCreated {
 		t.Fatalf("创建渠道状态码 = %d, 期望 201", created.StatusCode)
@@ -440,15 +502,7 @@ func TestChannelCRUD(t *testing.T) {
 	}
 
 	// 列表应含两个渠道且不含配置字段。
-	req, err := http.NewRequest(http.MethodGet, ts.URL+"/api/channels", nil)
-	if err != nil {
-		t.Fatalf("构造列表请求: %v", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	listResp, err := ts.Client().Do(req)
-	if err != nil {
-		t.Fatalf("发送列表请求: %v", err)
-	}
+	listResp := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/channels", "")
 	defer closeBody(t, listResp)
 	raw, err := io.ReadAll(listResp.Body)
 	if err != nil {
@@ -463,15 +517,7 @@ func TestChannelCRUD(t *testing.T) {
 	defer closeBody(t, up)
 	localID := int64(1) // 迁移内置渠道为首条记录
 	del := func(id int64) int {
-		delReq, derr := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/channels/%d", ts.URL, id), nil)
-		if derr != nil {
-			t.Fatalf("构造删除请求: %v", derr)
-		}
-		delReq.Header.Set("Authorization", "Bearer "+testToken)
-		dresp, derr := ts.Client().Do(delReq)
-		if derr != nil {
-			t.Fatalf("发送删除请求: %v", derr)
-		}
+		dresp := adminReq(t, client, csrf, http.MethodDelete, fmt.Sprintf("%s/api/admin/channels/%d", ts.URL, id), "")
 		defer closeBody(t, dresp)
 		return dresp.StatusCode
 	}
@@ -480,6 +526,92 @@ func TestChannelCRUD(t *testing.T) {
 	}
 	if code := del(cr.ID); code != http.StatusNoContent {
 		t.Fatalf("删除空渠道状态码 = %d, 期望 204", code)
+	}
+}
+
+// TestAdminAuthFlow 验证管理面认证闭环:错误密码 401、登录成功、/me 恢复会话、
+// 无 CSRF 头的状态变更 403、登出后会话失效。
+func TestAdminAuthFlow(t *testing.T) {
+	ts := newTestServer(t, nil)
+
+	// 错误密码 401。
+	bad, err := http.Post(ts.URL+"/api/admin/auth/login", "application/json",
+		strings.NewReader(`{"name":"admin","password":"wrong"}`))
+	if err != nil {
+		t.Fatalf("发送登录请求: %v", err)
+	}
+	defer closeBody(t, bad)
+	if bad.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("错误密码状态码 = %d, 期望 401", bad.StatusCode)
+	}
+
+	client, csrf := adminSession(t, ts)
+
+	// /me 返回主体与令牌。
+	me := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/me", "")
+	defer closeBody(t, me)
+	var mr struct {
+		User struct {
+			Name string `json:"name"`
+			Role string `json:"role"`
+		} `json:"user"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(me.Body).Decode(&mr); err != nil {
+		t.Fatalf("解析 /me: %v", err)
+	}
+	if mr.User.Name != "admin" || mr.User.Role != "admin" || mr.CSRFToken != csrf {
+		t.Fatalf("/me 内容异常: %+v", mr)
+	}
+
+	// 状态变更缺 CSRF 头 → 403(有会话也不行)。
+	noCSRF, err := http.NewRequest(http.MethodPost, ts.URL+"/api/admin/channels",
+		strings.NewReader(`{"name":"x","driver":"local"}`))
+	if err != nil {
+		t.Fatalf("构造请求: %v", err)
+	}
+	noCSRF.Header.Set("Content-Type", "application/json")
+	ncResp, err := client.Do(noCSRF)
+	if err != nil {
+		t.Fatalf("发送请求: %v", err)
+	}
+	defer closeBody(t, ncResp)
+	if ncResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("缺 CSRF 状态码 = %d, 期望 403", ncResp.StatusCode)
+	}
+
+	// 登出后会话失效。
+	lo := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/auth/logout", "")
+	closeBody(t, lo)
+	if lo.StatusCode != http.StatusNoContent {
+		t.Fatalf("登出状态码 = %d, 期望 204", lo.StatusCode)
+	}
+	after := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/me", "")
+	defer closeBody(t, after)
+	if after.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("登出后 /me 状态码 = %d, 期望 401", after.StatusCode)
+	}
+}
+
+// TestAdminOnlyChannels 验证渠道管理仅管理员可用:普通用户会话 403。
+func TestAdminOnlyChannels(t *testing.T) {
+	var authSvc *auth.Service
+	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
+		authSvc = tc.Router.Auth
+		if err := env.Queries.CreateUser(context.Background(), sqlc.CreateUserParams{
+			ID: "u-normal", Name: "bob", Role: "user",
+		}); err != nil {
+			t.Fatalf("建普通用户: %v", err)
+		}
+	})
+	if err := authSvc.SetPassword(t.Context(), "u-normal", "bob-pass"); err != nil {
+		t.Fatalf("设置普通用户密码: %v", err)
+	}
+	client, csrf := loginAs(t, ts, "bob", "bob-pass")
+	resp := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/channels", "")
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通用户访问渠道管理状态码 = %d, 期望 403", resp.StatusCode)
 	}
 }
 

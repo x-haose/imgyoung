@@ -3,7 +3,8 @@
 # 各项语义与单位见 README 配置表;此处只承载默认值。
 listen: ":8080"              # HTTP 监听地址
 data_dir: "data"             # 数据目录(SQLite 与本地渠道)
-token: ""                    # 上传 Token;留空则启动时生成随机值
+token: ""                    # 引导 Token;非空则首启植入为管理员的 bootstrap Token(真相在 DB,可后台管理)
+admin_password: ""           # 管理员初始密码;仅在管理员尚未设密时生效,之后以后台修改为准
 master_key: ""               # 主密钥(64 位 hex);留空则用 data/master.key
 max_upload_mb: 50            # 单图上限(MB)
 max_concurrent_uploads: 8    # 上传并发上限

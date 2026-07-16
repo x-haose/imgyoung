@@ -93,6 +93,45 @@ func (s *Service) RevokeToken(ctx context.Context, userID string, tokenID int64)
 	return nil
 }
 
+// EnsureBootstrapToken 确保环境变量指定的引导 Token 在库,幂等。
+// @Description: 明文哈希已在库(任意名下)即不动;否则吊销该用户旧的 bootstrap
+// Token 并以当前明文重建——环境变量的当前值即 bootstrap 名下的唯一真相,
+// headless 部署不进 UI 即可上传。
+// @param ctx 控制超时与取消
+// @param userID 归属用户 id
+// @param plaintext 引导 Token 明文(来自环境变量,长度形态不限)
+// @return 基础设施错误
+func (s *Service) EnsureBootstrapToken(ctx context.Context, userID, plaintext string) error {
+	_, err := s.cfg.Queries.GetActiveTokenByHash(ctx, hashSecret(plaintext))
+	switch {
+	case err == nil:
+		return nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("查询引导 Token: %w", err)
+	}
+	if _, err := s.cfg.Queries.RevokeTokenByName(ctx, sqlc.RevokeTokenByNameParams{
+		RevokedAt: sql.NullString{String: sqlc.TimeText(time.Now()), Valid: true},
+		UserID:    userID,
+		Name:      "bootstrap",
+	}); err != nil {
+		return fmt.Errorf("吊销旧引导 Token: %w", err)
+	}
+	prefix := plaintext
+	if len(prefix) > tokenPrefixChars {
+		prefix = prefix[:tokenPrefixChars]
+	}
+	if _, err := s.cfg.Queries.CreateToken(ctx, sqlc.CreateTokenParams{
+		UserID:    userID,
+		Name:      "bootstrap",
+		TokenHash: hashSecret(plaintext),
+		Prefix:    prefix,
+		Scopes:    "upload",
+	}); err != nil {
+		return fmt.Errorf("写入引导 Token: %w", err)
+	}
+	return nil
+}
+
 // FlushTokenUsage 将内存中的 Token 最近使用时刻批量回写数据库。
 // @Description: 供周期任务调用;单条回写失败仅告警,时刻信息属尽力而为的元数据。
 // @param ctx 控制超时与取消

@@ -25,6 +25,11 @@ UPDATE tokens
 SET revoked_at = ?
 WHERE id = ? AND user_id = ? AND revoked_at IS NULL;
 
+-- name: RevokeTokenByName :execrows
+UPDATE tokens
+SET revoked_at = ?
+WHERE user_id = ? AND name = ? AND revoked_at IS NULL;
+
 -- name: TouchTokenUsed :exec
 UPDATE tokens
 SET last_used_at = ?
