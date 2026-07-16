@@ -19,6 +19,7 @@ type Config struct {
 	Public               *publicapi.Handlers    // 数据面处理器集
 	Admin                *adminapi.Handlers     // 管理面处理器集
 	Auth                 *auth.Service          // 认证服务(Token 与会话校验)
+	UploadRatePerMinute  int                    // 每用户每分钟上传次数上限;<= 0 表示不启用
 	MaxConcurrentUploads int                    // 上传并发上限(内存三道闸之一),必须 > 0
 	RefererWhitelist     []string               // 防盗链白名单;为空表示不启用
 	AllowEmptyReferer    bool                   // 空 Referer 是否放行
@@ -39,6 +40,7 @@ func New(cfg Config) http.Handler {
 	r.Handle("/metrics", cfg.Metrics.Handler())
 	r.Group(func(g chi.Router) {
 		g.Use(middleware.TokenAuth(cfg.Auth, "upload", cfg.Logger))
+		g.Use(middleware.UploadRateLimit(cfg.UploadRatePerMinute, cfg.Logger))
 		g.Use(middleware.ConcurrencyLimit(cfg.MaxConcurrentUploads, cfg.Logger))
 		g.Post("/api/upload", cfg.Public.HandleUpload)
 	})
@@ -50,12 +52,27 @@ func New(cfg Config) http.Handler {
 			g.Use(middleware.CSRF(cfg.Logger))
 			g.Post("/auth/logout", cfg.Admin.HandleLogout)
 			g.Get("/me", cfg.Admin.HandleMe)
-			// 渠道配置属全站资源,仅管理员可见可改。
+			g.Put("/me/password", cfg.Admin.HandleChangePassword)
+			g.Get("/dashboard", cfg.Admin.HandleDashboard)
+			g.Get("/tokens", cfg.Admin.HandleTokenList)
+			g.Post("/tokens", cfg.Admin.HandleTokenCreate)
+			g.Delete("/tokens/{id}", cfg.Admin.HandleTokenRevoke)
+			g.Get("/images", cfg.Admin.HandleImageList)
+			g.Get("/images/{id}", cfg.Admin.HandleImageGet)
+			g.Delete("/images/{id}", cfg.Admin.HandleImageDelete)
+			// 全站资源(渠道/用户/审计/导出)仅管理员可见可改。
 			g.Group(func(ad chi.Router) {
 				ad.Use(middleware.RequireAdmin(cfg.Logger))
 				ad.Post("/channels", cfg.Admin.HandleChannelCreate)
 				ad.Get("/channels", cfg.Admin.HandleChannelList)
 				ad.Delete("/channels/{id}", cfg.Admin.HandleChannelDelete)
+				ad.Get("/users", cfg.Admin.HandleUserList)
+				ad.Post("/users", cfg.Admin.HandleUserCreate)
+				ad.Put("/users/{id}", cfg.Admin.HandleUserUpdate)
+				ad.Post("/users/{id}/password", cfg.Admin.HandleUserResetPassword)
+				ad.Delete("/users/{id}", cfg.Admin.HandleUserDelete)
+				ad.Get("/audit", cfg.Admin.HandleAuditList)
+				ad.Get("/export", cfg.Admin.HandleExport)
 			})
 		})
 	})

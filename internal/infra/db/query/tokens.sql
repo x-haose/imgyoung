@@ -34,3 +34,12 @@ WHERE user_id = ? AND name = ? AND revoked_at IS NULL;
 UPDATE tokens
 SET last_used_at = ?
 WHERE id = ?;
+
+-- name: DeleteTokensByUser :exec
+DELETE FROM tokens
+WHERE user_id = ?;
+
+-- name: ListTokensExport :many
+SELECT id, user_id, name, prefix, scopes, last_used_at, revoked_at, created_at
+FROM tokens
+ORDER BY id;

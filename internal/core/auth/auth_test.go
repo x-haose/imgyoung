@@ -25,7 +25,7 @@ func newTestService(t *testing.T) (*auth.Service, *sqlc.Queries) {
 		t.Fatalf("迁移: %v", err)
 	}
 	queries := sqlc.New(conn)
-	svc := auth.New(auth.Config{Queries: queries, Logger: slog.New(slog.DiscardHandler)})
+	svc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: slog.New(slog.DiscardHandler)})
 	phc, err := auth.HashPassword("correct-horse")
 	if err != nil {
 		t.Fatalf("哈希密码: %v", err)

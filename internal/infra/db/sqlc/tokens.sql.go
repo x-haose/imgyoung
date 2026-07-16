@@ -37,6 +37,16 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (int64
 	return id, err
 }
 
+const deleteTokensByUser = `-- name: DeleteTokensByUser :exec
+DELETE FROM tokens
+WHERE user_id = ?
+`
+
+func (q *Queries) DeleteTokensByUser(ctx context.Context, userID string) error {
+	_, err := q.db.ExecContext(ctx, deleteTokensByUser, userID)
+	return err
+}
+
 const getActiveTokenByHash = `-- name: GetActiveTokenByHash :one
 SELECT t.id, t.user_id, t.scopes, u.disabled AS user_disabled
 FROM tokens t
@@ -107,6 +117,55 @@ func (q *Queries) ListTokensByUser(ctx context.Context, userID string) ([]Token,
 			&i.UserID,
 			&i.Name,
 			&i.TokenHash,
+			&i.Prefix,
+			&i.Scopes,
+			&i.LastUsedAt,
+			&i.RevokedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTokensExport = `-- name: ListTokensExport :many
+SELECT id, user_id, name, prefix, scopes, last_used_at, revoked_at, created_at
+FROM tokens
+ORDER BY id
+`
+
+type ListTokensExportRow struct {
+	ID         int64
+	UserID     string
+	Name       string
+	Prefix     string
+	Scopes     string
+	LastUsedAt sql.NullString
+	RevokedAt  sql.NullString
+	CreatedAt  string
+}
+
+func (q *Queries) ListTokensExport(ctx context.Context) ([]ListTokensExportRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTokensExport)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTokensExportRow
+	for rows.Next() {
+		var i ListTokensExportRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
 			&i.Prefix,
 			&i.Scopes,
 			&i.LastUsedAt,

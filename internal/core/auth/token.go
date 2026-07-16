@@ -5,10 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
-
-	sqlite "modernc.org/sqlite"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -38,9 +35,7 @@ func (s *Service) IssueToken(ctx context.Context, userID, name string) (IssuedTo
 		Scopes:    "upload",
 	})
 	if err != nil {
-		var se *sqlite.Error
-		if errors.As(err, &se) && se.Code() == sqliteConstraintUnique &&
-			strings.Contains(se.Error(), "tokens.name") {
+		if isUniqueViolation(err, "tokens.name") {
 			return IssuedToken{}, ErrTokenNameTaken
 		}
 		return IssuedToken{}, fmt.Errorf("写入 Token: %w", err)

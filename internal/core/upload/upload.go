@@ -112,6 +112,9 @@ type Config struct {
 // ErrInsufficientReplicas 同步副本数不足 MinSuccess 要求。
 var ErrInsufficientReplicas = errors.New("upload: 副本数不足")
 
+// ErrQuotaExceeded 归属用户的存储配额不足以容纳本次上传。
+var ErrQuotaExceeded = errors.New("upload: 存储配额已满")
+
 // Options 一次上传的参数。
 type Options struct {
 	UserID         string             // 归属用户 id,必填;由认证中间件解析后显式传入,多租户隔离据此强制
@@ -183,6 +186,11 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	}
 	if int64(meta.Width)*int64(meta.Height) > s.cfg.MaxPixels {
 		return Result{}, ErrTooManyPixels
+	}
+
+	// 配额预检:按引用计全额(去重合并不减账面),超限即拒绝、不写渠道。
+	if err := s.checkQuota(ctx, opts.UserID, int64(len(data))); err != nil {
+		return Result{}, err
 	}
 
 	// 净化在前、哈希在后:哈希对象 = 实际存储字节。
@@ -273,6 +281,31 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		}
 	}
 	return Result{ImageID: shortID}, nil
+}
+
+// checkQuota 校验用户配额可容纳本次上传;NULL 配额表示不限。
+// @Description: 口径为按引用计全额——每条引用计其 blob 的完整大小,查重合并
+// 不减账面;预检用上传原始字节数近似最终存储大小。
+// @param ctx 控制超时与取消
+// @param userID 归属用户 id
+// @param size 本次上传字节数
+// @return ErrQuotaExceeded 或基础设施错误
+func (s *Service) checkQuota(ctx context.Context, userID string, size int64) error {
+	user, err := s.cfg.Queries.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("查询用户配额: %w", err)
+	}
+	if !user.QuotaBytes.Valid {
+		return nil
+	}
+	used, err := s.cfg.Queries.UserStorageUsage(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("统计用户用量: %w", err)
+	}
+	if used+size > user.QuotaBytes.Int64 {
+		return ErrQuotaExceeded
+	}
+	return nil
 }
 
 // minSuccess 归一化最少副本数(至少 1)。

@@ -17,6 +17,9 @@ import (
 // sweepBatch 单轮扫描处理的上限;超出的留待下一轮,避免长事务与无限循环。
 const sweepBatch = 500
 
+// ErrImageNotFound 目标引用不存在。
+var ErrImageNotFound = errors.New("lifecycle: 引用不存在")
+
 // Deleter 渠道对象删除入队口(由 replication.Runner 实现),解耦 lifecycle 与 River。
 type Deleter interface {
 	// EnqueueDelete 入队删除某渠道内一个对象。
@@ -119,6 +122,23 @@ func (s *Sweeper) expireImages(ctx context.Context) error {
 		s.cfg.Logger.Info("到期引用回收", "count", len(rows))
 	}
 	return nil
+}
+
+// DeleteImage 立即删除一条引用(后台管理删除入口)。
+// @Description: 事务语义与到期回收完全一致:删引用与幂等键、递减引用计数,
+// 归零则按宽限期打物理删标记,级联由 Sweeper 后续轮次完成。
+// @param ctx 控制超时与取消
+// @param imageID 目标引用短 ID
+// @return ErrImageNotFound 或基础设施错误
+func (s *Sweeper) DeleteImage(ctx context.Context, imageID string) error {
+	row, err := s.cfg.Queries.GetImageBlob(ctx, imageID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrImageNotFound
+	case err != nil:
+		return fmt.Errorf("查询引用: %w", err)
+	}
+	return s.expireOne(ctx, row.ID, row.BlobID)
 }
 
 // expireOne 在单事务内回收一条到期引用(引用计数是唯一真相,故删引用与减计数同事务)。

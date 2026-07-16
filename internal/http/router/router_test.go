@@ -96,7 +96,7 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 		MaxPixels: 1 << 20,
 		Logger:    discard,
 	})
-	authSvc := auth.New(auth.Config{Queries: queries, Logger: discard})
+	authSvc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: discard})
 	if err := authSvc.EnsureBootstrapToken(t.Context(), sqlc.DefaultUserID, testToken); err != nil {
 		t.Fatalf("植入测试 Token: %v", err)
 	}

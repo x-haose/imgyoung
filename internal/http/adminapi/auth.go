@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 
+	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
@@ -91,6 +92,40 @@ func (h *Handlers) HandleMe(w http.ResponseWriter, r *http.Request) {
 		User:      userInfo{ID: info.Principal.UserID, Name: info.Principal.Name, Role: info.Principal.Role},
 		CSRFToken: info.CSRFToken,
 	})
+}
+
+// HandleChangePassword 当前用户改密:校验旧密码,成功后全部会话失效、须重新登录。
+func (h *Handlers) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.sessionPrincipal(r)
+	if !ok {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
+	var req struct {
+		OldPassword string `json:"old_password"` // 旧明文密码
+		NewPassword string `json:"new_password"` // 新明文密码
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, loginBodyLimit)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
+		return
+	}
+	err := h.cfg.Auth.ChangePassword(r.Context(), p.UserID, req.OldPassword, req.NewPassword)
+	switch {
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "旧密码不正确")
+		return
+	case errors.Is(err, auth.ErrEmptyPassword):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "新密码不能为空")
+		return
+	case err != nil:
+		h.cfg.Logger.Error("修改密码失败", "user", p.UserID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
+	h.recordAudit(r.Context(), audit.ActionUserUpdate, p.UserID, "password.change")
+	http.SetCookie(w, sessionCookie("", r, -1))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // sessionCookieMaxAge 会话 cookie 的存活秒数,与服务端会话有效期一致。

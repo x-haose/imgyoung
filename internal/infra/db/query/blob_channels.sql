@@ -66,3 +66,8 @@ WHERE blob_id = ?;
 -- name: DeleteBlobChannelsByBlob :exec
 DELETE FROM blob_channels
 WHERE blob_id = ?;
+
+-- name: ListBlobChannelsExport :many
+SELECT blob_id, channel_id, state, attempts, last_error, updated_at
+FROM blob_channels
+ORDER BY blob_id, channel_id;

@@ -15,6 +15,20 @@ const (
 	ActionChannelCreate = "channel.create"
 	// ActionChannelDelete 渠道删除。
 	ActionChannelDelete = "channel.delete"
+	// ActionTokenIssue Token 签发。
+	ActionTokenIssue = "token.issue"
+	// ActionTokenRevoke Token 吊销。
+	ActionTokenRevoke = "token.revoke"
+	// ActionUserCreate 用户创建。
+	ActionUserCreate = "user.create"
+	// ActionUserUpdate 用户资料/密码变更。
+	ActionUserUpdate = "user.update"
+	// ActionUserDelete 用户删除。
+	ActionUserDelete = "user.delete"
+	// ActionImageDelete 图片引用删除。
+	ActionImageDelete = "image.delete"
+	// ActionDataExport 元数据导出。
+	ActionDataExport = "data.export"
 )
 
 // Recorder 审计记录器,追加写 audit_log。

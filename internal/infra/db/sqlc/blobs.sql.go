@@ -178,6 +178,50 @@ func (q *Queries) ListBlobsBySha256(ctx context.Context, sha256 string) ([]ListB
 	return items, nil
 }
 
+const listBlobsExport = `-- name: ListBlobsExport :many
+SELECT id, sha256, phash, md5, storage_key, mime, size, width, height,
+       ref_count, pending_delete, delete_after, created_at
+FROM blobs
+ORDER BY id
+`
+
+func (q *Queries) ListBlobsExport(ctx context.Context) ([]Blob, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobsExport)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Blob
+	for rows.Next() {
+		var i Blob
+		if err := rows.Scan(
+			&i.ID,
+			&i.Sha256,
+			&i.Phash,
+			&i.Md5,
+			&i.StorageKey,
+			&i.Mime,
+			&i.Size,
+			&i.Width,
+			&i.Height,
+			&i.RefCount,
+			&i.PendingDelete,
+			&i.DeleteAfter,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBlobsToDelete = `-- name: ListBlobsToDelete :many
 SELECT id, storage_key
 FROM blobs

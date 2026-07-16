@@ -36,6 +36,10 @@ WHERE id = ?;
 DELETE FROM users
 WHERE id = ?;
 
+-- name: CountUsers :one
+SELECT COUNT(*)
+FROM users;
+
 -- name: UserStorageUsage :one
 SELECT CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
 FROM images i

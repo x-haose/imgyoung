@@ -39,6 +39,7 @@ var dummyPHC = func() string {
 
 // Config Service 的全部依赖。
 type Config struct {
+	Conn    *sql.DB       // 数据库连接(事务用)
 	Queries *sqlc.Queries // sqlc 查询集
 	Logger  *slog.Logger  // 结构化日志
 }

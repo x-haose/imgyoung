@@ -120,6 +120,9 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, imaging.ErrUnknownPolicy):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
 		return
+	case errors.Is(err, upload.ErrQuotaExceeded):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "存储配额已满")
+		return
 	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
 		h.cfg.Logger.Error("渠道不可用,上传失败", "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "存储渠道暂不可用,请稍后重试")

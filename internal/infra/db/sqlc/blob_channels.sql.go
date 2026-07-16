@@ -147,6 +147,42 @@ func (q *Queries) ListBlobChannels(ctx context.Context, blobID int64) ([]ListBlo
 	return items, nil
 }
 
+const listBlobChannelsExport = `-- name: ListBlobChannelsExport :many
+SELECT blob_id, channel_id, state, attempts, last_error, updated_at
+FROM blob_channels
+ORDER BY blob_id, channel_id
+`
+
+func (q *Queries) ListBlobChannelsExport(ctx context.Context) ([]BlobChannel, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobChannelsExport)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BlobChannel
+	for rows.Next() {
+		var i BlobChannel
+		if err := rows.Scan(
+			&i.BlobID,
+			&i.ChannelID,
+			&i.State,
+			&i.Attempts,
+			&i.LastError,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDoneBlobChannelsForChannel = `-- name: ListDoneBlobChannelsForChannel :many
 SELECT bc.blob_id, b.storage_key
 FROM blob_channels bc

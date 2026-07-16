@@ -8,6 +8,7 @@ admin_password: ""           # 管理员初始密码;仅在管理员尚未设密
 master_key: ""               # 主密钥(64 位 hex);留空则用 data/master.key
 max_upload_mb: 50            # 单图上限(MB)
 max_concurrent_uploads: 8    # 上传并发上限
+upload_rate_per_min: 0       # 每用户每分钟上传次数上限,超出 429;0 = 不启用
 base_url: ""                 # 对外站点地址;留空则上传响应返回相对路径
 max_pixels_mp: 50            # 像素预算(百万像素)
 referer_whitelist: []        # 防盗链白名单;空表示不启用

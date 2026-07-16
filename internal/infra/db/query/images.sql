@@ -95,3 +95,18 @@ WHERE pending_cleanup = 1;
 UPDATE images
 SET pending_cleanup = 0, cleanup_exempt = 1
 WHERE id = ?;
+
+-- name: CountImages :one
+SELECT COUNT(*)
+FROM images;
+
+-- name: TotalStorageUsage :one
+SELECT CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
+FROM images i
+JOIN blobs b ON b.id = i.blob_id;
+
+-- name: ListImagesExport :many
+SELECT id, blob_id, user_id, token_id, file_name, expire_at, last_public_access_at,
+       pending_cleanup, cleanup_exempt, created_at
+FROM images
+ORDER BY created_at;

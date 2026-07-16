@@ -10,6 +10,18 @@ import (
 	"database/sql"
 )
 
+const countImages = `-- name: CountImages :one
+SELECT COUNT(*)
+FROM images
+`
+
+func (q *Queries) CountImages(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countImages)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countImagesAdmin = `-- name: CountImagesAdmin :one
 SELECT COUNT(*)
 FROM images i
@@ -357,6 +369,47 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 	return items, nil
 }
 
+const listImagesExport = `-- name: ListImagesExport :many
+SELECT id, blob_id, user_id, token_id, file_name, expire_at, last_public_access_at,
+       pending_cleanup, cleanup_exempt, created_at
+FROM images
+ORDER BY created_at
+`
+
+func (q *Queries) ListImagesExport(ctx context.Context) ([]Image, error) {
+	rows, err := q.db.QueryContext(ctx, listImagesExport)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Image
+	for rows.Next() {
+		var i Image
+		if err := rows.Scan(
+			&i.ID,
+			&i.BlobID,
+			&i.UserID,
+			&i.TokenID,
+			&i.FileName,
+			&i.ExpireAt,
+			&i.LastPublicAccessAt,
+			&i.PendingCleanup,
+			&i.CleanupExempt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingCleanupImages = `-- name: ListPendingCleanupImages :many
 SELECT i.id, i.user_id, i.file_name, i.last_public_access_at, i.created_at,
        b.mime, b.size, b.width, b.height
@@ -431,6 +484,19 @@ type RepointImagesParams struct {
 func (q *Queries) RepointImages(ctx context.Context, arg RepointImagesParams) error {
 	_, err := q.db.ExecContext(ctx, repointImages, arg.BlobID, arg.BlobID_2)
 	return err
+}
+
+const totalStorageUsage = `-- name: TotalStorageUsage :one
+SELECT CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+`
+
+func (q *Queries) TotalStorageUsage(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, totalStorageUsage)
+	var bytes int64
+	err := row.Scan(&bytes)
+	return bytes, err
 }
 
 const touchImageAccess = `-- name: TouchImageAccess :exec

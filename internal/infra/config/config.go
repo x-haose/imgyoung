@@ -50,6 +50,7 @@ type Config struct {
 	AdminPassword        string             `koanf:"admin_password"`         // 管理员初始密码;仅在管理员尚未设密时生效
 	MasterKey            string             `koanf:"master_key"`             // 主密钥(64 位 hex);为空则用数据目录文件
 	MaxConcurrentUploads int                `koanf:"max_concurrent_uploads"` // 上传并发上限
+	UploadRatePerMin     int                `koanf:"upload_rate_per_min"`    // 每用户每分钟上传次数上限;0 = 不启用
 	BaseURL              string             `koanf:"base_url"`               // 对外站点地址(去尾斜杠);空则返回相对路径
 	RefererWhitelist     []string           `koanf:"referer_whitelist"`      // 防盗链白名单;空表示不启用
 	AllowEmptyReferer    bool               `koanf:"allow_empty_referer"`    // 空 Referer 是否放行
@@ -174,6 +175,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("max_upload_mb=%d 非法: 需要正整数(单位 MB)", c.MaxUploadBytes>>20)
 	case c.MaxConcurrentUploads <= 0:
 		return fmt.Errorf("max_concurrent_uploads=%d 非法: 需要正整数", c.MaxConcurrentUploads)
+	case c.UploadRatePerMin < 0:
+		return fmt.Errorf("upload_rate_per_min=%d 非法: 需要非负整数(0 表示不启用)", c.UploadRatePerMin)
 	case c.MaxPixels <= 0:
 		return fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", c.MaxPixels/megapixel)
 	case c.MinSuccess < 1:

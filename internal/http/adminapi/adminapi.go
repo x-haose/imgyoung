@@ -5,6 +5,8 @@ package adminapi
 import (
 	"context"
 	"log/slog"
+	"net/http"
+	"strconv"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
@@ -23,11 +25,19 @@ type ChannelAdmin interface {
 	List(ctx context.Context) ([]channel.Info, error)
 }
 
+// ImageAdmin 图片管理删除入口(由 lifecycle.Sweeper 实现)。
+type ImageAdmin interface {
+	// DeleteImage 立即删除一条引用,级联由清理任务完成。
+	DeleteImage(ctx context.Context, imageID string) error
+}
+
 // Config Handlers 的全部依赖与参数。
 type Config struct {
 	Admin              ChannelAdmin    // 渠道管理操作
 	EncryptNewChannels bool            // 新建渠道未指定 encrypted 时的全局默认(创建时固化)
-	Auth               *auth.Service   // 认证服务(登录/登出/会话)
+	Auth               *auth.Service   // 认证服务(登录/会话/用户/Token 管理)
+	Images             ImageAdmin      // 图片删除入口
+	Queries            *sqlc.Queries   // 列表与统计查询
 	Audit              *audit.Recorder // 管理操作审计记录器
 	Logger             *slog.Logger    // 结构化日志
 }
@@ -58,4 +68,46 @@ func (h *Handlers) recordAudit(ctx context.Context, action, target, detail strin
 	if err := h.cfg.Audit.Record(ctx, actor, action, target, detail); err != nil {
 		h.cfg.Logger.Warn("审计记录失败", "action", action, "target", target, "err", err)
 	}
+}
+
+// 列表分页参数边界。
+const (
+	defaultPageSize = 20  // 未指定 page_size 时的默认值
+	maxPageSize     = 100 // page_size 上限,防单请求拉全表
+)
+
+// pagination 解析 page / page_size 查询参数为 LIMIT / OFFSET。
+// @param r 请求
+// @return limit 与 offset
+func pagination(r *http.Request) (limit, offset int64) {
+	q := r.URL.Query()
+	page, _ := strconv.ParseInt(q.Get("page"), 10, 64)
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.ParseInt(q.Get("page_size"), 10, 64)
+	if size < 1 {
+		size = defaultPageSize
+	}
+	if size > maxPageSize {
+		size = maxPageSize
+	}
+	return size, (page - 1) * size
+}
+
+// listResponse 列表统一信封,total 供前端分页。
+type listResponse struct {
+	Items any   `json:"items"` // 当前页数据
+	Total int64 `json:"total"` // 过滤后的总条数
+}
+
+// sessionPrincipal 取出请求会话主体;路由保证存在,缺失属装配错误。
+// @param r 请求
+// @return 会话主体与是否存在
+func (h *Handlers) sessionPrincipal(r *http.Request) (auth.Principal, bool) {
+	info, ok := middleware.SessionFrom(r.Context())
+	if !ok {
+		h.cfg.Logger.Error("管理请求缺少会话主体,检查路由装配", "path", r.URL.Path)
+	}
+	return info.Principal, ok
 }

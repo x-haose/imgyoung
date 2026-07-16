@@ -156,8 +156,8 @@ func provideMasterKey(cfg config.Config, logger *slog.Logger) (*secret.MasterKey
 
 // provideAuth 构造认证服务。
 // @return 认证服务
-func provideAuth(queries *sqlc.Queries, logger *slog.Logger) *auth.Service {
-	return auth.New(auth.Config{Queries: queries, Logger: logger})
+func provideAuth(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *auth.Service {
+	return auth.New(auth.Config{Conn: conn, Queries: queries, Logger: logger})
 }
 
 // bootstrapCredentials 首启凭证播种:管理员初始密码与引导 Token,均幂等。
@@ -322,14 +322,17 @@ func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel
 	})
 }
 
-// provideAdminAPI 构造管理面处理器集(认证、渠道管理与审计留痕)。
+// provideAdminAPI 构造管理面处理器集(认证、用户/Token/图片/渠道管理与审计)。
 // @return 管理面处理器集
 func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.Service,
+	sweeper *lifecycle.Sweeper, queries *sqlc.Queries,
 	auditRec *audit.Recorder, logger *slog.Logger) *adminapi.Handlers {
 	return adminapi.New(adminapi.Config{
 		Admin:              manager,
 		EncryptNewChannels: cfg.EncryptNewChannels,
 		Auth:               authSvc,
+		Images:             sweeper,
+		Queries:            queries,
 		Audit:              auditRec,
 		Logger:             logger,
 	})
@@ -343,6 +346,7 @@ func provideRouter(cfg config.Config, pub *publicapi.Handlers, adm *adminapi.Han
 		Public:               pub,
 		Admin:                adm,
 		Auth:                 authSvc,
+		UploadRatePerMinute:  cfg.UploadRatePerMin,
 		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
 		RefererWhitelist:     cfg.RefererWhitelist,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
