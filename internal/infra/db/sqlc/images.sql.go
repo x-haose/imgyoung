@@ -10,15 +10,73 @@ import (
 	"database/sql"
 )
 
+const countImagesAdmin = `-- name: CountImagesAdmin :one
+SELECT COUNT(*)
+FROM images i
+WHERE (?1 = '' OR i.user_id = ?1)
+  AND (?2 = 0 OR i.token_id = ?2)
+  AND (?3 = '' OR i.id LIKE '%' || ?3 || '%' OR i.file_name LIKE '%' || ?3 || '%')
+  AND (?4 = '' OR i.created_at >= ?4)
+  AND (?5 = '' OR i.created_at < ?5)
+`
+
+type CountImagesAdminParams struct {
+	UserID  interface{}
+	TokenID interface{}
+	Search  interface{}
+	Since   interface{}
+	Until   interface{}
+}
+
+func (q *Queries) CountImagesAdmin(ctx context.Context, arg CountImagesAdminParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countImagesAdmin,
+		arg.UserID,
+		arg.TokenID,
+		arg.Search,
+		arg.Since,
+		arg.Until,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countImagesByUser = `-- name: CountImagesByUser :one
+SELECT COUNT(*)
+FROM images
+WHERE user_id = ?
+`
+
+func (q *Queries) CountImagesByUser(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countImagesByUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countPendingCleanupImages = `-- name: CountPendingCleanupImages :one
+SELECT COUNT(*)
+FROM images
+WHERE pending_cleanup = 1
+`
+
+func (q *Queries) CountPendingCleanupImages(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingCleanupImages)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, file_name, expire_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateImageParams struct {
 	ID       string
 	BlobID   int64
-	UserID   sql.NullString
+	UserID   string
+	TokenID  sql.NullInt64
 	FileName string
 	ExpireAt sql.NullString
 }
@@ -28,6 +86,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 		arg.ID,
 		arg.BlobID,
 		arg.UserID,
+		arg.TokenID,
 		arg.FileName,
 		arg.ExpireAt,
 	)
@@ -42,6 +101,70 @@ WHERE id = ?
 func (q *Queries) DeleteImage(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, deleteImage, id)
 	return err
+}
+
+const exemptImageCleanup = `-- name: ExemptImageCleanup :execrows
+UPDATE images
+SET pending_cleanup = 0, cleanup_exempt = 1
+WHERE id = ?
+`
+
+func (q *Queries) ExemptImageCleanup(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, exemptImageCleanup, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getImageAdmin = `-- name: GetImageAdmin :one
+SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.id = ?
+`
+
+type GetImageAdminRow struct {
+	ID                 string
+	UserID             string
+	TokenID            sql.NullInt64
+	FileName           string
+	ExpireAt           sql.NullString
+	LastPublicAccessAt sql.NullString
+	PendingCleanup     int64
+	CleanupExempt      int64
+	CreatedAt          string
+	Mime               string
+	Size               int64
+	Width              int64
+	Height             int64
+	Sha256             string
+	RefCount           int64
+}
+
+func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRow, error) {
+	row := q.db.QueryRowContext(ctx, getImageAdmin, id)
+	var i GetImageAdminRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenID,
+		&i.FileName,
+		&i.ExpireAt,
+		&i.LastPublicAccessAt,
+		&i.PendingCleanup,
+		&i.CleanupExempt,
+		&i.CreatedAt,
+		&i.Mime,
+		&i.Size,
+		&i.Width,
+		&i.Height,
+		&i.Sha256,
+		&i.RefCount,
+	)
+	return i, err
 }
 
 const getImageBlob = `-- name: GetImageBlob :one
@@ -76,10 +199,24 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 	return i, err
 }
 
+const getImageOwner = `-- name: GetImageOwner :one
+SELECT user_id
+FROM images
+WHERE id = ?
+`
+
+func (q *Queries) GetImageOwner(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getImageOwner, id)
+	var user_id string
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const labelColdImages = `-- name: LabelColdImages :execrows
 UPDATE images
 SET pending_cleanup = 1
 WHERE pending_cleanup = 0
+  AND cleanup_exempt = 0
   AND COALESCE(last_public_access_at, created_at) < ?
 `
 
@@ -119,6 +256,154 @@ func (q *Queries) ListExpiredImages(ctx context.Context, arg ListExpiredImagesPa
 	for rows.Next() {
 		var i ListExpiredImagesRow
 		if err := rows.Scan(&i.ID, &i.BlobID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listImagesAdmin = `-- name: ListImagesAdmin :many
+SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       b.mime, b.size, b.width, b.height, b.sha256
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE (?1 = '' OR i.user_id = ?1)
+  AND (?2 = 0 OR i.token_id = ?2)
+  AND (?3 = '' OR i.id LIKE '%' || ?3 || '%' OR i.file_name LIKE '%' || ?3 || '%')
+  AND (?4 = '' OR i.created_at >= ?4)
+  AND (?5 = '' OR i.created_at < ?5)
+ORDER BY i.created_at DESC
+LIMIT ?7 OFFSET ?6
+`
+
+type ListImagesAdminParams struct {
+	UserID     interface{}
+	TokenID    interface{}
+	Search     interface{}
+	Since      interface{}
+	Until      interface{}
+	PageOffset int64
+	PageLimit  int64
+}
+
+type ListImagesAdminRow struct {
+	ID                 string
+	UserID             string
+	TokenID            sql.NullInt64
+	FileName           string
+	ExpireAt           sql.NullString
+	LastPublicAccessAt sql.NullString
+	PendingCleanup     int64
+	CleanupExempt      int64
+	CreatedAt          string
+	Mime               string
+	Size               int64
+	Width              int64
+	Height             int64
+	Sha256             string
+}
+
+func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams) ([]ListImagesAdminRow, error) {
+	rows, err := q.db.QueryContext(ctx, listImagesAdmin,
+		arg.UserID,
+		arg.TokenID,
+		arg.Search,
+		arg.Since,
+		arg.Until,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListImagesAdminRow
+	for rows.Next() {
+		var i ListImagesAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.TokenID,
+			&i.FileName,
+			&i.ExpireAt,
+			&i.LastPublicAccessAt,
+			&i.PendingCleanup,
+			&i.CleanupExempt,
+			&i.CreatedAt,
+			&i.Mime,
+			&i.Size,
+			&i.Width,
+			&i.Height,
+			&i.Sha256,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingCleanupImages = `-- name: ListPendingCleanupImages :many
+SELECT i.id, i.user_id, i.file_name, i.last_public_access_at, i.created_at,
+       b.mime, b.size, b.width, b.height
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.pending_cleanup = 1
+ORDER BY COALESCE(i.last_public_access_at, i.created_at)
+LIMIT ? OFFSET ?
+`
+
+type ListPendingCleanupImagesParams struct {
+	Limit  int64
+	Offset int64
+}
+
+type ListPendingCleanupImagesRow struct {
+	ID                 string
+	UserID             string
+	FileName           string
+	LastPublicAccessAt sql.NullString
+	CreatedAt          string
+	Mime               string
+	Size               int64
+	Width              int64
+	Height             int64
+}
+
+func (q *Queries) ListPendingCleanupImages(ctx context.Context, arg ListPendingCleanupImagesParams) ([]ListPendingCleanupImagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingCleanupImages, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingCleanupImagesRow
+	for rows.Next() {
+		var i ListPendingCleanupImagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FileName,
+			&i.LastPublicAccessAt,
+			&i.CreatedAt,
+			&i.Mime,
+			&i.Size,
+			&i.Width,
+			&i.Height,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

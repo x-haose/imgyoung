@@ -1,6 +1,6 @@
 -- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, file_name, expire_at)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at)
+VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: GetImageBlob :one
 SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size, b.sha256
@@ -28,9 +28,70 @@ WHERE id = ?;
 UPDATE images
 SET pending_cleanup = 1
 WHERE pending_cleanup = 0
+  AND cleanup_exempt = 0
   AND COALESCE(last_public_access_at, created_at) < ?;
 
 -- name: RepointImages :exec
 UPDATE images
 SET blob_id = ?
 WHERE blob_id = ?;
+
+-- name: ListImagesAdmin :many
+SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       b.mime, b.size, b.width, b.height, b.sha256
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE (@user_id = '' OR i.user_id = @user_id)
+  AND (@token_id = 0 OR i.token_id = @token_id)
+  AND (@search = '' OR i.id LIKE '%' || @search || '%' OR i.file_name LIKE '%' || @search || '%')
+  AND (@since = '' OR i.created_at >= @since)
+  AND (@until = '' OR i.created_at < @until)
+ORDER BY i.created_at DESC
+LIMIT @page_limit OFFSET @page_offset;
+
+-- name: CountImagesAdmin :one
+SELECT COUNT(*)
+FROM images i
+WHERE (@user_id = '' OR i.user_id = @user_id)
+  AND (@token_id = 0 OR i.token_id = @token_id)
+  AND (@search = '' OR i.id LIKE '%' || @search || '%' OR i.file_name LIKE '%' || @search || '%')
+  AND (@since = '' OR i.created_at >= @since)
+  AND (@until = '' OR i.created_at < @until);
+
+-- name: GetImageAdmin :one
+SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.id = ?;
+
+-- name: GetImageOwner :one
+SELECT user_id
+FROM images
+WHERE id = ?;
+
+-- name: CountImagesByUser :one
+SELECT COUNT(*)
+FROM images
+WHERE user_id = ?;
+
+-- name: ListPendingCleanupImages :many
+SELECT i.id, i.user_id, i.file_name, i.last_public_access_at, i.created_at,
+       b.mime, b.size, b.width, b.height
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.pending_cleanup = 1
+ORDER BY COALESCE(i.last_public_access_at, i.created_at)
+LIMIT ? OFFSET ?;
+
+-- name: CountPendingCleanupImages :one
+SELECT COUNT(*)
+FROM images
+WHERE pending_cleanup = 1;
+
+-- name: ExemptImageCleanup :execrows
+UPDATE images
+SET pending_cleanup = 0, cleanup_exempt = 1
+WHERE id = ?;

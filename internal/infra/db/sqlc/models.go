@@ -54,7 +54,17 @@ type Channel struct {
 	CreatedAt       string
 }
 
+type DedupCandidate struct {
+	ID        int64
+	BlobA     int64
+	BlobB     int64
+	Distance  int64
+	Status    string
+	CreatedAt string
+}
+
 type IdempotencyKey struct {
+	UserID    string
 	Key       string
 	ImageID   string
 	CreatedAt string
@@ -63,18 +73,44 @@ type IdempotencyKey struct {
 type Image struct {
 	ID                 string
 	BlobID             int64
-	UserID             sql.NullString
+	UserID             string
+	TokenID            sql.NullInt64
 	FileName           string
 	ExpireAt           sql.NullString
 	LastPublicAccessAt sql.NullString
 	PendingCleanup     int64
+	CleanupExempt      int64
 	CreatedAt          string
 }
 
-type User struct {
-	ID        string
-	Name      string
+type Session struct {
+	TokenHash string
+	UserID    string
+	CsrfToken string
+	ExpiresAt string
 	CreatedAt string
+}
+
+type Token struct {
+	ID         int64
+	UserID     string
+	Name       string
+	TokenHash  string
+	Prefix     string
+	Scopes     string
+	LastUsedAt sql.NullString
+	RevokedAt  sql.NullString
+	CreatedAt  string
+}
+
+type User struct {
+	ID           string
+	Name         string
+	PasswordHash string
+	Role         string
+	QuotaBytes   sql.NullInt64
+	Disabled     int64
+	CreatedAt    string
 }
 
 type Variant struct {

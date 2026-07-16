@@ -9,6 +9,25 @@ import (
 	"context"
 )
 
+const countAuditLog = `-- name: CountAuditLog :one
+SELECT COUNT(*)
+FROM audit_log
+WHERE (?1 = '' OR actor = ?1)
+  AND (?2 = '' OR action = ?2)
+`
+
+type CountAuditLogParams struct {
+	Actor  interface{}
+	Action interface{}
+}
+
+func (q *Queries) CountAuditLog(ctx context.Context, arg CountAuditLogParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAuditLog, arg.Actor, arg.Action)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAuditLog = `-- name: CreateAuditLog :exec
 INSERT INTO audit_log (actor, action, target, detail)
 VALUES (?, ?, ?, ?)
@@ -29,4 +48,55 @@ func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) 
 		arg.Detail,
 	)
 	return err
+}
+
+const listAuditLog = `-- name: ListAuditLog :many
+SELECT id, actor, "action", target, detail, created_at
+FROM audit_log
+WHERE (?1 = '' OR actor = ?1)
+  AND (?2 = '' OR action = ?2)
+ORDER BY id DESC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListAuditLogParams struct {
+	Actor      interface{}
+	Action     interface{}
+	PageOffset int64
+	PageLimit  int64
+}
+
+func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AuditLog, error) {
+	rows, err := q.db.QueryContext(ctx, listAuditLog,
+		arg.Actor,
+		arg.Action,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AuditLog
+	for rows.Next() {
+		var i AuditLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.Actor,
+			&i.Action,
+			&i.Target,
+			&i.Detail,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

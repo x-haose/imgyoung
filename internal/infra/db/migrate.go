@@ -28,7 +28,14 @@ const migrationsDir = "migrations"
 // @return 迁移失败时的错误
 func Migrate(conn *sql.DB) error {
 	ctx := context.Background()
-	drv, err := sqlite.Open(conn)
+	// 迁移钉在单个连接上执行:迁移脚本内的 PRAGMA(如 foreign_keys=off)只对
+	// 当前连接生效,经连接池分发会漂移到未设置的连接上,表重建将被外键约束拦下。
+	c, err := conn.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("获取迁移专用连接: %w", err)
+	}
+	defer func() { _ = c.Close() }()
+	drv, err := sqlite.Open(c)
 	if err != nil {
 		return fmt.Errorf("初始化迁移驱动: %w", err)
 	}

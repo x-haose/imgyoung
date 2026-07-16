@@ -2,15 +2,21 @@
 CREATE TABLE images (
     id TEXT PRIMARY KEY, -- 对外短 ID(nanoid)
     blob_id INTEGER NOT NULL REFERENCES blobs (id), -- 指向的物理图
-    user_id TEXT, -- 归属用户,单用户期为 'default'
+    user_id TEXT NOT NULL REFERENCES users (id), -- 归属用户,单用户期为 'default'
+    token_id INTEGER REFERENCES tokens (id), -- 经哪个 Token 上传,NULL 表示非 Token 途径或历史数据
     file_name TEXT NOT NULL DEFAULT '', -- 原始文件名,仅作元数据展示
     expire_at TEXT, -- 到期时刻,NULL 表示永不过期
     last_public_access_at TEXT, -- 最近一次真实公开访问时刻,NULL 表示从未
     pending_cleanup INTEGER NOT NULL DEFAULT 0, -- 冷图待清理标签,1 表示已入待裁决集
+    cleanup_exempt INTEGER NOT NULL DEFAULT 0, -- 清理豁免,1 表示裁决保留、不再参与冷图打标
     created_at TEXT NOT NULL DEFAULT (datetime('now')) -- 创建时刻,UTC 文本
 );
 
 CREATE INDEX idx_images_blob ON images (blob_id);
+
+CREATE INDEX idx_images_user ON images (user_id);
+
+CREATE INDEX idx_images_token ON images (token_id);
 
 CREATE INDEX idx_images_expire ON images (expire_at);
 

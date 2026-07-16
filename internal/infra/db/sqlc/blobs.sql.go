@@ -108,6 +108,41 @@ func (q *Queries) GetBlob(ctx context.Context, id int64) (Blob, error) {
 	return i, err
 }
 
+const listBlobPhashes = `-- name: ListBlobPhashes :many
+SELECT id, phash
+FROM blobs
+WHERE pending_delete = 0 AND id > ?
+ORDER BY id
+`
+
+type ListBlobPhashesRow struct {
+	ID    int64
+	Phash int64
+}
+
+func (q *Queries) ListBlobPhashes(ctx context.Context, id int64) ([]ListBlobPhashesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobPhashes, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlobPhashesRow
+	for rows.Next() {
+		var i ListBlobPhashesRow
+		if err := rows.Scan(&i.ID, &i.Phash); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBlobsBySha256 = `-- name: ListBlobsBySha256 :many
 SELECT id, ref_count
 FROM blobs

@@ -150,7 +150,9 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	}
 	fileName, idemKey := truncateName(opts.FileName), opts.IdempotencyKey
 	if idemKey != "" {
-		imageID, err := s.cfg.Queries.GetIdempotencyImage(ctx, idemKey)
+		imageID, err := s.cfg.Queries.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{
+			UserID: sqlc.DefaultUserID, Key: idemKey,
+		})
 		if err == nil {
 			return Result{ImageID: imageID}, nil
 		}
@@ -245,7 +247,9 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
 		if idemKey != "" {
-			if imageID, qerr := s.cfg.Queries.GetIdempotencyImage(ctx, idemKey); qerr == nil {
+			if imageID, qerr := s.cfg.Queries.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{
+				UserID: sqlc.DefaultUserID, Key: idemKey,
+			}); qerr == nil {
 				return Result{ImageID: imageID}, nil
 			}
 		}
@@ -362,7 +366,7 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	if err = q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID:       p.shortID,
 		BlobID:   blobID,
-		UserID:   sql.NullString{String: sqlc.DefaultUserID, Valid: true},
+		UserID:   sqlc.DefaultUserID,
 		FileName: p.fileName,
 		ExpireAt: expireAt,
 	}); err != nil {
@@ -386,6 +390,7 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	}
 	if p.idemKey != "" {
 		if err = q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
+			UserID:  sqlc.DefaultUserID,
 			Key:     p.idemKey,
 			ImageID: p.shortID,
 		}); err != nil {

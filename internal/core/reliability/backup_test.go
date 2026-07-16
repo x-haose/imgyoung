@@ -60,7 +60,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("创建 blob: %v", err)
 	}
 	if err := queries.CreateImage(t.Context(), sqlc.CreateImageParams{
-		ID: "restoreme01", BlobID: blobID, FileName: "a.png",
+		ID: "restoreme01", BlobID: blobID, UserID: sqlc.DefaultUserID, FileName: "a.png",
 	}); err != nil {
 		t.Fatalf("创建引用: %v", err)
 	}

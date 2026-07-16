@@ -37,7 +37,7 @@ func mkBlobWithImage(t *testing.T, ctx context.Context, q *sqlc.Queries, sha, ke
 		t.Fatalf("建 blob: %v", err)
 	}
 	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: imageID, BlobID: blobID, UserID: sql.NullString{String: sqlc.DefaultUserID, Valid: true},
+		ID: imageID, BlobID: blobID, UserID: sqlc.DefaultUserID,
 	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}

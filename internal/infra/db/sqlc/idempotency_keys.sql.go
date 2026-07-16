@@ -10,17 +10,18 @@ import (
 )
 
 const createIdempotencyKey = `-- name: CreateIdempotencyKey :exec
-INSERT INTO idempotency_keys (key, image_id)
-VALUES (?, ?)
+INSERT INTO idempotency_keys (user_id, key, image_id)
+VALUES (?, ?, ?)
 `
 
 type CreateIdempotencyKeyParams struct {
+	UserID  string
 	Key     string
 	ImageID string
 }
 
 func (q *Queries) CreateIdempotencyKey(ctx context.Context, arg CreateIdempotencyKeyParams) error {
-	_, err := q.db.ExecContext(ctx, createIdempotencyKey, arg.Key, arg.ImageID)
+	_, err := q.db.ExecContext(ctx, createIdempotencyKey, arg.UserID, arg.Key, arg.ImageID)
 	return err
 }
 
@@ -37,11 +38,16 @@ func (q *Queries) DeleteIdempotencyKeysByImage(ctx context.Context, imageID stri
 const getIdempotencyImage = `-- name: GetIdempotencyImage :one
 SELECT image_id
 FROM idempotency_keys
-WHERE key = ?
+WHERE user_id = ? AND key = ?
 `
 
-func (q *Queries) GetIdempotencyImage(ctx context.Context, key string) (string, error) {
-	row := q.db.QueryRowContext(ctx, getIdempotencyImage, key)
+type GetIdempotencyImageParams struct {
+	UserID string
+	Key    string
+}
+
+func (q *Queries) GetIdempotencyImage(ctx context.Context, arg GetIdempotencyImageParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getIdempotencyImage, arg.UserID, arg.Key)
 	var image_id string
 	err := row.Scan(&image_id)
 	return image_id, err

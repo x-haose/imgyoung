@@ -66,7 +66,7 @@ func TestSweepExpiresAndCascades(t *testing.T) {
 	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
 	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID: "img0000001", BlobID: blobID,
-		UserID: sql.NullString{String: sqlc.DefaultUserID, Valid: true}, ExpireAt: past,
+		UserID: sqlc.DefaultUserID, ExpireAt: past,
 	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestSweepCascadesVariants(t *testing.T) {
 	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
 	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID: "img0000002", BlobID: blobID,
-		UserID: sql.NullString{String: sqlc.DefaultUserID, Valid: true}, ExpireAt: past,
+		UserID: sqlc.DefaultUserID, ExpireAt: past,
 	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET ref_count = 2 WHERE id = ?", blobID); err != nil {
 		t.Fatalf("提升引用计数: %v", err)
 	}
-	uid := sql.NullString{String: sqlc.DefaultUserID, Valid: true}
+	uid := sqlc.DefaultUserID
 	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
 	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "expiring01", BlobID: blobID, UserID: uid, ExpireAt: past}); err != nil {
 		t.Fatalf("建到期 image: %v", err)
@@ -198,7 +198,7 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
-	uid := sql.NullString{String: sqlc.DefaultUserID, Valid: true}
+	uid := sqlc.DefaultUserID
 	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "img0000001", BlobID: blobID, UserID: uid}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
@@ -231,7 +231,7 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 func TestLabelColdImages(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	uid := sql.NullString{String: sqlc.DefaultUserID, Valid: true}
+	uid := sqlc.DefaultUserID
 	mk := func(id, key string) {
 		blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1})
 		if err != nil {

@@ -51,3 +51,9 @@ WHERE id = ?;
 UPDATE blobs
 SET ref_count = 0, pending_delete = 1, delete_after = ?
 WHERE id = ?;
+
+-- name: ListBlobPhashes :many
+SELECT id, phash
+FROM blobs
+WHERE pending_delete = 0 AND id > ?
+ORDER BY id;
