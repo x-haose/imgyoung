@@ -47,6 +47,18 @@ func New(ctx context.Context, remote string) (*Driver, error) {
 	return &Driver{f: f}, nil
 }
 
+// EnsureBucket 创建渠道根对应的桶/容器,已存在时不报错。
+// @Description: 对象存储后端(s3 等)的 Mkdir 在桶层即 CreateBucket。注意:调用方必须
+// 用未设 no_check_bucket=true 的实例,否则 s3 后端会短路 Mkdir 使本方法成为空操作。
+// 不进 driver.Driver 接口——仅对象存储后端有意义,避免污染核心抽象。
+// @return 建桶失败(多为凭证无建桶权限)时的错误
+func (d *Driver) EnsureBucket(ctx context.Context) error {
+	if err := d.f.Mkdir(ctx, ""); err != nil {
+		return fmt.Errorf("创建存储桶: %w", err)
+	}
+	return nil
+}
+
 // Put 将 r 中的 size 个字节流式写入 key。
 func (d *Driver) Put(ctx context.Context, key string, r io.Reader, size int64) error {
 	src := object.NewStaticObjectInfo(key, time.Now(), size, true, nil, nil)

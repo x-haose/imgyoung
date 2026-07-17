@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -18,13 +19,25 @@ import (
 const channelBodyLimit = 1 << 20
 
 // channelCreateRequest 创建渠道的请求体。
+// @Description: 两种模式二选一——模板模式给 template + inputs(推荐,内置 S3 系厂商);
+// 自定义模式给 driver + config(高级,直填 rclone 参数)。通用字段两种模式共用。
 type channelCreateRequest struct {
-	Name            string            `json:"name"`              // 渠道名(唯一)
-	Driver          string            `json:"driver"`            // rclone 后端名
-	Priority        int64             `json:"priority"`          // 优先级,越大越优先
-	Encrypted       *bool             `json:"encrypted"`         // 是否加密渠道;缺省用全局默认(创建时固化)
-	AllowDirectLink bool              `json:"allow_direct_link"` // 是否允许 302 直链
-	Config          map[string]string `json:"config"`            // 后端参数(含约定键 path / public_base_url)
+	Name             string            `json:"name"`               // 渠道名(唯一)
+	Priority         int64             `json:"priority"`           // 优先级,越大越优先
+	Encrypted        *bool             `json:"encrypted"`          // 是否加密渠道;缺省用全局默认(创建时固化)
+	AllowDirectLink  bool              `json:"allow_direct_link"`  // 是否允许 302 直链
+	AutoCreateBucket bool              `json:"auto_create_bucket"` // 是否创建时主动建桶(需凭证有建桶权限)
+	Template         string            `json:"template"`           // 模板模式:模板 id;空或 custom 走自定义
+	Inputs           map[string]string `json:"inputs"`             // 模板模式:字段值
+	Driver           string            `json:"driver"`             // 自定义模式:rclone 后端名
+	Config           map[string]string `json:"config"`             // 自定义模式:后端参数(含约定键 path / public_base_url)
+}
+
+// HandleChannelTemplates 下发内置渠道模板清单(供前端渲染选模板 + 字段表单)。
+func (h *Handlers) HandleChannelTemplates(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{
+		Items: channel.Templates(), Total: int64(len(channel.Templates())),
+	})
 }
 
 // HandleChannelCreate 创建渠道。
@@ -38,21 +51,32 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON 或含未知字段")
 		return
 	}
+	// 模板模式:按模板合并出 driver + config;自定义模式沿用请求原值。
+	driverName, config := req.Driver, req.Config
+	if req.Template != "" && req.Template != "custom" {
+		merged, cfg, err := channel.BuildTemplateConfig(req.Template, req.Inputs)
+		if err != nil {
+			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
+			return
+		}
+		driverName, config = merged, cfg
+	}
 	encrypted := h.cfg.EncryptNewChannels
 	if req.Encrypted != nil {
 		encrypted = *req.Encrypted
 	}
 	channelID, err := h.cfg.Admin.Create(r.Context(), channel.CreateParams{
-		Name:            req.Name,
-		Driver:          req.Driver,
-		Config:          req.Config,
-		Priority:        req.Priority,
-		Encrypted:       encrypted,
-		AllowDirectLink: req.AllowDirectLink,
+		Name:             req.Name,
+		Driver:           driverName,
+		Config:           config,
+		Priority:         req.Priority,
+		Encrypted:        encrypted,
+		AllowDirectLink:  req.AllowDirectLink,
+		AutoCreateBucket: req.AutoCreateBucket,
 	})
 	switch {
 	case errors.Is(err, channel.ErrInvalidChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "渠道参数非法或后端无法初始化")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
 		return
 	case errors.Is(err, channel.ErrChannelNameExists):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "渠道名已存在")
@@ -99,4 +123,12 @@ func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Logger.Info("渠道已删除", "id", channelID)
 	h.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10), "")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// templateErrMsg 把渠道创建错误转成面向用户的提示:去掉包前缀,透传字段必填、
+// 建桶失败等已面向用户的中文消息;凭证不入错误链,展示安全。
+// @param err 渠道创建返回的错误
+// @return 面向用户的错误消息
+func templateErrMsg(err error) string {
+	return strings.TrimPrefix(err.Error(), "channel: ")
 }

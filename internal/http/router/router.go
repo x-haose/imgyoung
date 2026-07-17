@@ -65,6 +65,7 @@ func New(cfg Config) http.Handler {
 			// 全站资源(渠道/用户/审计/导出)仅管理员可见可改。
 			g.Group(func(ad chi.Router) {
 				ad.Use(middleware.RequireAdmin(cfg.Logger))
+				ad.Get("/channel-templates", cfg.Admin.HandleChannelTemplates)
 				ad.Post("/channels", cfg.Admin.HandleChannelCreate)
 				ad.Get("/channels", cfg.Admin.HandleChannelList)
 				ad.Delete("/channels/{id}", cfg.Admin.HandleChannelDelete)

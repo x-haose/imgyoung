@@ -12,6 +12,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/internal/store/rclone"
 )
 
 // ErrInvalidChannel 渠道创建参数非法(名称/后端为空或后端无法初始化)。
@@ -23,12 +24,13 @@ var ErrChannelNameExists = errors.New("channel: 渠道名已存在")
 
 // CreateParams 创建渠道的参数。
 type CreateParams struct {
-	Name            string            // 渠道名(唯一)
-	Driver          string            // rclone 后端名
-	Config          map[string]string // 后端参数(含约定键 path / public_base_url),可为 nil
-	Priority        int64             // 优先级,越大越优先
-	Encrypted       bool              // 是否为加密渠道;创建时固化,建后不可变
-	AllowDirectLink bool              // 是否允许 302 直链
+	Name             string            // 渠道名(唯一)
+	Driver           string            // rclone 后端名
+	Config           map[string]string // 后端参数(含约定键 path / public_base_url),可为 nil
+	Priority         int64             // 优先级,越大越优先
+	Encrypted        bool              // 是否为加密渠道;创建时固化,建后不可变
+	AllowDirectLink  bool              // 是否允许 302 直链
+	AutoCreateBucket bool              // 是否在创建时主动建桶(需凭证有建桶权限);仅 s3 有意义
 }
 
 // nameMaxLen 渠道名长度上限。
@@ -103,6 +105,13 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 		return 0, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 
+	// 可选自动建桶:在落库前主动建,失败即中止(不留"渠道已建但桶不存在"的坑)。
+	if p.AutoCreateBucket {
+		if err := m.ensureBucket(ctx, p.Driver, p.Config); err != nil {
+			return 0, fmt.Errorf("%w: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): %w", ErrInvalidChannel, err)
+		}
+	}
+
 	channelID, err := m.cfg.Queries.CreateChannel(ctx, sqlc.CreateChannelParams{
 		Name:            p.Name,
 		Driver:          p.Driver,
@@ -123,6 +132,29 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 		m.cfg.Logger.Error("渠道已创建但装载失败", "channel", p.Name, "err", err)
 	}
 	return channelID, nil
+}
+
+// ensureBucket 对 s3 类渠道主动建桶。
+// @Description: 用渠道 config 构造一个显式 no_check_bucket=false 的裸驱动(不套 crypt——
+// 建桶是桶级操作,只需内层 s3),再调 EnsureBucket。渠道自身仍用默认 no_check_bucket=true,
+// 建好一次后续不必每次探测。config 为明文(尚未加密),直接可用。
+// @param drv rclone 后端名
+// @param config 渠道配置(含约定键 path)
+// @return 建桶失败时的错误
+func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[string]string) error {
+	params := make(map[string]string, len(config))
+	for k, v := range config {
+		if k == "path" || k == "public_base_url" {
+			continue
+		}
+		params[k] = v
+	}
+	params["no_check_bucket"] = "false"
+	d, err := rclone.New(ctx, BuildRemote(drv, params, config["path"]))
+	if err != nil {
+		return fmt.Errorf("初始化建桶驱动: %w", err)
+	}
+	return d.EnsureBucket(ctx)
 }
 
 // Delete 删除渠道;若其持有任何图的唯一就绪副本则拒绝(防数据丢失)。
