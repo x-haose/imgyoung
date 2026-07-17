@@ -154,8 +154,16 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 	if err := q.DeleteIdempotencyKeysByImage(ctx, imageID); err != nil {
 		return fmt.Errorf("清理幂等键: %w", err)
 	}
-	if err := q.DeleteImage(ctx, imageID); err != nil {
+	// 删引用与减计数必须原子:仅当本事务确实删掉了引用行才减 ref_count,
+	// 否则重复回收同一引用(管理端删除与到期扫描并发命中同图)会多减、
+	// 把仍被其他引用共享的 blob 误减到 0 而误删。
+	deleted, err := q.DeleteImage(ctx, imageID)
+	if err != nil {
 		return fmt.Errorf("删除引用: %w", err)
+	}
+	if deleted == 0 {
+		// 引用已被并发路径回收,计数已由该路径处理,本次不再触碰。
+		return tx.Commit()
 	}
 	refCount, err := q.DecrementBlobRef(ctx, blobID)
 	if err != nil {

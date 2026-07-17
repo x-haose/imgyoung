@@ -185,6 +185,81 @@ func TestMergeCandidateStaleBlob(t *testing.T) {
 	}
 }
 
+// TestMergeCandidateCountsActualRefs 验证合并并入的是实际改指向的引用数,
+// 而非事务外快照:被并方在裁决后、合并前有一条引用到期消失,保留方计数不多计。
+func TestMergeCandidateCountsActualRefs(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+	// 保留方 1 引用,被并方 2 引用(其中一条将被"抢先删除"模拟到期回收)。
+	keep := mkBlobWithPhash(t, ctx, q, "sha-keep", "key-keep", "keepimg001", 0)
+	drop := mkBlobWithPhash(t, ctx, q, "sha-drop", "key-drop", "dropimg001", 1)
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "dropimg002", BlobID: drop, UserID: sqlc.DefaultUserID}); err != nil {
+		t.Fatalf("建被并方第二引用: %v", err)
+	}
+	if _, err := conn.Exec("UPDATE blobs SET ref_count = 2 WHERE id = ?", drop); err != nil {
+		t.Fatalf("提升被并方计数: %v", err)
+	}
+
+	m := newSimilarMerger(conn, q)
+	if _, err := m.ScanSimilarOnce(ctx); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	var candID int64
+	if err := conn.QueryRow("SELECT id FROM dedup_candidates").Scan(&candID); err != nil {
+		t.Fatalf("查候选: %v", err)
+	}
+	// 抢先删掉被并方的一条引用(模拟并发到期回收):被并方实际只剩 1 条可改指向。
+	if _, err := conn.Exec("DELETE FROM images WHERE id = 'dropimg002'"); err != nil {
+		t.Fatalf("抢先删引用: %v", err)
+	}
+
+	if err := m.MergeCandidate(ctx, candID, keep); err != nil {
+		t.Fatalf("合并失败: %v", err)
+	}
+	// 保留方最终 ref = 原 1 + 实际改指向 1 = 2(而非快照 1 + 2 = 3)。
+	var refCount int
+	if err := conn.QueryRow("SELECT ref_count FROM blobs WHERE id = ?", keep).Scan(&refCount); err != nil {
+		t.Fatalf("查保留方: %v", err)
+	}
+	if refCount != 2 {
+		t.Fatalf("保留方 ref = %d, 期望 2(按实际改指向数并入,不用事务外快照)", refCount)
+	}
+}
+
+// TestMergeCandidateRejectsDyingKeeper 验证保留方在裁决后被减到待删时,
+// 合并事务内复查发现并拒绝(候选失效),不会把引用改指向一个待物理删的 blob。
+func TestMergeCandidateRejectsDyingKeeper(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+	keep := mkBlobWithPhash(t, ctx, q, "sha-keep", "key-keep", "keepimg001", 0)
+	drop := mkBlobWithPhash(t, ctx, q, "sha-drop", "key-drop", "dropimg001", 1)
+
+	m := newSimilarMerger(conn, q)
+	if _, err := m.ScanSimilarOnce(ctx); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	var candID int64
+	if err := conn.QueryRow("SELECT id FROM dedup_candidates").Scan(&candID); err != nil {
+		t.Fatalf("查候选: %v", err)
+	}
+	// 保留方自身引用到期被回收并标记物理删(aliveBlob 事务外可能已过窗口,
+	// 事务内复查才是最终防线)。
+	if _, err := conn.Exec("UPDATE blobs SET pending_delete = 1 WHERE id = ?", keep); err != nil {
+		t.Fatalf("标记保留方待删: %v", err)
+	}
+	if err := m.MergeCandidate(ctx, candID, keep); !errors.Is(err, dedup.ErrCandidateStale) {
+		t.Fatalf("保留方待删时合并应拒绝, got %v", err)
+	}
+	// 被并方未被牵连:仍存活、引用未改指向。
+	var dropBlob int64
+	if err := conn.QueryRow("SELECT blob_id FROM images WHERE id = 'dropimg001'").Scan(&dropBlob); err != nil {
+		t.Fatalf("查被并方引用: %v", err)
+	}
+	if dropBlob != drop {
+		t.Fatalf("被并方引用被误改指向 %d, 期望保持 %d", dropBlob, drop)
+	}
+}
+
 // TestScanSimilarDisabled 阈值为 0 时相似扫描完全关闭。
 func TestScanSimilarDisabled(t *testing.T) {
 	conn, q := setup(t)

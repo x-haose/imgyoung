@@ -189,6 +189,89 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	}
 }
 
+// TestDeleteImageIdempotentUnderDoubleDelete 验证重复回收同一引用不多减计数:
+// 共享 blob(ref=2)的一条引用被删两次,ref_count 只降到 1,blob 不被误标物理删,
+// 另一条引用仍可读(防"管理端删除与到期扫描并发命中同图致数据丢失")。
+func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "shared", Mime: "image/png", Size: 3, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET ref_count = 2 WHERE id = ?", blobID); err != nil {
+		t.Fatalf("提升引用计数: %v", err)
+	}
+	uid := sqlc.DefaultUserID
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "victimimg1", BlobID: blobID, UserID: uid}); err != nil {
+		t.Fatalf("建被删 image: %v", err)
+	}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "survivor01", BlobID: blobID, UserID: uid}); err != nil {
+		t.Fatalf("建幸存 image: %v", err)
+	}
+
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Grace: 0, Logger: slog.New(slog.DiscardHandler)})
+
+	// 首次删除:引用消失,ref_count 2→1。
+	if err := sw.DeleteImage(ctx, "victimimg1"); err != nil {
+		t.Fatalf("首次删除: %v", err)
+	}
+	// 重复删除同一引用(模拟并发第二路径):必须幂等,不再减计数。
+	if err := sw.DeleteImage(ctx, "victimimg1"); !errors.Is(err, lifecycle.ErrImageNotFound) {
+		t.Fatalf("重复删除应报不存在, got %v", err)
+	}
+
+	var refCount, pendingDelete int
+	if err := conn.QueryRowContext(ctx, "SELECT ref_count, pending_delete FROM blobs WHERE id = ?", blobID).Scan(&refCount, &pendingDelete); err != nil {
+		t.Fatalf("查 blob: %v", err)
+	}
+	if refCount != 1 || pendingDelete != 0 {
+		t.Fatalf("重复删除后 ref=%d pending=%d, 期望 1/0(未多减未误删)", refCount, pendingDelete)
+	}
+	if _, err := q.GetImageBlob(ctx, "survivor01"); err != nil {
+		t.Errorf("幸存引用被牵连: %v", err)
+	}
+}
+
+// TestExpireOneSkipsCountWhenRowGone 直接验证 expireOne 的原子性:当引用行已被
+// 并发删除(DeleteImage 影响 0 行),不得递减 ref_count。
+func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 3, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	uid := sqlc.DefaultUserID
+	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "ghostimg01", BlobID: blobID, UserID: uid, ExpireAt: past}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+	// 抢先删掉引用行(但故意不减计数),模拟并发路径已删行、本轮扫描仍持旧快照。
+	if _, err := conn.ExecContext(ctx, "DELETE FROM images WHERE id = 'ghostimg01'"); err != nil {
+		t.Fatalf("抢先删引用: %v", err)
+	}
+
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Grace: 0, Logger: slog.New(slog.DiscardHandler)})
+	// Sweeper 扫不到已删的到期引用,直接调 SweepOnce 应无副作用;ref_count 保持 1。
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce: %v", err)
+	}
+	var refCount int
+	if err := conn.QueryRowContext(ctx, "SELECT ref_count FROM blobs WHERE id = ?", blobID).Scan(&refCount); err != nil {
+		t.Fatalf("查 ref_count: %v", err)
+	}
+	if refCount != 1 {
+		t.Fatalf("ref_count = %d, 期望 1(引用行已消失不应减计数)", refCount)
+	}
+}
+
 // TestTrackerFlushTouchesAndUnlabels 验证活跃度 flush 落库 last_public_access_at,
 // 且摘除 pending_cleanup 标签(有真实访问则不再算冷图)。
 func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {

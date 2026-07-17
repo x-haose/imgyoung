@@ -15,7 +15,7 @@ WHERE expire_at IS NOT NULL AND expire_at < ?
 ORDER BY expire_at
 LIMIT ?;
 
--- name: DeleteImage :exec
+-- name: DeleteImage :execrows
 DELETE FROM images
 WHERE id = ?;
 
@@ -31,7 +31,7 @@ WHERE pending_cleanup = 0
   AND cleanup_exempt = 0
   AND COALESCE(last_public_access_at, created_at) < ?;
 
--- name: RepointImages :exec
+-- name: RepointImages :execrows
 UPDATE images
 SET blob_id = ?
 WHERE blob_id = ?;

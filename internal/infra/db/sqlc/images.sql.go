@@ -105,14 +105,17 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 	return err
 }
 
-const deleteImage = `-- name: DeleteImage :exec
+const deleteImage = `-- name: DeleteImage :execrows
 DELETE FROM images
 WHERE id = ?
 `
 
-func (q *Queries) DeleteImage(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, deleteImage, id)
-	return err
+func (q *Queries) DeleteImage(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteImage, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const exemptImageCleanup = `-- name: ExemptImageCleanup :execrows
@@ -470,7 +473,7 @@ func (q *Queries) ListPendingCleanupImages(ctx context.Context, arg ListPendingC
 	return items, nil
 }
 
-const repointImages = `-- name: RepointImages :exec
+const repointImages = `-- name: RepointImages :execrows
 UPDATE images
 SET blob_id = ?
 WHERE blob_id = ?
@@ -481,9 +484,12 @@ type RepointImagesParams struct {
 	BlobID_2 int64
 }
 
-func (q *Queries) RepointImages(ctx context.Context, arg RepointImagesParams) error {
-	_, err := q.db.ExecContext(ctx, repointImages, arg.BlobID, arg.BlobID_2)
-	return err
+func (q *Queries) RepointImages(ctx context.Context, arg RepointImagesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, repointImages, arg.BlobID, arg.BlobID_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const totalStorageUsage = `-- name: TotalStorageUsage :one

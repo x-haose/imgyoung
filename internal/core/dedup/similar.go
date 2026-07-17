@@ -96,11 +96,7 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	default:
 		return ErrBadKeeper
 	}
-	if _, err := m.aliveBlob(ctx, keepBlobID); err != nil {
-		return err
-	}
-	loser, err := m.aliveBlob(ctx, loserID)
-	if err != nil {
+	if _, err := m.aliveBlob(ctx, loserID); err != nil {
 		return err
 	}
 
@@ -110,25 +106,37 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := m.cfg.Queries.WithTx(tx)
-	if err := q.RepointImages(ctx, sqlc.RepointImagesParams{BlobID: keepBlobID, BlobID_2: loser.ID}); err != nil {
+	// 事务内复查保留对象存活:裁决与合并之间它自身引用可能全到期被减到 0 并标记物理删,
+	// 此时并入会把引用改指向一个待删 blob。已入删除流程即视为候选失效,交前端刷新。
+	keep, err := q.GetBlob(ctx, keepBlobID)
+	if err != nil {
+		return fmt.Errorf("复查保留对象: %w", err)
+	}
+	if keep.PendingDelete != 0 {
+		return ErrCandidateStale
+	}
+	// 并入实际改指向的引用数,而非事务外快照——期间被并对象的引用可能已被到期回收,
+	// 用快照会多计致保留对象引用计数永不归零(存储泄漏)。
+	moved, err := q.RepointImages(ctx, sqlc.RepointImagesParams{BlobID: keepBlobID, BlobID_2: loserID})
+	if err != nil {
 		return fmt.Errorf("改指向保留对象: %w", err)
 	}
-	if err := q.AddBlobRef(ctx, sqlc.AddBlobRefParams{RefCount: loser.RefCount, ID: keepBlobID}); err != nil {
+	if err := q.AddBlobRef(ctx, sqlc.AddBlobRefParams{RefCount: moved, ID: keepBlobID}); err != nil {
 		return fmt.Errorf("并入引用计数: %w", err)
 	}
 	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(m.cfg.Grace)), Valid: true}
-	if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: loser.ID}); err != nil {
+	if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: loserID}); err != nil {
 		return fmt.Errorf("标记被并对象待删: %w", err)
 	}
 	if err := q.DeleteDedupCandidatesByBlob(ctx, sqlc.DeleteDedupCandidatesByBlobParams{
-		BlobA: loser.ID, BlobB: loser.ID,
+		BlobA: loserID, BlobB: loserID,
 	}); err != nil {
 		return fmt.Errorf("清理被并对象候选: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交相似合并: %w", err)
 	}
-	m.cfg.Logger.Info("相似候选已合并", "candidate", candidateID, "keep", keepBlobID, "merged", loser.ID)
+	m.cfg.Logger.Info("相似候选已合并", "candidate", candidateID, "keep", keepBlobID, "merged", loserID)
 	return nil
 }
 

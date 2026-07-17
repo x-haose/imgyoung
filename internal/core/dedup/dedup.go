@@ -82,13 +82,25 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 	defer func() { _ = tx.Rollback() }()
 	q := m.cfg.Queries.WithTx(tx)
 
+	// 事务内复查 keeper 存活:选组与合并之间它自身引用可能全到期被减到 0 并标记物理删,
+	// 此时把冗余引用改指向它等于指向一个待删 blob。已入删除流程则放弃本组,下轮换新 keeper。
+	live, err := q.GetBlob(ctx, keeper.ID)
+	if err != nil {
+		return 0, fmt.Errorf("复查保留 blob: %w", err)
+	}
+	if live.PendingDelete != 0 {
+		return 0, nil
+	}
+
 	for _, other := range blobs[1:] {
 		// 引用改指向 keeper(内容一致,服务哪个物理副本无差别)。
-		if err := q.RepointImages(ctx, sqlc.RepointImagesParams{BlobID: keeper.ID, BlobID_2: other.ID}); err != nil {
+		moved, err := q.RepointImages(ctx, sqlc.RepointImagesParams{BlobID: keeper.ID, BlobID_2: other.ID})
+		if err != nil {
 			return 0, fmt.Errorf("改指向 keeper: %w", err)
 		}
-		// 冗余 blob 的引用计数并入 keeper。
-		if err := q.AddBlobRef(ctx, sqlc.AddBlobRefParams{RefCount: other.RefCount, ID: keeper.ID}); err != nil {
+		// 并入实际改指向的引用数,而非事务外快照——期间冗余 blob 的引用可能已被到期回收,
+		// 用快照会多计致 keeper 引用计数永不归零(存储泄漏)。
+		if err := q.AddBlobRef(ctx, sqlc.AddBlobRefParams{RefCount: moved, ID: keeper.ID}); err != nil {
 			return 0, fmt.Errorf("并入引用计数: %w", err)
 		}
 		// 冗余 blob 打物理删标记,其对象由 sweeper 级联清除。
