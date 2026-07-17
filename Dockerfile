@@ -24,5 +24,5 @@ COPY --from=build /out/imgyoung /imgyoung
 COPY --from=build --chown=nonroot:nonroot /out/data /data
 ENV IMGYOUNG_DATA_DIR=/data
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 8721
 ENTRYPOINT ["/imgyoung"]

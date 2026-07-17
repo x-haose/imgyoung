@@ -1,7 +1,7 @@
 # ImgYoung 内嵌默认配置(编译进二进制,随单文件分发)。
 # 覆盖优先级:本文件(默认) < 外部 configs/config.yml < 环境变量(IMGYOUNG_*)。
 # 各项语义与单位见 README 配置表;此处只承载默认值。
-listen: ":8080"              # HTTP 监听地址
+listen: ":8721"              # HTTP 监听地址(默认避开 8080/8000/8888 等易冲突端口)
 data_dir: "data"             # 数据目录(SQLite 与本地渠道)
 token: ""                    # 引导 Token;非空则首启植入为管理员的 bootstrap Token(真相在 DB,可后台管理)
 admin_password: ""           # 管理员初始密码;仅在管理员尚未设密时生效,之后以后台修改为准

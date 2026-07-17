@@ -29,6 +29,31 @@ func TestPasswordRoundtrip(t *testing.T) {
 	}
 }
 
+// TestNewRandomPassword 生成的初始密码非空、够长、两次互不相同,且可被正常哈希校验。
+func TestNewRandomPassword(t *testing.T) {
+	p1, err := NewRandomPassword()
+	if err != nil {
+		t.Fatalf("生成失败: %v", err)
+	}
+	if len(p1) < 16 {
+		t.Fatalf("初始密码过短: %q(%d 字符)", p1, len(p1))
+	}
+	p2, err := NewRandomPassword()
+	if err != nil {
+		t.Fatalf("二次生成失败: %v", err)
+	}
+	if p1 == p2 {
+		t.Fatal("两次生成的初始密码不应相同")
+	}
+	phc, err := HashPassword(p1)
+	if err != nil {
+		t.Fatalf("哈希初始密码: %v", err)
+	}
+	if ok, err := VerifyPassword(phc, p1); err != nil || !ok {
+		t.Fatalf("初始密码应可校验通过: ok=%v err=%v", ok, err)
+	}
+}
+
 // TestVerifyPasswordMalformed 非法 PHC 串一律报错而非误判通过。
 func TestVerifyPasswordMalformed(t *testing.T) {
 	cases := map[string]string{

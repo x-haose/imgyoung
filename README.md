@@ -10,28 +10,39 @@
 
 ```bash
 # 本地运行(需要 https://taskfile.dev 与 pnpm;build 会先构建后台前端)
-task build && IMGYOUNG_ADMIN_PASSWORD=change-me IMGYOUNG_TOKEN=my-token ./imgyoung
+task run
+# 首启无需任何环境变量:日志会打印一行自动生成的管理员初始密码,登录后台后即可改。
+# 默认监听 :8721(避开 8080 等易冲突端口),可用 IMGYOUNG_LISTEN 覆盖。
 
 # 或 Docker
 docker build -t imgyoung .
-docker run -p 8080:8080 -v imgyoung-data:/data \
-  -e IMGYOUNG_ADMIN_PASSWORD=change-me -e IMGYOUNG_TOKEN=my-token imgyoung
+docker run -p 8721:8721 -v imgyoung-data:/data imgyoung
 ```
+
+首启日志形如:
+
+```text
+level=WARN msg="未配置 admin_password,已生成初始管理员密码——请登录后立即修改,此密码仅此一次打印" user=admin password=xxxxxxxxxxxxxxxxxxxx
+```
+
+浏览器打开 `http://localhost:8721/`,用 `admin` + 日志里的密码登录,进后台「上传 Token」页签发一个 Token,即可用它上传:
 
 ```bash
 # 上传(可选:-H "Idempotency-Key: xx" 幂等重试;-F exif_policy=strip 剥离 EXIF)
-curl -H "Authorization: Bearer my-token" -F "file=@a.png" http://localhost:8080/api/upload
+curl -H "Authorization: Bearer <后台签发的Token>" -F "file=@a.png" http://localhost:8721/api/upload
 # => {"id":"R0RjUyP1UW","url":"/i/R0RjUyP1UW"}
 
 # 访问(?w=400 档位缩放,浏览器支持时自动 WebP)
-open http://localhost:8080/i/R0RjUyP1UW
+open http://localhost:8721/i/R0RjUyP1UW
 ```
+
+需要完全无人值守初始化(不进 UI)时,用环境变量播种:`IMGYOUNG_ADMIN_PASSWORD` 指定初始密码,`IMGYOUNG_TOKEN` 指定引导 Token。
 
 ## 管理后台
 
-浏览器打开 `http://localhost:8080/`,以 `admin` + `IMGYOUNG_ADMIN_PASSWORD` 登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
+浏览器打开 `http://localhost:8721/`,以 `admin` + 初始密码登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
 
-认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。`IMGYOUNG_TOKEN` 是引导 Token:设置后首启幂等植入为管理员名下的 `bootstrap` Token,之后随时可在后台吊销、另签新 Token——真相在 DB,环境变量只是种子。
+认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员初始密码首启时确定:配了 `IMGYOUNG_ADMIN_PASSWORD` 用它,否则自动生成并打印到日志;真相入库,之后一律在后台改。`IMGYOUNG_TOKEN` 是可选的引导 Token,设置后首启植入为管理员名下的 `bootstrap` Token;不设则登录后台自行签发。
 
 ## 配置
 
@@ -39,7 +50,7 @@ open http://localhost:8080/i/R0RjUyP1UW
 
 | 环境变量 | yaml 键 | 默认 | 说明 |
 |---|---|---|---|
-| `IMGYOUNG_LISTEN` | `listen` | `:8080` | HTTP 监听地址 |
+| `IMGYOUNG_LISTEN` | `listen` | `:8721` | HTTP 监听地址 |
 | `IMGYOUNG_DATA_DIR` | `data_dir` | `data` | 数据目录(SQLite 与本地存储) |
 | `IMGYOUNG_TOKEN` | `token` | (空) | 引导 Token:首启幂等植入为管理员的 `bootstrap` Token;留空则仅经后台签发 |
 | `IMGYOUNG_ADMIN_PASSWORD` | `admin_password` | (空) | 管理员初始密码,仅在尚未设密时生效;之后以后台修改为准 |
@@ -62,9 +73,8 @@ open http://localhost:8080/i/R0RjUyP1UW
 
 ```yaml
 # configs/config.yml 示例(只需写要覆盖的项)
-listen: ":8080"
+listen: ":8721"
 data_dir: /srv/imgyoung
-token: my-token
 max_upload_mb: 50
 ```
 

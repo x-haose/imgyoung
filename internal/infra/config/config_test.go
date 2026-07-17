@@ -36,8 +36,8 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load 返回错误: %v", err)
 	}
-	if cfg.Listen != ":8080" {
-		t.Errorf("Listen = %q, 期望 :8080", cfg.Listen)
+	if cfg.Listen != ":8721" {
+		t.Errorf("Listen = %q, 期望 :8721", cfg.Listen)
 	}
 	if cfg.DataDir != "data" {
 		t.Errorf("DataDir = %q, 期望 data", cfg.DataDir)

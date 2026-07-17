@@ -162,8 +162,9 @@ func provideAuth(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *auth
 }
 
 // bootstrapCredentials 首启凭证播种:管理员初始密码与引导 Token,均幂等。
-// @Description: 播种失败即启动失败,避免以"配置了凭证却未生效"的状态对外服务。
-// 管理员已设密后 admin_password 不再生效,以后台修改为准。
+// @Description: 仅首启(管理员尚未设密)才初始化密码——配置了 admin_password 用它,
+// 否则自动生成随机密码并经启动日志一次性告知,保证零配置也能登录后台。已设密后
+// 再改 admin_password 不生效,以后台修改为准。播种失败即启动失败,不以半初始化状态对外。
 // @param cfg 运行配置
 // @param queries 查询集
 // @param authSvc 认证服务
@@ -172,15 +173,25 @@ func provideAuth(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *auth
 func bootstrapCredentials(cfg config.Config, queries *sqlc.Queries,
 	authSvc *auth.Service, logger *slog.Logger) error {
 	ctx := context.Background()
-	if cfg.AdminPassword != "" {
-		admin, err := queries.GetUser(ctx, sqlc.DefaultUserID)
-		if err != nil {
-			return fmt.Errorf("读取内置管理员: %w", err)
-		}
-		if admin.PasswordHash == "" {
-			if err := authSvc.SetPassword(ctx, sqlc.DefaultUserID, cfg.AdminPassword); err != nil {
-				return fmt.Errorf("初始化管理员密码: %w", err)
+	admin, err := queries.GetUser(ctx, sqlc.DefaultUserID)
+	if err != nil {
+		return fmt.Errorf("读取内置管理员: %w", err)
+	}
+	if admin.PasswordHash == "" {
+		password, generated := cfg.AdminPassword, false
+		if password == "" {
+			if password, err = auth.NewRandomPassword(); err != nil {
+				return fmt.Errorf("生成初始管理员密码: %w", err)
 			}
+			generated = true
+		}
+		if err := authSvc.SetPassword(ctx, sqlc.DefaultUserID, password); err != nil {
+			return fmt.Errorf("初始化管理员密码: %w", err)
+		}
+		if generated {
+			logger.Warn("未配置 admin_password,已生成初始管理员密码——请登录后立即修改,此密码仅此一次打印",
+				"user", "admin", "password", password)
+		} else {
 			logger.Info("已按 admin_password 配置初始化管理员密码", "user", "admin")
 		}
 	}
