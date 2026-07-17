@@ -63,12 +63,24 @@ func (l *LoginLimiter) Reset(key string) {
 	delete(l.entries, key)
 }
 
-// prune 回收闲置键;须在持锁状态下调用。
+// prune 腾出键表容量;须在持锁状态下调用。
+// @Description: 先回收闲置超 TTL 的键;若键全在 TTL 内(外部以海量不同 IP/用户名
+// 灌入的极端场景)回收不足,则淘汰最老键,保证 limiterMaxEntries 是真正的硬上限。
 // @param now 当前时刻
 func (l *LoginLimiter) prune(now time.Time) {
 	for k, e := range l.entries {
 		if now.Sub(e.lastSeen) > limiterEntryTTL {
 			delete(l.entries, k)
 		}
+	}
+	for len(l.entries) >= limiterMaxEntries {
+		oldestKey := ""
+		var oldest time.Time
+		for k, e := range l.entries {
+			if oldestKey == "" || e.lastSeen.Before(oldest) {
+				oldestKey, oldest = k, e.lastSeen
+			}
+		}
+		delete(l.entries, oldestKey)
 	}
 }

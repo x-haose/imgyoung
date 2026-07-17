@@ -45,6 +45,21 @@ func TestLimiterReset(t *testing.T) {
 	}
 }
 
+// TestLimiterHardCap 键全在 TTL 内(闲置回收无果)时,键表仍不突破硬上限。
+func TestLimiterHardCap(t *testing.T) {
+	now := time.Now()
+	l := NewLoginLimiter()
+	l.now = func() time.Time { return now }
+	// 全部键都刚活跃过(远未到 TTL),持续灌入远超上限的不同键。
+	for i := range limiterMaxEntries * 2 {
+		l.Allow(fmt.Sprintf("ip:%d", i))
+		now = now.Add(time.Millisecond) // 制造 lastSeen 先后,供淘汰择最老
+	}
+	if len(l.entries) >= limiterMaxEntries+1 {
+		t.Fatalf("键表 %d 超硬上限 %d", len(l.entries), limiterMaxEntries)
+	}
+}
+
 // TestLimiterPrune 键表达到容量上限时回收闲置键,容量有界。
 func TestLimiterPrune(t *testing.T) {
 	now := time.Now()

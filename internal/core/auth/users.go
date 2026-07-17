@@ -129,6 +129,8 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 	if _, err := s.getUser(ctx, userID); err != nil {
 		return err
 	}
+	// 快速路径:名下有图直接拒绝。并发下(查后、删前有新上传)本判断可能漏网,
+	// 最终由下方 DeleteUser 撞外键约束兜住——两处都收敛到同一个 ErrUserHasImages。
 	n, err := s.cfg.Queries.CountImagesByUser(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("统计用户图片: %w", err)
@@ -149,6 +151,9 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 		return fmt.Errorf("删除用户会话: %w", err)
 	}
 	if err := q.DeleteUser(ctx, userID); err != nil {
+		if isForeignKeyViolation(err) {
+			return ErrUserHasImages
+		}
 		return fmt.Errorf("删除用户: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -218,4 +223,15 @@ func boolInt(b bool) int64 {
 func isUniqueViolation(err error, column string) bool {
 	var se *sqlite.Error
 	return errors.As(err, &se) && se.Code() == sqliteConstraintUnique && strings.Contains(se.Error(), column)
+}
+
+// sqliteConstraintForeignKey modernc 驱动的外键约束冲突扩展错误码(SQLITE_CONSTRAINT_FOREIGNKEY)。
+const sqliteConstraintForeignKey = 787
+
+// isForeignKeyViolation 判定错误是否为外键约束冲突。
+// @param err 待判定错误
+// @return 命中为 true
+func isForeignKeyViolation(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code() == sqliteConstraintForeignKey
 }

@@ -441,9 +441,22 @@ func registerBackgroundLoops(lc fx.Lifecycle, cfg config.Config, conn *sql.DB,
 	manager *channel.Manager, sweeper *lifecycle.Sweeper, tracker *lifecycle.Tracker,
 	reporter *usage.Reporter, merger *dedup.Merger, authSvc *auth.Service, logger *slog.Logger) {
 	authCtx, authCancel := context.WithCancel(context.Background())
+	authDone := make(chan struct{})
 	lc.Append(fx.Hook{
-		OnStart: func(context.Context) error { go authMaintenanceLoop(authCtx, authSvc, logger); return nil },
-		OnStop:  func(context.Context) error { authCancel(); return nil },
+		OnStart: func(context.Context) error {
+			go func() { authMaintenanceLoop(authCtx, authSvc, logger); close(authDone) }()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			// 等循环退出再返回,确保末批 Token 使用时刻在 DB 关闭前落库;
+			// 停机 ctx 超时则放弃等待,不阻塞进程退出。
+			authCancel()
+			select {
+			case <-authDone:
+			case <-ctx.Done():
+			}
+			return nil
+		},
 	})
 
 	usageCtx, usageCancel := context.WithCancel(context.Background())
