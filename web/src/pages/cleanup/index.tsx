@@ -39,7 +39,11 @@ export function CleanupPage() {
   });
   const items = list.result?.data ?? [];
   const total = list.result?.total ?? 0;
-  const refresh = () => invalidate({ resource: "cleanup", invalidates: ["list"] });
+  // 裁决同时影响图片列表(删/保留都动图片),一并失效使相邻页不显示陈旧数据。
+  const refresh = () => {
+    invalidate({ resource: "cleanup", invalidates: ["list"] });
+    invalidate({ resource: "images", invalidates: ["list"] });
+  };
 
   const keep = async (id: string) => {
     try {

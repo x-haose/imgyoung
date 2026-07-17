@@ -1,6 +1,5 @@
 import { useLogin } from "@refinedev/core";
-import { Alert, Button, Card, Flex, Form, Input, Typography, theme } from "antd";
-import { useState } from "react";
+import { Button, Card, Flex, Form, Input, Typography, theme } from "antd";
 
 import { BrandMark } from "../../layout/BrandMark";
 
@@ -10,22 +9,10 @@ interface LoginForm {
   password: string;
 }
 
-/** 登录页:画布中央的单卡片,品牌标 + 表单,错误就地提示。 */
+/** 登录页:画布中央的单卡片,品牌标 + 表单。凭证错误/限速由 Refine 通知层弹出提示。 */
 export function LoginPage() {
   const { mutate: login, isPending } = useLogin<LoginForm>();
-  const [error, setError] = useState("");
   const { token } = theme.useToken();
-
-  const onFinish = (values: LoginForm) => {
-    setError("");
-    login(values, {
-      onSuccess: (result) => {
-        if (!result.success) {
-          setError(result.error?.message ?? "登录失败");
-        }
-      },
-    });
-  };
 
   return (
     <Flex
@@ -47,10 +34,7 @@ export function LoginPage() {
           </Typography.Title>
           <Typography.Text type="secondary">自部署多渠道图床</Typography.Text>
         </Flex>
-        {error !== "" && (
-          <Alert type="error" showIcon message={error} style={{ marginBottom: 16 }} />
-        )}
-        <Form<LoginForm> layout="vertical" onFinish={onFinish} requiredMark={false}>
+        <Form<LoginForm> layout="vertical" onFinish={(values) => login(values)} requiredMark={false}>
           <Form.Item
             name="name"
             label="用户名"

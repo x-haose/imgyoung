@@ -76,7 +76,7 @@ func (h *Handlers) HandleChannelList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, list)
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: list, Total: int64(len(list))})
 }
 
 // HandleChannelDelete 删除渠道;持有唯一副本时返回 409。

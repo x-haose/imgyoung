@@ -33,9 +33,11 @@ func listChannels(t *testing.T, inst *instance) []channelInfo {
 	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/channels", "")
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
-	var out []channelInfo
+	var out struct {
+		Items []channelInfo `json:"items"`
+	}
 	_ = json.Unmarshal(raw, &out)
-	return out
+	return out.Items
 }
 
 // channelHealthy 判断指定渠道当前是否健康。

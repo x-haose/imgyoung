@@ -501,15 +501,33 @@ func TestChannelCRUD(t *testing.T) {
 		t.Fatalf("解析创建响应: %v", err)
 	}
 
-	// 列表应含两个渠道且不含配置字段。
+	// 列表须走 {items,total} 信封(与前端 dataProvider 契约一致)、含两个渠道且不泄露配置。
 	listResp := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/channels", "")
 	defer closeBody(t, listResp)
 	raw, err := io.ReadAll(listResp.Body)
 	if err != nil {
 		t.Fatalf("读取列表响应: %v", err)
 	}
-	if !bytes.Contains(raw, []byte(`"backup"`)) || bytes.Contains(raw, []byte("config")) {
-		t.Fatalf("渠道列表异常(应含 backup 且不含配置): %s", raw)
+	var lr struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+		Total int64 `json:"total"`
+	}
+	if err := json.Unmarshal(raw, &lr); err != nil {
+		t.Fatalf("列表响应非 {items,total} 信封: %v; body=%s", err, raw)
+	}
+	hasBackup := false
+	for _, c := range lr.Items {
+		if c.Name == "backup" {
+			hasBackup = true
+		}
+	}
+	if lr.Total < 2 || !hasBackup {
+		t.Fatalf("渠道列表信封异常(应含 backup 且 total≥2): %+v", lr)
+	}
+	if bytes.Contains(raw, []byte("config")) {
+		t.Fatalf("渠道列表泄露配置字段: %s", raw)
 	}
 
 	// 上传一张图:唯一副本在主渠道(内置 local),删除它应被守卫拒绝。
