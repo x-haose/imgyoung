@@ -6,6 +6,7 @@ import {
   DiffOutlined,
   KeyOutlined,
   PictureOutlined,
+  SettingOutlined,
   TeamOutlined,
 } from "@ant-design/icons";
 import { useNotificationProvider } from "@refinedev/antd";
@@ -18,8 +19,16 @@ import { BrowserRouter, Outlet, Route, Routes } from "react-router";
 
 import { interpolate, zhCN } from "./i18n/zhCN";
 import { AppLayout } from "./layout/AppLayout";
+import { AuditPage } from "./pages/audit";
+import { ChannelsPage } from "./pages/channels";
+import { CleanupPage } from "./pages/cleanup";
 import { DashboardPage } from "./pages/dashboard";
+import { DedupPage } from "./pages/dedup";
+import { ImagesPage } from "./pages/images";
 import { LoginPage } from "./pages/login";
+import { SettingsPage } from "./pages/settings";
+import { TokensPage } from "./pages/tokens";
+import { UsersPage } from "./pages/users";
 import { authProvider } from "./providers/authProvider";
 import { dataProvider } from "./providers/dataProvider";
 import { darkTheme, lightTheme, storedThemeMode, themeStorageKey } from "./theme/theme";
@@ -99,6 +108,11 @@ export function App() {
                 list: "/audit",
                 meta: { label: "审计日志", icon: <AuditOutlined />, adminOnly: true },
               },
+              {
+                name: "settings",
+                list: "/settings",
+                meta: { label: "设置", icon: <SettingOutlined /> },
+              },
             ]}
           >
             <Routes>
@@ -112,6 +126,14 @@ export function App() {
                 }
               >
                 <Route index element={<DashboardPage />} />
+                <Route path="/images" element={<ImagesPage />} />
+                <Route path="/tokens" element={<TokensPage />} />
+                <Route path="/channels" element={<ChannelsPage />} />
+                <Route path="/users" element={<UsersPage />} />
+                <Route path="/dedup" element={<DedupPage />} />
+                <Route path="/cleanup" element={<CleanupPage />} />
+                <Route path="/audit" element={<AuditPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
               </Route>
               <Route
                 element={

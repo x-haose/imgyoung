@@ -1,6 +1,8 @@
 import { useCustom } from "@refinedev/core";
 import { Card, Col, Flex, Row, Statistic, Table, Tag, Typography } from "antd";
 
+import { formatBytes } from "../../lib/format";
+
 /** 仪表盘聚合响应(管理员视图;普通用户仅前三项有意义)。 */
 interface DashboardData {
   images: number;
@@ -20,24 +22,6 @@ interface ChannelStat {
   driver: string;
   healthy: boolean;
   bytes: number;
-}
-
-/** 把字节格式化为人类可读单位。 */
-export function formatBytes(n: number | undefined | null): string {
-  if (n === undefined || n === null) {
-    return "—";
-  }
-  if (n < 1024) {
-    return `${n} B`;
-  }
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
 /** 总览页:核心指标卡片 + 渠道健康表。 */

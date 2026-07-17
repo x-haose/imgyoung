@@ -13,5 +13,15 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // 按依赖体量切分 vendor,页面代码变更不再抖动大依赖的缓存。
+        manualChunks: {
+          react: ["react", "react-dom", "react-router"],
+          antd: ["antd", "@ant-design/icons"],
+          refine: ["@refinedev/core", "@refinedev/antd", "@refinedev/react-router"],
+        },
+      },
+    },
   },
 });
