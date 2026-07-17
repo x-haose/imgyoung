@@ -30,6 +30,7 @@ const shared: ThemeConfig["components"] = {
   Card: { borderRadiusLG: 12 },
   Button: { controlHeight: 34 },
   Table: { cellPaddingBlock: 12 },
+  Menu: { itemBorderRadius: 8, itemMarginInline: 10, iconMarginInlineEnd: 12 },
 };
 
 /** 暗色主题(默认):近黑分层 + 翡翠绿点缀。 */
@@ -50,7 +51,18 @@ export const darkTheme: ThemeConfig = {
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
     fontSize: 13,
   },
-  components: shared,
+  components: {
+    ...shared,
+    // 侧栏与画布同系分层:面板近黑,不用 antd 内置深蓝。
+    Layout: { ...shared?.Layout, siderBg: brand.dark.bgElevated },
+    Menu: {
+      ...shared?.Menu,
+      darkItemBg: "transparent",
+      darkSubMenuItemBg: "transparent",
+      darkItemSelectedBg: brand.primary,
+      darkItemSelectedColor: "#052e22",
+    },
+  },
 };
 
 /** 亮色主题:同一气质的低饱和灰阶。 */
@@ -69,7 +81,11 @@ export const lightTheme: ThemeConfig = {
       "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
     fontSize: 13,
   },
-  components: shared,
+  components: {
+    ...shared,
+    Layout: { ...shared?.Layout, siderBg: brand.light.bgElevated },
+    Menu: { ...shared?.Menu, itemSelectedBg: "#d8f3e8" },
+  },
 };
 
 /** 主题模式的 localStorage 键。 */

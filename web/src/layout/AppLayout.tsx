@@ -34,6 +34,9 @@ export function AppLayout({ mode, onModeChange, children }: AppLayoutProps) {
     <Layout style={{ minHeight: "100vh" }}>
       <Layout.Sider
         width={208}
+        breakpoint="lg"
+        collapsedWidth={0}
+        zeroWidthTriggerStyle={{ top: 10 }}
         style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}
         theme={mode}
       >

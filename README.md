@@ -1,20 +1,21 @@
 # ImgYoung
 
-多渠道主备容灾的自部署图床(Go + rclone)。**开发中:迭代 2(多渠道容灾)已完成**。
+多渠道主备容灾的自部署图床(Go + rclone)。**开发中:迭代 6(按需处理 + 查重)与迭代 5(管理后台 + 多用户)已完成**。
 
-已具备:**多渠道主备容灾**(优先级选渠道 · 健康检查自动切换 · 异步副本补齐 · 访问即时容灾)· **渠道存储加密**(rclone crypt,渠道商只见密文)· magic bytes 格式校验 · JPEG 元数据剥离(EXIF/XMP/IPTC/COM + 尾部附加数据)· 像素预算 · SHA256 + 感知哈希 · 客户端幂等 · 防盗链 · 代理/302 双模式。
+已具备:**多渠道主备容灾**(优先级选渠道 · 健康检查自动切换 · 异步副本补齐 · 访问即时容灾)· **渠道存储加密**(rclone crypt,渠道商只见密文)· **Web 管理后台**(多用户 · 具名 Token · 配额/频控 · 查重与冷图裁决 · 审计 · 数据导出)· 按需处理(`?w=` 缩放 + WebP 协商)· 后台查重(精确自动合并 / 相似人工裁决)· TTL 生命周期 · magic bytes 格式校验 · JPEG 元数据剥离 · 像素预算 · SHA256 + 感知哈希 · 客户端幂等 · 防盗链 · 代理/302 双模式。
 
 设计蓝图:[图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md) · 项目约定:[CLAUDE.md](./CLAUDE.md)
 
 ## 快速开始
 
 ```bash
-# 本地运行(Token 留空则启动时打印随机 Token,需要 https://taskfile.dev)
-task build && IMGYOUNG_TOKEN=my-token ./imgyoung
+# 本地运行(需要 https://taskfile.dev 与 pnpm;build 会先构建后台前端)
+task build && IMGYOUNG_ADMIN_PASSWORD=change-me IMGYOUNG_TOKEN=my-token ./imgyoung
 
 # 或 Docker
 docker build -t imgyoung .
-docker run -p 8080:8080 -v imgyoung-data:/data -e IMGYOUNG_TOKEN=my-token imgyoung
+docker run -p 8080:8080 -v imgyoung-data:/data \
+  -e IMGYOUNG_ADMIN_PASSWORD=change-me -e IMGYOUNG_TOKEN=my-token imgyoung
 ```
 
 ```bash
@@ -22,9 +23,15 @@ docker run -p 8080:8080 -v imgyoung-data:/data -e IMGYOUNG_TOKEN=my-token imgyou
 curl -H "Authorization: Bearer my-token" -F "file=@a.png" http://localhost:8080/api/upload
 # => {"id":"R0RjUyP1UW","url":"/i/R0RjUyP1UW"}
 
-# 访问
+# 访问(?w=400 档位缩放,浏览器支持时自动 WebP)
 open http://localhost:8080/i/R0RjUyP1UW
 ```
+
+## 管理后台
+
+浏览器打开 `http://localhost:8080/`,以 `admin` + `IMGYOUNG_ADMIN_PASSWORD` 登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
+
+认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。`IMGYOUNG_TOKEN` 是引导 Token:设置后首启幂等植入为管理员名下的 `bootstrap` Token,之后随时可在后台吊销、另签新 Token——真相在 DB,环境变量只是种子。
 
 ## 配置
 
@@ -34,7 +41,10 @@ open http://localhost:8080/i/R0RjUyP1UW
 |---|---|---|---|
 | `IMGYOUNG_LISTEN` | `listen` | `:8080` | HTTP 监听地址 |
 | `IMGYOUNG_DATA_DIR` | `data_dir` | `data` | 数据目录(SQLite 与本地存储) |
-| `IMGYOUNG_TOKEN` | `token` | (随机生成) | 上传 Token |
+| `IMGYOUNG_TOKEN` | `token` | (空) | 引导 Token:首启幂等植入为管理员的 `bootstrap` Token;留空则仅经后台签发 |
+| `IMGYOUNG_ADMIN_PASSWORD` | `admin_password` | (空) | 管理员初始密码,仅在尚未设密时生效;之后以后台修改为准 |
+| `IMGYOUNG_UPLOAD_RATE_PER_MIN` | `upload_rate_per_min` | `0` | 每用户每分钟上传次数上限,超出 429;`0` = 不启用 |
+| `IMGYOUNG_DEDUP_PHASH_MAX_DISTANCE` | `dedup_phash_max_distance` | `10` | pHash 相似判定的汉明距离上限;`0` = 不做相似扫描 |
 | `IMGYOUNG_MAX_UPLOAD_MB` | `max_upload_mb` | `50` | 单图上限(MB) |
 | `IMGYOUNG_MAX_PIXELS_MP` | `max_pixels_mp` | `50` | 像素预算(百万像素) |
 | `IMGYOUNG_MAX_CONCURRENT_UPLOADS` | `max_concurrent_uploads` | `8` | 上传并发上限,满载返回 429 |
@@ -62,20 +72,14 @@ max_upload_mb: 50
 
 渠道 = 一个 rclone 后端实例。上传写主渠道(健康渠道中优先级最高者)即返回,其余渠道异步补齐;访问按优先级容灾切换。
 
-```bash
-# 创建渠道(config 中 path 为后端内路径,public_base_url 为 302 直链前缀,其余为 rclone 后端参数)
-curl -X POST -H "Authorization: Bearer my-token" -H "Content-Type: application/json" \
-  -d '{"name":"backup","driver":"local","priority":50,"encrypted":true,"config":{"path":"/mnt/backup"}}' \
-  http://localhost:8080/api/channels
+渠道在 **Web 后台「存储渠道」页**创建与删除(管理面走 session 认证,上传 Token 无权操作)。创建时填 rclone 驱动名与后端参数(`path` 为后端内路径,`public_base_url` 为 302 直链前缀,其余原样传给 rclone):
 
-# S3 渠道示例
-#   {"name":"r2","driver":"s3","priority":200,
-#    "config":{"provider":"Cloudflare","access_key_id":"...","secret_access_key":"...",
-#              "endpoint":"https://xxx.r2.cloudflarestorage.com","path":"bucket/imgs"}}
-
-curl -H "Authorization: Bearer my-token" http://localhost:8080/api/channels   # 列表
-curl -X DELETE -H "Authorization: Bearer my-token" http://localhost:8080/api/channels/2
-# 删除守卫:渠道持有某些图的唯一副本时返回 409,防止数据丢失
+```text
+# S3 / R2 渠道参数示例
+driver:   s3
+config:   provider=Cloudflare  access_key_id=...  secret_access_key=...
+          endpoint=https://xxx.r2.cloudflarestorage.com  path=bucket/imgs
+# 删除守卫:渠道持有某些图的唯一副本时拒绝删除(409),防止数据丢失
 ```
 
 - `encrypted: true` 的渠道经 rclone crypt 存储:内容与文件名均为密文,渠道商不可见;密码由主密钥派生,持 `master.key` 可用标准 rclone 工具独立解密(自救)。

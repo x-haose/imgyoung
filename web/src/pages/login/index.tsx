@@ -31,7 +31,13 @@ export function LoginPage() {
     <Flex
       align="center"
       justify="center"
-      style={{ minHeight: "100vh", background: token.colorBgLayout }}
+      style={{
+        minHeight: "100vh",
+        background: token.colorBgLayout,
+        // 画布上方一抹品牌色光晕,给"深邃工具感"以纵深,零图片资源。
+        backgroundImage:
+          "radial-gradient(600px 320px at 50% 18%, rgba(16, 185, 129, 0.14), transparent 70%)",
+      }}
     >
       <Card style={{ width: 360, boxShadow: token.boxShadowSecondary }}>
         <Flex vertical align="center" gap={6} style={{ marginBottom: 24, marginTop: 8 }}>
