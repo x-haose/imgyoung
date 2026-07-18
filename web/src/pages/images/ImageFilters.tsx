@@ -1,6 +1,6 @@
 import { FilterOutlined } from "@ant-design/icons";
 import { useList } from "@refinedev/core";
-import { Badge, Button, DatePicker, Flex, Popover, Select, Tag, Typography } from "antd";
+import { Badge, Button, DatePicker, Flex, Popover, Select, Switch, Tag, Typography } from "antd";
 
 import type { ImageFilterState } from "./types";
 
@@ -42,7 +42,9 @@ export function ImageFilters({ isAdmin, value, onChange }: ImageFiltersProps) {
 
   const tokenName = (id: number) =>
     tokens.result?.data.find((t) => t.id === id)?.name ?? `#${id}`;
-  const activeCount = [value.tokenId, value.userId, value.range].filter((v) => v != null).length;
+  const activeCount =
+    [value.tokenId, value.userId, value.range].filter((v) => v != null).length +
+    (value.exemptOnly ? 1 : 0);
 
   const panel = (
     <Flex vertical gap={12} style={{ width: 280, paddingTop: 4 }}>
@@ -88,6 +90,16 @@ export function ImageFilters({ isAdmin, value, onChange }: ImageFiltersProps) {
           }
         />
       </label>
+      <Flex align="center" justify="space-between">
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+          仅看已豁免(不参与冷图打标的图)
+        </Typography.Text>
+        <Switch
+          size="small"
+          checked={value.exemptOnly}
+          onChange={(checked) => onChange({ ...value, exemptOnly: checked })}
+        />
+      </Flex>
     </Flex>
   );
 
@@ -111,6 +123,11 @@ export function ImageFilters({ isAdmin, value, onChange }: ImageFiltersProps) {
       {value.range && (
         <Tag closable onClose={() => onChange({ ...value, range: null })}>
           {value.range[0].format("YYYY-MM-DD")} ~ {value.range[1].format("YYYY-MM-DD")}
+        </Tag>
+      )}
+      {value.exemptOnly && (
+        <Tag closable onClose={() => onChange({ ...value, exemptOnly: false })}>
+          仅看已豁免
         </Tag>
       )}
     </>

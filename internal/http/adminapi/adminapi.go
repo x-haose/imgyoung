@@ -57,6 +57,7 @@ type Config struct {
 	Dedup              DedupAdmin        // 相似候选裁决执行口
 	Queries            *sqlc.Queries     // 列表与统计查询
 	Audit              *audit.Recorder   // 管理操作审计记录器
+	Runtime            RuntimeConfigView // 只读运行配置切面,GET /config 原样返回
 	Logger             *slog.Logger      // 结构化日志
 }
 

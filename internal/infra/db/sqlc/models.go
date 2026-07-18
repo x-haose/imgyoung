@@ -82,6 +82,7 @@ type Image struct {
 	ExpireAt           sql.NullString
 	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString
+	AccessCount        int64
 	PendingCleanup     int64
 	CleanupExempt      int64
 	CreatedAt          string

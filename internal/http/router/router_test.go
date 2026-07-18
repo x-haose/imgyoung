@@ -702,6 +702,71 @@ func TestServeETag(t *testing.T) {
 	}
 }
 
+// TestAdminServeSkipsAccessTracking 验证后台缩略图通道:需会话鉴权、能取回图片,
+// 且不计公开访问活跃度;对照公开入口 /i/ 访问后计数正常累加。
+func TestAdminServeSkipsAccessTracking(t *testing.T) {
+	var tracker *lifecycle.Tracker
+	var queries *sqlc.Queries
+	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
+		tracker = lifecycle.NewTracker(env.Conn, env.Queries, false, slog.New(slog.DiscardHandler))
+		tc.Public.Activity = tracker
+		queries = env.Queries
+	})
+
+	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	defer closeBody(t, up)
+	imgID, imgURL := decodeUpload(t, up)
+	thumbURL := ts.URL + "/api/admin/images/" + imgID + "/thumb"
+
+	// 未登录访问后台通道 → 401(不能变成绕过防盗链的公开旁路)。
+	anon, err := ts.Client().Get(thumbURL)
+	if err != nil {
+		t.Fatalf("匿名访问后台缩略图: %v", err)
+	}
+	defer closeBody(t, anon)
+	if anon.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("匿名访问状态码 = %d, 期望 401", anon.StatusCode)
+	}
+
+	// 会话内访问返回图片,且落库后访问计数仍为 0。
+	client, csrf := adminSession(t, ts)
+	thumb := adminReq(t, client, csrf, http.MethodGet, thumbURL, "")
+	defer closeBody(t, thumb)
+	if thumb.StatusCode != http.StatusOK {
+		t.Fatalf("后台缩略图状态码 = %d, 期望 200", thumb.StatusCode)
+	}
+	if ct := thumb.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+		t.Fatalf("后台缩略图 Content-Type = %q, 期望图片类型", ct)
+	}
+	if err := tracker.Flush(context.Background()); err != nil {
+		t.Fatalf("落库活跃度: %v", err)
+	}
+	row, err := queries.GetImageAdmin(context.Background(), imgID)
+	if err != nil {
+		t.Fatalf("查询图片详情: %v", err)
+	}
+	if row.AccessCount != 0 {
+		t.Fatalf("后台浏览被计入公开访问: access_count = %d, 期望 0", row.AccessCount)
+	}
+
+	// 公开入口访问 → 计数累加(对照组,确认追踪链路本身有效)。
+	pub, err := ts.Client().Get(ts.URL + imgURL)
+	if err != nil {
+		t.Fatalf("公开访问图片: %v", err)
+	}
+	closeBody(t, pub)
+	if err := tracker.Flush(context.Background()); err != nil {
+		t.Fatalf("落库活跃度: %v", err)
+	}
+	row, err = queries.GetImageAdmin(context.Background(), imgID)
+	if err != nil {
+		t.Fatalf("查询图片详情: %v", err)
+	}
+	if row.AccessCount != 1 {
+		t.Fatalf("公开访问后 access_count = %d, 期望 1", row.AccessCount)
+	}
+}
+
 // TestMetricsEndpoint 验证 /metrics 暴露 Prometheus 指标,且请求经中间件计入。
 func TestMetricsEndpoint(t *testing.T) {
 	ts := newTestServer(t, nil)

@@ -273,8 +273,9 @@ func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
 	}
 }
 
-// TestTrackerFlushTouchesAndUnlabels 验证活跃度 flush 落库 last_public_access_at,
-// 且摘除 pending_cleanup 标签(有真实访问则不再算冷图)。
+// TestTrackerFlushTouchesAndUnlabels 验证活跃度 flush 落库 last_public_access_at
+// 与 access_count(同周期多次访问计 1,跨周期累加),且摘除 pending_cleanup 标签
+// (有真实访问则不再算冷图)。
 func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
@@ -292,15 +293,17 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	}
 
 	tr := lifecycle.NewTracker(conn, q, false, slog.New(slog.DiscardHandler))
+	// 同一 flush 周期内多次 Touch 只计一次(内存集合去重即计数口径)。
+	tr.Touch("img0000001")
 	tr.Touch("img0000001")
 	if err := tr.Flush(ctx); err != nil {
 		t.Fatalf("Flush 返回错误: %v", err)
 	}
 
 	var access sql.NullString
-	var pending int
-	row := conn.QueryRowContext(ctx, "SELECT last_public_access_at, pending_cleanup FROM images WHERE id = ?", "img0000001")
-	if err := row.Scan(&access, &pending); err != nil {
+	var pending, count int
+	row := conn.QueryRowContext(ctx, "SELECT last_public_access_at, pending_cleanup, access_count FROM images WHERE id = ?", "img0000001")
+	if err := row.Scan(&access, &pending, &count); err != nil {
 		t.Fatalf("读取 image: %v", err)
 	}
 	if !access.Valid {
@@ -308,6 +311,21 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	}
 	if pending != 0 {
 		t.Error("访问后 pending_cleanup 未摘除")
+	}
+	if count != 1 {
+		t.Errorf("access_count = %d, 期望 1(同周期去重)", count)
+	}
+
+	// 下一周期再访问:计数跨周期累加。
+	tr.Touch("img0000001")
+	if err := tr.Flush(ctx); err != nil {
+		t.Fatalf("二次 Flush 返回错误: %v", err)
+	}
+	if err := conn.QueryRowContext(ctx, "SELECT access_count FROM images WHERE id = ?", "img0000001").Scan(&count); err != nil {
+		t.Fatalf("读取 access_count: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("二次 flush 后 access_count = %d, 期望 2", count)
 	}
 }
 

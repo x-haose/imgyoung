@@ -3,10 +3,12 @@ import {
   App as AntdApp,
   Button,
   Card,
+  Checkbox,
   Col,
   Empty,
   Flex,
   Pagination,
+  Popconfirm,
   Row,
   Tag,
   Tooltip,
@@ -18,7 +20,8 @@ import { useState } from "react";
 import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
-import { formatBytes } from "../../lib/format";
+import { useServerConfig } from "../../hooks/useServerConfig";
+import { adminThumbSrc, formatBytes } from "../../lib/format";
 
 /** 候选对中一方的展示信息。 */
 interface CandidateSide {
@@ -51,6 +54,7 @@ function SideCard({
   onKeep: () => void;
 }) {
   const { token } = theme.useToken();
+  const serverConfig = useServerConfig();
   return (
     <Flex vertical gap={8} style={{ flex: 1, minWidth: 0 }}>
       <div
@@ -64,7 +68,7 @@ function SideCard({
         {side.image_id ? (
           <a href={`/i/${side.image_id}`} target="_blank" rel="noreferrer">
             <img
-              src={`/i/${side.image_id}?w=400`}
+              src={adminThumbSrc(side.image_id, serverConfig?.process_widths, 400)}
               alt={label}
               loading="lazy"
               style={{ width: "100%", height: "100%", objectFit: "contain" }}
@@ -92,6 +96,8 @@ const pageSize = 20;
 /** 疑似重复页:候选并排对比,人工裁决合并方向或忽略。 */
 export function DedupPage() {
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
+  const [batching, setBatching] = useState(false);
   const invalidate = useInvalidate();
   const { message, modal } = AntdApp.useApp();
 
@@ -102,7 +108,45 @@ export function DedupPage() {
   const items = list.result?.data ?? [];
   const total = list.result?.total ?? 0;
   usePageClamp(page, setPage, list.result?.total, pageSize);
-  const refresh = () => invalidate({ resource: "dedup", invalidates: ["list"] });
+  const refresh = () => {
+    setSelected(new Set());
+    invalidate({ resource: "dedup", invalidates: ["list"] });
+  };
+
+  /** toggleSelect 切换一组候选的勾选(不可变更新)。 */
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  /** batchDismiss 逐组忽略已勾选候选(忽略是单条端点,顺序循环;失败计数后继续)。 */
+  const batchDismiss = async () => {
+    setBatching(true);
+    let done = 0;
+    let failed = 0;
+    for (const id of selected) {
+      try {
+        await apiFetch(`/api/admin/dedup/${id}/dismiss`, { method: "POST" });
+        done++;
+      } catch {
+        failed++;
+      }
+    }
+    setBatching(false);
+    if (failed > 0) {
+      message.warning(`已忽略 ${done} 组,${failed} 组失败`);
+    } else {
+      message.success(`已忽略 ${done} 组,不再提示`);
+    }
+    refresh();
+  };
 
   const merge = (cand: CandidateItem, keep: CandidateSide, drop: CandidateSide) => {
     modal.confirm({
@@ -137,14 +181,25 @@ export function DedupPage() {
 
   return (
     <Flex vertical gap={16}>
-      <div>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          疑似重复
-        </Typography.Title>
-        <Typography.Text type="secondary">
-          pHash 相似的图片对,共 {total} 组待裁决;机器发现,人做不可逆决定
-        </Typography.Text>
-      </div>
+      <Flex align="center" justify="space-between" wrap gap={12}>
+        <div>
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            疑似重复
+          </Typography.Title>
+          <Typography.Text type="secondary">
+            pHash 相似的图片对,共 {total} 组待裁决;机器发现,人做不可逆决定
+          </Typography.Text>
+        </div>
+        {selected.size > 0 && (
+          <Popconfirm
+            title={`忽略选中的 ${selected.size} 组候选?`}
+            description="忽略后这些候选对不再提示;合并需逐组选择保留侧"
+            onConfirm={() => void batchDismiss()}
+          >
+            <Button loading={batching}>批量忽略</Button>
+          </Popconfirm>
+        )}
+      </Flex>
 
       <QueryState query={list.query}>
         {items.length === 0 ? (
@@ -156,6 +211,11 @@ export function DedupPage() {
                 <Card
                   title={
                     <Flex align="center" gap={8}>
+                      <Checkbox
+                        checked={selected.has(cand.id)}
+                        onChange={() => toggleSelect(cand.id)}
+                        aria-label={`勾选候选组 #${cand.id}`}
+                      />
                       <Tooltip title="感知哈希差异位数,越小越相似;0–2 几乎相同,越大差异越大">
                         <Tag color={cand.distance <= 2 ? "error" : "warning"}>
                           距离 {cand.distance}

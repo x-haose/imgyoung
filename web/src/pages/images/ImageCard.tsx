@@ -2,8 +2,9 @@ import { CheckCircleFilled, LinkOutlined } from "@ant-design/icons";
 import { App as AntdApp, Button, Card, Flex, Tag, Tooltip, Typography, theme } from "antd";
 import { useState } from "react";
 
+import { useServerConfig } from "../../hooks/useServerConfig";
 import { copyText } from "../../lib/clipboard";
-import { absoluteURL, formatBytes } from "../../lib/format";
+import { absoluteURL, adminThumbSrc, formatBytes } from "../../lib/format";
 import type { ImageItem } from "./types";
 
 /** ImageCard 的属性。 */
@@ -20,6 +21,7 @@ export function ImageCard({ img, selecting, selected, onOpen, onToggle }: ImageC
   const [hovered, setHovered] = useState(false);
   const { token } = theme.useToken();
   const { message } = AntdApp.useApp();
+  const serverConfig = useServerConfig();
 
   /** copyURL 复制完整访问链接(不进抽屉,卡片上直接完成)。 */
   const copyURL = async (e: React.MouseEvent) => {
@@ -56,7 +58,7 @@ export function ImageCard({ img, selecting, selected, onOpen, onToggle }: ImageC
           }}
         >
           <img
-            src={`${img.url}?w=400`}
+            src={adminThumbSrc(img.id, serverConfig?.process_widths, 400)}
             alt={img.file_name || img.id}
             loading="lazy"
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
@@ -112,6 +114,7 @@ export function ImageCard({ img, selecting, selected, onOpen, onToggle }: ImageC
           {formatBytes(img.size)}
         </Typography.Text>
         {img.pending_cleanup && <Tag color="warning">待清理</Tag>}
+        {img.cleanup_exempt && <Tag color="blue">已豁免</Tag>}
       </Flex>
     </Card>
   );

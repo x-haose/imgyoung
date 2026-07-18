@@ -35,6 +35,7 @@ type imageItem struct {
 	ExpireAt       *string `json:"expire_at"`       // 到期时刻;null 表示永久
 	TTLSeconds     *int64  `json:"ttl_seconds"`     // 有效时长(秒),访问续期按此顺延;null 表示永久
 	LastAccessAt   *string `json:"last_access_at"`  // 最近公开访问;null 表示从未
+	AccessCount    int64   `json:"access_count"`    // 累计公开访问次数,flush 周期粒度(非精确 PV)
 	PendingCleanup bool    `json:"pending_cleanup"` // 是否在待清理列表
 	CleanupExempt  bool    `json:"cleanup_exempt"`  // 是否清理豁免
 	CreatedAt      string  `json:"created_at"`      // 上传时刻
@@ -51,7 +52,7 @@ func imageItemFrom(row sqlc.GetImageAdminRow) imageItem {
 		FileName: row.FileName, Mime: row.Mime, Size: row.Size,
 		Width: row.Width, Height: row.Height, Sha256: row.Sha256,
 		ExpireAt: nullableStr(row.ExpireAt), TTLSeconds: nullableInt(row.TtlSeconds),
-		LastAccessAt:   nullableStr(row.LastPublicAccessAt),
+		LastAccessAt: nullableStr(row.LastPublicAccessAt), AccessCount: row.AccessCount,
 		PendingCleanup: row.PendingCleanup != 0, CleanupExempt: row.CleanupExempt != 0,
 		CreatedAt: row.CreatedAt, RefCount: row.RefCount,
 	}
@@ -70,11 +71,16 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 		userFilter = p.UserID
 	}
 	tokenID, _ := strconv.ParseInt(q.Get("token_id"), 10, 64)
+	// exempt=1 只看已豁免;其余取值不过滤(豁免图闭环入口,配合详情抽屉的取消豁免)。
+	exemptOnly := int64(0)
+	if q.Get("exempt") == "1" {
+		exemptOnly = 1
+	}
 	limit, offset := pagination(r)
 
 	rows, err := h.cfg.Queries.ListImagesAdmin(r.Context(), sqlc.ListImagesAdminParams{
 		UserID: userFilter, TokenID: tokenID, Search: q.Get("search"),
-		Since: q.Get("since"), Until: q.Get("until"),
+		Since: q.Get("since"), Until: q.Get("until"), Exempt: exemptOnly,
 		PageLimit: limit, PageOffset: offset,
 	})
 	if err != nil {
@@ -84,7 +90,7 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	}
 	total, err := h.cfg.Queries.CountImagesAdmin(r.Context(), sqlc.CountImagesAdminParams{
 		UserID: userFilter, TokenID: tokenID, Search: q.Get("search"),
-		Since: q.Get("since"), Until: q.Get("until"),
+		Since: q.Get("since"), Until: q.Get("until"), Exempt: exemptOnly,
 	})
 	if err != nil {
 		h.cfg.Logger.Error("统计图片总数失败", "err", err)

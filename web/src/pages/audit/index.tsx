@@ -1,15 +1,18 @@
 import { useList } from "@refinedev/core";
-import { Card, Flex, Input, Select, Table, Tag, Typography } from "antd";
+import { Card, DatePicker, Flex, Input, Select, Table, Tag, Tooltip, Typography } from "antd";
+import type { Dayjs } from "dayjs";
 import { useState } from "react";
+import { useSearchParams } from "react-router";
 
 import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
-import { formatTime } from "../../lib/format";
+import { formatTime, toUTCText } from "../../lib/format";
 
 /** 审计记录项(对应 /api/admin/audit 响应)。 */
 interface AuditItem {
   id: number;
   actor: string;
+  actor_name: string;
   action: string;
   target: string;
   detail: string;
@@ -39,6 +42,7 @@ function actionColor(action: string): string {
 /** 可筛选的动作清单(与后端 audit 常量一致)。 */
 const actionOptions = [
   "channel.create",
+  "channel.update",
   "channel.delete",
   "token.issue",
   "token.revoke",
@@ -47,6 +51,7 @@ const actionOptions = [
   "user.create",
   "user.update",
   "user.delete",
+  "image.update",
   "image.delete",
   "data.export",
   "dedup.merge",
@@ -57,11 +62,14 @@ const actionOptions = [
 /** 每页审计条数。 */
 const pageSize = 50;
 
-/** 审计页:管理操作留痕,按操作者/动作过滤。 */
+/** 审计页:管理操作留痕,按操作者/动作/目标/时间范围过滤;目标过滤可由其他页带 query 直达。 */
 export function AuditPage() {
+  const [searchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("");
+  const [target, setTarget] = useState(() => searchParams.get("target") ?? "");
+  const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null);
 
   const list = useList<AuditItem>({
     resource: "audit",
@@ -69,6 +77,22 @@ export function AuditPage() {
     filters: [
       ...(actor ? [{ field: "actor", operator: "eq" as const, value: actor }] : []),
       ...(action ? [{ field: "action", operator: "eq" as const, value: action }] : []),
+      ...(target ? [{ field: "target", operator: "eq" as const, value: target }] : []),
+      ...(range
+        ? [
+            // 首尾两天按本地日界取闭开区间:[首日 00:00, 末日次日 00:00)。
+            {
+              field: "since",
+              operator: "eq" as const,
+              value: toUTCText(range[0].startOf("day").valueOf()),
+            },
+            {
+              field: "until",
+              operator: "eq" as const,
+              value: toUTCText(range[1].add(1, "day").startOf("day").valueOf()),
+            },
+          ]
+        : []),
     ],
   });
   const items = list.result?.data ?? [];
@@ -84,11 +108,11 @@ export function AuditPage() {
           </Typography.Title>
           <Typography.Text type="secondary">管理操作只追加留痕,共 {total} 条</Typography.Text>
         </div>
-        <Flex gap={8}>
+        <Flex gap={8} wrap>
           <Select
             allowClear
             placeholder="按动作过滤"
-            style={{ width: 200 }}
+            style={{ width: 180 }}
             options={actionOptions}
             onChange={(v) => {
               setPage(1);
@@ -98,10 +122,28 @@ export function AuditPage() {
           <Input.Search
             allowClear
             placeholder="按操作者 id 过滤"
-            style={{ width: 200 }}
+            style={{ width: 170 }}
             onSearch={(v) => {
               setPage(1);
               setActor(v.trim());
+            }}
+          />
+          <Input.Search
+            allowClear
+            placeholder="目标 ID(图片短 ID / 渠道 ID / Token ID)"
+            style={{ width: 260 }}
+            defaultValue={target}
+            onSearch={(v) => {
+              setPage(1);
+              setTarget(v.trim());
+            }}
+          />
+          <DatePicker.RangePicker
+            allowClear
+            value={range}
+            onChange={(next) => {
+              setPage(1);
+              setRange(next?.[0] && next[1] ? [next[0], next[1]] : null);
             }}
           />
         </Flex>
@@ -130,7 +172,16 @@ export function AuditPage() {
                 width: 160,
                 render: (v: string) => <Tag color={actionColor(v)}>{v}</Tag>,
               },
-              { title: "操作者", dataIndex: "actor", width: 160 },
+              {
+                title: "操作者",
+                dataIndex: "actor_name",
+                width: 160,
+                render: (name: string, row) => (
+                  <Tooltip title={`用户 id:${row.actor}`}>
+                    <span>{name}</span>
+                  </Tooltip>
+                ),
+              },
               { title: "目标", dataIndex: "target" },
               {
                 title: "详情",

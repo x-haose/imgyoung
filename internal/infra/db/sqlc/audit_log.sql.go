@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"database/sql"
 )
 
 const countAuditLog = `-- name: CountAuditLog :one
@@ -14,15 +15,27 @@ SELECT COUNT(*)
 FROM audit_log
 WHERE (?1 = '' OR actor = ?1)
   AND (?2 = '' OR action = ?2)
+  AND (?3 = '' OR target = ?3)
+  AND (?4 = '' OR created_at >= ?4)
+  AND (?5 = '' OR created_at < ?5)
 `
 
 type CountAuditLogParams struct {
 	Actor  interface{}
 	Action interface{}
+	Target interface{}
+	Since  interface{}
+	Until  interface{}
 }
 
 func (q *Queries) CountAuditLog(ctx context.Context, arg CountAuditLogParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countAuditLog, arg.Actor, arg.Action)
+	row := q.db.QueryRowContext(ctx, countAuditLog,
+		arg.Actor,
+		arg.Action,
+		arg.Target,
+		arg.Since,
+		arg.Until,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -51,25 +64,46 @@ func (q *Queries) CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) 
 }
 
 const listAuditLog = `-- name: ListAuditLog :many
-SELECT id, actor, "action", target, detail, created_at
-FROM audit_log
-WHERE (?1 = '' OR actor = ?1)
-  AND (?2 = '' OR action = ?2)
-ORDER BY id DESC
-LIMIT ?4 OFFSET ?3
+SELECT a.id, a.actor, a.action, a.target, a.detail, a.created_at,
+       u.name AS actor_name
+FROM audit_log a
+LEFT JOIN users u ON u.id = a.actor
+WHERE (?1 = '' OR a.actor = ?1)
+  AND (?2 = '' OR a.action = ?2)
+  AND (?3 = '' OR a.target = ?3)
+  AND (?4 = '' OR a.created_at >= ?4)
+  AND (?5 = '' OR a.created_at < ?5)
+ORDER BY a.id DESC
+LIMIT ?7 OFFSET ?6
 `
 
 type ListAuditLogParams struct {
 	Actor      interface{}
 	Action     interface{}
+	Target     interface{}
+	Since      interface{}
+	Until      interface{}
 	PageOffset int64
 	PageLimit  int64
 }
 
-func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]AuditLog, error) {
+type ListAuditLogRow struct {
+	ID        int64
+	Actor     string
+	Action    string
+	Target    string
+	Detail    string
+	CreatedAt string
+	ActorName sql.NullString
+}
+
+func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]ListAuditLogRow, error) {
 	rows, err := q.db.QueryContext(ctx, listAuditLog,
 		arg.Actor,
 		arg.Action,
+		arg.Target,
+		arg.Since,
+		arg.Until,
 		arg.PageOffset,
 		arg.PageLimit,
 	)
@@ -77,9 +111,9 @@ func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]A
 		return nil, err
 	}
 	defer rows.Close()
-	var items []AuditLog
+	var items []ListAuditLogRow
 	for rows.Next() {
-		var i AuditLog
+		var i ListAuditLogRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Actor,
@@ -87,6 +121,7 @@ func (q *Queries) ListAuditLog(ctx context.Context, arg ListAuditLogParams) ([]A
 			&i.Target,
 			&i.Detail,
 			&i.CreatedAt,
+			&i.ActorName,
 		); err != nil {
 			return nil, err
 		}

@@ -21,7 +21,7 @@ WHERE id = ?;
 
 -- name: TouchImageAccess :exec
 UPDATE images
-SET last_public_access_at = ?, pending_cleanup = 0
+SET last_public_access_at = ?, pending_cleanup = 0, access_count = access_count + 1
 WHERE id = ?;
 
 -- name: LabelColdImages :execrows
@@ -38,7 +38,7 @@ WHERE blob_id = ?;
 
 -- name: ListImagesAdmin :many
 SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
-       i.expire_at, i.ttl_seconds, i.last_public_access_at,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
@@ -49,6 +49,7 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@search = '' OR i.id LIKE '%' || @search || '%' OR i.file_name LIKE '%' || @search || '%')
   AND (@since = '' OR i.created_at >= @since)
   AND (@until = '' OR i.created_at < @until)
+  AND (@exempt = 0 OR i.cleanup_exempt = 1)
 ORDER BY i.created_at DESC
 LIMIT @page_limit OFFSET @page_offset;
 
@@ -59,11 +60,12 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@token_id = 0 OR i.token_id = @token_id)
   AND (@search = '' OR i.id LIKE '%' || @search || '%' OR i.file_name LIKE '%' || @search || '%')
   AND (@since = '' OR i.created_at >= @since)
-  AND (@until = '' OR i.created_at < @until);
+  AND (@until = '' OR i.created_at < @until)
+  AND (@exempt = 0 OR i.cleanup_exempt = 1);
 
 -- name: GetImageAdmin :one
 SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
-       i.expire_at, i.ttl_seconds, i.last_public_access_at,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
@@ -116,6 +118,20 @@ WHERE id IN (sqlc.slice('ids'))
 SELECT COUNT(*)
 FROM images;
 
+-- name: AccessTotals :one
+SELECT CAST(COALESCE(SUM(i.access_count), 0) AS INTEGER)          AS total_accesses,
+       CAST(COALESCE(SUM(i.access_count * b.size), 0) AS INTEGER) AS traffic_bytes
+FROM images i
+JOIN blobs b ON b.id = i.blob_id;
+
+-- name: TopAccessedImages :many
+SELECT i.id, i.file_name, i.access_count, b.size
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.access_count > 0
+ORDER BY i.access_count DESC, i.id
+LIMIT ?;
+
 -- name: TotalStorageUsage :one
 SELECT CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
 FROM images i
@@ -123,6 +139,6 @@ JOIN blobs b ON b.id = i.blob_id;
 
 -- name: ListImagesExport :many
 SELECT id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds,
-       last_public_access_at, pending_cleanup, cleanup_exempt, created_at
+       last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at;

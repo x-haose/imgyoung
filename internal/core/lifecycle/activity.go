@@ -49,9 +49,12 @@ func (t *Tracker) Touch(imageID string) {
 	t.mu.Unlock()
 }
 
-// Flush 把累积的访问批量落库:更新 last_public_access_at、摘除 pending_cleanup 标签,
-// 并在开启访问续期时把本批带 TTL 的引用到期时刻顺延为 flush 时刻 + ttl_seconds。
-// @Description: 失败时把这批放回,留待下次重试——活跃度丢失只降冷图判定精度,不影响正确性。
+// Flush 把累积的访问批量落库:更新 last_public_access_at、access_count 加一、
+// 摘除 pending_cleanup 标签,并在开启访问续期时把本批带 TTL 的引用到期时刻
+// 顺延为 flush 时刻 + ttl_seconds。
+// @Description: 内存集合按引用 id 去重,access_count 的计数口径因此是 flush 周期粒度
+// (同图同周期内多次访问只 +1),非精确 PV。失败时把这批放回,留待下次重试——
+// 活跃度丢失只降冷图判定与计数精度,不影响正确性。
 // @return 落库失败时的错误
 func (t *Tracker) Flush(ctx context.Context) error {
 	t.mu.Lock()

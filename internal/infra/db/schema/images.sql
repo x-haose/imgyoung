@@ -8,6 +8,7 @@ CREATE TABLE images (
     expire_at TEXT, -- 到期时刻,NULL 表示永不过期
     ttl_seconds INTEGER, -- 上传时确定的有效时长,秒;访问续期按此顺延 expire_at;NULL 表示永久或未设置(不参与续期)
     last_public_access_at TEXT, -- 最近一次真实公开访问时刻,NULL 表示从未
+    access_count INTEGER NOT NULL DEFAULT 0, -- 累计公开访问次数;计数口径为活跃度 flush 周期粒度(同周期内多次访问计 1),非精确 PV
     pending_cleanup INTEGER NOT NULL DEFAULT 0, -- 冷图待清理标签,1 表示已入待裁决集
     cleanup_exempt INTEGER NOT NULL DEFAULT 0, -- 清理豁免,1 表示裁决保留、不再参与冷图打标
     created_at TEXT NOT NULL DEFAULT (datetime('now')) -- 创建时刻,UTC 文本

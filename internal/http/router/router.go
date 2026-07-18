@@ -62,12 +62,18 @@ func New(cfg Config) http.Handler {
 			g.Get("/me", cfg.Admin.HandleMe)
 			g.Put("/me/password", cfg.Admin.HandleChangePassword)
 			g.Get("/dashboard", cfg.Admin.HandleDashboard)
+			// 运行配置只读切面:上传上限/删除宽限/缩略档位等对普通用户的
+			// 操作反馈同样必要,故随会话开放、不进管理员组;不含凭证与密钥。
+			g.Get("/config", cfg.Admin.HandleConfig)
 			g.Get("/tokens", cfg.Admin.HandleTokenList)
 			g.Post("/tokens", cfg.Admin.HandleTokenCreate)
 			g.Post("/tokens/{id}/revoke", cfg.Admin.HandleTokenRevoke)
 			g.Post("/tokens/{id}/rotate", cfg.Admin.HandleTokenRotate)
 			g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
 			g.Get("/images", cfg.Admin.HandleImageList)
+			// 后台缩略图/预览走会话鉴权的不计数通道,避免管理员浏览污染
+			// 公开访问统计与冷图裁决;对外分享链接仍走 /i/。
+			g.Get("/images/{id}/thumb", cfg.Public.HandleAdminServe)
 			g.Post("/images/batch-delete", cfg.Admin.HandleImageBatchDelete)
 			g.Get("/images/{id}", cfg.Admin.HandleImageGet)
 			g.Patch("/images/{id}", cfg.Admin.HandleImagePatch)

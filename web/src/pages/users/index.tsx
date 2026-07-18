@@ -195,6 +195,16 @@ export function UsersPage() {
                   </Space>
                 ),
               },
+              {
+                title: "ID",
+                dataIndex: "id",
+                width: 110,
+                render: (v: string) => (
+                  <Typography.Text type="secondary" copyable style={{ fontSize: 12 }}>
+                    {v}
+                  </Typography.Text>
+                ),
+              },
               { title: "图片", dataIndex: "image_count", align: "right", width: 80 },
               {
                 title: "用量 / 配额",

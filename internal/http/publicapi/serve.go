@@ -13,8 +13,23 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
-// HandleServe 按短 ID 代理输出图片。
+// HandleServe 按短 ID 代理输出图片(对外公开入口,计公开访问活跃度)。
 func (h *Handlers) HandleServe(w http.ResponseWriter, r *http.Request) {
+	h.serveImage(w, r, true)
+}
+
+// HandleAdminServe 后台缩略图/预览入口:与公开入口同一处理管线,但不计公开访问活跃度。
+// @Description: 管理员浏览若计数,会把冷图摘出待清理列表(TTL 续期时还顺延到期)、
+// 抬高访问统计与热门榜,故后台展示一律走此会话鉴权通道;对外分享仍用 /i/。
+func (h *Handlers) HandleAdminServe(w http.ResponseWriter, r *http.Request) {
+	h.serveImage(w, r, false)
+}
+
+// serveImage 按短 ID 输出图片:查引用、可选计活跃度、按参数走变体或原图路径。
+// @param w 响应写入器
+// @param r 请求
+// @param touch 是否记公开访问活跃度(仅对外公开入口计,后台入口不计)
+func (h *Handlers) serveImage(w http.ResponseWriter, r *http.Request, touch bool) {
 	imageID := chi.URLParam(r, "id")
 
 	row, err := h.cfg.Queries.GetImageBlob(r.Context(), imageID)
@@ -27,8 +42,10 @@ func (h *Handlers) HandleServe(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "服务内部错误", http.StatusInternalServerError)
 		return
 	}
-	// 真实公开访问:记活跃度(仅内存,批量落库);后台入口不走此路径,天然不计。
-	h.cfg.Activity.Touch(imageID)
+	if touch {
+		// 真实公开访问:记活跃度(仅内存,批量落库)。
+		h.cfg.Activity.Touch(imageID)
+	}
 
 	// 按需处理:解析档位参数,命中则走处理路径(即便 redirect 省流量模式也强制代理)。
 	if h.cfg.Variants != nil {

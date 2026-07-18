@@ -354,7 +354,18 @@ func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.
 		Dedup:              merger,
 		Queries:            queries,
 		Audit:              auditRec,
-		Logger:             logger,
+		Runtime: adminapi.RuntimeConfigView{
+			ColdCleanupDays:    cfg.ColdCleanupDays,
+			DeleteGraceMinutes: cfg.DeleteGraceMinutes,
+			ProcessWidths:      cfg.ProcessWidths,
+			DefaultTTLHours:    cfg.DefaultTTLHours,
+			TTLRenewOnAccess:   cfg.TTLRenewOnAccess,
+			MaxUploadMB:        cfg.MaxUploadBytes >> 20,
+			BaseURL:            cfg.BaseURL,
+			AccessMode:         cfg.AccessMode,
+			EXIFPolicy:         string(cfg.EXIFPolicy),
+		},
+		Logger: logger,
 	})
 }
 

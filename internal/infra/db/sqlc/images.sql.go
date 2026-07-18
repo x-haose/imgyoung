@@ -11,6 +11,25 @@ import (
 	"strings"
 )
 
+const accessTotals = `-- name: AccessTotals :one
+SELECT CAST(COALESCE(SUM(i.access_count), 0) AS INTEGER)          AS total_accesses,
+       CAST(COALESCE(SUM(i.access_count * b.size), 0) AS INTEGER) AS traffic_bytes
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+`
+
+type AccessTotalsRow struct {
+	TotalAccesses int64
+	TrafficBytes  int64
+}
+
+func (q *Queries) AccessTotals(ctx context.Context) (AccessTotalsRow, error) {
+	row := q.db.QueryRowContext(ctx, accessTotals)
+	var i AccessTotalsRow
+	err := row.Scan(&i.TotalAccesses, &i.TrafficBytes)
+	return i, err
+}
+
 const countImages = `-- name: CountImages :one
 SELECT COUNT(*)
 FROM images
@@ -31,6 +50,7 @@ WHERE (?1 = '' OR i.user_id = ?1)
   AND (?3 = '' OR i.id LIKE '%' || ?3 || '%' OR i.file_name LIKE '%' || ?3 || '%')
   AND (?4 = '' OR i.created_at >= ?4)
   AND (?5 = '' OR i.created_at < ?5)
+  AND (?6 = 0 OR i.cleanup_exempt = 1)
 `
 
 type CountImagesAdminParams struct {
@@ -39,6 +59,7 @@ type CountImagesAdminParams struct {
 	Search  interface{}
 	Since   interface{}
 	Until   interface{}
+	Exempt  interface{}
 }
 
 func (q *Queries) CountImagesAdmin(ctx context.Context, arg CountImagesAdminParams) (int64, error) {
@@ -48,6 +69,7 @@ func (q *Queries) CountImagesAdmin(ctx context.Context, arg CountImagesAdminPara
 		arg.Search,
 		arg.Since,
 		arg.Until,
+		arg.Exempt,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -123,7 +145,7 @@ func (q *Queries) DeleteImage(ctx context.Context, id string) (int64, error) {
 
 const getImageAdmin = `-- name: GetImageAdmin :one
 SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
-       i.expire_at, i.ttl_seconds, i.last_public_access_at,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
@@ -141,6 +163,7 @@ type GetImageAdminRow struct {
 	ExpireAt           sql.NullString
 	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString
+	AccessCount        int64
 	PendingCleanup     int64
 	CleanupExempt      int64
 	CreatedAt          string
@@ -164,6 +187,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 		&i.ExpireAt,
 		&i.TtlSeconds,
 		&i.LastPublicAccessAt,
+		&i.AccessCount,
 		&i.PendingCleanup,
 		&i.CleanupExempt,
 		&i.CreatedAt,
@@ -281,7 +305,7 @@ func (q *Queries) ListExpiredImages(ctx context.Context, arg ListExpiredImagesPa
 
 const listImagesAdmin = `-- name: ListImagesAdmin :many
 SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
-       i.expire_at, i.ttl_seconds, i.last_public_access_at,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
@@ -292,8 +316,9 @@ WHERE (?1 = '' OR i.user_id = ?1)
   AND (?3 = '' OR i.id LIKE '%' || ?3 || '%' OR i.file_name LIKE '%' || ?3 || '%')
   AND (?4 = '' OR i.created_at >= ?4)
   AND (?5 = '' OR i.created_at < ?5)
+  AND (?6 = 0 OR i.cleanup_exempt = 1)
 ORDER BY i.created_at DESC
-LIMIT ?7 OFFSET ?6
+LIMIT ?8 OFFSET ?7
 `
 
 type ListImagesAdminParams struct {
@@ -302,6 +327,7 @@ type ListImagesAdminParams struct {
 	Search     interface{}
 	Since      interface{}
 	Until      interface{}
+	Exempt     interface{}
 	PageOffset int64
 	PageLimit  int64
 }
@@ -315,6 +341,7 @@ type ListImagesAdminRow struct {
 	ExpireAt           sql.NullString
 	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString
+	AccessCount        int64
 	PendingCleanup     int64
 	CleanupExempt      int64
 	CreatedAt          string
@@ -333,6 +360,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 		arg.Search,
 		arg.Since,
 		arg.Until,
+		arg.Exempt,
 		arg.PageOffset,
 		arg.PageLimit,
 	)
@@ -352,6 +380,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 			&i.ExpireAt,
 			&i.TtlSeconds,
 			&i.LastPublicAccessAt,
+			&i.AccessCount,
 			&i.PendingCleanup,
 			&i.CleanupExempt,
 			&i.CreatedAt,
@@ -377,7 +406,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 
 const listImagesExport = `-- name: ListImagesExport :many
 SELECT id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds,
-       last_public_access_at, pending_cleanup, cleanup_exempt, created_at
+       last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at
 `
@@ -400,6 +429,7 @@ func (q *Queries) ListImagesExport(ctx context.Context) ([]Image, error) {
 			&i.ExpireAt,
 			&i.TtlSeconds,
 			&i.LastPublicAccessAt,
+			&i.AccessCount,
 			&i.PendingCleanup,
 			&i.CleanupExempt,
 			&i.CreatedAt,
@@ -547,6 +577,50 @@ func (q *Queries) SetImageCleanupExempt(ctx context.Context, arg SetImageCleanup
 	return result.RowsAffected()
 }
 
+const topAccessedImages = `-- name: TopAccessedImages :many
+SELECT i.id, i.file_name, i.access_count, b.size
+FROM images i
+JOIN blobs b ON b.id = i.blob_id
+WHERE i.access_count > 0
+ORDER BY i.access_count DESC, i.id
+LIMIT ?
+`
+
+type TopAccessedImagesRow struct {
+	ID          string
+	FileName    string
+	AccessCount int64
+	Size        int64
+}
+
+func (q *Queries) TopAccessedImages(ctx context.Context, limit int64) ([]TopAccessedImagesRow, error) {
+	rows, err := q.db.QueryContext(ctx, topAccessedImages, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TopAccessedImagesRow
+	for rows.Next() {
+		var i TopAccessedImagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileName,
+			&i.AccessCount,
+			&i.Size,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const totalStorageUsage = `-- name: TotalStorageUsage :one
 SELECT CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS bytes
 FROM images i
@@ -562,7 +636,7 @@ func (q *Queries) TotalStorageUsage(ctx context.Context) (int64, error) {
 
 const touchImageAccess = `-- name: TouchImageAccess :exec
 UPDATE images
-SET last_public_access_at = ?, pending_cleanup = 0
+SET last_public_access_at = ?, pending_cleanup = 0, access_count = access_count + 1
 WHERE id = ?
 `
 

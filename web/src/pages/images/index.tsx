@@ -20,24 +20,22 @@ import { Link } from "react-router";
 import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
-import { toUTCText } from "../../lib/format";
+import { useServerConfig } from "../../hooks/useServerConfig";
+import { deleteWarningText, toUTCText } from "../../lib/format";
 import { ImageCard } from "./ImageCard";
-import { deleteWarning, ImageDetailDrawer } from "./ImageDetailDrawer";
+import { ImageDetailDrawer } from "./ImageDetailDrawer";
 import { ImageFilters } from "./ImageFilters";
-import { emptyFilters, type ImageFilterState, type ImageItem } from "./types";
+import {
+  batchDeleteMax,
+  emptyFilters,
+  type BatchDeleteResult,
+  type ImageFilterState,
+  type ImageItem,
+} from "./types";
 import { UploadModal } from "./UploadModal";
 
 /** 每页卡片数(4 列 × 6 行)。 */
 const pageSize = 24;
-
-/** 单次批量删除的张数上限(与后端 batch-delete 契约一致)。 */
-const batchDeleteMax = 100;
-
-/** 批量删除响应(对应 POST /api/admin/images/batch-delete)。 */
-interface BatchDeleteResult {
-  deleted: number;
-  failed: { id: string; error: string }[];
-}
 
 /** buildFilters 把搜索词与筛选状态平铺为后端列表查询参数。 */
 function buildFilters(search: string, f: ImageFilterState) {
@@ -55,6 +53,9 @@ function buildFilters(search: string, f: ImageFilterState) {
     // 首尾两天按本地日界取闭开区间:[首日 00:00, 末日次日 00:00)。
     out.push({ field: "since", operator: "eq", value: toUTCText(f.range[0].startOf("day").valueOf()) });
     out.push({ field: "until", operator: "eq", value: toUTCText(f.range[1].add(1, "day").startOf("day").valueOf()) });
+  }
+  if (f.exemptOnly) {
+    out.push({ field: "exempt", operator: "eq", value: 1 });
   }
   return out;
 }
@@ -74,8 +75,13 @@ export function ImagesPage() {
   const { message } = AntdApp.useApp();
   const { token } = theme.useToken();
 
+  const serverConfig = useServerConfig();
   const hasQuery =
-    search !== "" || filters.tokenId != null || filters.userId != null || filters.range != null;
+    search !== "" ||
+    filters.tokenId != null ||
+    filters.userId != null ||
+    filters.range != null ||
+    filters.exemptOnly;
   const list = useList<ImageItem>({
     resource: "images",
     pagination: { currentPage: page, pageSize },
@@ -250,7 +256,7 @@ export function ImagesPage() {
           <Typography.Text strong>已选 {selected.size} 张</Typography.Text>
           <Popconfirm
             title={`删除选中的 ${selected.size} 张图片?`}
-            description={deleteWarning}
+            description={deleteWarningText(serverConfig?.delete_grace_minutes)}
             okButtonProps={{ danger: true }}
             onConfirm={() => void batchDelete()}
           >

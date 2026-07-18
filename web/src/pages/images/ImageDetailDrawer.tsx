@@ -1,4 +1,4 @@
-import { ClockCircleOutlined, DeleteOutlined, QuestionCircleOutlined } from "@ant-design/icons";
+import { AuditOutlined, ClockCircleOutlined, DeleteOutlined, QuestionCircleOutlined } from "@ant-design/icons";
 import {
   App as AntdApp,
   Button,
@@ -16,14 +16,13 @@ import {
 } from "antd";
 import { usePermissions } from "@refinedev/core";
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { apiFetch } from "../../api/http";
+import { useServerConfig } from "../../hooks/useServerConfig";
 import { copyText } from "../../lib/clipboard";
-import { absoluteURL, formatBytes, formatTime } from "../../lib/format";
+import { absoluteURL, adminThumbSrc, deleteWarningText, formatBytes, formatTime } from "../../lib/format";
 import type { ImageItem } from "./types";
-
-/** 删除确认的统一文案(单删/批删一致,不承诺不存在的宽限)。 */
-export const deleteWarning = "删除后外链立即失效,该操作不可恢复";
 
 /** ImageDetailDrawer 的属性。 */
 interface ImageDetailDrawerProps {
@@ -48,6 +47,7 @@ export function ImageDetailDrawer({ image, onClose, onDeleted, onPatched }: Imag
   const { message } = AntdApp.useApp();
   const { data: role } = usePermissions<string>({});
   const isAdmin = role === "admin"; // 清理豁免属管理员裁决权,属主只读展示
+  const serverConfig = useServerConfig();
 
   /** copy 复制指定格式并提示。 */
   const copy = async (label: string, text: string) => {
@@ -135,7 +135,7 @@ export function ImageDetailDrawer({ image, onClose, onDeleted, onPatched }: Imag
         image && (
           <Popconfirm
             title="删除这张图片?"
-            description={deleteWarning}
+            description={deleteWarningText(serverConfig?.delete_grace_minutes)}
             okButtonProps={{ danger: true }}
             onConfirm={() => void remove()}
           >
@@ -150,7 +150,7 @@ export function ImageDetailDrawer({ image, onClose, onDeleted, onPatched }: Imag
         <Flex vertical gap={16}>
           <a href={image.url} target="_blank" rel="noreferrer">
             <img
-              src={`${image.url}?w=800`}
+              src={adminThumbSrc(image.id, serverConfig?.process_widths, 800)}
               alt={image.file_name || image.id}
               style={{ width: "100%", borderRadius: 8 }}
             />
@@ -195,6 +195,17 @@ export function ImageDetailDrawer({ image, onClose, onDeleted, onPatched }: Imag
               },
               { label: "上传时间", children: formatTime(image.created_at) },
               { label: "最近访问", children: formatTime(image.last_access_at) },
+              {
+                label: "访问次数",
+                children: (
+                  <Space size={4}>
+                    {image.access_count}
+                    <Tooltip title="按活跃度落库周期计数,同一周期内的多次访问计 1 次,非精确 PV">
+                      <QuestionCircleOutlined style={{ fontSize: 12, opacity: 0.55 }} />
+                    </Tooltip>
+                  </Space>
+                ),
+              },
               {
                 label: "到期",
                 children: (
@@ -243,6 +254,14 @@ export function ImageDetailDrawer({ image, onClose, onDeleted, onPatched }: Imag
               },
             ]}
           />
+
+          {isAdmin && (
+            <Link to={`/audit?target=${encodeURIComponent(image.id)}`}>
+              <Button size="small" icon={<AuditOutlined />}>
+                查审计
+              </Button>
+            </Link>
+          )}
         </Flex>
       )}
     </Drawer>
