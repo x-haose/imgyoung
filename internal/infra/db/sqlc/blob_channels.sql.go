@@ -9,6 +9,50 @@ import (
 	"context"
 )
 
+const channelReplicaStats = `-- name: ChannelReplicaStats :many
+SELECT channel_id,
+       CAST(SUM(CASE WHEN state = 'done' THEN 1 ELSE 0 END) AS INTEGER)                    AS done,
+       CAST(SUM(CASE WHEN state IN ('pending', 'uploading') THEN 1 ELSE 0 END) AS INTEGER) AS pending,
+       CAST(SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS INTEGER)                  AS failed
+FROM blob_channels
+GROUP BY channel_id
+`
+
+type ChannelReplicaStatsRow struct {
+	ChannelID int64
+	Done      int64
+	Pending   int64
+	Failed    int64
+}
+
+func (q *Queries) ChannelReplicaStats(ctx context.Context) ([]ChannelReplicaStatsRow, error) {
+	rows, err := q.db.QueryContext(ctx, channelReplicaStats)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ChannelReplicaStatsRow
+	for rows.Next() {
+		var i ChannelReplicaStatsRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.Done,
+			&i.Pending,
+			&i.Failed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countSoleReplicas = `-- name: CountSoleReplicas :one
 SELECT COUNT(*)
 FROM blob_channels bc
@@ -297,6 +341,27 @@ WHERE state = 'failed' AND channel_id = ?
 func (q *Queries) ResetFailedBlobChannels(ctx context.Context, channelID int64) error {
 	_, err := q.db.ExecContext(ctx, resetFailedBlobChannels, channelID)
 	return err
+}
+
+const seedBlobChannelsForChannel = `-- name: SeedBlobChannelsForChannel :execrows
+INSERT INTO blob_channels (blob_id, channel_id, state)
+SELECT b.id, c.id, 'pending'
+FROM blobs b
+         CROSS JOIN channels c
+WHERE c.id = ?
+  AND b.pending_delete = 0
+  AND NOT EXISTS (SELECT 1
+                  FROM blob_channels bc
+                  WHERE bc.blob_id = b.id
+                    AND bc.channel_id = c.id)
+`
+
+func (q *Queries) SeedBlobChannelsForChannel(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, seedBlobChannelsForChannel, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const upsertBlobChannel = `-- name: UpsertBlobChannel :exec

@@ -1,0 +1,222 @@
+package channel
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/store/driver"
+)
+
+// deepProbeTimeout 深探测(写→读→删三次往返)的整体超时。
+const deepProbeTimeout = 20 * time.Second
+
+// probeKeyPrefix 深探测临时对象键的前缀;探后即删,崩溃残留由对账 GC 按孤儿回收。
+const probeKeyPrefix = ".imgyoung-probe-"
+
+// probeErrorMaxLen 无法归类的探测错误兜底截断长度(按字符计)。
+const probeErrorMaxLen = 200
+
+// probePayload 深探测写入的对象内容(固定小对象,读回校验一致性)。
+var probePayload = []byte("imgyoung-deep-probe")
+
+// DeepProbe 对驱动执行一次写→读→删探测。
+// @Description: 相比只读 Stat 的轻探测,能暴露只读凭证"轻探测健康却写不进"的
+// 假健康;探测对象用随机键,并发探测互不干扰。删除阶段用独立于探测超时的
+// 上下文,读回超时不连累清理。
+// @param d 目标渠道驱动
+// @return 任一环节失败时的原始错误(展示前应经 humanizeProbeError)
+func DeepProbe(ctx context.Context, d driver.Driver) error {
+	ctx, cancel := context.WithTimeout(ctx, deepProbeTimeout)
+	defer cancel()
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return fmt.Errorf("生成探测键: %w", err)
+	}
+	key := probeKeyPrefix + hex.EncodeToString(buf[:])
+	if err := d.Put(ctx, key, bytes.NewReader(probePayload), int64(len(probePayload))); err != nil {
+		return fmt.Errorf("写入探测对象: %w", err)
+	}
+	readErr := readBackProbe(ctx, d, key)
+	delCtx, delCancel := context.WithTimeout(context.WithoutCancel(ctx), probeTimeout)
+	defer delCancel()
+	delErr := d.Delete(delCtx, key)
+	if readErr != nil {
+		return readErr
+	}
+	if delErr != nil && !errors.Is(delErr, driver.ErrNotFound) {
+		return fmt.Errorf("删除探测对象: %w", delErr)
+	}
+	return nil
+}
+
+// readBackProbe 读回探测对象并核对内容一致。
+// @param d 目标渠道驱动
+// @param key 探测对象键
+// @return 读取失败或内容不一致时的错误
+func readBackProbe(ctx context.Context, d driver.Driver, key string) error {
+	rc, err := d.Open(ctx, key)
+	if err != nil {
+		return fmt.Errorf("读回探测对象: %w", err)
+	}
+	got, err := io.ReadAll(rc)
+	if cerr := rc.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return fmt.Errorf("读取探测对象内容: %w", err)
+	}
+	if !bytes.Equal(got, probePayload) {
+		return errors.New("探测对象读回内容不一致")
+	}
+	return nil
+}
+
+// ProbeChannel 对指定渠道执行深探测并把结果落库。
+// @Description: 渠道在库但驱动未装载(配置坏死被 Reload 跳过)时,以构造失败
+// 作为探测结果落库,坏死原因在渠道列表可见。探测失败不算方法失败——结果体现
+// 在 healthy / last_error 里。
+// @param channelID 渠道主键
+// @return ErrChannelNotFound 或查询、落库失败时的错误
+func (m *Manager) ProbeChannel(ctx context.Context, channelID int64) error {
+	var probeErr error
+	if h, ok := m.Get(channelID); ok {
+		probeErr = DeepProbe(ctx, h.Driver)
+	} else {
+		row, err := m.cfg.Queries.GetChannel(ctx, channelID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrChannelNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("读取渠道 %d: %w", channelID, err)
+		}
+		if d, _, derr := m.buildDriver(ctx, row); derr != nil {
+			probeErr = fmt.Errorf("驱动构造失败: %w", derr)
+		} else {
+			probeErr = DeepProbe(ctx, d)
+		}
+	}
+	return m.recordProbe(ctx, channelID, probeErr)
+}
+
+// TestConfig 用一份未落库的渠道配置执行深探测(测试连接)。
+// @Description: 不创建渠道、不写任何库表;加密属性不参与——crypt 密钥派生
+// 依赖渠道 ID,本方法验证的是后端连通性与写读删权限。返回的错误文案已
+// 人话化并抹除凭证,可直接展示给用户。
+// @param driverName rclone 后端名
+// @param config 渠道配置(含约定键 path / public_base_url),可为 nil
+// @return ErrInvalidChannel(参数非法)或人话化的探测失败错误;nil 表示连接可用
+func (m *Manager) TestConfig(ctx context.Context, driverName string, config map[string]string) error {
+	if err := validateCreateParams(CreateParams{
+		Name: "connectivity-test", Driver: driverName, Config: config,
+	}); err != nil {
+		return err
+	}
+	sealed, err := m.sealConfigMap(config)
+	if err != nil {
+		return err
+	}
+	trial := sqlc.Channel{Name: "connectivity-test", Driver: driverName, ConfigSealed: sealed}
+	d, _, err := m.buildDriver(ctx, trial)
+	if err != nil {
+		return errors.New(redactSecrets(humanizeProbeError(err), config))
+	}
+	if perr := DeepProbe(ctx, d); perr != nil {
+		return errors.New(redactSecrets(humanizeProbeError(perr), config))
+	}
+	return nil
+}
+
+// recordProbe 把一次探测结果写入渠道行(healthy / last_checked_at / last_error)
+// 并同步内存健康标记。
+// @param channelID 渠道主键
+// @param perr 探测错误,nil 表示健康
+// @return 落库失败时的错误
+func (m *Manager) recordProbe(ctx context.Context, channelID int64, perr error) error {
+	msg := humanizeProbeError(perr)
+	if err := m.cfg.Queries.UpdateChannelProbeResult(ctx, sqlc.UpdateChannelProbeResultParams{
+		Healthy:   boolToInt(perr == nil),
+		LastError: sql.NullString{String: msg, Valid: msg != ""},
+		ID:        channelID,
+	}); err != nil {
+		return fmt.Errorf("写回渠道 %d 探测结果: %w", channelID, err)
+	}
+	m.setHealth(channelID, perr == nil)
+	return nil
+}
+
+// probeErrorRules 探测错误分类映射:命中任一子串(不区分大小写)即取对应文案。
+// 顺序即匹配优先级,越具体越靠前。
+var probeErrorRules = []struct {
+	needles []string // 底层错误文本特征(小写)
+	message string   // 面向用户的排障文案
+}{
+	{[]string{"invalidaccesskeyid", "signaturedoesnotmatch", "accessdenied", "access denied", "statuscode: 403", "401 unauthorized"}, "认证失败(403):检查 Access Key / Secret Key 及其权限"},
+	{[]string{"nosuchbucket", "no such bucket", "bucketregionerror"}, "存储桶不存在或无权访问:检查桶名与凭证权限"},
+	{[]string{"permanentredirect", "authorizationheadermalformed"}, "区域不匹配:检查所选区域与存储桶实际所在区域"},
+	{[]string{"no such host", "server misbehaving"}, "无法解析服务端点域名:检查 endpoint 配置"},
+	{[]string{"connection refused", "connection reset"}, "无法连接服务端点:检查 endpoint 地址与端口"},
+	{[]string{"certificate", "x509", "tls handshake"}, "TLS 证书校验失败:检查端点证书或改用正确协议"},
+	{[]string{"context deadline exceeded", "i/o timeout", "timeout"}, "连接超时:检查端点地址与网络连通性"},
+	{[]string{"permission denied", "read-only file system"}, "存储路径无写入权限:检查目录权限"},
+}
+
+// humanizeProbeError 把底层探测错误翻成面向用户的排障文案。
+// @Description: 按错误特征归类映射;无法归类时截断原文兜底。归类文案不含
+// 凭证与连接串;持有明文配置的调用方应再经 redactSecrets 兜底抹除。
+// @param err 探测错误,nil 返回空串
+// @return 面向用户的文案
+func humanizeProbeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "连接超时:检查端点地址与网络连通性"
+	}
+	lower := strings.ToLower(err.Error())
+	for _, rule := range probeErrorRules {
+		for _, n := range rule.needles {
+			if strings.Contains(lower, n) {
+				return rule.message
+			}
+		}
+	}
+	return truncateRunes(err.Error(), probeErrorMaxLen)
+}
+
+// truncateRunes 把 s 截断到最多 limit 个字符(按 rune 计,多字节文本安全)。
+// @param s 原文
+// @param limit 字符数上限
+// @return 截断后的文本,被截断时追加省略号
+func truncateRunes(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + "…"
+}
+
+// secretKeyPattern 判定配置键是否属于敏感凭证(其值必须从错误文案中抹除)。
+var secretKeyPattern = regexp.MustCompile(`(?i)key|secret|password|token|credential`)
+
+// redactSecrets 把配置中敏感字段的值从文案里替换为掩码,兜底防凭证回显。
+// @param msg 待清洗文案
+// @param config 明文配置
+// @return 清洗后的文案
+func redactSecrets(msg string, config map[string]string) string {
+	for k, v := range config {
+		if v != "" && secretKeyPattern.MatchString(k) {
+			msg = strings.ReplaceAll(msg, v, "***")
+		}
+	}
+	return msg
+}

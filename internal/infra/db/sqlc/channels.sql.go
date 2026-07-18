@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"database/sql"
 )
 
 const channelStorageUsage = `-- name: ChannelStorageUsage :many
@@ -47,8 +48,8 @@ func (q *Queries) ChannelStorageUsage(ctx context.Context) ([]ChannelStorageUsag
 }
 
 const createChannel = `-- name: CreateChannel :one
-INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link, template)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -59,6 +60,7 @@ type CreateChannelParams struct {
 	Priority        int64
 	Encrypted       int64
 	AllowDirectLink int64
+	Template        string
 }
 
 func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (int64, error) {
@@ -69,6 +71,7 @@ func (q *Queries) CreateChannel(ctx context.Context, arg CreateChannelParams) (i
 		arg.Priority,
 		arg.Encrypted,
 		arg.AllowDirectLink,
+		arg.Template,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -86,7 +89,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template
 FROM channels
 WHERE id = ?
 `
@@ -104,12 +107,15 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 		&i.Encrypted,
 		&i.AllowDirectLink,
 		&i.CreatedAt,
+		&i.LastCheckedAt,
+		&i.LastError,
+		&i.Template,
 	)
 	return i, err
 }
 
 const listChannels = `-- name: ListChannels :many
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template
 FROM channels
 ORDER BY priority DESC, id ASC
 `
@@ -133,6 +139,9 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 			&i.Encrypted,
 			&i.AllowDirectLink,
 			&i.CreatedAt,
+			&i.LastCheckedAt,
+			&i.LastError,
+			&i.Template,
 		); err != nil {
 			return nil, err
 		}
@@ -145,6 +154,40 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateChannelConfig = `-- name: UpdateChannelConfig :exec
+UPDATE channels
+SET name              = ?,
+    driver            = ?,
+    config_sealed     = ?,
+    priority          = ?,
+    allow_direct_link = ?,
+    template          = ?
+WHERE id = ?
+`
+
+type UpdateChannelConfigParams struct {
+	Name            string
+	Driver          string
+	ConfigSealed    string
+	Priority        int64
+	AllowDirectLink int64
+	Template        string
+	ID              int64
+}
+
+func (q *Queries) UpdateChannelConfig(ctx context.Context, arg UpdateChannelConfigParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelConfig,
+		arg.Name,
+		arg.Driver,
+		arg.ConfigSealed,
+		arg.Priority,
+		arg.AllowDirectLink,
+		arg.Template,
+		arg.ID,
+	)
+	return err
 }
 
 const updateChannelHealth = `-- name: UpdateChannelHealth :exec
@@ -160,5 +203,24 @@ type UpdateChannelHealthParams struct {
 
 func (q *Queries) UpdateChannelHealth(ctx context.Context, arg UpdateChannelHealthParams) error {
 	_, err := q.db.ExecContext(ctx, updateChannelHealth, arg.Healthy, arg.ID)
+	return err
+}
+
+const updateChannelProbeResult = `-- name: UpdateChannelProbeResult :exec
+UPDATE channels
+SET healthy         = ?,
+    last_checked_at = datetime('now'),
+    last_error      = ?
+WHERE id = ?
+`
+
+type UpdateChannelProbeResultParams struct {
+	Healthy   int64
+	LastError sql.NullString
+	ID        int64
+}
+
+func (q *Queries) UpdateChannelProbeResult(ctx context.Context, arg UpdateChannelProbeResultParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelProbeResult, arg.Healthy, arg.LastError, arg.ID)
 	return err
 }

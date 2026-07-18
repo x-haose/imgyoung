@@ -67,6 +67,26 @@ WHERE blob_id = ?;
 DELETE FROM blob_channels
 WHERE blob_id = ?;
 
+-- name: ChannelReplicaStats :many
+SELECT channel_id,
+       CAST(SUM(CASE WHEN state = 'done' THEN 1 ELSE 0 END) AS INTEGER)                    AS done,
+       CAST(SUM(CASE WHEN state IN ('pending', 'uploading') THEN 1 ELSE 0 END) AS INTEGER) AS pending,
+       CAST(SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) AS INTEGER)                  AS failed
+FROM blob_channels
+GROUP BY channel_id;
+
+-- name: SeedBlobChannelsForChannel :execrows
+INSERT INTO blob_channels (blob_id, channel_id, state)
+SELECT b.id, c.id, 'pending'
+FROM blobs b
+         CROSS JOIN channels c
+WHERE c.id = ?
+  AND b.pending_delete = 0
+  AND NOT EXISTS (SELECT 1
+                  FROM blob_channels bc
+                  WHERE bc.blob_id = b.id
+                    AND bc.channel_id = c.id);
+
 -- name: ListBlobChannelsExport :many
 SELECT blob_id, channel_id, state, attempts, last_error, updated_at
 FROM blob_channels

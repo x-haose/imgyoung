@@ -13,6 +13,8 @@ import (
 const (
 	// ActionChannelCreate 渠道创建。
 	ActionChannelCreate = "channel.create"
+	// ActionChannelUpdate 渠道配置编辑。
+	ActionChannelUpdate = "channel.update"
 	// ActionChannelDelete 渠道删除。
 	ActionChannelDelete = "channel.delete"
 	// ActionTokenIssue Token 签发。

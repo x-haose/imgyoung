@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -727,6 +728,177 @@ func TestMetricsEndpoint(t *testing.T) {
 	// /metrics 自身不计入(避免自我观测噪音)。
 	if bytes.Contains(body, []byte(`route="/metrics"`)) {
 		t.Error("/metrics 请求不应计入自身指标")
+	}
+}
+
+// channelInfoResp 渠道描述响应的断言用投影。
+type channelInfoResp struct {
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	Priority        int64  `json:"priority"`
+	Healthy         bool   `json:"healthy"`
+	AllowDirectLink bool   `json:"allow_direct_link"`
+	LastCheckedAt   string `json:"last_checked_at"`
+	LastError       string `json:"last_error"`
+	Replicas        struct {
+		Done    int64 `json:"done"`
+		Pending int64 `json:"pending"`
+		Failed  int64 `json:"failed"`
+	} `json:"replicas"`
+}
+
+// TestChannelUpdateAPI 验证编辑接口:改优先级/名称生效并返回最新描述,
+// encrypted 翻转返回 409,渠道不存在返回 404。
+func TestChannelUpdateAPI(t *testing.T) {
+	ts := newTestServer(t, nil)
+	client, csrf := adminSession(t, ts)
+
+	dir := t.TempDir()
+	created := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels",
+		fmt.Sprintf(`{"name":"editable","driver":"local","priority":10,"config":{"path":%q}}`, dir))
+	defer closeBody(t, created)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("创建渠道状态码 = %d, 期望 201", created.StatusCode)
+	}
+	var cr struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(created.Body).Decode(&cr); err != nil {
+		t.Fatalf("解析创建响应: %v", err)
+	}
+	url := fmt.Sprintf("%s/api/admin/channels/%d", ts.URL, cr.ID)
+
+	// 编辑:改名 + 提优先级,响应即最新描述且含创建/编辑即探测的结果。
+	updated := adminReq(t, client, csrf, http.MethodPut, url,
+		fmt.Sprintf(`{"name":"edited","driver":"local","priority":500,"config":{"path":%q}}`, dir))
+	defer closeBody(t, updated)
+	if updated.StatusCode != http.StatusOK {
+		t.Fatalf("编辑状态码 = %d, 期望 200", updated.StatusCode)
+	}
+	var info channelInfoResp
+	if err := json.NewDecoder(updated.Body).Decode(&info); err != nil {
+		t.Fatalf("解析编辑响应: %v", err)
+	}
+	if info.Name != "edited" || info.Priority != 500 || !info.Healthy || info.LastCheckedAt == "" {
+		t.Fatalf("编辑响应异常: %+v", info)
+	}
+
+	// 编辑生效于选路:新优先级(500 > 内置 100)使该渠道成为主渠道,上传落其目录。
+	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	closeBody(t, up)
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("上传未落到编辑后的主渠道目录: entries=%v err=%v", entries, err)
+	}
+
+	// encrypted 翻转 → 409。
+	flip := adminReq(t, client, csrf, http.MethodPut, url,
+		fmt.Sprintf(`{"name":"edited","driver":"local","priority":500,"encrypted":true,"config":{"path":%q}}`, dir))
+	defer closeBody(t, flip)
+	if flip.StatusCode != http.StatusConflict {
+		t.Fatalf("翻转加密属性状态码 = %d, 期望 409", flip.StatusCode)
+	}
+
+	// 渠道不存在 → 404。
+	missing := adminReq(t, client, csrf, http.MethodPut, ts.URL+"/api/admin/channels/99999",
+		`{"name":"x","driver":"local"}`)
+	defer closeBody(t, missing)
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("编辑不存在渠道状态码 = %d, 期望 404", missing.StatusCode)
+	}
+}
+
+// TestChannelTestAPI 验证测试连接:好配置 ok=true;坏配置 ok=false 且错误
+// 人话化、凭证不回显;不产生任何渠道记录。
+func TestChannelTestAPI(t *testing.T) {
+	ts := newTestServer(t, nil)
+	client, csrf := adminSession(t, ts)
+
+	good := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels/test",
+		fmt.Sprintf(`{"name":"probe","driver":"local","config":{"path":%q}}`, t.TempDir()))
+	defer closeBody(t, good)
+	if good.StatusCode != http.StatusOK {
+		t.Fatalf("好配置状态码 = %d, 期望 200", good.StatusCode)
+	}
+	var gr struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(good.Body).Decode(&gr); err != nil {
+		t.Fatalf("解析响应: %v", err)
+	}
+	if !gr.OK || gr.Error != "" {
+		t.Fatalf("好配置结果 = %+v, 期望 ok", gr)
+	}
+
+	const secret = "TESTSECRETNEVERSHOWN"
+	bad := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels/test",
+		`{"name":"probe","driver":"s3","config":{"provider":"Minio","endpoint":"http://127.0.0.1:1","access_key_id":"AK","secret_access_key":"`+secret+`","path":"bkt"}}`)
+	defer closeBody(t, bad)
+	raw, err := io.ReadAll(bad.Body)
+	if err != nil {
+		t.Fatalf("读取响应: %v", err)
+	}
+	if bad.StatusCode != http.StatusOK {
+		t.Fatalf("坏配置状态码 = %d, 期望 200(结果在信封里): %s", bad.StatusCode, raw)
+	}
+	var br struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &br); err != nil {
+		t.Fatalf("解析响应: %v", err)
+	}
+	if br.OK || br.Error == "" {
+		t.Fatalf("坏配置结果 = %+v, 期望 ok=false 且带错误文案", br)
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Fatalf("测试连接响应回显了凭证: %s", raw)
+	}
+
+	// 测试连接不落库:渠道列表仍只有内置 local。
+	list := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/channels", "")
+	defer closeBody(t, list)
+	var lr struct {
+		Total int64 `json:"total"`
+	}
+	if err := json.NewDecoder(list.Body).Decode(&lr); err != nil {
+		t.Fatalf("解析列表: %v", err)
+	}
+	if lr.Total != 1 {
+		t.Fatalf("测试连接后渠道数 = %d, 期望仍为 1", lr.Total)
+	}
+}
+
+// TestChannelCheckAPI 验证手动重检:返回探测后的完整描述(含时刻与副本水位)。
+func TestChannelCheckAPI(t *testing.T) {
+	ts := newTestServer(t, nil)
+	client, csrf := adminSession(t, ts)
+
+	// 上传一张图,让内置 local 渠道拥有一份 done 副本。
+	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	closeBody(t, up)
+
+	resp := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels/1/check", "")
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("手动重检状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	var info channelInfoResp
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		t.Fatalf("解析响应: %v", err)
+	}
+	if !info.Healthy || info.LastCheckedAt == "" || info.LastError != "" {
+		t.Fatalf("重检结果异常: %+v", info)
+	}
+	if info.Replicas.Done != 1 || info.Replicas.Pending != 0 || info.Replicas.Failed != 0 {
+		t.Fatalf("副本水位 = %+v, 期望 done=1", info.Replicas)
+	}
+
+	missing := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels/99999/check", "")
+	defer closeBody(t, missing)
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("重检不存在渠道状态码 = %d, 期望 404", missing.StatusCode)
 	}
 }
 

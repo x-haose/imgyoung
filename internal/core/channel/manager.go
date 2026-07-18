@@ -195,15 +195,9 @@ func (m *Manager) SealConfig(plain string) (string, error) {
 // @return 就绪的驱动与解密后的原始参数表(含约定键)
 // @return 解密、解析或后端初始化失败时的错误
 func (m *Manager) buildDriver(ctx context.Context, row sqlc.Channel) (driver.Driver, map[string]string, error) {
-	params := map[string]string{}
-	if row.ConfigSealed != "" {
-		plain, err := m.cfg.Master.DecryptString(row.ConfigSealed)
-		if err != nil {
-			return nil, nil, fmt.Errorf("解密渠道配置: %w", err)
-		}
-		if err := json.Unmarshal([]byte(plain), &params); err != nil {
-			return nil, nil, fmt.Errorf("解析渠道配置 JSON: %w", err)
-		}
+	params, err := m.unsealConfigMap(row.ConfigSealed)
+	if err != nil {
+		return nil, nil, err
 	}
 	raw := map[string]string{}
 	for k, v := range params {
@@ -238,6 +232,25 @@ func (m *Manager) buildDriver(ctx context.Context, row sqlc.Channel) (driver.Dri
 		return nil, nil, err
 	}
 	return driver, raw, nil
+}
+
+// unsealConfigMap 把入库的配置密文解密还原为参数表。
+// @param sealed 配置密文,空串表示无参数
+// @return 参数表(含约定键 path / public_base_url),永不为 nil
+// @return 解密或解析失败时的错误
+func (m *Manager) unsealConfigMap(sealed string) (map[string]string, error) {
+	params := map[string]string{}
+	if sealed == "" {
+		return params, nil
+	}
+	plain, err := m.cfg.Master.DecryptString(sealed)
+	if err != nil {
+		return nil, fmt.Errorf("解密渠道配置: %w", err)
+	}
+	if err := json.Unmarshal([]byte(plain), &params); err != nil {
+		return nil, fmt.Errorf("解析渠道配置 JSON: %w", err)
+	}
+	return params, nil
 }
 
 // Get 按 ID 返回渠道句柄。

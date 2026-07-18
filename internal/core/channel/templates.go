@@ -56,7 +56,7 @@ var templates = []Template{
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
 			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, configKey: "region", Options: awsRegions},
-			bucketField(""),
+			bucketField(""), publicBaseURLField(),
 		},
 	},
 	{
@@ -67,7 +67,7 @@ var templates = []Template{
 			accessKeyField(), secretKeyField(),
 			{Key: "account_id", Label: "账户 ID", Type: FieldText, Required: true,
 				Placeholder: "如 a1b2c3d4e5f6", Help: "Cloudflare 账户 ID,用于拼接 R2 端点"},
-			bucketField(""),
+			bucketField(""), publicBaseURLField(),
 		},
 	},
 	{
@@ -78,7 +78,7 @@ var templates = []Template{
 			{Key: "access_key_id", Label: "SecretId", Type: FieldText, Required: true, configKey: "access_key_id"},
 			{Key: "secret_access_key", Label: "SecretKey", Type: FieldPassword, Required: true, configKey: "secret_access_key"},
 			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, Options: cosRegions},
-			bucketField("桶名需带 APPID 后缀,如 mybucket-1250000000"),
+			bucketField("桶名需带 APPID 后缀,如 mybucket-1250000000"), publicBaseURLField(),
 		},
 	},
 	{
@@ -88,7 +88,7 @@ var templates = []Template{
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
 			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, Options: ossRegions},
-			bucketField(""),
+			bucketField(""), publicBaseURLField(),
 		},
 	},
 	{
@@ -100,7 +100,7 @@ var templates = []Template{
 			{Key: "secret_access_key", Label: "Application Key", Type: FieldPassword, Required: true, configKey: "secret_access_key"},
 			{Key: "region", Label: "区域", Type: FieldText, Required: true, configKey: "region",
 				Placeholder: "如 us-west-004", Help: "B2 账户所在区域,须与端点一致"},
-			bucketField(""),
+			bucketField(""), publicBaseURLField(),
 		},
 	},
 	{
@@ -110,7 +110,7 @@ var templates = []Template{
 			accessKeyField(), secretKeyField(),
 			{Key: "endpoint", Label: "服务端点", Type: FieldText, Required: true, configKey: "endpoint",
 				Placeholder: "https://minio.example.com"},
-			bucketField(""),
+			bucketField(""), publicBaseURLField(),
 		},
 	},
 	{
@@ -120,7 +120,7 @@ var templates = []Template{
 			accessKeyField(), secretKeyField(),
 			{Key: "endpoint", Label: "S3 API 端点", Type: FieldText, Required: true, configKey: "endpoint",
 				Placeholder: "https://s3.example.com"},
-			bucketField(""),
+			bucketField(""), publicBaseURLField(),
 		},
 	},
 }
@@ -144,6 +144,13 @@ func bucketField(extraHelp string) TemplateField {
 	return TemplateField{Key: "bucket", Label: "存储桶", Type: FieldText, Required: true, configKey: "path", Help: help}
 }
 
+// publicBaseURLField 通用公开访问地址字段(可选)。
+func publicBaseURLField() TemplateField {
+	return TemplateField{Key: "public_base_url", Label: "公开访问地址", Type: FieldText,
+		Placeholder: "https://cdn.example.com", configKey: "public_base_url",
+		Help: "可选;存储桶(或其 CDN)的公开访问 URL 前缀,配置后该渠道可 302 直链"}
+}
+
 // Templates 返回内置模板清单(供 API 下发)。
 // @return 模板切片
 func Templates() []Template { return templates }
@@ -157,13 +164,7 @@ func Templates() []Template { return templates }
 // @return 合并后的渠道 config(含约定键 path)
 // @return ErrUnknownTemplate 或字段必填校验失败的 ErrInvalidChannel
 func BuildTemplateConfig(templateID string, inputs map[string]string) (string, map[string]string, error) {
-	var tpl *Template
-	for i := range templates {
-		if templates[i].ID == templateID {
-			tpl = &templates[i]
-			break
-		}
-	}
+	tpl := templateByID(templateID)
 	if tpl == nil {
 		return "", nil, ErrUnknownTemplate
 	}
@@ -188,4 +189,72 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 		config["endpoint"] = ep
 	}
 	return tpl.Driver, config, nil
+}
+
+// templateByID 按标识查内置模板。
+// @param templateID 模板标识
+// @return 命中的模板;不存在返回 nil
+func templateByID(templateID string) *Template {
+	for i := range templates {
+		if templates[i].ID == templateID {
+			return &templates[i]
+		}
+	}
+	return nil
+}
+
+// TemplateInputsFromConfig 从渠道 config 反解出模板表单字段值(供编辑表单预填)。
+// @Description: 与 BuildTemplateConfig 互逆——直落 configKey 的字段取同键值,
+// 参与 endpoint 拼接的字段按模板 endpoint 模式反向提取;密码字段以
+// SecretPlaceholder 掩码,凭证明文不下发。
+// @param templateID 模板标识
+// @param config 解密后的渠道 config
+// @return 表单字段值(键为 TemplateField.Key)
+// @return 模板是否存在
+func TemplateInputsFromConfig(templateID string, config map[string]string) (map[string]string, bool) {
+	tpl := templateByID(templateID)
+	if tpl == nil {
+		return nil, false
+	}
+	inputs := make(map[string]string, len(tpl.Fields))
+	for _, f := range tpl.Fields {
+		switch {
+		case f.Type == FieldPassword:
+			if config[f.configKey] != "" {
+				inputs[f.Key] = SecretPlaceholder
+			}
+		case f.configKey != "":
+			if v := config[f.configKey]; v != "" {
+				inputs[f.Key] = v
+			}
+		case tpl.endpointPattern != "":
+			if v, ok := extractPatternField(tpl.endpointPattern, f.Key, config["endpoint"]); ok {
+				inputs[f.Key] = v
+			}
+		}
+	}
+	return inputs, true
+}
+
+// extractPatternField 从按模式拼接出的 endpoint 中反向提取一个占位字段的值。
+// @Description: 以占位符两侧的字面前后缀切出中间值;仅支持模式含单个占位符的
+// 形态(内置模板均如此),前后缀含其他占位符时提取失败而非误配。
+// @param pattern endpoint 拼接模式,{fieldKey} 占位
+// @param key 待提取的字段标识
+// @param endpoint 实际 endpoint 值
+// @return 提取出的字段值
+// @return 是否提取成功
+func extractPatternField(pattern, key, endpoint string) (string, bool) {
+	marker := "{" + key + "}"
+	i := strings.Index(pattern, marker)
+	if i < 0 || endpoint == "" {
+		return "", false
+	}
+	prefix, suffix := pattern[:i], pattern[i+len(marker):]
+	if !strings.HasPrefix(endpoint, prefix) || !strings.HasSuffix(endpoint, suffix) ||
+		len(endpoint) < len(prefix)+len(suffix) {
+		return "", false
+	}
+	v := endpoint[len(prefix) : len(endpoint)-len(suffix)]
+	return v, v != ""
 }

@@ -36,13 +36,15 @@ type Driver struct {
 var _ driver.Driver = (*Driver)(nil)
 
 // New 以 remote 连接字符串创建 Driver。
+// @Description: 错误链不携带 remote 原文——连接字符串内联凭证,任何回显
+// (日志、API 错误消息)都是凭证泄露面。
 // @param remote rclone 连接字符串(本地路径或 ":backend,opt=v:path" 形式)
 // @return 创建好的驱动实例
 // @return remote 无法解析或后端初始化失败时的错误
 func New(ctx context.Context, remote string) (*Driver, error) {
 	f, err := fs.NewFs(ctx, remote)
 	if err != nil {
-		return nil, fmt.Errorf("初始化 rclone 后端 %q: %w", remote, err)
+		return nil, fmt.Errorf("初始化 rclone 后端: %w", err)
 	}
 	return &Driver{f: f}, nil
 }

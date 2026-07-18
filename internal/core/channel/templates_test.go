@@ -77,6 +77,76 @@ func TestBuildTemplateConfigRequired(t *testing.T) {
 	}
 }
 
+// TestTemplateInputsFromConfig 表单字段反解与 BuildTemplateConfig 互逆:
+// 直落键取回原值、拼接字段从 endpoint 反提、密码字段哨兵掩码。
+func TestTemplateInputsFromConfig(t *testing.T) {
+	cases := map[string]struct {
+		template   string
+		config     map[string]string
+		wantInputs map[string]string
+	}{
+		"R2 从端点反提 account_id": {
+			template: "r2",
+			config: map[string]string{
+				"provider": "Cloudflare", "region": "auto",
+				"access_key_id": "AK", "secret_access_key": "SK",
+				"endpoint": "https://acc123.r2.cloudflarestorage.com", "path": "imgs",
+				"public_base_url": "https://cdn.example.com",
+			},
+			wantInputs: map[string]string{
+				"access_key_id": "AK", "secret_access_key": SecretPlaceholder,
+				"account_id": "acc123", "bucket": "imgs", "public_base_url": "https://cdn.example.com",
+			},
+		},
+		"COS 从端点反提 region": {
+			template: "cos",
+			config: map[string]string{
+				"provider": "TencentCOS", "access_key_id": "SID", "secret_access_key": "SKEY",
+				"endpoint": "cos.ap-shanghai.myqcloud.com", "path": "b-125",
+			},
+			wantInputs: map[string]string{
+				"access_key_id": "SID", "secret_access_key": SecretPlaceholder,
+				"region": "ap-shanghai", "bucket": "b-125",
+			},
+		},
+		"MinIO 直落键原样取回": {
+			template: "minio",
+			config: map[string]string{
+				"provider": "Minio", "access_key_id": "AK", "secret_access_key": "SK",
+				"endpoint": "https://minio.local", "path": "b",
+			},
+			wantInputs: map[string]string{
+				"access_key_id": "AK", "secret_access_key": SecretPlaceholder,
+				"endpoint": "https://minio.local", "bucket": "b",
+			},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			inputs, ok := TemplateInputsFromConfig(tc.template, tc.config)
+			if !ok {
+				t.Fatalf("模板 %q 应存在", tc.template)
+			}
+			for k, want := range tc.wantInputs {
+				if inputs[k] != want {
+					t.Errorf("inputs[%q] = %q, 期望 %q", k, inputs[k], want)
+				}
+			}
+		})
+	}
+	if _, ok := TemplateInputsFromConfig("no-such", nil); ok {
+		t.Error("未知模板应返回 ok=false")
+	}
+	// 端点与模式不匹配(如手工改过配置)时拼接字段缺省而非误配。
+	inputs, ok := TemplateInputsFromConfig("r2", map[string]string{"endpoint": "https://other.example.com"})
+	if !ok {
+		t.Fatal("r2 模板应存在")
+	}
+	if v, exists := inputs["account_id"]; exists {
+		t.Errorf("模式不匹配仍反提出 account_id=%q", v)
+	}
+}
+
 // TestTemplatesDownloadShape 下发的模板不泄露预设/拼接细节(仅暴露渲染所需字段)。
 func TestTemplatesDownloadShape(t *testing.T) {
 	for _, tpl := range Templates() {

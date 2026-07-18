@@ -173,6 +173,39 @@ func TestReconcileRequeuesPending(t *testing.T) {
 	waitDone(t, env, blobID, env.backup.ID)
 }
 
+// TestReconcileSeedsMissingRows 验证对账收敛播种:blob 在某渠道完全缺
+// blob_channels 行(上传快照与渠道创建竞窗的产物)时,对账补上该行并
+// 经既有补齐链路收敛为真实副本。
+func TestReconcileSeedsMissingRows(t *testing.T) {
+	env := newTestEnv(t)
+	const key = "race_00000000"
+	payload := []byte("seed-race-0123456789")
+	if err := env.local.Driver.Put(t.Context(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+		t.Fatalf("写源对象: %v", err)
+	}
+	blobID, err := env.queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
+		Sha256: "racehash", Phash: 1, StorageKey: key, Mime: "image/png",
+		Size: int64(len(payload)), Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("创建 blob 记录: %v", err)
+	}
+	// 只落 local 的 done 行,backup 渠道无任何行——模拟竞窗漏播。
+	if err := env.queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
+		BlobID: blobID, ChannelID: env.local.ID, State: channel.StateDone,
+	}); err != nil {
+		t.Fatalf("写源副本状态: %v", err)
+	}
+
+	if err := env.runner.Reconcile(t.Context()); err != nil {
+		t.Fatalf("对账扫描: %v", err)
+	}
+	waitDone(t, env, blobID, env.backup.ID)
+	if _, err := env.backup.Driver.Stat(t.Context(), key); err != nil {
+		t.Fatalf("补种副本未真实写入: %v", err)
+	}
+}
+
 // TestReconcileResetsFailedOnHealthyChannel 验证对账把健康渠道上的 failed 副本
 // 复位为 pending 并最终补齐(failed 不是永久终态)。
 func TestReconcileResetsFailedOnHealthyChannel(t *testing.T) {
@@ -188,6 +221,45 @@ func TestReconcileResetsFailedOnHealthyChannel(t *testing.T) {
 		t.Fatalf("对账扫描: %v", err)
 	}
 	waitDone(t, env, blobID, env.backup.ID)
+}
+
+// TestBackfillNewChannel 验证新渠道存量回填:创建渠道即播种 pending 副本行,
+// 唤醒补齐管道(Reconcile)后由既有链路消化为真实副本。
+func TestBackfillNewChannel(t *testing.T) {
+	env := newTestEnv(t)
+	blobID, key := seedBlob(t, env)
+
+	thirdID, err := env.mgr.Create(t.Context(), channel.CreateParams{
+		Name: "third", Driver: "local",
+		Config:   map[string]string{"path": t.TempDir()},
+		Priority: 50,
+	})
+	if err != nil {
+		t.Fatalf("创建第三渠道: %v", err)
+	}
+	row, err := env.queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{
+		BlobID: blobID, ChannelID: thirdID,
+	})
+	if err != nil {
+		t.Fatalf("存量 blob 未随创建播种: %v", err)
+	}
+	if row.State != channel.StatePending {
+		t.Fatalf("播种状态 = %q, 期望 pending", row.State)
+	}
+
+	// 唤醒补齐管道(与 API 层创建渠道后的主动唤醒同一入口)。
+	if err := env.runner.Reconcile(t.Context()); err != nil {
+		t.Fatalf("唤醒补齐: %v", err)
+	}
+	waitDone(t, env, blobID, thirdID)
+
+	third, ok := env.mgr.Get(thirdID)
+	if !ok {
+		t.Fatalf("第三渠道句柄缺失")
+	}
+	if _, err := third.Driver.Stat(t.Context(), key); err != nil {
+		t.Fatalf("回填副本未真实写入: %v", err)
+	}
 }
 
 // TestGCRemovesExpiredOrphans 验证孤儿回收:超宽限期的未知对象被删,

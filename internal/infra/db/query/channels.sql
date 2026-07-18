@@ -1,6 +1,6 @@
 -- name: CreateChannel :one
-INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link, template)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: ListChannels :many
@@ -16,6 +16,23 @@ WHERE id = ?;
 -- name: UpdateChannelHealth :exec
 UPDATE channels
 SET healthy = ?
+WHERE id = ?;
+
+-- name: UpdateChannelProbeResult :exec
+UPDATE channels
+SET healthy         = ?,
+    last_checked_at = datetime('now'),
+    last_error      = ?
+WHERE id = ?;
+
+-- name: UpdateChannelConfig :exec
+UPDATE channels
+SET name              = ?,
+    driver            = ?,
+    config_sealed     = ?,
+    priority          = ?,
+    allow_direct_link = ?,
+    template          = ?
 WHERE id = ?;
 
 -- name: DeleteChannel :exec

@@ -173,10 +173,17 @@ func (r *Runner) EnqueueDelete(ctx context.Context, channelID int64, storageKey 
 	return nil
 }
 
-// Reconcile 对账兜底:重置已恢复渠道的 failed 副本,再分页扫描全部未完成
-// 副本重新入队(启动恢复与定期对账共用;入队按参数去重,重复无害)。
-// @return 扫描或入队失败时的错误
+// Reconcile 对账兜底:补种缺失的副本行,重置已恢复渠道的 failed 副本,再分页
+// 扫描全部未完成副本重新入队(启动恢复与定期对账共用;入队按参数去重,重复无害)。
+// @return 播种、扫描或入队失败时的错误
 func (r *Runner) Reconcile(ctx context.Context) error {
+	// 收敛播种:上传以开始时的渠道快照落副本行,与渠道创建并发时新渠道可能
+	// 漏掉在途 blob 的行;按 NOT EXISTS 周期补齐使缺行自愈(已收敛时近似只读)。
+	for _, h := range r.cfg.Manager.All() {
+		if _, err := r.cfg.Queries.SeedBlobChannelsForChannel(ctx, h.ID); err != nil {
+			return fmt.Errorf("补种渠道 %q 缺失副本行: %w", h.Name, err)
+		}
+	}
 	// failed 不是永久终态:渠道恢复健康后给它的失败副本重来的机会。
 	for _, h := range r.cfg.Manager.Healthy() {
 		if err := r.cfg.Queries.ResetFailedBlobChannels(ctx, h.ID); err != nil {
