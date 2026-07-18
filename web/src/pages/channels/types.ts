@@ -1,0 +1,22 @@
+/** 渠道模块共享类型,与后端 channel.Info 的 JSON 形态对齐。 */
+
+/** ReplicaStats 渠道的副本补齐水位(按副本状态聚合)。 */
+export interface ReplicaStats {
+  done: number; // 已就绪副本数
+  pending: number; // 待补齐副本数(含补齐进行中)
+  failed: number; // 补齐失败副本数
+}
+
+/** ChannelItem 渠道列表项(凭证与配置不出库)。 */
+export interface ChannelItem {
+  id: number;
+  name: string;
+  driver: string;
+  priority: number;
+  healthy: boolean;
+  encrypted: boolean;
+  allow_direct_link: boolean;
+  last_checked_at: string; // 最近探测时刻,UTC 文本;空 = 尚未探测
+  last_error: string; // 最近探测失败原因(人话化);空 = 最近一次探测成功
+  replicas: ReplicaStats; // 副本补齐水位
+}
