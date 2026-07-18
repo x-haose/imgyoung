@@ -12,7 +12,7 @@ func TestLimiterBurstAndRefill(t *testing.T) {
 	l := NewLoginLimiter()
 	l.now = func() time.Time { return now }
 
-	for i := range loginBurst {
+	for i := range LoginBurst {
 		if !l.Allow("ip:a") {
 			t.Fatalf("第 %d 次尝试应在突发额度内放行", i+1)
 		}
@@ -23,7 +23,7 @@ func TestLimiterBurstAndRefill(t *testing.T) {
 	if !l.Allow("ip:b") {
 		t.Fatal("其他键不应受影响")
 	}
-	now = now.Add(loginRefillEvery + time.Second)
+	now = now.Add(LoginRefillEvery + time.Second)
 	if !l.Allow("ip:a") {
 		t.Fatal("补充间隔后应恢复一次额度")
 	}
@@ -32,7 +32,7 @@ func TestLimiterBurstAndRefill(t *testing.T) {
 // TestLimiterReset 重置后额度恢复,其余键不受影响。
 func TestLimiterReset(t *testing.T) {
 	l := NewLoginLimiter()
-	for range loginBurst {
+	for range LoginBurst {
 		l.Allow("ip:a")
 		l.Allow("ip:b")
 	}

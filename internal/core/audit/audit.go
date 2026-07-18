@@ -43,6 +43,10 @@ const (
 	ActionDedupDismiss = "dedup.dismiss"
 	// ActionCleanupKeep 待清理引用裁决保留(清理豁免)。
 	ActionCleanupKeep = "cleanup.keep"
+	// ActionRefererAdd 防盗链白名单规则添加。
+	ActionRefererAdd = "referer.add"
+	// ActionRefererRemove 防盗链白名单规则删除。
+	ActionRefererRemove = "referer.remove"
 )
 
 // Recorder 审计记录器,追加写 audit_log。

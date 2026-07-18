@@ -7,10 +7,13 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// 登录限速参数:每个键(IP 或用户名)允许突发 5 次尝试,之后每 12 秒恢复 1 次。
+// 登录限速参数:每个键(IP 或用户名)允许突发尝试,之后按固定间隔恢复额度;
+// 导出常量供配置可见性切面展示当前生效参数。
 const (
-	loginBurst        = 5
-	loginRefillEvery  = 12 * time.Second
+	// LoginBurst 每个键(IP / 用户名)允许的突发登录尝试次数。
+	LoginBurst = 5
+	// LoginRefillEvery 突发额度用尽后,每恢复一次尝试额度所需的间隔。
+	LoginRefillEvery  = 12 * time.Second
 	limiterMaxEntries = 1024      // 键表容量上限,超出即触发过期清理,防内存无界
 	limiterEntryTTL   = time.Hour // 键闲置超过该时长视为可回收
 )
@@ -46,7 +49,7 @@ func (l *LoginLimiter) Allow(key string) bool {
 		if len(l.entries) >= limiterMaxEntries {
 			l.prune(now)
 		}
-		e = &limiterEntry{lim: rate.NewLimiter(rate.Every(loginRefillEvery), loginBurst)}
+		e = &limiterEntry{lim: rate.NewLimiter(rate.Every(LoginRefillEvery), LoginBurst)}
 		l.entries[key] = e
 	}
 	e.lastSeen = now

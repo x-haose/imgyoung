@@ -5,13 +5,22 @@ package main
 import (
 	"log/slog"
 	"net/http"
+	"os"
 
 	"go.uber.org/fx"
 	"go.uber.org/fx/fxevent"
 )
 
-// main 进程入口:构建 fx 应用并运行,直至收到 SIGINT/SIGTERM 优雅停机。
+// main 进程入口:无参数即启动服务,带参数则分发到运维子命令(如 reset-password)。
 func main() {
+	if len(os.Args) > 1 {
+		os.Exit(runSubcommand(os.Args[1:]))
+	}
+	runServer()
+}
+
+// runServer 构建 fx 应用并运行,直至收到 SIGINT/SIGTERM 优雅停机。
+func runServer() {
 	fx.New(
 		fx.Provide(
 			provideLogger,
@@ -25,6 +34,7 @@ func main() {
 			provideUpload,
 			provideMetrics,
 			provideAudit,
+			provideReferer,
 			provideVariantStore,
 			provideVariants,
 			providePublicAPI,

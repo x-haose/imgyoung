@@ -23,6 +23,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
@@ -104,6 +105,10 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 	if err := authSvc.SetPassword(t.Context(), sqlc.DefaultUserID, testAdminPass); err != nil {
 		t.Fatalf("设置管理员密码: %v", err)
 	}
+	refererSvc, err := referer.New(t.Context(), queries, nil)
+	if err != nil {
+		t.Fatalf("创建防盗链服务: %v", err)
+	}
 
 	tc := testConfig{
 		Public: publicapi.Config{
@@ -116,14 +121,17 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 			Logger:            discard,
 		},
 		Admin: adminapi.Config{
-			Admin:  mgr,
-			Auth:   authSvc,
-			Audit:  audit.New(queries),
-			Logger: discard,
+			Admin:   mgr,
+			Auth:    authSvc,
+			Queries: queries,
+			Audit:   audit.New(queries),
+			Referer: refererSvc,
+			Logger:  discard,
 		},
 		Router: router.Config{
 			Auth:                 authSvc,
 			MaxConcurrentUploads: 4,
+			RefererPatterns:      refererSvc.Patterns,
 			AllowEmptyReferer:    true,
 			Metrics:              observability.New(),
 			Logger:               discard,
@@ -360,7 +368,7 @@ func TestUploadBaseURL(t *testing.T) {
 // TestRefererProtection 验证防盗链:白名单命中放行、未命中 403、空 Referer 按配置。
 func TestRefererProtection(t *testing.T) {
 	ts := newTestServer(t, func(tc *testConfig, _ testEnv) {
-		tc.Router.RefererWhitelist = []string{"*.ok.com"}
+		tc.Router.RefererPatterns = func() []string { return []string{"*.ok.com"} }
 		tc.Router.AllowEmptyReferer = true
 	})
 	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)

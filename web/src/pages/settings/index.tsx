@@ -1,10 +1,12 @@
 import { DownloadOutlined } from "@ant-design/icons";
 import { useLogout, usePermissions } from "@refinedev/core";
-import { App as AntdApp, Button, Card, Flex, Form, Input, Typography } from "antd";
+import { Alert, App as AntdApp, Button, Card, Flex, Form, Input, Typography } from "antd";
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
 import { sessionUser } from "../../providers/authProvider";
+import { RefererCard } from "./RefererCard";
+import { RuntimeConfigCard } from "./RuntimeConfigCard";
 
 /** 改密表单值。 */
 interface PasswordForm {
@@ -13,7 +15,7 @@ interface PasswordForm {
   confirm: string;
 }
 
-/** 设置页:修改密码(改后全端下线重新登录);管理员另有元数据导出。 */
+/** 设置页:修改密码(改后全端下线重新登录);管理员另有运行配置、防盗链与元数据导出。 */
 export function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const { mutate: logout } = useLogout();
@@ -42,7 +44,7 @@ export function SettingsPage() {
   };
 
   return (
-    <Flex vertical gap={16} style={{ maxWidth: 480 }}>
+    <Flex vertical gap={16} style={{ maxWidth: 640 }}>
       <div>
         <Typography.Title level={4} style={{ margin: 0 }}>
           设置
@@ -92,15 +94,27 @@ export function SettingsPage() {
       </Card>
 
       {role === "admin" && (
-        <Card title="数据导出">
-          <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
-            导出全部元数据(用户、渠道、图片、副本分布,凭证脱敏)。图与账本都在渠道里,
-            即便项目停更也能凭此自救。
-          </Typography.Paragraph>
-          <Button icon={<DownloadOutlined />} href="/api/admin/export" target="_blank">
-            导出 JSON
-          </Button>
-        </Card>
+        <>
+          <RuntimeConfigCard />
+          <RefererCard />
+          <Card title="数据导出">
+            <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+              导出全部元数据(用户、渠道、图片、副本分布,凭证脱敏)。图与账本都在渠道里,
+              即便项目停更也能凭此自救。
+            </Typography.Paragraph>
+            <Alert
+              type="warning"
+              showIcon
+              message="主密钥文件须单独离线备份"
+              description="主密钥(数据目录下的 master.key)不包含在数据导出与远端快照中;
+              丢失后渠道凭证与加密渠道数据将永久不可恢复,请复制该文件到独立的安全位置。"
+              style={{ marginBottom: 16 }}
+            />
+            <Button icon={<DownloadOutlined />} href="/api/admin/export" target="_blank">
+              导出 JSON
+            </Button>
+          </Card>
+        </>
       )}
     </Flex>
   );

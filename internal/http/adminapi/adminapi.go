@@ -11,6 +11,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -57,7 +58,9 @@ type Config struct {
 	Dedup              DedupAdmin        // 相似候选裁决执行口
 	Queries            *sqlc.Queries     // 列表与统计查询
 	Audit              *audit.Recorder   // 管理操作审计记录器
+	Referer            *referer.Service  // 防盗链白名单管理(增删热生效)
 	Runtime            RuntimeConfigView // 只读运行配置切面,GET /config 原样返回
+	Full               FullConfigView    // 全量非敏感配置切面,GET /config/full 原样返回(管理员)
 	Logger             *slog.Logger      // 结构化日志
 }
 

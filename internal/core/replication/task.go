@@ -25,8 +25,9 @@ import (
 // reconcileBatch 恢复扫描的分页大小(循环取批直到取尽)。
 const reconcileBatch = 1000
 
-// reconcileInterval 定期对账间隔:重置已恢复渠道的 failed 副本并捞回悬空行。
-const reconcileInterval = 10 * time.Minute
+// ReconcileInterval 定期对账间隔:重置已恢复渠道的 failed 副本并捞回悬空行。
+// 导出供配置可见性切面展示当前生效参数。
+const ReconcileInterval = 10 * time.Minute
 
 // replicateQueueWorkers 补齐队列的并发 worker 数。
 const replicateQueueWorkers = 4
@@ -117,7 +118,7 @@ func (r *Runner) Start(ctx context.Context) error {
 		return err
 	}
 	go func() {
-		reconcileTicker := time.NewTicker(reconcileInterval)
+		reconcileTicker := time.NewTicker(ReconcileInterval)
 		defer reconcileTicker.Stop()
 		gcTicker := time.NewTicker(gcInterval)
 		defer gcTicker.Stop()

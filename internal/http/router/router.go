@@ -22,7 +22,7 @@ type Config struct {
 	Auth                 *auth.Service          // 认证服务(Token 与会话校验)
 	UploadRatePerMinute  int                    // 每用户每分钟上传次数上限;<= 0 表示不启用
 	MaxConcurrentUploads int                    // 上传并发上限(内存三道闸之一),必须 > 0
-	RefererWhitelist     []string               // 防盗链白名单;为空表示不启用
+	RefererPatterns      func() []string        // 防盗链白名单快照读取口(热生效);nil 或返回空表示不启用
 	AllowEmptyReferer    bool                   // 空 Referer 是否放行
 	Metrics              *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
 	Web                  fs.FS                  // 后台前端产物;nil 表示不服务页面
@@ -94,6 +94,10 @@ func New(cfg Config) http.Handler {
 				ad.Put("/users/{id}", cfg.Admin.HandleUserUpdate)
 				ad.Post("/users/{id}/password", cfg.Admin.HandleUserResetPassword)
 				ad.Delete("/users/{id}", cfg.Admin.HandleUserDelete)
+				ad.Get("/config/full", cfg.Admin.HandleConfigFull)
+				ad.Get("/referer-whitelist", cfg.Admin.HandleRefererList)
+				ad.Post("/referer-whitelist", cfg.Admin.HandleRefererAdd)
+				ad.Delete("/referer-whitelist/{id}", cfg.Admin.HandleRefererDelete)
 				ad.Get("/audit", cfg.Admin.HandleAuditList)
 				ad.Get("/export", cfg.Admin.HandleExport)
 				ad.Get("/dedup", cfg.Admin.HandleDedupCandidates)
@@ -106,7 +110,7 @@ func New(cfg Config) http.Handler {
 	})
 	r.Group(func(g chi.Router) {
 		// 防盗链只作用于对外公开图片入口。
-		g.Use(middleware.RefererCheck(cfg.RefererWhitelist, cfg.AllowEmptyReferer))
+		g.Use(middleware.RefererCheck(cfg.RefererPatterns, cfg.AllowEmptyReferer))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
 	})
 	if cfg.Web != nil {

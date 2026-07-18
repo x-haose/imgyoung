@@ -19,6 +19,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/dedup"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -340,11 +341,19 @@ func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel
 	})
 }
 
+// provideReferer 构造防盗链白名单服务(规则真相在 DB,配置仅作首启种子)。
+// @return 白名单服务
+// @return 种子非法或装载失败时的错误
+func provideReferer(cfg config.Config, queries *sqlc.Queries) (*referer.Service, error) {
+	return referer.New(context.Background(), queries, cfg.RefererWhitelist)
+}
+
 // provideAdminAPI 构造管理面处理器集(认证、用户/Token/图片/渠道管理与审计)。
 // @return 管理面处理器集
 func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.Service,
 	sweeper *lifecycle.Sweeper, merger *dedup.Merger, queries *sqlc.Queries,
-	runner *replication.Runner, auditRec *audit.Recorder, logger *slog.Logger) *adminapi.Handlers {
+	runner *replication.Runner, auditRec *audit.Recorder, refererSvc *referer.Service,
+	logger *slog.Logger) *adminapi.Handlers {
 	return adminapi.New(adminapi.Config{
 		Admin:              manager,
 		Replicator:         runner,
@@ -354,6 +363,8 @@ func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.
 		Dedup:              merger,
 		Queries:            queries,
 		Audit:              auditRec,
+		Referer:            refererSvc,
+		Full:               adminapi.FullConfigViewFrom(cfg),
 		Runtime: adminapi.RuntimeConfigView{
 			ColdCleanupDays:    cfg.ColdCleanupDays,
 			DeleteGraceMinutes: cfg.DeleteGraceMinutes,
@@ -372,14 +383,15 @@ func provideAdminAPI(cfg config.Config, manager *channel.Manager, authSvc *auth.
 // provideRouter 组装完整 HTTP 路由。
 // @return 可挂载到 http.Server 的处理器
 func provideRouter(cfg config.Config, pub *publicapi.Handlers, adm *adminapi.Handlers,
-	authSvc *auth.Service, metrics *observability.Metrics, logger *slog.Logger) http.Handler {
+	authSvc *auth.Service, refererSvc *referer.Service, metrics *observability.Metrics,
+	logger *slog.Logger) http.Handler {
 	return router.New(router.Config{
 		Public:               pub,
 		Admin:                adm,
 		Auth:                 authSvc,
 		UploadRatePerMinute:  cfg.UploadRatePerMin,
 		MaxConcurrentUploads: cfg.MaxConcurrentUploads,
-		RefererWhitelist:     cfg.RefererWhitelist,
+		RefererPatterns:      refererSvc.Patterns,
 		AllowEmptyReferer:    cfg.AllowEmptyReferer,
 		Metrics:              metrics,
 		Web:                  web.Dist(),

@@ -88,6 +88,12 @@ type Image struct {
 	CreatedAt          string
 }
 
+type RefererWhitelist struct {
+	ID        int64
+	Pattern   string
+	CreatedAt string
+}
+
 type Session struct {
 	TokenHash string
 	UserID    string

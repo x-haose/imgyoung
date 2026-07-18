@@ -53,6 +53,17 @@ export function LoginPage() {
             登录
           </Button>
         </Form>
+        <Typography.Paragraph
+          type="secondary"
+          style={{ fontSize: 12, lineHeight: 1.7, margin: "16px 2px 0", textAlign: "center" }}
+        >
+          首次登录:用户名 admin,初始密码见服务启动日志(仅首次启动打印)。
+          <br />
+          忘记密码?在服务器上执行{" "}
+          <Typography.Text code style={{ fontSize: 11 }}>
+            imgyoung reset-password
+          </Typography.Text>
+        </Typography.Paragraph>
       </Card>
     </Flex>
   );

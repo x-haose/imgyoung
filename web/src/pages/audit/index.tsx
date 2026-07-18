@@ -36,6 +36,9 @@ function actionColor(action: string): string {
   if (action.startsWith("image.")) {
     return "volcano";
   }
+  if (action.startsWith("referer.")) {
+    return "green";
+  }
   return "default";
 }
 
@@ -57,6 +60,8 @@ const actionOptions = [
   "dedup.merge",
   "dedup.dismiss",
   "cleanup.keep",
+  "referer.add",
+  "referer.remove",
 ].map((v) => ({ value: v, label: v }));
 
 /** 每页审计条数。 */
