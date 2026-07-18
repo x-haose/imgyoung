@@ -26,11 +26,13 @@ function buildGroups(cfg: FullConfig): ConfigGroup[] {
       title: "服务",
       items: [
         { label: "监听地址", value: cfg.server.listen },
-        { label: "对外站点地址", value: cfg.server.base_url || "未设置(返回相对路径)" },
+        { label: "对外站点地址", value: cfg.server.base_url || "未设置(按请求域名推导)" },
         {
           label: "访问模式",
           value: cfg.server.access_mode === "redirect" ? "redirect(302 省流量)" : "proxy(代理)",
         },
+        { label: "Cloudflare Zone ID", value: cfg.server.cdn_cloudflare_zone_id || "未设置" },
+        { label: "删除级联 CDN purge", value: onOff(cfg.server.cdn_purge_enabled) },
       ],
     },
     {

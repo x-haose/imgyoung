@@ -1,6 +1,6 @@
 -- name: CreateUser :exec
-INSERT INTO users (id, name, password_hash, role, quota_bytes)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO users (id, name, password_hash, role, quota_bytes, default_ttl_hours)
+VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: GetUser :one
 SELECT *
@@ -29,7 +29,7 @@ WHERE id = ?;
 
 -- name: UpdateUser :exec
 UPDATE users
-SET name = ?, role = ?, quota_bytes = ?, disabled = ?
+SET name = ?, role = ?, quota_bytes = ?, default_ttl_hours = ?, disabled = ?
 WHERE id = ?;
 
 -- name: DeleteUser :exec

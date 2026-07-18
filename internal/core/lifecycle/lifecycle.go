@@ -32,12 +32,21 @@ type VariantCleaner interface {
 	DeleteByBlob(ctx context.Context, blobID int64) error
 }
 
+// PurgeEnqueuer CDN 边缘缓存清理入队口(由 replication.Runner 实现):
+// 引用删除级联时异步清理其公开 URL 的边缘缓存,失败由任务队列退避重试。
+type PurgeEnqueuer interface {
+	// EnqueuePurge 入队一组绝对 URL 的边缘缓存清理任务(幂等)。
+	EnqueuePurge(ctx context.Context, urls []string) error
+}
+
 // Config Sweeper 的依赖与参数。
 type Config struct {
 	Conn          *sql.DB        // 数据库连接(多步删除的事务用)
 	Queries       *sqlc.Queries  // sqlc 查询集
 	Deleter       Deleter        // 渠道对象删除入队口
 	Variants      VariantCleaner // 衍生图缓存清理;为 nil 时跳过
+	Purger        PurgeEnqueuer  // CDN 缓存清理入队口;为 nil 时跳过
+	BaseURL       string         // 对外站点地址(无尾斜杠),拼 purge 绝对 URL;purge 只认配置值——异步任务无请求上下文可推导,为空时跳过 purge
 	Grace         time.Duration  // 物理删宽限:引用归零打标到实际物理删的等待,可为 0
 	ColdThreshold time.Duration  // 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;<=0 表示不启用
 	Logger        *slog.Logger   // 结构化日志
@@ -144,6 +153,8 @@ func (s *Sweeper) DeleteImage(ctx context.Context, imageID string) error {
 // expireOne 在单事务内回收一条到期引用(引用计数是唯一真相,故删引用与减计数同事务)。
 // @return 事务失败时的错误
 func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) error {
+	// 先于删除收集 purge URL:变体索引行到物理删阶段才消亡,此刻仍可枚举齐全。
+	purgeURLs := s.collectPurgeURLs(ctx, imageID, blobID)
 	tx, err := s.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开启事务: %w", err)
@@ -178,7 +189,58 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交到期回收: %w", err)
 	}
+	// 引用已死,其公开 URL 随之失效:异步清 CDN 边缘缓存,不阻塞删除。
+	s.enqueuePurge(ctx, imageID, purgeURLs)
 	return nil
+}
+
+// collectPurgeURLs 枚举一条引用对外可能被 CDN 缓存的 URL:原图 /i/{id},
+// 加上该物理图实际生成过的变体参数组合(显式 ?w=&format= 与协商 ?w= 两种形态)。
+// @Description: purge 未启用(无 Purger 或无 BaseURL)时返回 nil,不做无谓枚举;
+// 枚举失败降级为只清原图 URL。format=auto 等其余查询串形态无法穷举,
+// 漏网 URL 由 CDN 自身缓存 TTL 兜底过期。
+// @param imageID 引用短 ID
+// @param blobID 引用指向的物理图主键
+// @return 待清理的绝对 URL 列表;purge 未启用时为 nil
+func (s *Sweeper) collectPurgeURLs(ctx context.Context, imageID string, blobID int64) []string {
+	if s.cfg.Purger == nil || s.cfg.BaseURL == "" {
+		return nil
+	}
+	base := s.cfg.BaseURL + "/i/" + imageID
+	urls := []string{base}
+	rows, err := s.cfg.Queries.ListVariantURLParams(ctx, blobID)
+	if err != nil {
+		s.cfg.Logger.Warn("枚举变体参数失败,仅清理原图 URL", "image", imageID, "err", err)
+		return urls
+	}
+	seen := map[string]struct{}{base: {}}
+	add := func(u string) {
+		if _, ok := seen[u]; !ok {
+			seen[u] = struct{}{}
+			urls = append(urls, u)
+		}
+	}
+	for _, v := range rows {
+		if v.Width > 0 {
+			add(fmt.Sprintf("%s?w=%d", base, v.Width))
+			add(fmt.Sprintf("%s?w=%d&format=%s", base, v.Width, v.Format))
+		} else {
+			add(base + "?format=" + v.Format)
+		}
+	}
+	return urls
+}
+
+// enqueuePurge 入队 CDN 缓存清理;失败仅告警,绝不阻塞删除流程。
+// @param imageID 引用短 ID(日志定位用)
+// @param urls 待清理 URL;空列表为空操作
+func (s *Sweeper) enqueuePurge(ctx context.Context, imageID string, urls []string) {
+	if len(urls) == 0 {
+		return
+	}
+	if err := s.cfg.Purger.EnqueuePurge(ctx, urls); err != nil {
+		s.cfg.Logger.Warn("CDN purge 入队失败,边缘缓存待 CDN TTL 自然过期", "image", imageID, "err", err)
+	}
 }
 
 // physicalDelete 物理删已过宽限的物理图:事务内删业务行,再级联入队删渠道对象。
@@ -202,7 +264,8 @@ func (s *Sweeper) physicalDelete(ctx context.Context) error {
 
 // deleteBlob 物理删一个物理图:先取副本渠道清单,事务内删业务行,再级联入队删渠道对象。
 // @Description: 渠道对象删除走 best-effort 入队——失败即对象成孤儿,由对账 GC 最终回收,
-// 不阻塞逻辑删。
+// 不阻塞逻辑删。CDN purge 不在此层:物理删时引用行已全部消亡,无公开 URL 可还原,
+// 每条引用的 purge 已在 expireOne 回收该引用时逐条入队。
 // @return 事务失败时的错误
 func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey string) error {
 	// 先清衍生图缓存(文件+索引):variants 有外键指向 blobs,不先删其行,下面的 DeleteBlob 会被外键约束拦下。

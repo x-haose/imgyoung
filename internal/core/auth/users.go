@@ -29,23 +29,28 @@ var (
 	ErrEmptyPassword = errors.New("auth: 密码不能为空")
 )
 
+// CreateUserParams 建号参数。
+type CreateUserParams struct {
+	Name            string        // 登录名,全局唯一
+	Password        string        // 初始明文密码,必填并即时可登录
+	Role            string        // 角色,见 Role 常量
+	QuotaBytes      int64         // 存储配额上限,按引用计全额;<= 0 表示不限
+	DefaultTTLHours sql.NullInt64 // 上传默认有效期,小时;NULL 随全局默认,0 表示默认永久
+}
+
 // CreateUser 创建用户(管理员建号,不开放注册)。
-// @Description: 密码必填并即时可登录;quotaBytes <= 0 表示不限配额。
 // @param ctx 控制超时与取消
-// @param name 登录名,全局唯一
-// @param password 初始明文密码
-// @param role 角色,见 Role 常量
-// @param quotaBytes 存储配额上限,按引用计全额;<= 0 表示不限
+// @param p 建号参数
 // @return 新建用户行
 // @return ErrUserNameTaken / ErrInvalidRole / ErrEmptyPassword 或基础设施错误
-func (s *Service) CreateUser(ctx context.Context, name, password, role string, quotaBytes int64) (sqlc.User, error) {
-	if role != RoleAdmin && role != RoleUser {
+func (s *Service) CreateUser(ctx context.Context, p CreateUserParams) (sqlc.User, error) {
+	if p.Role != RoleAdmin && p.Role != RoleUser {
 		return sqlc.User{}, ErrInvalidRole
 	}
-	if password == "" {
+	if p.Password == "" {
 		return sqlc.User{}, ErrEmptyPassword
 	}
-	phc, err := HashPassword(password)
+	phc, err := HashPassword(p.Password)
 	if err != nil {
 		return sqlc.User{}, err
 	}
@@ -54,11 +59,12 @@ func (s *Service) CreateUser(ctx context.Context, name, password, role string, q
 		return sqlc.User{}, fmt.Errorf("生成用户 id: %w", err)
 	}
 	if err := s.cfg.Queries.CreateUser(ctx, sqlc.CreateUserParams{
-		ID:           userID,
-		Name:         name,
-		PasswordHash: phc,
-		Role:         role,
-		QuotaBytes:   quotaNull(quotaBytes),
+		ID:              userID,
+		Name:            p.Name,
+		PasswordHash:    phc,
+		Role:            p.Role,
+		QuotaBytes:      quotaNull(p.QuotaBytes),
+		DefaultTtlHours: p.DefaultTTLHours,
 	}); err != nil {
 		if isUniqueViolation(err, "users.name") {
 			return sqlc.User{}, ErrUserNameTaken
@@ -74,10 +80,11 @@ func (s *Service) CreateUser(ctx context.Context, name, password, role string, q
 
 // UpdateUserParams 用户资料的完整目标状态(PUT 语义)。
 type UpdateUserParams struct {
-	Name       string // 登录名
-	Role       string // 角色,见 Role 常量
-	QuotaBytes int64  // 存储配额;<= 0 表示不限
-	Disabled   bool   // 是否禁用
+	Name            string        // 登录名
+	Role            string        // 角色,见 Role 常量
+	QuotaBytes      int64         // 存储配额;<= 0 表示不限
+	DefaultTTLHours sql.NullInt64 // 上传默认有效期,小时;NULL 随全局默认,0 表示默认永久
+	Disabled        bool          // 是否禁用
 }
 
 // UpdateUser 更新用户资料;禁用即时生效(吊销其全部会话)。
@@ -97,11 +104,12 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, p UpdateUserPar
 		return ErrUserProtected
 	}
 	if err := s.cfg.Queries.UpdateUser(ctx, sqlc.UpdateUserParams{
-		Name:       p.Name,
-		Role:       p.Role,
-		QuotaBytes: quotaNull(p.QuotaBytes),
-		Disabled:   boolInt(p.Disabled),
-		ID:         userID,
+		Name:            p.Name,
+		Role:            p.Role,
+		QuotaBytes:      quotaNull(p.QuotaBytes),
+		DefaultTtlHours: p.DefaultTTLHours,
+		Disabled:        boolInt(p.Disabled),
+		ID:              userID,
 	}); err != nil {
 		if isUniqueViolation(err, "users.name") {
 			return ErrUserNameTaken

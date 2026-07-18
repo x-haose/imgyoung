@@ -116,19 +116,21 @@ type Token struct {
 }
 
 type User struct {
-	ID           string
-	Name         string
-	PasswordHash string
-	Role         string
-	QuotaBytes   sql.NullInt64
-	Disabled     int64
-	CreatedAt    string
+	ID              string
+	Name            string
+	PasswordHash    string
+	Role            string
+	QuotaBytes      sql.NullInt64
+	DefaultTtlHours sql.NullInt64
+	Disabled        int64
+	CreatedAt       string
 }
 
 type Variant struct {
 	ID         int64
 	BlobID     int64
 	ParamsHash string
+	Width      int64
 	Format     string
 	Size       int64
 	LastAccess string

@@ -106,6 +106,7 @@ type Config struct {
 	Replicator ReplicationEnqueuer // 补齐入队口;可为 nil(pending 行由恢复扫描兜底)
 	MaxPixels  int64               // 像素预算(width × height 上限)
 	MinSuccess int                 // 返回成功所需的最少副本数,小于 1 视为 1
+	DefaultTTL time.Duration       // 全局默认 TTL,<=0 表示永不过期;TTL 三层解析的最低层
 	Logger     *slog.Logger        // 结构化日志
 }
 
@@ -121,8 +122,9 @@ type Options struct {
 	TokenID        int64              // 上传所经 Token 的记录 id,0 表示非 Token 途径
 	FileName       string             // 原始文件名(仅存元数据,不参与任何逻辑)
 	IdempotencyKey string             // 客户端幂等键,可为空;按用户隔离
-	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入,本包不做隐式回退;strip 仅对 JPEG 生效
-	TTL            time.Duration      // 本次上传引用的有效时长,<=0 表示永不过期;调用方按"单次指定 > 全局默认"解析后传入,到期时刻由落库时刻推算
+	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入,本包不做隐式回退;strip 按格式分发(JPEG/PNG/WebP 剥离,GIF 直通)
+	TTL            time.Duration      // 请求显式指定的有效时长,仅 TTLSet 为 true 时生效;0 表示显式永久
+	TTLSet         bool               // 请求是否显式指定 ttl;false 时按"用户默认 > 全局默认"解析,到期时刻由落库时刻推算
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -188,14 +190,19 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, ErrTooManyPixels
 	}
 
+	// 用户行一次读取,配额预检与用户级 TTL 解析共用(上传热路径不多打一枪)。
+	user, err := s.cfg.Queries.GetUser(ctx, opts.UserID)
+	if err != nil {
+		return Result{}, fmt.Errorf("查询用户: %w", err)
+	}
 	// 配额预检:按引用计全额(去重合并不减账面),超限即拒绝、不写渠道。
-	if err := s.checkQuota(ctx, opts.UserID, int64(len(data))); err != nil {
+	if err := s.checkQuota(ctx, user, int64(len(data))); err != nil {
 		return Result{}, err
 	}
 
 	// 净化在前、哈希在后:哈希对象 = 实际存储字节。
-	if opts.EXIFPolicy == imaging.PolicyStrip && mime == mimeJPEG {
-		stripped, serr := imaging.StripJPEGMetadata(data)
+	if opts.EXIFPolicy == imaging.PolicyStrip {
+		stripped, serr := imaging.StripMetadata(data, mime)
 		if serr != nil {
 			return Result{}, fmt.Errorf("%w: %w", ErrInvalidImage, serr)
 		}
@@ -258,7 +265,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		size:     int64(len(data)),
 		width:    int64(meta.Width),
 		height:   int64(meta.Height),
-		ttl:      opts.TTL,
+		ttl:      resolveTTL(opts, user.DefaultTtlHours, s.cfg.DefaultTTL),
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -287,18 +294,14 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 // @Description: 口径为按引用计全额——每条引用计其 blob 的完整大小,查重合并
 // 不减账面;预检用上传原始字节数近似最终存储大小。
 // @param ctx 控制超时与取消
-// @param userID 归属用户 id
+// @param user 归属用户行(调用方已读取,避免热路径重复查询)
 // @param size 本次上传字节数
 // @return ErrQuotaExceeded 或基础设施错误
-func (s *Service) checkQuota(ctx context.Context, userID string, size int64) error {
-	user, err := s.cfg.Queries.GetUser(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("查询用户配额: %w", err)
-	}
+func (s *Service) checkQuota(ctx context.Context, user sqlc.User, size int64) error {
 	if !user.QuotaBytes.Valid {
 		return nil
 	}
-	used, err := s.cfg.Queries.UserStorageUsage(ctx, userID)
+	used, err := s.cfg.Queries.UserStorageUsage(ctx, user.ID)
 	if err != nil {
 		return fmt.Errorf("统计用户用量: %w", err)
 	}
@@ -306,6 +309,23 @@ func (s *Service) checkQuota(ctx context.Context, userID string, size int64) err
 		return ErrQuotaExceeded
 	}
 	return nil
+}
+
+// resolveTTL 三层解析本次上传的有效时长:请求显式指定(含 0 = 永久)>
+// 用户默认 default_ttl_hours(0 = 该用户默认永久)> 全局默认。
+// @param opts 上传参数(取显式 TTL 与其标志)
+// @param userHours 用户行的 default_ttl_hours;NULL 表示随全局
+// @param global 全局默认 TTL
+// @return 生效的有效时长,<=0 表示永不过期
+func resolveTTL(opts Options, userHours sql.NullInt64, global time.Duration) time.Duration {
+	switch {
+	case opts.TTLSet:
+		return opts.TTL
+	case userHours.Valid:
+		return time.Duration(userHours.Int64) * time.Hour
+	default:
+		return global
+	}
 }
 
 // minSuccess 归一化最少副本数(至少 1)。

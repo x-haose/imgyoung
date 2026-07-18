@@ -68,6 +68,7 @@ type RunnerConfig struct {
 	Conn    *sql.DB          // 数据库连接(River 复用同一 SQLite)
 	Queries *sqlc.Queries    // sqlc 查询集
 	Manager *channel.Manager // 渠道管理器(取源/目标驱动)
+	Purger  ObjectPurger     // CDN 缓存清理执行器;nil 表示 purge 未启用,EnqueuePurge 为空操作
 	Logger  *slog.Logger     // 结构化日志
 }
 
@@ -94,6 +95,9 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &replicateWorker{cfg: cfg})
 	river.AddWorker(workers, &deleteObjectWorker{cfg: cfg})
+	if cfg.Purger != nil {
+		river.AddWorker(workers, &cdnPurgeWorker{purger: cfg.Purger, cfg: cfg})
+	}
 	client, err := river.NewClient(driver, &river.Config{
 		Logger: cfg.Logger,
 		Queues: map[string]river.QueueConfig{

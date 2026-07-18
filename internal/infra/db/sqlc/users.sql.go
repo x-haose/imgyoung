@@ -23,16 +23,17 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 }
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO users (id, name, password_hash, role, quota_bytes)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO users (id, name, password_hash, role, quota_bytes, default_ttl_hours)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateUserParams struct {
-	ID           string
-	Name         string
-	PasswordHash string
-	Role         string
-	QuotaBytes   sql.NullInt64
+	ID              string
+	Name            string
+	PasswordHash    string
+	Role            string
+	QuotaBytes      sql.NullInt64
+	DefaultTtlHours sql.NullInt64
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
@@ -42,6 +43,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
 		arg.PasswordHash,
 		arg.Role,
 		arg.QuotaBytes,
+		arg.DefaultTtlHours,
 	)
 	return err
 }
@@ -57,7 +59,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, password_hash, role, quota_bytes, disabled, created_at
+SELECT id, name, password_hash, role, quota_bytes, default_ttl_hours, disabled, created_at
 FROM users
 WHERE id = ?
 `
@@ -71,6 +73,7 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.PasswordHash,
 		&i.Role,
 		&i.QuotaBytes,
+		&i.DefaultTtlHours,
 		&i.Disabled,
 		&i.CreatedAt,
 	)
@@ -78,7 +81,7 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 }
 
 const getUserByName = `-- name: GetUserByName :one
-SELECT id, name, password_hash, role, quota_bytes, disabled, created_at
+SELECT id, name, password_hash, role, quota_bytes, default_ttl_hours, disabled, created_at
 FROM users
 WHERE name = ?
 `
@@ -92,6 +95,7 @@ func (q *Queries) GetUserByName(ctx context.Context, name string) (User, error) 
 		&i.PasswordHash,
 		&i.Role,
 		&i.QuotaBytes,
+		&i.DefaultTtlHours,
 		&i.Disabled,
 		&i.CreatedAt,
 	)
@@ -99,7 +103,7 @@ func (q *Queries) GetUserByName(ctx context.Context, name string) (User, error) 
 }
 
 const listUsersWithUsage = `-- name: ListUsersWithUsage :many
-SELECT u.id, u.name, u.password_hash, u.role, u.quota_bytes, u.disabled, u.created_at,
+SELECT u.id, u.name, u.password_hash, u.role, u.quota_bytes, u.default_ttl_hours, u.disabled, u.created_at,
        CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS used_bytes,
        CAST(COUNT(i.id) AS INTEGER) AS image_count
 FROM users u
@@ -110,15 +114,16 @@ ORDER BY u.created_at
 `
 
 type ListUsersWithUsageRow struct {
-	ID           string
-	Name         string
-	PasswordHash string
-	Role         string
-	QuotaBytes   sql.NullInt64
-	Disabled     int64
-	CreatedAt    string
-	UsedBytes    int64
-	ImageCount   int64
+	ID              string
+	Name            string
+	PasswordHash    string
+	Role            string
+	QuotaBytes      sql.NullInt64
+	DefaultTtlHours sql.NullInt64
+	Disabled        int64
+	CreatedAt       string
+	UsedBytes       int64
+	ImageCount      int64
 }
 
 func (q *Queries) ListUsersWithUsage(ctx context.Context) ([]ListUsersWithUsageRow, error) {
@@ -136,6 +141,7 @@ func (q *Queries) ListUsersWithUsage(ctx context.Context) ([]ListUsersWithUsageR
 			&i.PasswordHash,
 			&i.Role,
 			&i.QuotaBytes,
+			&i.DefaultTtlHours,
 			&i.Disabled,
 			&i.CreatedAt,
 			&i.UsedBytes,
@@ -156,16 +162,17 @@ func (q *Queries) ListUsersWithUsage(ctx context.Context) ([]ListUsersWithUsageR
 
 const updateUser = `-- name: UpdateUser :exec
 UPDATE users
-SET name = ?, role = ?, quota_bytes = ?, disabled = ?
+SET name = ?, role = ?, quota_bytes = ?, default_ttl_hours = ?, disabled = ?
 WHERE id = ?
 `
 
 type UpdateUserParams struct {
-	Name       string
-	Role       string
-	QuotaBytes sql.NullInt64
-	Disabled   int64
-	ID         string
+	Name            string
+	Role            string
+	QuotaBytes      sql.NullInt64
+	DefaultTtlHours sql.NullInt64
+	Disabled        int64
+	ID              string
 }
 
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
@@ -173,6 +180,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 		arg.Name,
 		arg.Role,
 		arg.QuotaBytes,
+		arg.DefaultTtlHours,
 		arg.Disabled,
 		arg.ID,
 	)

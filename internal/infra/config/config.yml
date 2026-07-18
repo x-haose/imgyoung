@@ -9,7 +9,9 @@ master_key: ""               # 主密钥(64 位 hex);留空则用 data/master.ke
 max_upload_mb: 50            # 单图上限(MB)
 max_concurrent_uploads: 8    # 上传并发上限
 upload_rate_per_min: 0       # 每用户每分钟上传次数上限,超出 429;0 = 不启用
-base_url: ""                 # 对外站点地址;留空则上传响应返回相对路径
+base_url: ""                 # 对外站点地址;留空则上传响应按请求域名推导绝对地址
+cdn_cloudflare_zone_id: ""   # Cloudflare Zone ID;与 api_token、base_url 同时配置才启用删除级联的 CDN purge
+cdn_cloudflare_api_token: "" # Cloudflare API Token(Zone.Cache Purge 权限);敏感,不进日志与配置端点
 max_pixels_mp: 50            # 像素预算(百万像素)
 referer_whitelist: []        # 防盗链白名单;空表示不启用
 allow_empty_referer: true    # 空 Referer 是否放行

@@ -19,7 +19,7 @@ type RuntimeConfigView struct {
 	DefaultTTLHours    int    `json:"default_ttl_hours"`    // 全局默认 TTL(小时);0 表示永不过期
 	TTLRenewOnAccess   bool   `json:"ttl_renew_on_access"`  // 公开访问是否顺延带 TTL 图片的到期时刻
 	MaxUploadMB        int64  `json:"max_upload_mb"`        // 单图上限(MB)
-	BaseURL            string `json:"base_url"`             // 对外站点地址;空表示返回相对路径
+	BaseURL            string `json:"base_url"`             // 对外站点地址;空则按请求域名推导绝对地址
 	AccessMode         string `json:"access_mode"`          // 访问模式:proxy / redirect
 	EXIFPolicy         string `json:"exif_policy"`          // 全局 EXIF 档位:passthrough / strip
 }
@@ -47,9 +47,11 @@ type FullConfigView struct {
 
 // ServerConfigGroup 服务组:监听与对外形态。
 type ServerConfigGroup struct {
-	Listen     string `json:"listen"`      // HTTP 监听地址
-	BaseURL    string `json:"base_url"`    // 对外站点地址;空表示返回相对路径
-	AccessMode string `json:"access_mode"` // 访问模式:proxy / redirect
+	Listen              string `json:"listen"`                 // HTTP 监听地址
+	BaseURL             string `json:"base_url"`               // 对外站点地址;空则按请求域名推导绝对地址
+	AccessMode          string `json:"access_mode"`            // 访问模式:proxy / redirect
+	CDNCloudflareZoneID string `json:"cdn_cloudflare_zone_id"` // Cloudflare Zone ID;空表示未配置删除级联的 CDN purge
+	CDNPurgeEnabled     bool   `json:"cdn_purge_enabled"`      // 删除级联的 CDN purge 是否生效(zone、token、base_url 三者齐备)
 }
 
 // UploadConfigGroup 上传限制组:体量、像素与流量闸。
@@ -99,9 +101,11 @@ type ReliabilityConfigGroup struct {
 func FullConfigViewFrom(cfg config.Config) FullConfigView {
 	return FullConfigView{
 		Server: ServerConfigGroup{
-			Listen:     cfg.Listen,
-			BaseURL:    cfg.BaseURL,
-			AccessMode: cfg.AccessMode,
+			Listen:              cfg.Listen,
+			BaseURL:             cfg.BaseURL,
+			AccessMode:          cfg.AccessMode,
+			CDNCloudflareZoneID: cfg.CDNCloudflareZoneID,
+			CDNPurgeEnabled:     cfg.CDNPurgeEnabled(),
 		},
 		Upload: UploadConfigGroup{
 			MaxUploadMB:          cfg.MaxUploadBytes >> 20,

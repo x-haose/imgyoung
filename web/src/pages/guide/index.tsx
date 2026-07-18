@@ -185,7 +185,7 @@ export function GuidePage() {
             bordered
             items={[
               { label: "file", children: "必填,multipart 文件字段;按内容识别格式,仅收 jpeg / png / gif / webp" },
-              { label: "ttl", children: "可选,过期秒数;0 或 never 表示永久,留空跟随全局默认" },
+              { label: "ttl", children: "可选,过期秒数;0 或 never 表示永久,留空跟随默认(用户默认有效期,未设置则全局默认)" },
               { label: "exif_policy", children: "可选,strip(剥离元数据)/ passthrough(原样保留),留空跟随全局默认" },
               { label: "Idempotency-Key 头", children: "可选,幂等键;网络重试时带同一键不会重复建图" },
             ]}
@@ -235,7 +235,7 @@ export function GuidePage() {
           <Alert
             type="info"
             showIcon
-            message="返回的 url 是相对路径时,PicGo 拿不到完整链接:需在服务端配置 base_url(环境变量 IMGYOUNG_BASE_URL)为你的对外域名。"
+            message="未配置 base_url 时,返回的 url 按请求域名推导为绝对地址,直连场景开箱即用;经反代 / CDN 后对外域名与请求域名不一致时,需在服务端配置 base_url(环境变量 IMGYOUNG_BASE_URL)为你的对外域名。"
           />
         </Flex>
       </Card>

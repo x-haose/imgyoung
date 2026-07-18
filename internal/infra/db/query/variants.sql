@@ -4,8 +4,8 @@ FROM variants
 WHERE blob_id = ? AND params_hash = ?;
 
 -- name: UpsertVariant :exec
-INSERT INTO variants (blob_id, params_hash, format, size)
-VALUES (?, ?, ?, ?)
+INSERT INTO variants (blob_id, params_hash, width, format, size)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (blob_id, params_hash) DO UPDATE SET
     size = excluded.size,
     last_access = datetime('now');
@@ -36,4 +36,9 @@ WHERE id = ?;
 
 -- name: DeleteVariantsByBlob :exec
 DELETE FROM variants
+WHERE blob_id = ?;
+
+-- name: ListVariantURLParams :many
+SELECT DISTINCT width, format
+FROM variants
 WHERE blob_id = ?;

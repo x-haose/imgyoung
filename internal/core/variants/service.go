@@ -118,7 +118,7 @@ func (s *Service) process(blobID int64, key string, p imaging.ProcessParams, src
 		return result{}, fmt.Errorf("处理图片: %w", err)
 	}
 	// 落缓存失败不影响本次返回,仅记日志:下次访问会重建。
-	if perr := s.store.Put(pctx, blobID, key, p.Format, out); perr != nil {
+	if perr := s.store.Put(pctx, blobID, key, p.Width, p.Format, out); perr != nil {
 		s.log.Warn("写衍生图缓存失败", "blob", blobID, "key", key, "err", perr)
 	}
 	return result{data: out, mime: mime}, nil

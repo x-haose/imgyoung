@@ -8,7 +8,7 @@ export interface ServerConfig {
   default_ttl_hours: number; // 全局默认 TTL(小时);0 表示永不过期
   ttl_renew_on_access: boolean; // 公开访问是否顺延带 TTL 图片的到期时刻
   max_upload_mb: number; // 单图上限(MB)
-  base_url: string; // 对外站点地址;空表示相对路径
+  base_url: string; // 对外站点地址;空则按请求域名推导绝对地址
   access_mode: string; // 访问模式:proxy / redirect
   exif_policy: string; // 全局 EXIF 档位:passthrough / strip
 }

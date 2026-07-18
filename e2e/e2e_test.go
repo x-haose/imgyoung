@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -232,7 +233,7 @@ func upload(t *testing.T, inst *instance, token, filename string, payload []byte
 }
 
 // mustUpload 上传并断言 200,返回图片 URL 路径。
-func mustUpload(t *testing.T, inst *instance, payload []byte, fields, headers map[string]string) (id, url string) {
+func mustUpload(t *testing.T, inst *instance, payload []byte, fields, headers map[string]string) (id, path string) {
 	t.Helper()
 	resp := upload(t, inst, testToken, "e2e.bin", payload, fields, headers)
 	defer func() { _ = resp.Body.Close() }()
@@ -247,7 +248,17 @@ func mustUpload(t *testing.T, inst *instance, payload []byte, fields, headers ma
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("解析上传响应: %v", err)
 	}
-	return out.ID, out.URL
+	return out.ID, urlPath(t, out.URL)
+}
+
+// urlPath 校验上传响应的 url 为绝对地址(未配 base_url 时按请求推导),返回其路径部分。
+func urlPath(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		t.Fatalf("上传响应 url = %q, 期望为绝对地址", raw)
+	}
+	return u.Path
 }
 
 // fetch 访问图片(可带 Referer),返回响应。

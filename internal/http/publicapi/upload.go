@@ -25,7 +25,7 @@ const maxTTLSeconds = 876000 * 3600
 // uploadResponse 上传成功的响应体。
 type uploadResponse struct {
 	ID  string `json:"id"`  // 对外短 ID
-	URL string `json:"url"` // 图片访问地址;配置了 base_url 时为绝对地址,否则为相对路径
+	URL string `json:"url"` // 图片绝对访问地址;配置了 base_url 用配置,否则按请求推导
 }
 
 // HandleHealth 健康检查端点。
@@ -36,26 +36,25 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// resolveTTL 解析本次上传的有效时长:单次 ttl 字段 > 全局默认。
-// @Description: ttl 单位秒;"never" 或 0 显式永久;空则用全局默认(默认为 0 亦永久)。
+// resolveTTL 解析请求的 ttl 字段;未显式指定时的"用户默认 > 全局默认"回退
+// 由上传服务按用户行解析,本层只翻译请求。
+// @Description: ttl 单位秒;"never" 或 0 表示显式永久;空表示未显式指定。
 // @param r 上传请求
-// @return 有效时长(0 表示永不过期)
+// @return 显式指定的有效时长(0 表示显式永久)
+// @return 是否显式指定了 ttl
 // @return ttl 取值合法为 true;非法(非整数、负数或超上限)为 false
-func (h *Handlers) resolveTTL(r *http.Request) (time.Duration, bool) {
+func (h *Handlers) resolveTTL(r *http.Request) (ttl time.Duration, explicit, ok bool) {
 	switch raw := r.FormValue("ttl"); raw {
 	case "never":
-		return 0, true
+		return 0, true, true
 	case "":
-		if h.cfg.DefaultTTL <= 0 {
-			return 0, true
-		}
-		return h.cfg.DefaultTTL, true
+		return 0, false, true
 	default:
 		secs, err := strconv.Atoi(raw)
 		if err != nil || secs < 0 || secs > maxTTLSeconds {
-			return 0, false
+			return 0, false, false
 		}
-		return time.Duration(secs) * time.Second, true
+		return time.Duration(secs) * time.Second, true, true
 	}
 }
 
@@ -114,7 +113,7 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		policy = h.cfg.DefaultEXIFPolicy
 	}
 
-	ttl, ok := h.resolveTTL(r)
+	ttl, ttlSet, ok := h.resolveTTL(r)
 	if !ok {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
 			fmt.Sprintf("ttl 取值非法(需要 0 到 %d 的整数秒,或 never 表示永久)", maxTTLSeconds))
@@ -128,16 +127,22 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
 		EXIFPolicy:     policy,
 		TTL:            ttl,
+		TTLSet:         ttlSet,
 	})
 	if err != nil {
 		h.writeUploadError(w, err)
 		return
 	}
 
+	// 站点地址:配置了 base_url 一律用配置;未配置则按请求推导绝对地址。
+	base := h.cfg.BaseURL
+	if base == "" {
+		base = httpx.RequestBaseURL(r)
+	}
 	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", header.Filename, "size", len(data))
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
 		ID:  res.ImageID,
-		URL: h.cfg.BaseURL + "/i/" + res.ImageID,
+		URL: base + "/i/" + res.ImageID,
 	})
 }
 

@@ -33,6 +33,18 @@ func (f *fakeDeleter) EnqueueDelete(_ context.Context, channelID int64, storageK
 	return nil
 }
 
+// fakePurger 记录 CDN purge 入队调用,可注入失败。
+type fakePurger struct {
+	batches [][]string // 每次入队的 URL 列表
+	err     error      // 非 nil 时入队返回该错误
+}
+
+// EnqueuePurge 记录调用。
+func (f *fakePurger) EnqueuePurge(_ context.Context, urls []string) error {
+	f.batches = append(f.batches, urls)
+	return f.err
+}
+
 // setup 打开临时库并迁移,返回连接与查询句柄。
 func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
@@ -145,6 +157,98 @@ func TestSweepCascadesVariants(t *testing.T) {
 	// 变体索引应级联删除。
 	if _, err := q.GetVariant(ctx, sqlc.GetVariantParams{BlobID: blobID, ParamsHash: key}); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("变体索引未级联删除: err=%v", err)
+	}
+}
+
+// TestDeleteCascadesCDNPurge 验证引用删除级联收集并入队 CDN purge URL:
+// 原图 /i/{id} + 该 blob 实际存在过的变体参数组合(显式与协商两种形态,去重)。
+func TestDeleteCascadesCDNPurge(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 3, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "purgeimg01", BlobID: blobID, UserID: sqlc.DefaultUserID,
+	}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+	// 两个变体:缩放+转格式、仅转格式。
+	for _, v := range []struct {
+		width  int64
+		format string
+	}{{200, "webp"}, {0, "webp"}} {
+		if err := q.UpsertVariant(ctx, sqlc.UpsertVariantParams{
+			BlobID: blobID, ParamsHash: fmt.Sprintf("ph-%d-%s", v.width, v.format),
+			Width: v.width, Format: v.format, Size: 1,
+		}); err != nil {
+			t.Fatalf("建变体索引: %v", err)
+		}
+	}
+
+	purger := &fakePurger{}
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Purger: purger,
+		BaseURL: "https://img.example.com", Grace: 0, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := sw.DeleteImage(ctx, "purgeimg01"); err != nil {
+		t.Fatalf("DeleteImage: %v", err)
+	}
+
+	if len(purger.batches) != 1 {
+		t.Fatalf("purge 入队次数 = %d, 期望 1", len(purger.batches))
+	}
+	got := map[string]bool{}
+	for _, u := range purger.batches[0] {
+		got[u] = true
+	}
+	want := []string{
+		"https://img.example.com/i/purgeimg01",
+		"https://img.example.com/i/purgeimg01?w=200",
+		"https://img.example.com/i/purgeimg01?w=200&format=webp",
+		"https://img.example.com/i/purgeimg01?format=webp",
+	}
+	if len(got) != len(want) {
+		t.Errorf("purge URL 集大小 = %d, 期望 %d: %v", len(got), len(want), purger.batches[0])
+	}
+	for _, u := range want {
+		if !got[u] {
+			t.Errorf("purge URL 缺失: %s", u)
+		}
+	}
+}
+
+// TestDeleteToleratesPurgeEnqueueFailure 验证 purge 入队失败只告警,不阻塞删除。
+func TestDeleteToleratesPurgeEnqueueFailure(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 3, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "purgefail01", BlobID: blobID, UserID: sqlc.DefaultUserID,
+	}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
+		Purger:  &fakePurger{err: errors.New("队列不可用")},
+		BaseURL: "https://img.example.com", Grace: 0, Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := sw.DeleteImage(ctx, "purgefail01"); err != nil {
+		t.Fatalf("purge 入队失败不应阻塞删除: %v", err)
+	}
+	if _, err := q.GetImageBlob(ctx, "purgefail01"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("引用未删除: err=%v", err)
 	}
 }
 

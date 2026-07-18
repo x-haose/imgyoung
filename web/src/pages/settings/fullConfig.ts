@@ -4,8 +4,10 @@ import { useCustom } from "@refinedev/core";
 export interface FullConfig {
   server: {
     listen: string; // HTTP 监听地址
-    base_url: string; // 对外站点地址;空表示返回相对路径
+    base_url: string; // 对外站点地址;空则按请求域名推导绝对地址
     access_mode: string; // 访问模式:proxy / redirect
+    cdn_cloudflare_zone_id: string; // Cloudflare Zone ID;空表示未配置删除级联的 CDN purge
+    cdn_purge_enabled: boolean; // 删除级联的 CDN purge 是否生效(zone、token、base_url 三者齐备)
   };
   upload: {
     max_upload_mb: number; // 单图上限(MB)

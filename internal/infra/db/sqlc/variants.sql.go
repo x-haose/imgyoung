@@ -30,7 +30,7 @@ func (q *Queries) DeleteVariantsByBlob(ctx context.Context, blobID int64) error 
 }
 
 const getVariant = `-- name: GetVariant :one
-SELECT id, blob_id, params_hash, format, size, last_access, created_at
+SELECT id, blob_id, params_hash, width, format, size, last_access, created_at
 FROM variants
 WHERE blob_id = ? AND params_hash = ?
 `
@@ -47,12 +47,47 @@ func (q *Queries) GetVariant(ctx context.Context, arg GetVariantParams) (Variant
 		&i.ID,
 		&i.BlobID,
 		&i.ParamsHash,
+		&i.Width,
 		&i.Format,
 		&i.Size,
 		&i.LastAccess,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listVariantURLParams = `-- name: ListVariantURLParams :many
+SELECT DISTINCT width, format
+FROM variants
+WHERE blob_id = ?
+`
+
+type ListVariantURLParamsRow struct {
+	Width  int64
+	Format string
+}
+
+func (q *Queries) ListVariantURLParams(ctx context.Context, blobID int64) ([]ListVariantURLParamsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listVariantURLParams, blobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVariantURLParamsRow
+	for rows.Next() {
+		var i ListVariantURLParamsRow
+		if err := rows.Scan(&i.Width, &i.Format); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listVariantsByBlob = `-- name: ListVariantsByBlob :many
@@ -155,8 +190,8 @@ func (q *Queries) TouchVariant(ctx context.Context, id int64) error {
 }
 
 const upsertVariant = `-- name: UpsertVariant :exec
-INSERT INTO variants (blob_id, params_hash, format, size)
-VALUES (?, ?, ?, ?)
+INSERT INTO variants (blob_id, params_hash, width, format, size)
+VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (blob_id, params_hash) DO UPDATE SET
     size = excluded.size,
     last_access = datetime('now')
@@ -165,6 +200,7 @@ ON CONFLICT (blob_id, params_hash) DO UPDATE SET
 type UpsertVariantParams struct {
 	BlobID     int64
 	ParamsHash string
+	Width      int64
 	Format     string
 	Size       int64
 }
@@ -173,6 +209,7 @@ func (q *Queries) UpsertVariant(ctx context.Context, arg UpsertVariantParams) er
 	_, err := q.db.ExecContext(ctx, upsertVariant,
 		arg.BlobID,
 		arg.ParamsHash,
+		arg.Width,
 		arg.Format,
 		arg.Size,
 	)

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,8 +207,9 @@ func closeBody(t *testing.T, resp *http.Response) {
 	}
 }
 
-// decodeUpload 解析上传响应体。
-func decodeUpload(t *testing.T, resp *http.Response) (id, url string) {
+// decodeUpload 解析上传响应体;url 按契约应为绝对地址(未配 base_url 时按请求
+// 域名推导),校验后返回其路径部分供测试拼接访问。
+func decodeUpload(t *testing.T, resp *http.Response) (id, path string) {
 	t.Helper()
 	var result struct {
 		ID  string `json:"id"`
@@ -216,7 +218,11 @@ func decodeUpload(t *testing.T, resp *http.Response) (id, url string) {
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("解析上传响应: %v", err)
 	}
-	return result.ID, result.URL
+	u, err := neturl.Parse(result.URL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		t.Fatalf("上传响应 url = %q, 期望为绝对地址", result.URL)
+	}
+	return result.ID, u.Path
 }
 
 // TestUploadRequiresAuth 验证缺失或错误 Token 一律 401。
@@ -354,14 +360,39 @@ func TestUploadEXIFPolicyField(t *testing.T) {
 	}
 }
 
-// TestUploadBaseURL 验证配置 BaseURL 后响应返回绝对地址(PicGo 等客户端需要)。
+// rawUploadURL 解码上传响应并返回未加工的 url 字段(站点地址断言用)。
+func rawUploadURL(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	var result struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("解析上传响应: %v", err)
+	}
+	return result.URL
+}
+
+// TestUploadBaseURL 验证配置 BaseURL 后响应一律用配置的绝对地址(PicGo 等客户端需要)。
 func TestUploadBaseURL(t *testing.T) {
 	ts := newTestServer(t, func(tc *testConfig, _ testEnv) { tc.Public.BaseURL = "https://img.example.com" })
 	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
 	defer closeBody(t, resp)
-	_, imgURL := decodeUpload(t, resp)
-	if !strings.HasPrefix(imgURL, "https://img.example.com/i/") {
-		t.Fatalf("url = %q, 期望以 BaseURL 开头的绝对地址", imgURL)
+	if got := rawUploadURL(t, resp); !strings.HasPrefix(got, "https://img.example.com/i/") {
+		t.Fatalf("url = %q, 期望以配置 BaseURL 开头的绝对地址", got)
+	}
+}
+
+// TestUploadURLDerivedFromRequest 验证未配置 BaseURL 时按请求推导绝对地址,
+// 反代转发头(X-Forwarded-Proto/Host)优先于连接本身。
+func TestUploadURLDerivedFromRequest(t *testing.T) {
+	ts := newTestServer(t, nil)
+	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), map[string]string{
+		"X-Forwarded-Proto": "https",
+		"X-Forwarded-Host":  "pub.example.com",
+	})
+	defer closeBody(t, resp)
+	if got := rawUploadURL(t, resp); !strings.HasPrefix(got, "https://pub.example.com/i/") {
+		t.Fatalf("url = %q, 期望按转发头推导的绝对地址", got)
 	}
 }
 

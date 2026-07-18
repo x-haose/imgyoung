@@ -40,7 +40,7 @@ func TestStorePutGetRoundtrip(t *testing.T) {
 	key := variants.Key(blobID, 400, "webp", 80, 4)
 	want := []byte("webp-bytes")
 
-	if err := s.Put(ctx, blobID, key, "webp", want); err != nil {
+	if err := s.Put(ctx, blobID, key, 200, "webp", want); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	got, format, ok, err := s.Get(ctx, blobID, key)
@@ -63,7 +63,7 @@ func TestStoreGetMiss(t *testing.T) {
 	}
 
 	// 索引在但文件被手工删:仍视为未命中,交上层重建。
-	if err := s.Put(ctx, blobID, key, "webp", []byte("x")); err != nil {
+	if err := s.Put(ctx, blobID, key, 200, "webp", []byte("x")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	_ = os.Remove(filepath.Join(dir, key[:2], key))
@@ -81,7 +81,7 @@ func TestStoreLRUEvicts(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		key := variants.Key(blobID, 100+i, "webp", 80, 4)
-		if err := s.Put(ctx, blobID, key, "webp", payload); err != nil {
+		if err := s.Put(ctx, blobID, key, 200, "webp", payload); err != nil {
 			t.Fatalf("Put #%d: %v", i, err)
 		}
 	}
@@ -103,7 +103,7 @@ func TestStoreDeleteByBlob(t *testing.T) {
 	s, blobID, dir := newStore(t, 1<<30)
 	ctx := t.Context()
 	key := variants.Key(blobID, 400, "webp", 80, 4)
-	if err := s.Put(ctx, blobID, key, "webp", []byte("z")); err != nil {
+	if err := s.Put(ctx, blobID, key, 200, "webp", []byte("z")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 

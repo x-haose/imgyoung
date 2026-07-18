@@ -51,7 +51,9 @@ type Config struct {
 	MasterKey             string             `koanf:"master_key"`               // 主密钥(64 位 hex);为空则用数据目录文件
 	MaxConcurrentUploads  int                `koanf:"max_concurrent_uploads"`   // 上传并发上限
 	UploadRatePerMin      int                `koanf:"upload_rate_per_min"`      // 每用户每分钟上传次数上限;0 = 不启用
-	BaseURL               string             `koanf:"base_url"`                 // 对外站点地址(去尾斜杠);空则返回相对路径
+	BaseURL               string             `koanf:"base_url"`                 // 对外站点地址(去尾斜杠);空则上传响应按请求域名推导
+	CDNCloudflareZoneID   string             `koanf:"cdn_cloudflare_zone_id"`   // Cloudflare Zone ID;与 api_token、base_url 同时非空才启用删除级联的 CDN purge
+	CDNCloudflareAPIToken string             `koanf:"cdn_cloudflare_api_token"` // Cloudflare API Token,需 Zone.Cache Purge 权限;敏感,绝不进日志与配置端点
 	RefererWhitelist      []string           `koanf:"referer_whitelist"`        // 防盗链白名单;空表示不启用
 	AllowEmptyReferer     bool               `koanf:"allow_empty_referer"`      // 空 Referer 是否放行
 	EXIFPolicy            imaging.EXIFPolicy `koanf:"exif_policy"`              // 全局默认 EXIF 档位,单次上传可覆盖;枚举见 imaging
@@ -238,6 +240,14 @@ func (c Config) validate() error {
 		return fmt.Errorf("exif_policy 配置非法: %w", err)
 	}
 	return nil
+}
+
+// CDNPurgeEnabled 判定删除级联的 CDN purge 链路是否启用。
+// @Description: zone、token 与 base_url 三者均非空才启用——purge 需以配置的
+// 站点地址还原公开 URL(异步任务无请求上下文可推导)。
+// @return 启用为 true
+func (c Config) CDNPurgeEnabled() bool {
+	return c.CDNCloudflareZoneID != "" && c.CDNCloudflareAPIToken != "" && c.BaseURL != ""
 }
 
 // splitCommaInts 把环境变量里逗号分隔的整数切成 []int,非整数项跳过。

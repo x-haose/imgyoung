@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.uber.org/fx"
@@ -28,6 +29,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
 	"github.com/x-haose/imgyoung/internal/http/router"
+	"github.com/x-haose/imgyoung/internal/infra/cdn"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -228,12 +230,13 @@ func provideManager(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 // 而非信号直接砍断在途复制。
 // @return 补齐 Runner
 // @return River 初始化失败时的错误
-func provideRunner(lc fx.Lifecycle, conn *sql.DB, queries *sqlc.Queries,
+func provideRunner(lc fx.Lifecycle, cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 	manager *channel.Manager, logger *slog.Logger) (*replication.Runner, error) {
 	runner, err := replication.NewRunner(replication.RunnerConfig{
 		Conn:    conn,
 		Queries: queries,
 		Manager: manager,
+		Purger:  cdnPurgerFromConfig(cfg, logger),
 		Logger:  logger,
 	})
 	if err != nil {
@@ -251,6 +254,31 @@ func provideRunner(lc fx.Lifecycle, conn *sql.DB, queries *sqlc.Queries,
 	return runner, nil
 }
 
+// cdnPurgerFromConfig 按配置构造 CDN purge 执行器;未启用返回 nil(整条链路跳过)。
+// @Description: 启用条件见 config.CDNPurgeEnabled;启动打一行 info 说明启用与否及原因,
+// Token 绝不入日志。
+// @param cfg 运行配置
+// @param logger 结构化日志
+// @return purge 执行器;未启用时为 nil
+func cdnPurgerFromConfig(cfg config.Config, logger *slog.Logger) replication.ObjectPurger {
+	if cfg.CDNPurgeEnabled() {
+		logger.Info("CDN purge 已启用(Cloudflare)", "zone", cfg.CDNCloudflareZoneID)
+		return cdn.NewCloudflare(cfg.CDNCloudflareZoneID, cfg.CDNCloudflareAPIToken)
+	}
+	var missing []string
+	if cfg.CDNCloudflareZoneID == "" {
+		missing = append(missing, "cdn_cloudflare_zone_id")
+	}
+	if cfg.CDNCloudflareAPIToken == "" {
+		missing = append(missing, "cdn_cloudflare_api_token")
+	}
+	if cfg.BaseURL == "" {
+		missing = append(missing, "base_url")
+	}
+	logger.Info("CDN purge 未启用", "missing", strings.Join(missing, ","))
+	return nil
+}
+
 // provideUpload 构造上传服务。
 // @return 上传服务
 func provideUpload(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
@@ -262,6 +290,7 @@ func provideUpload(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 		Replicator: runner,
 		MaxPixels:  cfg.MaxPixels,
 		MinSuccess: cfg.MinSuccess,
+		DefaultTTL: time.Duration(cfg.DefaultTTLHours) * time.Hour,
 		Logger:     logger,
 	})
 }
@@ -332,7 +361,6 @@ func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel
 		MaxPixels:         cfg.MaxPixels,
 		BaseURL:           cfg.BaseURL,
 		DefaultEXIFPolicy: cfg.EXIFPolicy,
-		DefaultTTL:        time.Duration(cfg.DefaultTTLHours) * time.Hour,
 		Activity:          tracker,
 		Variants:          variantSvc,
 		ProcessWidths:     cfg.ProcessWidths,
@@ -399,11 +427,11 @@ func provideRouter(cfg config.Config, pub *publicapi.Handlers, adm *adminapi.Han
 	})
 }
 
-// provideSweeper 构造生命周期清理器(渠道对象删除走 replication 入队口)。
+// provideSweeper 构造生命周期清理器(渠道对象删除与 CDN purge 均走 replication 入队口)。
 // @return 清理器
 func provideSweeper(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 	runner *replication.Runner, store *variants.Store, logger *slog.Logger) *lifecycle.Sweeper {
-	return lifecycle.New(lifecycle.Config{
+	lcfg := lifecycle.Config{
 		Conn:          conn,
 		Queries:       queries,
 		Deleter:       runner,
@@ -411,7 +439,13 @@ func provideSweeper(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 		Grace:         time.Duration(cfg.DeleteGraceMinutes) * time.Minute,
 		ColdThreshold: time.Duration(cfg.ColdCleanupDays) * 24 * time.Hour,
 		Logger:        logger,
-	})
+	}
+	// purge 启用才接线:未启用时删除级联连 URL 枚举都不做。
+	if cfg.CDNPurgeEnabled() {
+		lcfg.Purger = runner
+		lcfg.BaseURL = cfg.BaseURL
+	}
+	return lifecycle.New(lcfg)
 }
 
 // provideTracker 构造访问活跃度追踪器(访问即续期开关取自配置)。

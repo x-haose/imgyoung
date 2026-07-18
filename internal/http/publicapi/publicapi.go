@@ -5,7 +5,6 @@ package publicapi
 import (
 	"context"
 	"log/slog"
-	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -34,9 +33,8 @@ type Config struct {
 	Upload            *upload.Service    // 上传编排服务
 	MaxUploadBytes    int64              // 单图字节上限(内存三道闸之一)
 	MaxPixels         int64              // 像素预算(w×h 上限);仅用于超限错误文案,真校验在 upload.Service
-	BaseURL           string             // 对外站点地址(无尾部斜杠);为空时响应返回相对路径
+	BaseURL           string             // 对外站点地址(无尾部斜杠);为空时上传响应按请求推导绝对地址
 	DefaultEXIFPolicy imaging.EXIFPolicy // 全局默认 EXIF 档位;单次上传的表单字段可覆盖;档位决策在本层完成,传给 Service 的必须是明确档位
-	DefaultTTL        time.Duration      // 全局默认 TTL;<=0 表示永不过期;单次上传的 ttl 字段可覆盖
 	Activity          AccessTracker      // 公开访问活跃度追踪器
 	Variants          *variants.Service  // 按需处理服务;为 nil 表示不启用(仅代理原图)
 	ProcessWidths     []int              // 允许的宽度档白名单,档外请求 400

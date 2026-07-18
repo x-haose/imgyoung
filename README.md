@@ -2,7 +2,7 @@
 
 多渠道主备容灾的自部署图床(Go + rclone)。**开发中:迭代 6(按需处理 + 查重)与迭代 5(管理后台 + 多用户)已完成**。
 
-已具备:**多渠道主备容灾**(优先级选渠道 · 健康检查自动切换 · 异步副本补齐 · 访问即时容灾)· **渠道存储加密**(rclone crypt,渠道商只见密文)· **Web 管理后台**(多用户 · 具名 Token · 配额/频控 · 查重与冷图裁决 · 审计 · 数据导出)· 按需处理(`?w=` 缩放 + WebP 协商)· 后台查重(精确自动合并 / 相似人工裁决)· TTL 生命周期 · magic bytes 格式校验 · JPEG 元数据剥离 · 像素预算 · SHA256 + 感知哈希 · 客户端幂等 · 防盗链 · 代理/302 双模式。
+已具备:**多渠道主备容灾**(优先级选渠道 · 健康检查自动切换 · 异步副本补齐 · 访问即时容灾)· **渠道存储加密**(rclone crypt,渠道商只见密文)· **Web 管理后台**(多用户 · 具名 Token · 配额/频控 · 查重与冷图裁决 · 审计 · 数据导出)· 按需处理(`?w=` 缩放 + WebP 协商)· 后台查重(精确自动合并 / 相似人工裁决)· TTL 生命周期 · magic bytes 格式校验 · 元数据剥离(JPEG/PNG/WebP) · 像素预算 · SHA256 + 感知哈希 · 客户端幂等 · 防盗链 · 代理/302 双模式。
 
 设计蓝图:[图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md) · 项目约定:[CLAUDE.md](./CLAUDE.md)
 
@@ -59,7 +59,7 @@ open http://localhost:8721/i/R0RjUyP1UW
 | `IMGYOUNG_MAX_UPLOAD_MB` | `max_upload_mb` | `50` | 单图上限(MB) |
 | `IMGYOUNG_MAX_PIXELS_MP` | `max_pixels_mp` | `50` | 像素预算(百万像素) |
 | `IMGYOUNG_MAX_CONCURRENT_UPLOADS` | `max_concurrent_uploads` | `8` | 上传并发上限,满载返回 429 |
-| `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;设置后上传响应返回绝对 URL(PicGo 等客户端需要) |
+| `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;留空按请求域名推导绝对地址,经反代 / CDN 对外域名与请求域名不一致时需显式配置 |
 | `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单,逗号分隔,支持 `*.example.com` |
 | `IMGYOUNG_ALLOW_EMPTY_REFERER` | `allow_empty_referer` | `true` | 空 Referer 是否放行 |
 | `IMGYOUNG_MASTER_KEY` | `master_key` | (自动生成 `data/master.key`) | 主密钥(64 位 hex),加密渠道凭证与派生渠道加密密码;**丢失则渠道配置与密文数据不可恢复** |
@@ -70,6 +70,8 @@ open http://localhost:8721/i/R0RjUyP1UW
 | `IMGYOUNG_BACKUP_INTERVAL_HOURS` | `backup_interval_hours` | `24` | 元数据库自动备份间隔(小时);快照上传到最高优先级健康渠道 |
 | `IMGYOUNG_BACKUP_KEEP` | `backup_keep` | `7` | 备份保留份数,超出的旧快照自动清理 |
 | `IMGYOUNG_EXIF_POLICY` | `exif_policy` | `passthrough` | 全局默认 EXIF 档位:`passthrough`(原样保留)/ `strip`(剥离元数据);`spoof` 为实验特性尚未开放。单次上传可用表单字段 `exif_policy` 覆盖 |
+| `IMGYOUNG_CDN_CLOUDFLARE_ZONE_ID` | `cdn_cloudflare_zone_id` | (空) | Cloudflare Zone ID;与 `cdn_cloudflare_api_token`、`base_url` 三者齐备时,删除图片级联清除 CDN 缓存 |
+| `IMGYOUNG_CDN_CLOUDFLARE_API_TOKEN` | `cdn_cloudflare_api_token` | (空) | Cloudflare API Token,需 Zone.Cache Purge 权限;敏感项,不进日志与配置端点 |
 
 ```yaml
 # configs/config.yml 示例(只需写要覆盖的项)
@@ -99,7 +101,7 @@ config:   provider=Cloudflare  access_key_id=...  secret_access_key=...
 ## 已知限制
 
 - 动画 WebP 暂不支持(解码库限制,上传返回 400);动画 GIF 正常。
-- `exif_policy=strip` 目前仅处理 JPEG(剥离元数据段与 EOI 后的尾部附加数据,如 Motion Photo 视频);PNG/WebP/GIF 的元数据块暂原样保留,后续版本补齐。
+- `exif_policy=strip` 覆盖全部支持格式:JPEG 剥离元数据段与 EOI 后的尾部附加数据(如 Motion Photo 视频),PNG 剥离 eXIf 与文本块及 IEND 后的尾部数据,WebP 剥离 EXIF/XMP chunk 并同步清 VP8X 标志位;GIF 无标准元数据容器,直通。
 
 ## PicGo / PicList 对接
 
@@ -107,7 +109,7 @@ config:   provider=Cloudflare  access_key_id=...  secret_access_key=...
 
 | 参数 | 值 |
 |---|---|
-| API 地址 | `https://你的域名/api/upload`(需设置 `base_url` 以返回绝对地址) |
+| API 地址 | `https://你的域名/api/upload`(返回的 `url` 默认按请求域名推导为绝对地址;经反代 / CDN 对外域名与请求域名不一致时需设置 `base_url`) |
 | POST 参数名 | `file` |
 | 自定义请求头 | `{"Authorization": "Bearer 你的Token"}` |
 | JSON 路径 | `url` |

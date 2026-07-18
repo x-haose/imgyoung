@@ -1,4 +1,4 @@
-// Package imaging 提供图片字节级处理(JPEG 元数据剥离)与 EXIF 档位定义。
+// Package imaging 提供图片字节级处理(元数据剥离、按需缩放重编码)与 EXIF 档位定义。
 package imaging
 
 import (

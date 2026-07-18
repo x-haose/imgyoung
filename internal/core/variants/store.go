@@ -91,10 +91,11 @@ func (s *Store) Get(ctx context.Context, blobID int64, key string) ([]byte, stri
 // @param ctx 上下文
 // @param blobID 源物理图主键
 // @param key 缓存键
+// @param width 目标宽度像素,0 表示不缩放;入索引供 CDN purge 还原 URL 参数
 // @param format 目标格式
 // @param data 衍生图字节
 // @return 错误
-func (s *Store) Put(ctx context.Context, blobID int64, key, format string, data []byte) error {
+func (s *Store) Put(ctx context.Context, blobID int64, key string, width int, format string, data []byte) error {
 	path := s.pathFor(key)
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("建缓存目录: %w", err)
@@ -103,7 +104,7 @@ func (s *Store) Put(ctx context.Context, blobID int64, key, format string, data 
 		return fmt.Errorf("写缓存文件: %w", err)
 	}
 	if err := s.cfg.Queries.UpsertVariant(ctx, sqlc.UpsertVariantParams{
-		BlobID: blobID, ParamsHash: key, Format: format, Size: int64(len(data)),
+		BlobID: blobID, ParamsHash: key, Width: int64(width), Format: format, Size: int64(len(data)),
 	}); err != nil {
 		if rmErr := os.Remove(path); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 			s.cfg.Logger.Warn("回删孤儿缓存文件失败", "key", key, "err", rmErr)

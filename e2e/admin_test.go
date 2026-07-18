@@ -328,7 +328,7 @@ func TestAdminSessionUpload(t *testing.T) {
 		t.Fatalf("后台上传的图片 %s 未出现在列表中", out.ID)
 	}
 
-	pub := fetch(t, inst, out.URL, "")
+	pub := fetch(t, inst, urlPath(t, out.URL), "")
 	code := pub.StatusCode
 	_ = pub.Body.Close()
 	if code != http.StatusOK {

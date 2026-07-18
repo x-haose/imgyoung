@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { apiFetch } from "../../api/http";
 import { absoluteURL } from "../../lib/format";
 
-/** TTL 档位:跟随全局默认 / 显式永久 / 自定义小时数。 */
+/** TTL 档位:跟随默认(用户默认有效期,未设置则全局默认)/ 显式永久 / 自定义小时数。 */
 type TtlMode = "default" | "never" | "custom";
 
 /** 单个上传条目的展示状态。 */
@@ -18,7 +18,7 @@ interface UploadEntry {
   uid: number; // 本地自增标识
   name: string; // 文件名(剪贴板图片可能为空,用占位名)
   status: "uploading" | "done" | "error"; // 上传中 / 成功 / 失败
-  url?: string; // 成功后的访问路径;配置了 base_url 时为绝对地址,否则为相对路径
+  url?: string; // 成功后的访问地址;base_url 未配置时按请求域名推导为绝对地址
   error?: string; // 失败时的后端错误消息
 }
 
@@ -58,7 +58,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
   const pending = useRef<{ uid: number; file: File; ttl: string | null }[]>([]);
   const anySucceeded = useRef(false);
 
-  /** resolveTtl 按当前档位算出 ttl 表单值:null=跟随默认(不发字段),"0"=永久,其余为秒数。 */
+  /** resolveTtl 按当前档位算出 ttl 表单值:null=跟随默认(不发字段,服务端按用户默认→全局默认解析),"0"=永久,其余为秒数。 */
   const resolveTtl = useCallback((): string | null => {
     if (ttlMode === "never") {
       return "0";
@@ -74,7 +74,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
     setEntries((prev) => prev.map((e) => (e.uid === uid ? { ...e, ...changes } : e)));
   }, []);
 
-  /** send 上传单个文件并落定其条目状态;ttl 为入队时捕获的表单值,null 表示跟随全局默认。 */
+  /** send 上传单个文件并落定其条目状态;ttl 为入队时捕获的表单值,null 表示跟随默认(用户默认,未设置则全局默认)。 */
   const send = useCallback(
     async (uid: number, file: File, ttl: string | null) => {
       const fd = new FormData();
@@ -116,7 +116,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
   }, [send, onUploaded]);
 
   /** enqueue 把文件加入展示列表与待传队列并触发调度;TTL 在入队时刻捕获随文件走。
-   * 自定义档小时数未填时拒绝入队——静默回退到全局默认会打破三态语义。 */
+   * 自定义档小时数未填时拒绝入队——静默回退到默认档会打破三态语义。 */
   const enqueue = useCallback(
     (file: File) => {
       if (ttlMode === "custom" && (ttlHours == null || ttlHours <= 0)) {
@@ -208,7 +208,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
           )}
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {ttlMode === "default"
-              ? "跟随站点全局默认;对之后加入的文件生效"
+              ? "跟随默认有效期(你的用户默认,未设置则站点全局默认);对之后加入的文件生效"
               : ttlMode === "never"
                 ? "永不过期;对之后加入的文件生效"
                 : "到期后自动回收;对之后加入的文件生效"}
