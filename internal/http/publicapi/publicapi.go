@@ -33,6 +33,7 @@ type Config struct {
 	RedirectMode      bool               // 302 省流量模式:候选渠道允许直链时重定向,否则回退代理
 	Upload            *upload.Service    // 上传编排服务
 	MaxUploadBytes    int64              // 单图字节上限(内存三道闸之一)
+	MaxPixels         int64              // 像素预算(w×h 上限);仅用于超限错误文案,真校验在 upload.Service
 	BaseURL           string             // 对外站点地址(无尾部斜杠);为空时响应返回相对路径
 	DefaultEXIFPolicy imaging.EXIFPolicy // 全局默认 EXIF 档位;单次上传的表单字段可覆盖;档位决策在本层完成,传给 Service 的必须是明确档位
 	DefaultTTL        time.Duration      // 全局默认 TTL;<=0 表示永不过期;单次上传的 ttl 字段可覆盖

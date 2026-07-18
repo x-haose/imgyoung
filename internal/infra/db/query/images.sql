@@ -1,6 +1,6 @@
 -- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetImageBlob :one
 SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size, b.sha256
@@ -37,11 +37,13 @@ SET blob_id = ?
 WHERE blob_id = ?;
 
 -- name: ListImagesAdmin :many
-SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
-       b.mime, b.size, b.width, b.height, b.sha256
+       b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+LEFT JOIN tokens t ON t.id = i.token_id
 WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@token_id = 0 OR i.token_id = @token_id)
   AND (@search = '' OR i.id LIKE '%' || @search || '%' OR i.file_name LIKE '%' || @search || '%')
@@ -60,11 +62,13 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@until = '' OR i.created_at < @until);
 
 -- name: GetImageAdmin :one
-SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+LEFT JOIN tokens t ON t.id = i.token_id
 WHERE i.id = ?;
 
 -- name: GetImageOwner :one
@@ -91,10 +95,22 @@ SELECT COUNT(*)
 FROM images
 WHERE pending_cleanup = 1;
 
--- name: ExemptImageCleanup :execrows
+-- name: SetImageCleanupExempt :execrows
 UPDATE images
-SET pending_cleanup = 0, cleanup_exempt = 1
-WHERE id = ?;
+SET cleanup_exempt = @exempt, pending_cleanup = 0
+WHERE id = @id;
+
+-- name: UpdateImageExpiry :execrows
+UPDATE images
+SET expire_at = @expire_at, ttl_seconds = @ttl_seconds
+WHERE id = @id;
+
+-- name: RenewImagesTTL :execrows
+UPDATE images
+SET expire_at = datetime(CAST(@now AS TEXT), '+' || ttl_seconds || ' seconds')
+WHERE id IN (sqlc.slice('ids'))
+  AND expire_at IS NOT NULL
+  AND ttl_seconds IS NOT NULL;
 
 -- name: CountImages :one
 SELECT COUNT(*)
@@ -106,7 +122,7 @@ FROM images i
 JOIN blobs b ON b.id = i.blob_id;
 
 -- name: ListImagesExport :many
-SELECT id, blob_id, user_id, token_id, file_name, expire_at, last_public_access_at,
-       pending_cleanup, cleanup_exempt, created_at
+SELECT id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds,
+       last_public_access_at, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at;

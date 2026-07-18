@@ -328,6 +328,7 @@ func providePublicAPI(cfg config.Config, queries *sqlc.Queries, manager *channel
 		RedirectMode:      cfg.AccessMode == "redirect",
 		Upload:            uploadSvc,
 		MaxUploadBytes:    cfg.MaxUploadBytes,
+		MaxPixels:         cfg.MaxPixels,
 		BaseURL:           cfg.BaseURL,
 		DefaultEXIFPolicy: cfg.EXIFPolicy,
 		DefaultTTL:        time.Duration(cfg.DefaultTTLHours) * time.Hour,
@@ -389,10 +390,10 @@ func provideSweeper(cfg config.Config, conn *sql.DB, queries *sqlc.Queries,
 	})
 }
 
-// provideTracker 构造访问活跃度追踪器。
+// provideTracker 构造访问活跃度追踪器(访问即续期开关取自配置)。
 // @return 活跃度追踪器
-func provideTracker(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *lifecycle.Tracker {
-	return lifecycle.NewTracker(conn, queries, logger)
+func provideTracker(cfg config.Config, conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *lifecycle.Tracker {
+	return lifecycle.NewTracker(conn, queries, cfg.TTLRenewOnAccess, logger)
 }
 
 // bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。

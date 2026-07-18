@@ -15,23 +15,30 @@ import (
 // flushStopTimeout 停机前最后一次 flush 的超时预算。
 const flushStopTimeout = 5 * time.Second
 
+// renewChunkSize 单条 RenewImagesTTL 语句携带的 id 数上限。
+// SQLite 绑定变量上限(SQLITE_MAX_VARIABLE_NUMBER,默认 32766)远高于此值,
+// 分片让批量大小与该上限解耦,超大访问批不会撑爆单条语句。
+const renewChunkSize = 500
+
 // Tracker 访问活跃度追踪:内存聚合 + 周期批量落库,
 // 避免逐请求 UPDATE 与 SQLite 单写者争锁。并发安全。
 type Tracker struct {
-	conn    *sql.DB             // 数据库连接(批量事务用)
-	queries *sqlc.Queries       // sqlc 查询集
-	logger  *slog.Logger        // 结构化日志
-	mu      sync.Mutex          // 保护 touched
-	touched map[string]struct{} // 自上次 flush 以来被访问的引用 id 集合
+	conn     *sql.DB             // 数据库连接(批量事务用)
+	queries  *sqlc.Queries       // sqlc 查询集
+	logger   *slog.Logger        // 结构化日志
+	renewTTL bool                // 访问即续期:flush 时把本批带 TTL 的引用到期时刻顺延
+	mu       sync.Mutex          // 保护 touched
+	touched  map[string]struct{} // 自上次 flush 以来被访问的引用 id 集合
 }
 
 // NewTracker 创建活跃度追踪器。
 // @param conn 数据库连接
 // @param queries 查询集
+// @param renewTTL 是否在 flush 时对本批活跃引用做 TTL 续期(仅 expire_at 与 ttl_seconds 均非空的行)
 // @param logger 日志
 // @return 就绪的追踪器
-func NewTracker(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *Tracker {
-	return &Tracker{conn: conn, queries: queries, logger: logger, touched: make(map[string]struct{})}
+func NewTracker(conn *sql.DB, queries *sqlc.Queries, renewTTL bool, logger *slog.Logger) *Tracker {
+	return &Tracker{conn: conn, queries: queries, renewTTL: renewTTL, logger: logger, touched: make(map[string]struct{})}
 }
 
 // Touch 记录一次公开访问(仅写内存,极轻量;真正落库由 flush 批量完成)。
@@ -42,7 +49,8 @@ func (t *Tracker) Touch(imageID string) {
 	t.mu.Unlock()
 }
 
-// Flush 把累积的访问批量落库:更新 last_public_access_at 并摘除 pending_cleanup 标签。
+// Flush 把累积的访问批量落库:更新 last_public_access_at、摘除 pending_cleanup 标签,
+// 并在开启访问续期时把本批带 TTL 的引用到期时刻顺延为 flush 时刻 + ttl_seconds。
 // @Description: 失败时把这批放回,留待下次重试——活跃度丢失只降冷图判定精度,不影响正确性。
 // @return 落库失败时的错误
 func (t *Tracker) Flush(ctx context.Context) error {
@@ -55,7 +63,7 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	t.touched = make(map[string]struct{})
 	t.mu.Unlock()
 
-	now := sql.NullString{String: sqlc.TimeText(time.Now()), Valid: true}
+	now := sqlc.TimeText(time.Now())
 	tx, err := t.conn.BeginTx(ctx, nil)
 	if err != nil {
 		t.requeue(batch)
@@ -64,10 +72,26 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 
 	q := t.queries.WithTx(tx)
+	nowNull := sql.NullString{String: now, Valid: true}
 	for id := range batch {
-		if err := q.TouchImageAccess(ctx, sqlc.TouchImageAccessParams{LastPublicAccessAt: now, ID: id}); err != nil {
+		if err := q.TouchImageAccess(ctx, sqlc.TouchImageAccessParams{LastPublicAccessAt: nowNull, ID: id}); err != nil {
 			t.requeue(batch)
 			return fmt.Errorf("更新活跃度: %w", err)
+		}
+	}
+	if t.renewTTL {
+		// IN 批量顺延,按 renewChunkSize 分片仍在同一事务内;
+		// 永久/无 ttl_seconds 的行由 WHERE 过滤,不逐行判断。
+		ids := make([]string, 0, len(batch))
+		for id := range batch {
+			ids = append(ids, id)
+		}
+		for start := 0; start < len(ids); start += renewChunkSize {
+			end := min(start+renewChunkSize, len(ids))
+			if _, err := q.RenewImagesTTL(ctx, sqlc.RenewImagesTTLParams{Now: now, Ids: ids[start:end]}); err != nil {
+				t.requeue(batch)
+				return fmt.Errorf("续期活跃引用: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

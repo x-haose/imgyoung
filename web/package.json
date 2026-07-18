@@ -14,6 +14,7 @@
     "@refinedev/antd": "^6.0.3",
     "@refinedev/core": "^5.0.12",
     "@refinedev/react-router": "^2.0.4",
+    "dayjs": "^1.11.21",
     "antd": "^5.29.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

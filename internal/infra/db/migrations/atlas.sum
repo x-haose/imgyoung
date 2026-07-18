@@ -1,5 +1,7 @@
-h1:8OW542K2iDQTn7/dDHPr7ZsK81zlWaK25unvjs3Ugls=
+h1:uO7Fw0rACfYxkbfSWPSOi0C6+u3YkC00mOS2Tt4RExg=
 20260703132606_init.sql h1:r9fx8hZFI5/ggNckSOFlc6disj2i3717SFs4TsaOye8=
 20260704051551_add_variants.sql h1:8GTfYMZfMDfTHSIEGdvgECbqQNDZIuotyfU9IjqAzAE=
 20260716151735_iter5_multiuser.sql h1:TSgSM+1IiaWzR85m20jYcGP1rVpiB1izBfWah/vQAu4=
 20260718133225_token_expiry.sql h1:6zYVAkiU36LAnxKfdP+8aXTIMWnjQXVIuxVzUaZxuyc=
+20260718142800_image_ttl_seconds.sql h1:xFOYifc1UCA2+RSL4Q97Lx7iU62EW+tdhgh5XUNyRdI=
+20260718145636_token_delete_set_null.sql h1:ZGXbegnGWDlYEWbpCG52laD+FbjjduGqVbEupzDhxjU=

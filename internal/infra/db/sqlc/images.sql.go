@@ -8,6 +8,7 @@ package sqlc
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 const countImages = `-- name: CountImages :one
@@ -80,17 +81,18 @@ func (q *Queries) CountPendingCleanupImages(ctx context.Context) (int64, error) 
 }
 
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateImageParams struct {
-	ID       string
-	BlobID   int64
-	UserID   string
-	TokenID  sql.NullInt64
-	FileName string
-	ExpireAt sql.NullString
+	ID         string
+	BlobID     int64
+	UserID     string
+	TokenID    sql.NullInt64
+	FileName   string
+	ExpireAt   sql.NullString
+	TtlSeconds sql.NullInt64
 }
 
 func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
@@ -101,6 +103,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 		arg.TokenID,
 		arg.FileName,
 		arg.ExpireAt,
+		arg.TtlSeconds,
 	)
 	return err
 }
@@ -118,26 +121,14 @@ func (q *Queries) DeleteImage(ctx context.Context, id string) (int64, error) {
 	return result.RowsAffected()
 }
 
-const exemptImageCleanup = `-- name: ExemptImageCleanup :execrows
-UPDATE images
-SET pending_cleanup = 0, cleanup_exempt = 1
-WHERE id = ?
-`
-
-func (q *Queries) ExemptImageCleanup(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, exemptImageCleanup, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const getImageAdmin = `-- name: GetImageAdmin :one
-SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+LEFT JOIN tokens t ON t.id = i.token_id
 WHERE i.id = ?
 `
 
@@ -145,8 +136,10 @@ type GetImageAdminRow struct {
 	ID                 string
 	UserID             string
 	TokenID            sql.NullInt64
+	TokenName          sql.NullString
 	FileName           string
 	ExpireAt           sql.NullString
+	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString
 	PendingCleanup     int64
 	CleanupExempt      int64
@@ -166,8 +159,10 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 		&i.ID,
 		&i.UserID,
 		&i.TokenID,
+		&i.TokenName,
 		&i.FileName,
 		&i.ExpireAt,
+		&i.TtlSeconds,
 		&i.LastPublicAccessAt,
 		&i.PendingCleanup,
 		&i.CleanupExempt,
@@ -285,11 +280,13 @@ func (q *Queries) ListExpiredImages(ctx context.Context, arg ListExpiredImagesPa
 }
 
 const listImagesAdmin = `-- name: ListImagesAdmin :many
-SELECT i.id, i.user_id, i.token_id, i.file_name, i.expire_at, i.last_public_access_at,
+SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+       i.expire_at, i.ttl_seconds, i.last_public_access_at,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
-       b.mime, b.size, b.width, b.height, b.sha256
+       b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+LEFT JOIN tokens t ON t.id = i.token_id
 WHERE (?1 = '' OR i.user_id = ?1)
   AND (?2 = 0 OR i.token_id = ?2)
   AND (?3 = '' OR i.id LIKE '%' || ?3 || '%' OR i.file_name LIKE '%' || ?3 || '%')
@@ -313,8 +310,10 @@ type ListImagesAdminRow struct {
 	ID                 string
 	UserID             string
 	TokenID            sql.NullInt64
+	TokenName          sql.NullString
 	FileName           string
 	ExpireAt           sql.NullString
+	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString
 	PendingCleanup     int64
 	CleanupExempt      int64
@@ -324,6 +323,7 @@ type ListImagesAdminRow struct {
 	Width              int64
 	Height             int64
 	Sha256             string
+	RefCount           int64
 }
 
 func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams) ([]ListImagesAdminRow, error) {
@@ -347,8 +347,10 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 			&i.ID,
 			&i.UserID,
 			&i.TokenID,
+			&i.TokenName,
 			&i.FileName,
 			&i.ExpireAt,
+			&i.TtlSeconds,
 			&i.LastPublicAccessAt,
 			&i.PendingCleanup,
 			&i.CleanupExempt,
@@ -358,6 +360,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 			&i.Width,
 			&i.Height,
 			&i.Sha256,
+			&i.RefCount,
 		); err != nil {
 			return nil, err
 		}
@@ -373,8 +376,8 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 }
 
 const listImagesExport = `-- name: ListImagesExport :many
-SELECT id, blob_id, user_id, token_id, file_name, expire_at, last_public_access_at,
-       pending_cleanup, cleanup_exempt, created_at
+SELECT id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds,
+       last_public_access_at, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at
 `
@@ -395,6 +398,7 @@ func (q *Queries) ListImagesExport(ctx context.Context) ([]Image, error) {
 			&i.TokenID,
 			&i.FileName,
 			&i.ExpireAt,
+			&i.TtlSeconds,
 			&i.LastPublicAccessAt,
 			&i.PendingCleanup,
 			&i.CleanupExempt,
@@ -473,6 +477,38 @@ func (q *Queries) ListPendingCleanupImages(ctx context.Context, arg ListPendingC
 	return items, nil
 }
 
+const renewImagesTTL = `-- name: RenewImagesTTL :execrows
+UPDATE images
+SET expire_at = datetime(CAST(?1 AS TEXT), '+' || ttl_seconds || ' seconds')
+WHERE id IN (/*SLICE:ids*/?)
+  AND expire_at IS NOT NULL
+  AND ttl_seconds IS NOT NULL
+`
+
+type RenewImagesTTLParams struct {
+	Now string
+	Ids []string
+}
+
+func (q *Queries) RenewImagesTTL(ctx context.Context, arg RenewImagesTTLParams) (int64, error) {
+	query := renewImagesTTL
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.Now)
+	if len(arg.Ids) > 0 {
+		for _, v := range arg.Ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(arg.Ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	result, err := q.db.ExecContext(ctx, query, queryParams...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const repointImages = `-- name: RepointImages :execrows
 UPDATE images
 SET blob_id = ?
@@ -486,6 +522,25 @@ type RepointImagesParams struct {
 
 func (q *Queries) RepointImages(ctx context.Context, arg RepointImagesParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, repointImages, arg.BlobID, arg.BlobID_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setImageCleanupExempt = `-- name: SetImageCleanupExempt :execrows
+UPDATE images
+SET cleanup_exempt = ?1, pending_cleanup = 0
+WHERE id = ?2
+`
+
+type SetImageCleanupExemptParams struct {
+	Exempt int64
+	ID     string
+}
+
+func (q *Queries) SetImageCleanupExempt(ctx context.Context, arg SetImageCleanupExemptParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setImageCleanupExempt, arg.Exempt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -519,4 +574,24 @@ type TouchImageAccessParams struct {
 func (q *Queries) TouchImageAccess(ctx context.Context, arg TouchImageAccessParams) error {
 	_, err := q.db.ExecContext(ctx, touchImageAccess, arg.LastPublicAccessAt, arg.ID)
 	return err
+}
+
+const updateImageExpiry = `-- name: UpdateImageExpiry :execrows
+UPDATE images
+SET expire_at = ?1, ttl_seconds = ?2
+WHERE id = ?3
+`
+
+type UpdateImageExpiryParams struct {
+	ExpireAt   sql.NullString
+	TtlSeconds sql.NullInt64
+	ID         string
+}
+
+func (q *Queries) UpdateImageExpiry(ctx context.Context, arg UpdateImageExpiryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateImageExpiry, arg.ExpireAt, arg.TtlSeconds, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

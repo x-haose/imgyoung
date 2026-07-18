@@ -26,6 +26,11 @@ export function formatBytes(n: number | undefined | null): string {
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
+/** 把本地时刻(毫秒时间戳)转为后端可比较的 UTC 文本时间(YYYY-MM-DD HH:MM:SS)。 */
+export function toUTCText(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 19).replace("T", " ");
+}
+
 /** 把后端 UTC 文本时间(YYYY-MM-DD HH:MM:SS)转为本地时间展示;空值显示占位符。 */
 export function formatTime(utc: string | null | undefined): string {
   if (!utc) {

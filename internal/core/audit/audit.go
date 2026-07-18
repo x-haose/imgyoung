@@ -31,6 +31,8 @@ const (
 	ActionUserDelete = "user.delete"
 	// ActionImageDelete 图片引用删除。
 	ActionImageDelete = "image.delete"
+	// ActionImageUpdate 图片有效期/清理豁免修改。
+	ActionImageUpdate = "image.update"
 	// ActionDataExport 元数据导出。
 	ActionDataExport = "data.export"
 	// ActionDedupMerge 相似候选人工合并。

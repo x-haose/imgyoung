@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -290,7 +291,7 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 		t.Fatalf("预置标签: %v", err)
 	}
 
-	tr := lifecycle.NewTracker(conn, q, slog.New(slog.DiscardHandler))
+	tr := lifecycle.NewTracker(conn, q, false, slog.New(slog.DiscardHandler))
 	tr.Touch("img0000001")
 	if err := tr.Flush(ctx); err != nil {
 		t.Fatalf("Flush 返回错误: %v", err)
@@ -307,6 +308,132 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	}
 	if pending != 0 {
 		t.Error("访问后 pending_cleanup 未摘除")
+	}
+}
+
+// renewImage 建一条可定制到期/时长/豁免的引用。
+func renewImage(t *testing.T, conn *sql.DB, q *sqlc.Queries, id, key string, expireAt sql.NullString, ttlSeconds sql.NullInt64, exempt bool) {
+	t.Helper()
+	blobID, err := q.CreateBlob(t.Context(), sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	if err := q.CreateImage(t.Context(), sqlc.CreateImageParams{
+		ID: id, BlobID: blobID, UserID: sqlc.DefaultUserID, ExpireAt: expireAt, TtlSeconds: ttlSeconds,
+	}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+	if exempt {
+		if _, err := conn.ExecContext(t.Context(), "UPDATE images SET cleanup_exempt = 1 WHERE id = ?", id); err != nil {
+			t.Fatalf("置豁免: %v", err)
+		}
+	}
+}
+
+// expireAtOf 读取引用的 expire_at(可空)。
+func expireAtOf(t *testing.T, conn *sql.DB, id string) sql.NullString {
+	t.Helper()
+	var v sql.NullString
+	if err := conn.QueryRowContext(t.Context(), "SELECT expire_at FROM images WHERE id = ?", id).Scan(&v); err != nil {
+		t.Fatalf("读 expire_at: %v", err)
+	}
+	return v
+}
+
+// TestTrackerFlushRenewsTTL 验证访问即续期:flush 把本批带 TTL 的活跃引用到期时刻
+// 顺延为 flush 时刻 + ttl_seconds;豁免只免除冷图打标,豁免热图同样续期;永久图不动。
+func TestTrackerFlushRenewsTTL(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	soon := sql.NullString{String: sqlc.TimeText(time.Now().Add(time.Hour)), Valid: true}
+	ttl := sql.NullInt64{Int64: 7200, Valid: true}
+	renewImage(t, conn, q, "hotimg0001", "k1", soon, ttl, false)
+	renewImage(t, conn, q, "exemptimg1", "k2", soon, ttl, true)
+	renewImage(t, conn, q, "foreverimg", "k3", sql.NullString{}, sql.NullInt64{}, false)
+
+	tr := lifecycle.NewTracker(conn, q, true, slog.New(slog.DiscardHandler))
+	tr.Touch("hotimg0001")
+	tr.Touch("exemptimg1")
+	tr.Touch("foreverimg")
+	if err := tr.Flush(ctx); err != nil {
+		t.Fatalf("Flush 返回错误: %v", err)
+	}
+
+	// 热图与豁免热图:到期都应被推远到约 now+2h(原 now+1h)。
+	want := time.Now().Add(2 * time.Hour)
+	for _, id := range []string{"hotimg0001", "exemptimg1"} {
+		got := expireAtOf(t, conn, id)
+		if !got.Valid {
+			t.Fatalf("%s expire_at 被误清空", id)
+		}
+		renewed, err := sqlc.ParseTimeText(got.String)
+		if err != nil {
+			t.Fatalf("解析 %s 续期后到期时刻: %v", id, err)
+		}
+		if diff := renewed.Sub(want); diff < -time.Minute || diff > time.Minute {
+			t.Errorf("%s 续期后到期 = %v, 期望约 %v", id, renewed, want)
+		}
+	}
+	// 永久图:仍无到期。
+	if got := expireAtOf(t, conn, "foreverimg"); got.Valid {
+		t.Errorf("永久图被误设到期: %v", got)
+	}
+}
+
+// TestTrackerFlushRenewsBeyondChunk 验证续期分片:一个 flush 批超过单条语句的
+// id 分片上限时,所有引用仍全部续期,无一遗漏(尾部不足一片的余量也覆盖)。
+func TestTrackerFlushRenewsBeyondChunk(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+
+	const n = 501
+	soon := sql.NullString{String: sqlc.TimeText(time.Now().Add(time.Hour)), Valid: true}
+	ttl := sql.NullInt64{Int64: 7200, Valid: true}
+	tr := lifecycle.NewTracker(conn, q, true, slog.New(slog.DiscardHandler))
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("chunkimg%03d", i)
+		renewImage(t, conn, q, id, "ck"+id, soon, ttl, false)
+		tr.Touch(id)
+	}
+	if err := tr.Flush(ctx); err != nil {
+		t.Fatalf("Flush 返回错误: %v", err)
+	}
+
+	var renewed int
+	if err := conn.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM images WHERE id LIKE 'chunkimg%' AND expire_at > ?", soon.String,
+	).Scan(&renewed); err != nil {
+		t.Fatalf("统计续期行: %v", err)
+	}
+	if renewed != n {
+		t.Errorf("续期行数 = %d, 期望 %d", renewed, n)
+	}
+}
+
+// TestTrackerFlushNoRenewWhenDisabled 验证配置关闭访问续期时,flush 只记活跃度、不动到期。
+func TestTrackerFlushNoRenewWhenDisabled(t *testing.T) {
+	conn, q := setup(t)
+	soon := sql.NullString{String: sqlc.TimeText(time.Now().Add(time.Hour)), Valid: true}
+	renewImage(t, conn, q, "coldrenew1", "k1", soon, sql.NullInt64{Int64: 7200, Valid: true}, false)
+
+	tr := lifecycle.NewTracker(conn, q, false, slog.New(slog.DiscardHandler))
+	tr.Touch("coldrenew1")
+	if err := tr.Flush(t.Context()); err != nil {
+		t.Fatalf("Flush 返回错误: %v", err)
+	}
+
+	if got := expireAtOf(t, conn, "coldrenew1"); got != soon {
+		t.Errorf("关闭续期仍改动到期: %v", got)
+	}
+	var access sql.NullString
+	if err := conn.QueryRowContext(t.Context(), "SELECT last_public_access_at FROM images WHERE id = 'coldrenew1'").Scan(&access); err != nil {
+		t.Fatalf("读活跃度: %v", err)
+	}
+	if !access.Valid {
+		t.Error("关闭续期时活跃度也未落库")
 	}
 }
 

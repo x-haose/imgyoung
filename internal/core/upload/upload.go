@@ -122,7 +122,7 @@ type Options struct {
 	FileName       string             // 原始文件名(仅存元数据,不参与任何逻辑)
 	IdempotencyKey string             // 客户端幂等键,可为空;按用户隔离
 	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入,本包不做隐式回退;strip 仅对 JPEG 生效
-	ExpireAt       time.Time          // 本次上传引用的到期时刻,零值表示永不过期;调用方按"单次指定 > 全局默认"解析后传入
+	TTL            time.Duration      // 本次上传引用的有效时长,<=0 表示永不过期;调用方按"单次指定 > 全局默认"解析后传入,到期时刻由落库时刻推算
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -258,7 +258,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		size:     int64(len(data)),
 		width:    int64(meta.Width),
 		height:   int64(meta.Height),
-		expireAt: opts.ExpireAt,
+		ttl:      opts.TTL,
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -375,7 +375,7 @@ type persistParams struct {
 	mime          string           // 真实 MIME
 	size          int64            // 存储字节大小
 	width, height int64            // 像素尺寸
-	expireAt      time.Time        // 到期时刻,零值表示永不过期
+	ttl           time.Duration    // 有效时长,<=0 表示永不过期;到期时刻与 ttl_seconds 均由此推算
 }
 
 // persist 在单事务内写入 blob、引用、副本状态与幂等键。
@@ -402,17 +402,19 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("写入 blob 记录: %w", err)
 	}
-	expireAt := sql.NullString{}
-	if !p.expireAt.IsZero() {
-		expireAt = sql.NullString{String: sqlc.TimeText(p.expireAt), Valid: true}
+	expireAt, ttlSeconds := sql.NullString{}, sql.NullInt64{}
+	if p.ttl > 0 {
+		expireAt = sql.NullString{String: sqlc.TimeText(time.Now().Add(p.ttl)), Valid: true}
+		ttlSeconds = sql.NullInt64{Int64: int64(p.ttl / time.Second), Valid: true}
 	}
 	if err = q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID:       p.shortID,
-		BlobID:   blobID,
-		UserID:   p.userID,
-		TokenID:  sql.NullInt64{Int64: p.tokenID, Valid: p.tokenID != 0},
-		FileName: p.fileName,
-		ExpireAt: expireAt,
+		ID:         p.shortID,
+		BlobID:     blobID,
+		UserID:     p.userID,
+		TokenID:    sql.NullInt64{Int64: p.tokenID, Valid: p.tokenID != 0},
+		FileName:   p.fileName,
+		ExpireAt:   expireAt,
+		TtlSeconds: ttlSeconds,
 	}); err != nil {
 		return 0, fmt.Errorf("写入引用记录: %w", err)
 	}

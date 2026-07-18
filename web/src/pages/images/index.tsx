@@ -1,12 +1,9 @@
-import { BookOutlined, DeleteOutlined, LinkOutlined, UploadOutlined } from "@ant-design/icons";
+import { BookOutlined, CheckSquareOutlined, DeleteOutlined, UploadOutlined } from "@ant-design/icons";
 import { useInvalidate, useList, usePermissions } from "@refinedev/core";
 import {
   App as AntdApp,
   Button,
-  Card,
   Col,
-  Descriptions,
-  Drawer,
   Empty,
   Flex,
   Input,
@@ -14,7 +11,6 @@ import {
   Popconfirm,
   Row,
   Space,
-  Tag,
   Typography,
   theme,
 } from "antd";
@@ -24,47 +20,66 @@ import { Link } from "react-router";
 import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
-import { absoluteURL, formatBytes, formatTime } from "../../lib/format";
+import { toUTCText } from "../../lib/format";
+import { ImageCard } from "./ImageCard";
+import { deleteWarning, ImageDetailDrawer } from "./ImageDetailDrawer";
+import { ImageFilters } from "./ImageFilters";
+import { emptyFilters, type ImageFilterState, type ImageItem } from "./types";
 import { UploadModal } from "./UploadModal";
-
-/** 图片列表项(对应 /api/admin/images 响应)。 */
-export interface ImageItem {
-  id: string;
-  url: string;
-  user_id: string;
-  token_id: number | null;
-  file_name: string;
-  mime: string;
-  size: number;
-  width: number;
-  height: number;
-  sha256: string;
-  expire_at: string | null;
-  last_access_at: string | null;
-  pending_cleanup: boolean;
-  cleanup_exempt: boolean;
-  created_at: string;
-  ref_count?: number;
-}
 
 /** 每页卡片数(4 列 × 6 行)。 */
 const pageSize = 24;
 
-/** 图片页:缩略卡片网格 + 搜索过滤 + 详情抽屉 + 删除。 */
+/** 单次批量删除的张数上限(与后端 batch-delete 契约一致)。 */
+const batchDeleteMax = 100;
+
+/** 批量删除响应(对应 POST /api/admin/images/batch-delete)。 */
+interface BatchDeleteResult {
+  deleted: number;
+  failed: { id: string; error: string }[];
+}
+
+/** buildFilters 把搜索词与筛选状态平铺为后端列表查询参数。 */
+function buildFilters(search: string, f: ImageFilterState) {
+  const out: { field: string; operator: "eq"; value: string | number }[] = [];
+  if (search) {
+    out.push({ field: "search", operator: "eq", value: search });
+  }
+  if (f.tokenId != null) {
+    out.push({ field: "token_id", operator: "eq", value: f.tokenId });
+  }
+  if (f.userId) {
+    out.push({ field: "user_id", operator: "eq", value: f.userId });
+  }
+  if (f.range) {
+    // 首尾两天按本地日界取闭开区间:[首日 00:00, 末日次日 00:00)。
+    out.push({ field: "since", operator: "eq", value: toUTCText(f.range[0].startOf("day").valueOf()) });
+    out.push({ field: "until", operator: "eq", value: toUTCText(f.range[1].add(1, "day").startOf("day").valueOf()) });
+  }
+  return out;
+}
+
+/** 图片页:缩略卡片网格 + 搜索/多维筛选 + 多选批量删除 + 详情抽屉。 */
 export function ImagesPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<ImageFilterState>(emptyFilters);
   const [active, setActive] = useState<ImageItem | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
   const { data: role } = usePermissions<string>({});
   const invalidate = useInvalidate();
   const { message } = AntdApp.useApp();
   const { token } = theme.useToken();
 
+  const hasQuery =
+    search !== "" || filters.tokenId != null || filters.userId != null || filters.range != null;
   const list = useList<ImageItem>({
     resource: "images",
     pagination: { currentPage: page, pageSize },
-    filters: search ? [{ field: "search", operator: "eq", value: search }] : [],
+    filters: buildFilters(search, filters),
   });
   const items = list.result?.data ?? [];
   const total = list.result?.total ?? 0;
@@ -72,14 +87,48 @@ export function ImagesPage() {
 
   const refresh = () => invalidate({ resource: "images", invalidates: ["list"] });
 
-  const removeImage = async (id: string) => {
+  /** toggleSelect 切换单张勾选(不可变更新)。 */
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else if (next.size >= batchDeleteMax) {
+        message.warning(`一次最多选择 ${batchDeleteMax} 张`);
+        return prev;
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  /** exitSelecting 退出多选模式并清空已选。 */
+  const exitSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+
+  /** batchDelete 批量删除已选并反馈成功/失败数。 */
+  const batchDelete = async () => {
+    setBatchDeleting(true);
     try {
-      await apiFetch(`/api/admin/images/${id}`, { method: "DELETE" });
-      message.success("已删除");
+      const res = await apiFetch<BatchDeleteResult>("/api/admin/images/batch-delete", {
+        method: "POST",
+        body: JSON.stringify({ ids: [...selected] }),
+      });
+      if (res.failed.length > 0) {
+        message.warning(`已删除 ${res.deleted} 张,${res.failed.length} 张失败:${res.failed[0].error}`);
+      } else {
+        message.success(`已删除 ${res.deleted} 张`);
+      }
+      exitSelecting();
       setActive(null);
       refresh();
     } catch (err) {
-      message.error(err instanceof Error ? err.message : "删除失败");
+      message.error(err instanceof Error ? err.message : "批量删除失败");
+    } finally {
+      setBatchDeleting(false);
     }
   };
 
@@ -98,12 +147,28 @@ export function ImagesPage() {
           <Input.Search
             allowClear
             placeholder="按短 ID / 文件名搜索"
-            style={{ width: 280 }}
+            style={{ width: 240 }}
             onSearch={(v) => {
               setPage(1);
               setSearch(v.trim());
             }}
           />
+          <ImageFilters
+            isAdmin={role === "admin"}
+            value={filters}
+            onChange={(next) => {
+              setPage(1);
+              setFilters(next);
+            }}
+          />
+          <Button
+            icon={<CheckSquareOutlined />}
+            type={selecting ? "primary" : "default"}
+            ghost={selecting}
+            onClick={() => (selecting ? exitSelecting() : setSelecting(true))}
+          >
+            {selecting ? "取消选择" : "选择"}
+          </Button>
           <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
             上传图片
           </Button>
@@ -112,7 +177,7 @@ export function ImagesPage() {
 
       <QueryState query={list.query}>
         {items.length === 0 ? (
-          search ? (
+          hasQuery ? (
             <Empty description="没有匹配的图片" style={{ padding: "64px 0" }} />
           ) : (
             <Empty
@@ -141,40 +206,13 @@ export function ImagesPage() {
           <Row gutter={[16, 16]}>
             {items.map((img) => (
               <Col key={img.id} xs={12} sm={8} md={6} xl={4}>
-                <Card
-                  hoverable
-                  onClick={() => setActive(img)}
-                  styles={{ body: { padding: "10px 12px" } }}
-                  cover={
-                    <div
-                      style={{
-                        aspectRatio: "4 / 3",
-                        overflow: "hidden",
-                        background: token.colorBgLayout,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <img
-                        src={`${img.url}?w=400`}
-                        alt={img.file_name || img.id}
-                        loading="lazy"
-                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                      />
-                    </div>
-                  }
-                >
-                  <Typography.Text ellipsis style={{ display: "block", fontSize: 12 }}>
-                    {img.file_name || img.id}
-                  </Typography.Text>
-                  <Flex justify="space-between" align="center" style={{ marginTop: 2 }}>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {formatBytes(img.size)}
-                    </Typography.Text>
-                    {img.pending_cleanup && <Tag color="warning">待清理</Tag>}
-                  </Flex>
-                </Card>
+                <ImageCard
+                  img={img}
+                  selecting={selecting}
+                  selected={selected.has(img.id)}
+                  onOpen={setActive}
+                  onToggle={toggleSelect}
+                />
               </Col>
             ))}
           </Row>
@@ -192,69 +230,50 @@ export function ImagesPage() {
         </Flex>
       </QueryState>
 
-      <Drawer
-        open={active !== null}
+      {selecting && (
+        <Flex
+          align="center"
+          gap={16}
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 10,
+            padding: "10px 20px",
+            borderRadius: 12,
+            background: token.colorBgElevated,
+            boxShadow: token.boxShadowSecondary,
+            border: `1px solid ${token.colorBorderSecondary}`,
+          }}
+        >
+          <Typography.Text strong>已选 {selected.size} 张</Typography.Text>
+          <Popconfirm
+            title={`删除选中的 ${selected.size} 张图片?`}
+            description={deleteWarning}
+            okButtonProps={{ danger: true }}
+            onConfirm={() => void batchDelete()}
+          >
+            <Button danger icon={<DeleteOutlined />} loading={batchDeleting} disabled={selected.size === 0}>
+              批量删除
+            </Button>
+          </Popconfirm>
+          <Button onClick={exitSelecting}>取消</Button>
+        </Flex>
+      )}
+
+      <ImageDetailDrawer
+        image={active}
         onClose={() => setActive(null)}
-        width={420}
-        title={active?.file_name || active?.id}
-        extra={
-          active && (
-            <Popconfirm
-              title="删除这张图片?"
-              description="引用即刻删除,物理文件按宽限期级联清理。"
-              okButtonProps={{ danger: true }}
-              onConfirm={() => removeImage(active.id)}
-            >
-              <Button danger icon={<DeleteOutlined />}>
-                删除
-              </Button>
-            </Popconfirm>
-          )
-        }
-      >
-        {active && (
-          <Flex vertical gap={16}>
-            <a href={active.url} target="_blank" rel="noreferrer">
-              <img
-                src={`${active.url}?w=800`}
-                alt={active.file_name || active.id}
-                style={{ width: "100%", borderRadius: 8 }}
-              />
-            </a>
-            <Descriptions
-              column={1}
-              size="small"
-              items={[
-                {
-                  label: "链接",
-                  children: (
-                    <Typography.Text copyable={{ text: absoluteURL(active.url) }}>
-                      <LinkOutlined /> {active.url}
-                    </Typography.Text>
-                  ),
-                },
-                { label: "格式", children: `${active.mime} · ${active.width}×${active.height}` },
-                { label: "大小", children: formatBytes(active.size) },
-                { label: "归属", children: active.user_id },
-                { label: "上传时间", children: formatTime(active.created_at) },
-                { label: "最近访问", children: formatTime(active.last_access_at) },
-                {
-                  label: "到期",
-                  children: active.expire_at ? formatTime(active.expire_at) : "永不过期",
-                },
-                {
-                  label: "SHA-256",
-                  children: (
-                    <Typography.Text code copyable style={{ fontSize: 11 }}>
-                      {active.sha256}
-                    </Typography.Text>
-                  ),
-                },
-              ]}
-            />
-          </Flex>
-        )}
-      </Drawer>
+        onDeleted={() => {
+          setActive(null);
+          refresh();
+        }}
+        onPatched={(updated) => {
+          setActive(updated);
+          refresh();
+        }}
+      />
 
       <UploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} onUploaded={refresh} />
     </Flex>

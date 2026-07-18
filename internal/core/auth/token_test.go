@@ -162,6 +162,45 @@ func TestDeleteTokenRecord(t *testing.T) {
 	}
 }
 
+// TestDeleteTokenRecordNullsImageSource 删除失效 Token 时,其上传过的图片保留、
+// 来源置空(外键 ON DELETE SET NULL),存量图片不阻塞删除。
+func TestDeleteTokenRecordNullsImageSource(t *testing.T) {
+	svc, queries, conn := newTestService(t)
+	ctx := t.Context()
+
+	tok, err := svc.IssueToken(ctx, "u1", "uploader", 0)
+	if err != nil {
+		t.Fatalf("签发: %v", err)
+	}
+	blobID, err := queries.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "s", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	if err := queries.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "imgbytoken", BlobID: blobID, UserID: "u1",
+		TokenID: sql.NullInt64{Int64: tok.ID, Valid: true},
+	}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+
+	if err := svc.RevokeToken(ctx, "u1", tok.ID); err != nil {
+		t.Fatalf("吊销: %v", err)
+	}
+	if err := svc.DeleteTokenRecord(ctx, "u1", tok.ID); err != nil {
+		t.Fatalf("有存量图片的失效 Token 应可删: %v", err)
+	}
+	var tid sql.NullInt64
+	if err := conn.QueryRowContext(ctx,
+		"SELECT token_id FROM images WHERE id = 'imgbytoken'").Scan(&tid); err != nil {
+		t.Fatalf("图片应保留: %v", err)
+	}
+	if tid.Valid {
+		t.Errorf("token_id 应被置空, got %v", tid.Int64)
+	}
+}
+
 // TestBootstrapGuard bootstrap 守卫:环境变量托管时吊销/轮转/删除一律拒绝,
 // 未托管时按普通 Token 处理。
 func TestBootstrapGuard(t *testing.T) {

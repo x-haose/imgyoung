@@ -4,11 +4,14 @@ import {
   InboxOutlined,
   LoadingOutlined,
 } from "@ant-design/icons";
-import { Flex, InputNumber, Modal, Typography, Upload, theme } from "antd";
+import { App as AntdApp, Flex, InputNumber, Modal, Segmented, Typography, Upload, theme } from "antd";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { apiFetch } from "../../api/http";
 import { absoluteURL } from "../../lib/format";
+
+/** TTL 档位:跟随全局默认 / 显式永久 / 自定义小时数。 */
+type TtlMode = "default" | "never" | "custom";
 
 /** 单个上传条目的展示状态。 */
 interface UploadEntry {
@@ -44,30 +47,40 @@ interface UploadResult {
  */
 export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
   const [entries, setEntries] = useState<UploadEntry[]>([]);
-  const [ttlHours, setTtlHours] = useState<number | null>(null);
+  const [ttlMode, setTtlMode] = useState<TtlMode>("default");
+  const [ttlHours, setTtlHours] = useState<number | null>(24);
   const { token } = theme.useToken();
+  const { message } = AntdApp.useApp();
 
   // 队列状态全放 ref:上传回调跨渲染周期存活,不能依赖闭包里的旧 state。
   const nextUid = useRef(0);
   const running = useRef(0);
-  const pending = useRef<{ uid: number; file: File }[]>([]);
+  const pending = useRef<{ uid: number; file: File; ttl: string | null }[]>([]);
   const anySucceeded = useRef(false);
-  const ttlRef = useRef<number | null>(null);
-  ttlRef.current = ttlHours;
+
+  /** resolveTtl 按当前档位算出 ttl 表单值:null=跟随默认(不发字段),"0"=永久,其余为秒数。 */
+  const resolveTtl = useCallback((): string | null => {
+    if (ttlMode === "never") {
+      return "0";
+    }
+    if (ttlMode === "custom" && ttlHours != null && ttlHours > 0) {
+      return String(Math.round(ttlHours * 3600));
+    }
+    return null;
+  }, [ttlMode, ttlHours]);
 
   /** patch 以不可变方式更新指定条目的状态。 */
   const patch = useCallback((uid: number, changes: Partial<UploadEntry>) => {
     setEntries((prev) => prev.map((e) => (e.uid === uid ? { ...e, ...changes } : e)));
   }, []);
 
-  /** send 上传单个文件并落定其条目状态;TTL 取发起时刻的输入值(小时 → 秒)。 */
+  /** send 上传单个文件并落定其条目状态;ttl 为入队时捕获的表单值,null 表示跟随全局默认。 */
   const send = useCallback(
-    async (uid: number, file: File) => {
+    async (uid: number, file: File, ttl: string | null) => {
       const fd = new FormData();
       fd.append("file", file, file.name || "clipboard.png");
-      const hours = ttlRef.current;
-      if (hours != null && hours > 0) {
-        fd.append("ttl", String(Math.round(hours * 3600)));
+      if (ttl != null) {
+        fd.append("ttl", ttl);
       }
       try {
         const res = await apiFetch<UploadResult>("/api/admin/upload", {
@@ -91,7 +104,7 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
         return;
       }
       running.current += 1;
-      void send(job.uid, job.file).finally(() => {
+      void send(job.uid, job.file, job.ttl).finally(() => {
         running.current -= 1;
         if (running.current === 0 && pending.current.length === 0 && anySucceeded.current) {
           anySucceeded.current = false;
@@ -102,19 +115,24 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
     }
   }, [send, onUploaded]);
 
-  /** enqueue 把文件加入展示列表与待传队列并触发调度。 */
+  /** enqueue 把文件加入展示列表与待传队列并触发调度;TTL 在入队时刻捕获随文件走。
+   * 自定义档小时数未填时拒绝入队——静默回退到全局默认会打破三态语义。 */
   const enqueue = useCallback(
     (file: File) => {
+      if (ttlMode === "custom" && (ttlHours == null || ttlHours <= 0)) {
+        message.warning({ content: "请先填写自定义有效期的小时数", key: "ttl-custom-empty" });
+        return;
+      }
       const uid = nextUid.current;
       nextUid.current += 1;
       setEntries((prev) => [
         ...prev,
         { uid, name: file.name || "剪贴板图片", status: "uploading" },
       ]);
-      pending.current.push({ uid, file });
+      pending.current.push({ uid, file, ttl: resolveTtl() });
       pump();
     },
-    [pump],
+    [pump, resolveTtl, ttlMode, ttlHours, message],
   );
 
   // 弹窗打开期间监听全局 paste:剪贴板里的图片直接入队。
@@ -169,17 +187,31 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
 
         <Flex align="center" gap={10} wrap>
           <Typography.Text style={{ fontSize: 13 }}>有效期</Typography.Text>
-          <InputNumber
-            min={1}
-            precision={0}
-            placeholder="默认"
-            suffix="小时"
-            style={{ width: 130 }}
-            value={ttlHours}
-            onChange={(v) => setTtlHours(v)}
+          <Segmented<TtlMode>
+            value={ttlMode}
+            onChange={setTtlMode}
+            options={[
+              { label: "默认", value: "default" },
+              { label: "永久", value: "never" },
+              { label: "自定义", value: "custom" },
+            ]}
           />
+          {ttlMode === "custom" && (
+            <InputNumber
+              min={1}
+              precision={0}
+              suffix="小时"
+              style={{ width: 120 }}
+              value={ttlHours}
+              onChange={(v) => setTtlHours(v)}
+            />
+          )}
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            留空跟随全局默认;对之后加入的文件生效
+            {ttlMode === "default"
+              ? "跟随站点全局默认;对之后加入的文件生效"
+              : ttlMode === "never"
+                ? "永不过期;对之后加入的文件生效"
+                : "到期后自动回收;对之后加入的文件生效"}
           </Typography.Text>
         </Flex>
 

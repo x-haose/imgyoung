@@ -77,6 +77,7 @@ type Image struct {
 	TokenID            sql.NullInt64
 	FileName           string
 	ExpireAt           sql.NullString
+	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString
 	PendingCleanup     int64
 	CleanupExempt      int64

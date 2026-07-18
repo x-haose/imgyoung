@@ -64,6 +64,7 @@ type Config struct {
 	CleanupSweepSeconds   int                `koanf:"cleanup_sweep_seconds"`    // 生命周期清理扫描间隔(秒)
 	DeleteGraceMinutes    int                `koanf:"delete_grace_minutes"`     // 引用归零到物理删的宽限(分钟),可为 0
 	DefaultTTLHours       int                `koanf:"default_ttl_hours"`        // 全局默认 TTL(小时),0 = 永不过期
+	TTLRenewOnAccess      bool               `koanf:"ttl_renew_on_access"`      // 公开访问是否把带 TTL 图片的到期时刻按其时长顺延(随活跃度批量落库)
 	ActivityFlushSeconds  int                `koanf:"activity_flush_seconds"`   // 访问活跃度批量落库间隔(秒)
 	ColdCleanupDays       int                `koanf:"cold_cleanup_days"`        // 冷图待清理阈值(天),0 = 不启用
 	UsageReportSeconds    int                `koanf:"usage_report_seconds"`     // 渠道用量上报间隔(秒)

@@ -111,7 +111,7 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 			Upload:            svc,
 			MaxUploadBytes:    1 << 20,
 			DefaultEXIFPolicy: imaging.PolicyPassthrough,
-			Activity:          lifecycle.NewTracker(conn, queries, discard),
+			Activity:          lifecycle.NewTracker(conn, queries, false, discard),
 			Logger:            discard,
 		},
 		Admin: adminapi.Config{

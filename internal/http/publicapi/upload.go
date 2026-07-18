@@ -2,6 +2,7 @@ package publicapi
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -17,6 +18,10 @@ import (
 // idempotencyHeader 客户端幂等键请求头。
 const idempotencyHeader = "Idempotency-Key"
 
+// maxTTLSeconds ttl 秒数上限(100 年),与管理面 ttl_hours 上限同口径;
+// 同时挡住 time.Duration 乘法溢出(溢出为负会被误判为永久)。
+const maxTTLSeconds = 876000 * 3600
+
 // uploadResponse 上传成功的响应体。
 type uploadResponse struct {
 	ID  string `json:"id"`  // 对外短 ID
@@ -31,29 +36,26 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// resolveExpiry 解析本次上传的到期时刻:单次 ttl 字段 > 全局默认。
+// resolveTTL 解析本次上传的有效时长:单次 ttl 字段 > 全局默认。
 // @Description: ttl 单位秒;"never" 或 0 显式永久;空则用全局默认(默认为 0 亦永久)。
 // @param r 上传请求
-// @return 到期时刻(零值表示永不过期)
-// @return ttl 取值合法为 true;非法(非整数或负数)为 false
-func (h *Handlers) resolveExpiry(r *http.Request) (time.Time, bool) {
+// @return 有效时长(0 表示永不过期)
+// @return ttl 取值合法为 true;非法(非整数、负数或超上限)为 false
+func (h *Handlers) resolveTTL(r *http.Request) (time.Duration, bool) {
 	switch raw := r.FormValue("ttl"); raw {
 	case "never":
-		return time.Time{}, true
+		return 0, true
 	case "":
 		if h.cfg.DefaultTTL <= 0 {
-			return time.Time{}, true
+			return 0, true
 		}
-		return time.Now().Add(h.cfg.DefaultTTL), true
+		return h.cfg.DefaultTTL, true
 	default:
 		secs, err := strconv.Atoi(raw)
-		if err != nil || secs < 0 {
-			return time.Time{}, false
+		if err != nil || secs < 0 || secs > maxTTLSeconds {
+			return 0, false
 		}
-		if secs == 0 {
-			return time.Time{}, true
-		}
-		return time.Now().Add(time.Duration(secs) * time.Second), true
+		return time.Duration(secs) * time.Second, true
 	}
 }
 
@@ -92,7 +94,7 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, uploadErrStatus(err), "无法读取 file 字段")
+		h.writeReadError(w, err, "无法读取 file 字段(需要 multipart/form-data 的 file 字段)")
 		return
 	}
 	defer func() {
@@ -102,7 +104,7 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 	}()
 	data, err := io.ReadAll(file)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, uploadErrStatus(err), "读取上传内容失败")
+		h.writeReadError(w, err, "读取上传内容失败")
 		return
 	}
 
@@ -112,9 +114,10 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		policy = h.cfg.DefaultEXIFPolicy
 	}
 
-	expireAt, ok := h.resolveExpiry(r)
+	ttl, ok := h.resolveTTL(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "ttl 取值非法(需要非负整数秒,或 never 表示永久)")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
+			fmt.Sprintf("ttl 取值非法(需要 0 到 %d 的整数秒,或 never 表示永久)", maxTTLSeconds))
 		return
 	}
 
@@ -124,7 +127,7 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		FileName:       header.Filename,
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
 		EXIFPolicy:     policy,
-		ExpireAt:       expireAt,
+		TTL:            ttl,
 	})
 	if err != nil {
 		h.writeUploadError(w, err)
@@ -144,7 +147,8 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, err error) {
 	case errors.Is(err, upload.ErrUnsupportedType):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusUnsupportedMediaType, "仅支持图片文件(jpeg/png/gif/webp)")
 	case errors.Is(err, upload.ErrTooManyPixels):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, "图片分辨率超出限制")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("图片分辨率超出限制(像素预算 %d 百万像素)", h.cfg.MaxPixels/megapixel))
 	case errors.Is(err, upload.ErrInvalidImage):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "图片内容无法解析")
 	case errors.Is(err, imaging.ErrUnknownPolicy):
@@ -160,12 +164,19 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, err error) {
 	}
 }
 
-// uploadErrStatus 将上传读取错误映射为 HTTP 状态码。
-// @Description: 超过 MaxBytesReader 上限 → 413,其余按客户端请求错误 → 400。
-func uploadErrStatus(err error) int {
+// megapixel 一百万像素(错误文案换算用)。
+const megapixel = 1_000_000
+
+// writeReadError 把请求体读取错误写为带数值的用户可读响应。
+// @Description: 超过 MaxBytesReader 上限 → 413 并给出大小上限;其余按客户端请求错误 → 400 用 fallback 文案。
+// @param err 读取阶段的原始错误
+// @param fallback 非超限错误时的 400 文案
+func (h *Handlers) writeReadError(w http.ResponseWriter, err error, fallback string) {
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
-		return http.StatusRequestEntityTooLarge
+		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("文件超过大小上限(%d MB)", h.cfg.MaxUploadBytes>>20))
+		return
 	}
-	return http.StatusBadRequest
+	httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, fallback)
 }

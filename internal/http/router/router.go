@@ -68,7 +68,9 @@ func New(cfg Config) http.Handler {
 			g.Post("/tokens/{id}/rotate", cfg.Admin.HandleTokenRotate)
 			g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
 			g.Get("/images", cfg.Admin.HandleImageList)
+			g.Post("/images/batch-delete", cfg.Admin.HandleImageBatchDelete)
 			g.Get("/images/{id}", cfg.Admin.HandleImageGet)
+			g.Patch("/images/{id}", cfg.Admin.HandleImagePatch)
 			g.Delete("/images/{id}", cfg.Admin.HandleImageDelete)
 			// 全站资源(渠道/用户/审计/导出)仅管理员可见可改。
 			g.Group(func(ad chi.Router) {
