@@ -21,6 +21,8 @@ import {
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { QueryState } from "../../components/QueryState";
+import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatBytes, formatTime } from "../../lib/format";
 
 /** 用户列表项(对应 /api/admin/users 响应)。 */
@@ -47,8 +49,12 @@ interface UserForm {
 /** 字节换算:GB 输入 → 字节。 */
 const bytesPerGB = 1 << 30;
 
+/** 每页用户数(后端单次上限 100)。 */
+const pageSize = 50;
+
 /** 用户页:列表(含用量)+ 建号 + 编辑 + 重置密码 + 删除。 */
 export function UsersPage() {
+  const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<UserItem | "new" | null>(null);
   const [resetFor, setResetFor] = useState<UserItem | null>(null);
   const [saving, setSaving] = useState(false);
@@ -59,9 +65,11 @@ export function UsersPage() {
 
   const list = useList<UserItem>({
     resource: "users",
-    pagination: { currentPage: 1, pageSize: 200 },
+    pagination: { currentPage: page, pageSize },
   });
   const items = list.result?.data ?? [];
+  const total = list.result?.total ?? 0;
+  usePageClamp(page, setPage, list.result?.total, pageSize);
   const refresh = () => invalidate({ resource: "users", invalidates: ["list"] });
 
   const openEditor = (target: UserItem | "new") => {
@@ -160,83 +168,95 @@ export function UsersPage() {
         </Button>
       </Flex>
 
-      <Card styles={{ body: { padding: 0 } }}>
-        <Table<UserItem>
-          rowKey="id"
-          dataSource={items}
-          loading={list.query.isLoading}
-          pagination={false}
-          size="middle"
-          columns={[
-            {
-              title: "用户",
-              key: "name",
-              render: (_, row) => (
-                <Space>
-                  <Typography.Text strong>{row.name}</Typography.Text>
-                  {row.role === "admin" && <Tag color="gold">管理员</Tag>}
-                  {row.disabled && <Tag>已禁用</Tag>}
-                </Space>
-              ),
-            },
-            { title: "图片", dataIndex: "image_count", align: "right", width: 80 },
-            {
-              title: "用量 / 配额",
-              key: "usage",
-              width: 260,
-              render: (_, row) => {
-                if (!row.quota_bytes) {
-                  return (
-                    <Typography.Text type="secondary">
-                      {formatBytes(row.used_bytes)} / 不限
-                    </Typography.Text>
-                  );
-                }
-                const percent = Math.min(100, Math.round((row.used_bytes / row.quota_bytes) * 100));
-                return (
-                  <Flex vertical gap={2}>
-                    <Progress
-                      percent={percent}
-                      size="small"
-                      status={percent >= 90 ? "exception" : "normal"}
-                      showInfo={false}
-                    />
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {formatBytes(row.used_bytes)} / {formatBytes(row.quota_bytes)}
-                    </Typography.Text>
-                  </Flex>
-                );
+      <QueryState query={list.query}>
+        <Card styles={{ body: { padding: 0 } }}>
+          <Table<UserItem>
+            rowKey="id"
+            dataSource={items}
+            loading={list.query.isFetching}
+            pagination={{
+              current: page,
+              pageSize,
+              total,
+              showSizeChanger: false,
+              onChange: setPage,
+            }}
+            scroll={{ x: 880 }}
+            size="middle"
+            columns={[
+              {
+                title: "用户",
+                key: "name",
+                render: (_, row) => (
+                  <Space>
+                    <Typography.Text strong>{row.name}</Typography.Text>
+                    {row.role === "admin" && <Tag color="gold">管理员</Tag>}
+                    {row.disabled && <Tag>已禁用</Tag>}
+                  </Space>
+                ),
               },
-            },
-            { title: "创建时间", dataIndex: "created_at", render: formatTime },
-            {
-              title: "操作",
-              key: "actions",
-              width: 200,
-              render: (_, row) => (
-                <Space size={0}>
-                  <Button size="small" type="text" onClick={() => openEditor(row)}>
-                    编辑
-                  </Button>
-                  <Button size="small" type="text" onClick={() => setResetFor(row)}>
-                    重置密码
-                  </Button>
-                  <Popconfirm
-                    title={`删除用户 ${row.name}?`}
-                    description="名下仍有图片时会被拒绝;Token 与会话随删除失效。"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => remove(row)}
-                  >
-                    <Button size="small" type="text" danger>
-                      删除
+              { title: "图片", dataIndex: "image_count", align: "right", width: 80 },
+              {
+                title: "用量 / 配额",
+                key: "usage",
+                width: 260,
+                render: (_, row) => {
+                  if (!row.quota_bytes) {
+                    return (
+                      <Typography.Text type="secondary">
+                        {formatBytes(row.used_bytes)} / 不限
+                      </Typography.Text>
+                    );
+                  }
+                  const percent = Math.min(
+                    100,
+                    Math.round((row.used_bytes / row.quota_bytes) * 100),
+                  );
+                  return (
+                    <Flex vertical gap={2}>
+                      <Progress
+                        percent={percent}
+                        size="small"
+                        status={percent >= 90 ? "exception" : "normal"}
+                        showInfo={false}
+                      />
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {formatBytes(row.used_bytes)} / {formatBytes(row.quota_bytes)}
+                      </Typography.Text>
+                    </Flex>
+                  );
+                },
+              },
+              { title: "创建时间", dataIndex: "created_at", render: formatTime },
+              {
+                title: "操作",
+                key: "actions",
+                width: 200,
+                render: (_, row) => (
+                  <Space size={0}>
+                    <Button size="small" type="text" onClick={() => openEditor(row)}>
+                      编辑
                     </Button>
-                  </Popconfirm>
-                </Space>
-              ),
-            },
-          ]}
-        />
-      </Card>
+                    <Button size="small" type="text" onClick={() => setResetFor(row)}>
+                      重置密码
+                    </Button>
+                    <Popconfirm
+                      title={`删除用户 ${row.name}?`}
+                      description="名下仍有图片时会被拒绝;Token 与会话随删除失效。"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => remove(row)}
+                    >
+                      <Button size="small" type="text" danger>
+                        删除
+                      </Button>
+                    </Popconfirm>
+                  </Space>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      </QueryState>
 
       <Modal
         open={editing !== null}

@@ -26,6 +26,7 @@ import { DashboardPage } from "./pages/dashboard";
 import { DedupPage } from "./pages/dedup";
 import { ImagesPage } from "./pages/images";
 import { LoginPage } from "./pages/login";
+import { NotFoundPage } from "./pages/not-found";
 import { SettingsPage } from "./pages/settings";
 import { TokensPage } from "./pages/tokens";
 import { UsersPage } from "./pages/users";
@@ -75,7 +76,6 @@ export function App() {
               {
                 name: "images",
                 list: "/images",
-                show: "/images/:id",
                 meta: { label: "图片", icon: <PictureOutlined /> },
               },
               {
@@ -134,6 +134,7 @@ export function App() {
                 <Route path="/cleanup" element={<CleanupPage />} />
                 <Route path="/audit" element={<AuditPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<NotFoundPage />} />
               </Route>
               <Route
                 element={

@@ -29,7 +29,7 @@ export const authProvider: AuthProvider = {
         method: "POST",
         body: JSON.stringify({ name, password }),
       });
-      setCsrfToken(res.csrf_token);
+      setCsrfToken(res.csrf_token, res.user.id);
       currentUser = res.user;
       return { success: true, redirectTo: "/" };
     } catch (err) {
@@ -53,7 +53,7 @@ export const authProvider: AuthProvider = {
   check: async () => {
     try {
       const res = await apiFetch<SessionResponse>("/api/admin/me");
-      setCsrfToken(res.csrf_token);
+      setCsrfToken(res.csrf_token, res.user.id);
       currentUser = res.user;
       return { authenticated: true };
     } catch {

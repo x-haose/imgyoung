@@ -6,13 +6,18 @@ import {
   Col,
   Empty,
   Flex,
+  Pagination,
   Row,
   Tag,
+  Tooltip,
   Typography,
   theme,
 } from "antd";
+import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { QueryState } from "../../components/QueryState";
+import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatBytes } from "../../lib/format";
 
 /** 候选对中一方的展示信息。 */
@@ -81,17 +86,22 @@ function SideCard({
   );
 }
 
+/** 每页候选组数。 */
+const pageSize = 20;
+
 /** 疑似重复页:候选并排对比,人工裁决合并方向或忽略。 */
 export function DedupPage() {
+  const [page, setPage] = useState(1);
   const invalidate = useInvalidate();
   const { message, modal } = AntdApp.useApp();
 
   const list = useList<CandidateItem>({
     resource: "dedup",
-    pagination: { currentPage: 1, pageSize: 20 },
+    pagination: { currentPage: page, pageSize },
   });
   const items = list.result?.data ?? [];
   const total = list.result?.total ?? 0;
+  usePageClamp(page, setPage, list.result?.total, pageSize);
   const refresh = () => invalidate({ resource: "dedup", invalidates: ["list"] });
 
   const merge = (cand: CandidateItem, keep: CandidateSide, drop: CandidateSide) => {
@@ -136,38 +146,52 @@ export function DedupPage() {
         </Typography.Text>
       </div>
 
-      {items.length === 0 && !list.query.isLoading ? (
-        <Empty description="没有待裁决的相似图片" style={{ padding: "64px 0" }} />
-      ) : (
-        <Row gutter={[16, 16]}>
-          {items.map((cand) => (
-            <Col key={cand.id} xs={24} xl={12}>
-              <Card
-                title={
-                  <Flex align="center" gap={8}>
-                    <Tag color={cand.distance <= 2 ? "error" : "warning"}>
-                      距离 {cand.distance}
-                    </Tag>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      #{cand.id}
-                    </Typography.Text>
+      <QueryState query={list.query}>
+        {items.length === 0 ? (
+          <Empty description="没有待裁决的相似图片" style={{ padding: "64px 0" }} />
+        ) : (
+          <Row gutter={[16, 16]}>
+            {items.map((cand) => (
+              <Col key={cand.id} xs={24} xl={12}>
+                <Card
+                  title={
+                    <Flex align="center" gap={8}>
+                      <Tooltip title="感知哈希差异位数,越小越相似;0–2 几乎相同,越大差异越大">
+                        <Tag color={cand.distance <= 2 ? "error" : "warning"}>
+                          距离 {cand.distance}
+                        </Tag>
+                      </Tooltip>
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        #{cand.id}
+                      </Typography.Text>
+                    </Flex>
+                  }
+                  extra={
+                    <Button size="small" type="text" onClick={() => dismiss(cand)}>
+                      忽略
+                    </Button>
+                  }
+                >
+                  <Flex gap={16}>
+                    <SideCard side={cand.a} label="左图" onKeep={() => merge(cand, cand.a, cand.b)} />
+                    <SideCard side={cand.b} label="右图" onKeep={() => merge(cand, cand.b, cand.a)} />
                   </Flex>
-                }
-                extra={
-                  <Button size="small" type="text" onClick={() => dismiss(cand)}>
-                    忽略
-                  </Button>
-                }
-              >
-                <Flex gap={16}>
-                  <SideCard side={cand.a} label="左图" onKeep={() => merge(cand, cand.a, cand.b)} />
-                  <SideCard side={cand.b} label="右图" onKeep={() => merge(cand, cand.b, cand.a)} />
-                </Flex>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      )}
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        )}
+        <Flex justify="center">
+          <Pagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger={false}
+            onChange={setPage}
+            hideOnSinglePage
+          />
+        </Flex>
+      </QueryState>
     </Flex>
   );
 }

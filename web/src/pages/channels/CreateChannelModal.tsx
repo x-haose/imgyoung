@@ -62,6 +62,9 @@ export function CreateChannelModal({ open, onClose, onCreated }: CreateChannelMo
   const { message } = AntdApp.useApp();
   const { token } = theme.useToken();
   const [form] = Form.useForm();
+  // 加密与 302 直链互斥(密文不能直出),一方开启即禁用另一方并就地说明,不等后端打回。
+  const encrypted = Form.useWatch("encrypted", form) as boolean | undefined;
+  const allowDirectLink = Form.useWatch("allow_direct_link", form) as boolean | undefined;
 
   const templates = useList<ChannelTemplate>({
     resource: "channel-templates",
@@ -200,11 +203,21 @@ export function CreateChannelModal({ open, onClose, onCreated }: CreateChannelMo
               <Form.Item name="priority" label="优先级" style={{ width: 120 }}>
                 <InputNumber min={0} max={1000} style={{ width: "100%" }} />
               </Form.Item>
-              <Form.Item name="encrypted" label="服务端加密" valuePropName="checked">
-                <Switch />
+              <Form.Item
+                name="encrypted"
+                label="服务端加密"
+                valuePropName="checked"
+                extra={allowDirectLink ? "已开直链的渠道无法加密:密文不能直出" : undefined}
+              >
+                <Switch disabled={allowDirectLink === true} />
               </Form.Item>
-              <Form.Item name="allow_direct_link" label="允许 302 直链" valuePropName="checked">
-                <Switch />
+              <Form.Item
+                name="allow_direct_link"
+                label="允许 302 直链"
+                valuePropName="checked"
+                extra={encrypted ? "加密渠道无法 302 直链:密文不能直出" : undefined}
+              >
+                <Switch disabled={encrypted === true} />
               </Form.Item>
             </Flex>
             <Form.Item

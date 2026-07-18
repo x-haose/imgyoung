@@ -17,6 +17,7 @@ import {
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { QueryState } from "../../components/QueryState";
 import { formatTime } from "../../lib/format";
 
 /** Token 列表项(对应 /api/admin/tokens 响应)。 */
@@ -99,53 +100,56 @@ export function TokensPage() {
         </Button>
       </Flex>
 
-      <Card styles={{ body: { padding: 0 } }}>
-        <Table<TokenItem>
-          rowKey="id"
-          dataSource={items}
-          loading={list.query.isLoading}
-          pagination={false}
-          size="middle"
-          columns={[
-            { title: "名称", dataIndex: "name" },
-            {
-              title: "识别前缀",
-              dataIndex: "prefix",
-              render: (v: string) => <Typography.Text code>{v}…</Typography.Text>,
-            },
-            {
-              title: "状态",
-              key: "state",
-              render: (_, row) =>
-                row.revoked_at ? <Tag>已吊销</Tag> : <Tag color="success">有效</Tag>,
-            },
-            {
-              title: "最近使用",
-              dataIndex: "last_used_at",
-              render: (v: string | null) => (v ? formatTime(v) : "从未使用"),
-            },
-            { title: "签发时间", dataIndex: "created_at", render: formatTime },
-            {
-              title: "操作",
-              key: "actions",
-              width: 100,
-              render: (_, row) =>
-                row.revoked_at ? null : (
-                  <Popconfirm
-                    title="吊销该 Token?"
-                    description="使用该 Token 的客户端将立即无法上传。"
-                    okButtonProps={{ danger: true }}
-                    onConfirm={() => revoke(row.id)}
-                  >
-                    <Button size="small" danger type="text">
-                      吊销
-                    </Button>
-                  </Popconfirm>
-                ),
-            },
-          ]}
-        />
-      </Card>
+      <QueryState query={list.query}>
+        <Card styles={{ body: { padding: 0 } }}>
+          <Table<TokenItem>
+            rowKey="id"
+            dataSource={items}
+            loading={list.query.isFetching}
+            pagination={false}
+            scroll={{ x: 760 }}
+            size="middle"
+            columns={[
+              { title: "名称", dataIndex: "name" },
+              {
+                title: "识别前缀",
+                dataIndex: "prefix",
+                render: (v: string) => <Typography.Text code>{v}…</Typography.Text>,
+              },
+              {
+                title: "状态",
+                key: "state",
+                render: (_, row) =>
+                  row.revoked_at ? <Tag>已吊销</Tag> : <Tag color="success">有效</Tag>,
+              },
+              {
+                title: "最近使用",
+                dataIndex: "last_used_at",
+                render: (v: string | null) => (v ? formatTime(v) : "从未使用"),
+              },
+              { title: "签发时间", dataIndex: "created_at", render: formatTime },
+              {
+                title: "操作",
+                key: "actions",
+                width: 100,
+                render: (_, row) =>
+                  row.revoked_at ? null : (
+                    <Popconfirm
+                      title="吊销该 Token?"
+                      description="使用该 Token 的客户端将立即无法上传。"
+                      okButtonProps={{ danger: true }}
+                      onConfirm={() => revoke(row.id)}
+                    >
+                      <Button size="small" danger type="text">
+                        吊销
+                      </Button>
+                    </Popconfirm>
+                  ),
+              },
+            ]}
+          />
+        </Card>
+      </QueryState>
 
       <Modal
         open={createOpen}
@@ -174,8 +178,20 @@ export function TokensPage() {
             <KeyOutlined /> Token 已签发
           </Flex>
         }
-        onCancel={() => setIssued(null)}
-        footer={<Button onClick={() => setIssued(null)}>我已保存</Button>}
+        // 明文只此一次:禁掉遮罩点击 / Esc / 右上角叉,唯一出口是二次确认过的「我已保存」。
+        maskClosable={false}
+        keyboard={false}
+        closable={false}
+        footer={
+          <Popconfirm
+            title="确认已保存?"
+            description="关闭后无法再次查看明文。"
+            okText="已保存,关闭"
+            onConfirm={() => setIssued(null)}
+          >
+            <Button type="primary">我已保存</Button>
+          </Popconfirm>
+        }
       >
         <Alert
           type="warning"

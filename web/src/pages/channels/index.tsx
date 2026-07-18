@@ -4,6 +4,7 @@ import { App as AntdApp, Button, Card, Flex, Popconfirm, Space, Table, Tag, Typo
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { QueryState } from "../../components/QueryState";
 import { CreateChannelModal } from "./CreateChannelModal";
 
 /** 渠道列表项(channel.Info,凭证与配置不出库)。 */
@@ -56,54 +57,57 @@ export function ChannelsPage() {
         </Button>
       </Flex>
 
-      <Card styles={{ body: { padding: 0 } }}>
-        <Table<ChannelItem>
-          rowKey="id"
-          dataSource={items}
-          loading={list.query.isLoading}
-          pagination={false}
-          size="middle"
-          columns={[
-            { title: "渠道", dataIndex: "name" },
-            { title: "驱动", dataIndex: "driver", render: (v: string) => <Tag>{v}</Tag> },
-            { title: "优先级", dataIndex: "priority", align: "right", width: 90 },
-            {
-              title: "状态",
-              dataIndex: "healthy",
-              width: 90,
-              render: (v: boolean) =>
-                v ? <Tag color="success">健康</Tag> : <Tag color="error">异常</Tag>,
-            },
-            {
-              title: "特性",
-              key: "flags",
-              render: (_, row) => (
-                <Space size={4}>
-                  {row.encrypted && <Tag color="geekblue">加密</Tag>}
-                  {row.allow_direct_link && <Tag color="cyan">可直链</Tag>}
-                </Space>
-              ),
-            },
-            {
-              title: "操作",
-              key: "actions",
-              width: 100,
-              render: (_, row) => (
-                <Popconfirm
-                  title={`删除渠道 ${row.name}?`}
-                  description="持有唯一副本的渠道会被拒绝删除,防止丢数据。"
-                  okButtonProps={{ danger: true }}
-                  onConfirm={() => remove(row.id)}
-                >
-                  <Button size="small" danger type="text">
-                    删除
-                  </Button>
-                </Popconfirm>
-              ),
-            },
-          ]}
-        />
-      </Card>
+      <QueryState query={list.query}>
+        <Card styles={{ body: { padding: 0 } }}>
+          <Table<ChannelItem>
+            rowKey="id"
+            dataSource={items}
+            loading={list.query.isFetching}
+            pagination={false}
+            scroll={{ x: 640 }}
+            size="middle"
+            columns={[
+              { title: "渠道", dataIndex: "name" },
+              { title: "驱动", dataIndex: "driver", render: (v: string) => <Tag>{v}</Tag> },
+              { title: "优先级", dataIndex: "priority", align: "right", width: 90 },
+              {
+                title: "状态",
+                dataIndex: "healthy",
+                width: 90,
+                render: (v: boolean) =>
+                  v ? <Tag color="success">健康</Tag> : <Tag color="error">异常</Tag>,
+              },
+              {
+                title: "特性",
+                key: "flags",
+                render: (_, row) => (
+                  <Space size={4}>
+                    {row.encrypted && <Tag color="geekblue">加密</Tag>}
+                    {row.allow_direct_link && <Tag color="cyan">可直链</Tag>}
+                  </Space>
+                ),
+              },
+              {
+                title: "操作",
+                key: "actions",
+                width: 100,
+                render: (_, row) => (
+                  <Popconfirm
+                    title={`删除渠道 ${row.name}?`}
+                    description="持有唯一副本的渠道会被拒绝删除,防止丢数据。"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => remove(row.id)}
+                  >
+                    <Button size="small" danger type="text">
+                      删除
+                    </Button>
+                  </Popconfirm>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      </QueryState>
 
       <CreateChannelModal open={open} onClose={() => setOpen(false)} onCreated={() => {
         setOpen(false);

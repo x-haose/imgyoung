@@ -2,6 +2,8 @@ import { useList } from "@refinedev/core";
 import { Card, Flex, Input, Select, Table, Tag, Typography } from "antd";
 import { useState } from "react";
 
+import { QueryState } from "../../components/QueryState";
+import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatTime } from "../../lib/format";
 
 /** 审计记录项(对应 /api/admin/audit 响应)。 */
@@ -50,6 +52,9 @@ const actionOptions = [
   "cleanup.keep",
 ].map((v) => ({ value: v, label: v }));
 
+/** 每页审计条数。 */
+const pageSize = 50;
+
 /** 审计页:管理操作留痕,按操作者/动作过滤。 */
 export function AuditPage() {
   const [page, setPage] = useState(1);
@@ -58,7 +63,7 @@ export function AuditPage() {
 
   const list = useList<AuditItem>({
     resource: "audit",
-    pagination: { currentPage: page, pageSize: 50 },
+    pagination: { currentPage: page, pageSize },
     filters: [
       ...(actor ? [{ field: "actor", operator: "eq" as const, value: actor }] : []),
       ...(action ? [{ field: "action", operator: "eq" as const, value: action }] : []),
@@ -66,6 +71,7 @@ export function AuditPage() {
   });
   const items = list.result?.data ?? [];
   const total = list.result?.total ?? 0;
+  usePageClamp(page, setPage, list.result?.total, pageSize);
 
   return (
     <Flex vertical gap={16}>
@@ -99,41 +105,44 @@ export function AuditPage() {
         </Flex>
       </Flex>
 
-      <Card styles={{ body: { padding: 0 } }}>
-        <Table<AuditItem>
-          rowKey="id"
-          dataSource={items}
-          loading={list.query.isLoading}
-          size="middle"
-          pagination={{
-            current: page,
-            pageSize: 50,
-            total,
-            showSizeChanger: false,
-            onChange: setPage,
-          }}
-          columns={[
-            { title: "时间", dataIndex: "created_at", width: 180, render: formatTime },
-            {
-              title: "动作",
-              dataIndex: "action",
-              width: 160,
-              render: (v: string) => <Tag color={actionColor(v)}>{v}</Tag>,
-            },
-            { title: "操作者", dataIndex: "actor", width: 160 },
-            { title: "目标", dataIndex: "target" },
-            {
-              title: "详情",
-              dataIndex: "detail",
-              render: (v: string) => (
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {v}
-                </Typography.Text>
-              ),
-            },
-          ]}
-        />
-      </Card>
+      <QueryState query={list.query}>
+        <Card styles={{ body: { padding: 0 } }}>
+          <Table<AuditItem>
+            rowKey="id"
+            dataSource={items}
+            loading={list.query.isFetching}
+            size="middle"
+            pagination={{
+              current: page,
+              pageSize,
+              total,
+              showSizeChanger: false,
+              onChange: setPage,
+            }}
+            scroll={{ x: 900 }}
+            columns={[
+              { title: "时间", dataIndex: "created_at", width: 180, render: formatTime },
+              {
+                title: "动作",
+                dataIndex: "action",
+                width: 160,
+                render: (v: string) => <Tag color={actionColor(v)}>{v}</Tag>,
+              },
+              { title: "操作者", dataIndex: "actor", width: 160 },
+              { title: "目标", dataIndex: "target" },
+              {
+                title: "详情",
+                dataIndex: "detail",
+                render: (v: string) => (
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    {v}
+                  </Typography.Text>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      </QueryState>
     </Flex>
   );
 }

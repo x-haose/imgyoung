@@ -20,6 +20,8 @@ import {
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { QueryState } from "../../components/QueryState";
+import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatBytes, formatTime } from "../../lib/format";
 
 /** 图片列表项(对应 /api/admin/images 响应)。 */
@@ -62,6 +64,7 @@ export function ImagesPage() {
   });
   const items = list.result?.data ?? [];
   const total = list.result?.total ?? 0;
+  usePageClamp(page, setPage, list.result?.total, pageSize);
 
   const refresh = () => invalidate({ resource: "images", invalidates: ["list"] });
 
@@ -98,61 +101,63 @@ export function ImagesPage() {
         />
       </Flex>
 
-      {items.length === 0 && !list.query.isLoading ? (
-        <Empty description="没有图片" style={{ padding: "64px 0" }} />
-      ) : (
-        <Row gutter={[16, 16]}>
-          {items.map((img) => (
-            <Col key={img.id} xs={12} sm={8} md={6} xl={4}>
-              <Card
-                hoverable
-                onClick={() => setActive(img)}
-                styles={{ body: { padding: "10px 12px" } }}
-                cover={
-                  <div
-                    style={{
-                      aspectRatio: "4 / 3",
-                      overflow: "hidden",
-                      background: token.colorBgLayout,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <img
-                      src={`${img.url}?w=400`}
-                      alt={img.file_name || img.id}
-                      loading="lazy"
-                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                    />
-                  </div>
-                }
-              >
-                <Typography.Text ellipsis style={{ display: "block", fontSize: 12 }}>
-                  {img.file_name || img.id}
-                </Typography.Text>
-                <Flex justify="space-between" align="center" style={{ marginTop: 2 }}>
-                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                    {formatBytes(img.size)}
+      <QueryState query={list.query}>
+        {items.length === 0 ? (
+          <Empty description="没有图片" style={{ padding: "64px 0" }} />
+        ) : (
+          <Row gutter={[16, 16]}>
+            {items.map((img) => (
+              <Col key={img.id} xs={12} sm={8} md={6} xl={4}>
+                <Card
+                  hoverable
+                  onClick={() => setActive(img)}
+                  styles={{ body: { padding: "10px 12px" } }}
+                  cover={
+                    <div
+                      style={{
+                        aspectRatio: "4 / 3",
+                        overflow: "hidden",
+                        background: token.colorBgLayout,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <img
+                        src={`${img.url}?w=400`}
+                        alt={img.file_name || img.id}
+                        loading="lazy"
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    </div>
+                  }
+                >
+                  <Typography.Text ellipsis style={{ display: "block", fontSize: 12 }}>
+                    {img.file_name || img.id}
                   </Typography.Text>
-                  {img.pending_cleanup && <Tag color="warning">待清理</Tag>}
-                </Flex>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      )}
+                  <Flex justify="space-between" align="center" style={{ marginTop: 2 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      {formatBytes(img.size)}
+                    </Typography.Text>
+                    {img.pending_cleanup && <Tag color="warning">待清理</Tag>}
+                  </Flex>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        )}
 
-      <Flex justify="center">
-        <Pagination
-          current={page}
-          pageSize={pageSize}
-          total={total}
-          showSizeChanger={false}
-          onChange={setPage}
-          hideOnSinglePage
-        />
-      </Flex>
+        <Flex justify="center">
+          <Pagination
+            current={page}
+            pageSize={pageSize}
+            total={total}
+            showSizeChanger={false}
+            onChange={setPage}
+            hideOnSinglePage
+          />
+        </Flex>
+      </QueryState>
 
       <Drawer
         open={active !== null}
