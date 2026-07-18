@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 )
 
 // newTestService 建一个迁移到最新 schema 的临时库,并注册一个已设密码的测试用户。
-func newTestService(t *testing.T) (*auth.Service, *sqlc.Queries) {
+func newTestService(t *testing.T) (*auth.Service, *sqlc.Queries, *sql.DB) {
 	t.Helper()
 	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -35,12 +36,12 @@ func newTestService(t *testing.T) (*auth.Service, *sqlc.Queries) {
 	}); err != nil {
 		t.Fatalf("建测试用户: %v", err)
 	}
-	return svc, queries
+	return svc, queries, conn
 }
 
 // TestLoginAndSession 登录成功产出可校验的会话,登出后会话失效。
 func TestLoginAndSession(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := t.Context()
 
 	res, err := svc.Login(ctx, "alice", "correct-horse", "1.1.1.1")
@@ -67,7 +68,7 @@ func TestLoginAndSession(t *testing.T) {
 
 // TestLoginRejections 错误密码/未知用户/未设密码/禁用用户逐一拒绝。
 func TestLoginRejections(t *testing.T) {
-	svc, queries := newTestService(t)
+	svc, queries, _ := newTestService(t)
 	ctx := t.Context()
 
 	if _, err := svc.Login(ctx, "alice", "wrong", "2.2.2.1"); !errors.Is(err, auth.ErrInvalidCredentials) {
@@ -94,7 +95,7 @@ func TestLoginRejections(t *testing.T) {
 
 // TestLoginRateLimit 同一 IP 连续尝试超过突发额度后被限速。
 func TestLoginRateLimit(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := t.Context()
 	var last error
 	for range 8 {
@@ -107,7 +108,7 @@ func TestLoginRateLimit(t *testing.T) {
 
 // TestSessionExpiry 到期会话失效,清理任务能回收到期行。
 func TestSessionExpiry(t *testing.T) {
-	svc, queries := newTestService(t)
+	svc, queries, _ := newTestService(t)
 	ctx := t.Context()
 	res, err := svc.Login(ctx, "alice", "correct-horse", "3.3.3.3")
 	if err != nil {
@@ -127,7 +128,7 @@ func TestSessionExpiry(t *testing.T) {
 
 // TestSetPasswordInvalidatesSessions 改密后既有会话全部失效,新密码可登录。
 func TestSetPasswordInvalidatesSessions(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := t.Context()
 	res, err := svc.Login(ctx, "alice", "correct-horse", "4.4.4.4")
 	if err != nil {
@@ -146,17 +147,17 @@ func TestSetPasswordInvalidatesSessions(t *testing.T) {
 
 // TestTokenLifecycle 签发→认证→吊销→拒绝的完整链路,含同名约束与使用回写。
 func TestTokenLifecycle(t *testing.T) {
-	svc, queries := newTestService(t)
+	svc, queries, _ := newTestService(t)
 	ctx := t.Context()
 
-	issued, err := svc.IssueToken(ctx, "u1", "picgo")
+	issued, err := svc.IssueToken(ctx, "u1", "picgo", 0)
 	if err != nil {
 		t.Fatalf("签发失败: %v", err)
 	}
 	if len(issued.Plaintext) < 40 || issued.Prefix != issued.Plaintext[:12] {
 		t.Fatalf("Token 形态异常: %+v", issued)
 	}
-	if _, err := svc.IssueToken(ctx, "u1", "picgo"); !errors.Is(err, auth.ErrTokenNameTaken) {
+	if _, err := svc.IssueToken(ctx, "u1", "picgo", 0); !errors.Is(err, auth.ErrTokenNameTaken) {
 		t.Fatalf("同名有效 Token 应冲突, got %v", err)
 	}
 
@@ -179,7 +180,7 @@ func TestTokenLifecycle(t *testing.T) {
 	if err := svc.RevokeToken(ctx, "u1", issued.ID); !errors.Is(err, auth.ErrTokenNotFound) {
 		t.Fatalf("重复吊销应不存在, got %v", err)
 	}
-	if _, err := svc.IssueToken(ctx, "u1", "picgo"); err != nil {
+	if _, err := svc.IssueToken(ctx, "u1", "picgo", 0); err != nil {
 		t.Fatalf("吊销后同名应可重签: %v", err)
 	}
 	if _, err := svc.AuthenticateToken(ctx, "imgy_bogus"); !errors.Is(err, auth.ErrTokenInvalid) {
@@ -189,9 +190,9 @@ func TestTokenLifecycle(t *testing.T) {
 
 // TestRevokeTokenOwnership 吊销带归属校验,他人无法吊销我的 Token。
 func TestRevokeTokenOwnership(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, _, _ := newTestService(t)
 	ctx := t.Context()
-	issued, err := svc.IssueToken(ctx, "u1", "mine")
+	issued, err := svc.IssueToken(ctx, "u1", "mine", 0)
 	if err != nil {
 		t.Fatalf("签发失败: %v", err)
 	}

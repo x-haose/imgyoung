@@ -157,8 +157,13 @@ func provideMasterKey(cfg config.Config, logger *slog.Logger) (*secret.MasterKey
 
 // provideAuth 构造认证服务。
 // @return 认证服务
-func provideAuth(conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *auth.Service {
-	return auth.New(auth.Config{Conn: conn, Queries: queries, Logger: logger})
+func provideAuth(cfg config.Config, conn *sql.DB, queries *sqlc.Queries, logger *slog.Logger) *auth.Service {
+	return auth.New(auth.Config{
+		Conn:             conn,
+		Queries:          queries,
+		BootstrapManaged: cfg.Token != "",
+		Logger:           logger,
+	})
 }
 
 // bootstrapCredentials 首启凭证播种:管理员初始密码与引导 Token,均幂等。

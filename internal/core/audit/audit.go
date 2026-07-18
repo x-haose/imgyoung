@@ -19,6 +19,10 @@ const (
 	ActionTokenIssue = "token.issue"
 	// ActionTokenRevoke Token 吊销。
 	ActionTokenRevoke = "token.revoke"
+	// ActionTokenRotate Token 轮转(同名新签发 + 旧吊销)。
+	ActionTokenRotate = "token.rotate"
+	// ActionTokenDelete 已失效 Token 记录删除。
+	ActionTokenDelete = "token.delete"
 	// ActionUserCreate 用户创建。
 	ActionUserCreate = "user.create"
 	// ActionUserUpdate 用户资料/密码变更。

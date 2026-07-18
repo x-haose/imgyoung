@@ -98,6 +98,7 @@ type Token struct {
 	TokenHash  string
 	Prefix     string
 	Scopes     string
+	ExpiresAt  sql.NullString
 	LastUsedAt sql.NullString
 	RevokedAt  sql.NullString
 	CreatedAt  string

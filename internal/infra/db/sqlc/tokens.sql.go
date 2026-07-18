@@ -10,9 +10,22 @@ import (
 	"database/sql"
 )
 
+const countTokensByUser = `-- name: CountTokensByUser :one
+SELECT count(*)
+FROM tokens
+WHERE user_id = ?
+`
+
+func (q *Queries) CountTokensByUser(ctx context.Context, userID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTokensByUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createToken = `-- name: CreateToken :one
-INSERT INTO tokens (user_id, name, token_hash, prefix, scopes)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO tokens (user_id, name, token_hash, prefix, scopes, expires_at)
+VALUES (?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -22,6 +35,7 @@ type CreateTokenParams struct {
 	TokenHash string
 	Prefix    string
 	Scopes    string
+	ExpiresAt sql.NullString
 }
 
 func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (int64, error) {
@@ -31,10 +45,31 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (int64
 		arg.TokenHash,
 		arg.Prefix,
 		arg.Scopes,
+		arg.ExpiresAt,
 	)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
+}
+
+const deleteTokenRecord = `-- name: DeleteTokenRecord :execrows
+DELETE FROM tokens
+WHERE id = ?1 AND user_id = ?2
+  AND (revoked_at IS NOT NULL OR (expires_at IS NOT NULL AND expires_at <= ?3))
+`
+
+type DeleteTokenRecordParams struct {
+	ID     int64
+	UserID string
+	Now    sql.NullString
+}
+
+func (q *Queries) DeleteTokenRecord(ctx context.Context, arg DeleteTokenRecordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTokenRecord, arg.ID, arg.UserID, arg.Now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteTokensByUser = `-- name: DeleteTokensByUser :exec
@@ -51,8 +86,15 @@ const getActiveTokenByHash = `-- name: GetActiveTokenByHash :one
 SELECT t.id, t.user_id, t.scopes, u.disabled AS user_disabled
 FROM tokens t
 JOIN users u ON u.id = t.user_id
-WHERE t.token_hash = ? AND t.revoked_at IS NULL
+WHERE t.token_hash = ?1
+  AND t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > ?2)
 `
+
+type GetActiveTokenByHashParams struct {
+	TokenHash string
+	Now       sql.NullString
+}
 
 type GetActiveTokenByHashRow struct {
 	ID           int64
@@ -61,8 +103,8 @@ type GetActiveTokenByHashRow struct {
 	UserDisabled int64
 }
 
-func (q *Queries) GetActiveTokenByHash(ctx context.Context, tokenHash string) (GetActiveTokenByHashRow, error) {
-	row := q.db.QueryRowContext(ctx, getActiveTokenByHash, tokenHash)
+func (q *Queries) GetActiveTokenByHash(ctx context.Context, arg GetActiveTokenByHashParams) (GetActiveTokenByHashRow, error) {
+	row := q.db.QueryRowContext(ctx, getActiveTokenByHash, arg.TokenHash, arg.Now)
 	var i GetActiveTokenByHashRow
 	err := row.Scan(
 		&i.ID,
@@ -74,7 +116,7 @@ func (q *Queries) GetActiveTokenByHash(ctx context.Context, tokenHash string) (G
 }
 
 const getToken = `-- name: GetToken :one
-SELECT id, user_id, name, token_hash, prefix, scopes, last_used_at, revoked_at, created_at
+SELECT id, user_id, name, token_hash, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
 FROM tokens
 WHERE id = ?
 `
@@ -89,6 +131,7 @@ func (q *Queries) GetToken(ctx context.Context, id int64) (Token, error) {
 		&i.TokenHash,
 		&i.Prefix,
 		&i.Scopes,
+		&i.ExpiresAt,
 		&i.LastUsedAt,
 		&i.RevokedAt,
 		&i.CreatedAt,
@@ -97,14 +140,21 @@ func (q *Queries) GetToken(ctx context.Context, id int64) (Token, error) {
 }
 
 const listTokensByUser = `-- name: ListTokensByUser :many
-SELECT id, user_id, name, token_hash, prefix, scopes, last_used_at, revoked_at, created_at
+SELECT id, user_id, name, token_hash, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
 FROM tokens
 WHERE user_id = ?
-ORDER BY created_at DESC
+ORDER BY created_at DESC, id DESC
+LIMIT ? OFFSET ?
 `
 
-func (q *Queries) ListTokensByUser(ctx context.Context, userID string) ([]Token, error) {
-	rows, err := q.db.QueryContext(ctx, listTokensByUser, userID)
+type ListTokensByUserParams struct {
+	UserID string
+	Limit  int64
+	Offset int64
+}
+
+func (q *Queries) ListTokensByUser(ctx context.Context, arg ListTokensByUserParams) ([]Token, error) {
+	rows, err := q.db.QueryContext(ctx, listTokensByUser, arg.UserID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +169,7 @@ func (q *Queries) ListTokensByUser(ctx context.Context, userID string) ([]Token,
 			&i.TokenHash,
 			&i.Prefix,
 			&i.Scopes,
+			&i.ExpiresAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
 			&i.CreatedAt,
@@ -137,7 +188,7 @@ func (q *Queries) ListTokensByUser(ctx context.Context, userID string) ([]Token,
 }
 
 const listTokensExport = `-- name: ListTokensExport :many
-SELECT id, user_id, name, prefix, scopes, last_used_at, revoked_at, created_at
+SELECT id, user_id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
 FROM tokens
 ORDER BY id
 `
@@ -148,6 +199,7 @@ type ListTokensExportRow struct {
 	Name       string
 	Prefix     string
 	Scopes     string
+	ExpiresAt  sql.NullString
 	LastUsedAt sql.NullString
 	RevokedAt  sql.NullString
 	CreatedAt  string
@@ -168,6 +220,7 @@ func (q *Queries) ListTokensExport(ctx context.Context) ([]ListTokensExportRow, 
 			&i.Name,
 			&i.Prefix,
 			&i.Scopes,
+			&i.ExpiresAt,
 			&i.LastUsedAt,
 			&i.RevokedAt,
 			&i.CreatedAt,
@@ -183,6 +236,33 @@ func (q *Queries) ListTokensExport(ctx context.Context) ([]ListTokensExportRow, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const revokeExpiredTokenByName = `-- name: RevokeExpiredTokenByName :execrows
+UPDATE tokens
+SET revoked_at = ?1
+WHERE user_id = ?2 AND name = ?3 AND revoked_at IS NULL
+  AND expires_at IS NOT NULL AND expires_at <= ?4
+`
+
+type RevokeExpiredTokenByNameParams struct {
+	RevokedAt sql.NullString
+	UserID    string
+	Name      string
+	Now       sql.NullString
+}
+
+func (q *Queries) RevokeExpiredTokenByName(ctx context.Context, arg RevokeExpiredTokenByNameParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, revokeExpiredTokenByName,
+		arg.RevokedAt,
+		arg.UserID,
+		arg.Name,
+		arg.Now,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const revokeToken = `-- name: RevokeToken :execrows

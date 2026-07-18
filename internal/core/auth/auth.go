@@ -26,6 +26,8 @@ var (
 	ErrTokenInvalid       = errors.New("auth: Token 无效或已吊销")
 	ErrTokenNotFound      = errors.New("auth: Token 不存在")
 	ErrTokenNameTaken     = errors.New("auth: 同名 Token 已存在")
+	ErrTokenActive        = errors.New("auth: Token 仍有效,不可删除")
+	ErrTokenProtected     = errors.New("auth: 引导 Token 由环境变量托管")
 )
 
 // dummyPHC 用户不存在时仍参与校验的占位哈希,抹平存在与否的时间差,防用户名枚举。
@@ -39,9 +41,10 @@ var dummyPHC = func() string {
 
 // Config Service 的全部依赖。
 type Config struct {
-	Conn    *sql.DB       // 数据库连接(事务用)
-	Queries *sqlc.Queries // sqlc 查询集
-	Logger  *slog.Logger  // 结构化日志
+	Conn             *sql.DB       // 数据库连接(事务用)
+	Queries          *sqlc.Queries // sqlc 查询集
+	BootstrapManaged bool          // 引导 Token 环境变量当前是否配置;true 时该 Token 拒绝吊销/轮转/删除
+	Logger           *slog.Logger  // 结构化日志
 }
 
 // Service 认证服务;除 Token 使用追踪外无可变状态,并发安全。
@@ -73,6 +76,7 @@ type LoginResult struct {
 // IssuedToken 一次 Token 签发的产物。
 type IssuedToken struct {
 	ID        int64  // Token 记录 id
+	Name      string // 用途名(轮转时继承原 Token)
 	Plaintext string // Token 明文,仅签发时返回一次
 	Prefix    string // 明文前缀,列表识别用
 }

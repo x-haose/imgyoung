@@ -179,7 +179,7 @@ func TestTokenRevokeStopsUpload(t *testing.T) {
 		t.Fatalf("新 Token 上传状态码 = %d, 期望 200", code)
 	}
 
-	rev := adminReq(t, admin, csrf, http.MethodDelete, fmt.Sprintf("%s/api/admin/tokens/%d", inst.baseURL, tokenID), "")
+	rev := adminReq(t, admin, csrf, http.MethodPost, fmt.Sprintf("%s/api/admin/tokens/%d/revoke", inst.baseURL, tokenID), "")
 	code = rev.StatusCode
 	_ = rev.Body.Close()
 	if code != http.StatusNoContent {

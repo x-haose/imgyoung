@@ -42,6 +42,8 @@ const actionOptions = [
   "channel.delete",
   "token.issue",
   "token.revoke",
+  "token.rotate",
+  "token.delete",
   "user.create",
   "user.update",
   "user.delete",

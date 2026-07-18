@@ -1,5 +1,5 @@
-import { KeyOutlined, PlusOutlined } from "@ant-design/icons";
-import { useInvalidate, useList } from "@refinedev/core";
+import { KeyOutlined, PlusOutlined, SyncOutlined } from "@ant-design/icons";
+import { useInvalidate, useList, usePermissions } from "@refinedev/core";
 import {
   App as AntdApp,
   Alert,
@@ -10,15 +10,20 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Select,
+  Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from "antd";
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
+import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatTime } from "../../lib/format";
+import { sessionUser } from "../../providers/authProvider";
 
 /** Token 列表项(对应 /api/admin/tokens 响应)。 */
 interface TokenItem {
@@ -26,12 +31,20 @@ interface TokenItem {
   name: string;
   prefix: string;
   scopes: string;
+  expires_at: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+  is_bootstrap: boolean;
 }
 
-/** 签发成功响应:明文仅此一次。 */
+/** 用户下拉项(管理员筛选用,对应 /api/admin/users 响应的子集)。 */
+interface UserOption {
+  id: string;
+  name: string;
+}
+
+/** 签发/轮转成功响应:明文仅此一次。 */
 interface IssuedToken {
   id: number;
   name: string;
@@ -39,24 +52,84 @@ interface IssuedToken {
   token: string;
 }
 
-/** Token 页:列表 + 签发(明文单次展示)+ 吊销。 */
+/** 签发表单值。 */
+interface CreateForm {
+  name: string;
+  expires_in_hours: number;
+}
+
+/** 有效期档位;value 为小时数,0 表示永久。 */
+const expiryOptions = [
+  { value: 0, label: "永久" },
+  { value: 7 * 24, label: "7 天" },
+  { value: 30 * 24, label: "30 天" },
+  { value: 90 * 24, label: "90 天" },
+  { value: 365 * 24, label: "365 天" },
+];
+
+/** 每页 Token 数(后端单次上限 100)。 */
+const pageSize = 50;
+
+/** bootstrap 托管说明:吊销无效的原因与正确的停用方式。 */
+const bootstrapHint =
+  "由环境变量托管:后台吊销会在下次重启时被环境变量复活;停用需移除环境变量后重启";
+
+/** Token 的展示状态:有效 / 已过期 / 已吊销。 */
+type TokenStatus = "active" | "expired" | "revoked";
+
+/** 判定 Token 当前状态;后端时间为 UTC 文本,按 UTC 解析与现在比较。 */
+function tokenStatus(row: TokenItem): TokenStatus {
+  if (row.revoked_at) {
+    return "revoked";
+  }
+  if (row.expires_at && new Date(row.expires_at.replace(" ", "T") + "Z").getTime() <= Date.now()) {
+    return "expired";
+  }
+  return "active";
+}
+
+/** 状态 → 三色 Tag。 */
+const statusTag: Record<TokenStatus, { color: string; label: string }> = {
+  active: { color: "success", label: "有效" },
+  expired: { color: "warning", label: "已过期" },
+  revoked: { color: "default", label: "已吊销" },
+};
+
+/** Token 页:列表(分页/三态)+ 签发(可选有效期)+ 轮转 + 吊销 + 失效记录删除。 */
 export function TokensPage() {
+  const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [issued, setIssued] = useState<IssuedToken | null>(null);
   const [creating, setCreating] = useState(false);
+  const [userFilter, setUserFilter] = useState<string | undefined>(undefined);
   const invalidate = useInvalidate();
   const { message } = AntdApp.useApp();
-  const [form] = Form.useForm<{ name: string }>();
+  const [form] = Form.useForm<CreateForm>();
+  const { data: role } = usePermissions<string>({});
+
+  const isAdmin = role === "admin";
+  const me = sessionUser();
+  // 未选择或选中本人 = 本人视角;查看他人时隐藏签发与轮转(明文只应下发给持有者)。
+  const viewingSelf = !userFilter || userFilter === me?.id;
 
   const list = useList<TokenItem>({
     resource: "tokens",
-    pagination: { currentPage: 1, pageSize: 100 },
+    pagination: { currentPage: page, pageSize },
+    filters: userFilter ? [{ field: "user_id", operator: "eq", value: userFilter }] : [],
   });
   const items = list.result?.data ?? [];
+  const total = list.result?.total ?? 0;
+  usePageClamp(page, setPage, list.result?.total, pageSize);
+
+  const users = useList<UserOption>({
+    resource: "users",
+    pagination: { currentPage: 1, pageSize: 100 },
+    queryOptions: { enabled: isAdmin },
+  });
 
   const refresh = () => invalidate({ resource: "tokens", invalidates: ["list"] });
 
-  const create = async (values: { name: string }) => {
+  const create = async (values: CreateForm) => {
     setCreating(true);
     try {
       const res = await apiFetch<IssuedToken>("/api/admin/tokens", {
@@ -74,9 +147,19 @@ export function TokensPage() {
     }
   };
 
+  const rotate = async (id: number) => {
+    try {
+      const res = await apiFetch<IssuedToken>(`/api/admin/tokens/${id}/rotate`, { method: "POST" });
+      setIssued(res);
+      refresh();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "轮转失败");
+    }
+  };
+
   const revoke = async (id: number) => {
     try {
-      await apiFetch(`/api/admin/tokens/${id}`, { method: "DELETE" });
+      await apiFetch(`/api/admin/tokens/${id}/revoke`, { method: "POST" });
       message.success("已吊销");
       refresh();
     } catch (err) {
@@ -84,9 +167,19 @@ export function TokensPage() {
     }
   };
 
+  const removeRecord = async (id: number) => {
+    try {
+      await apiFetch(`/api/admin/tokens/${id}`, { method: "DELETE" });
+      message.success("记录已删除");
+      refresh();
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "删除失败");
+    }
+  };
+
   return (
     <Flex vertical gap={16}>
-      <Flex align="center" justify="space-between">
+      <Flex align="center" justify="space-between" wrap gap={12}>
         <div>
           <Typography.Title level={4} style={{ margin: 0 }}>
             上传 Token
@@ -95,9 +188,29 @@ export function TokensPage() {
             给 PicGo、脚本、CLI 各签发一个具名 Token;明文只在签发时展示一次
           </Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          签发 Token
-        </Button>
+        <Space>
+          {isAdmin && (
+            <Select
+              style={{ width: 180 }}
+              value={userFilter ?? me?.id}
+              onChange={(v) => {
+                setPage(1);
+                setUserFilter(v === me?.id ? undefined : v);
+              }}
+              options={(users.result?.data ?? []).map((u) => ({
+                value: u.id,
+                label: u.id === me?.id ? `${u.name}(本人)` : u.name,
+              }))}
+              loading={users.query.isFetching}
+              placeholder="按用户查看"
+            />
+          )}
+          {viewingSelf && (
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              签发 Token
+            </Button>
+          )}
+        </Space>
       </Flex>
 
       <QueryState query={list.query}>
@@ -106,11 +219,33 @@ export function TokensPage() {
             rowKey="id"
             dataSource={items}
             loading={list.query.isFetching}
-            pagination={false}
-            scroll={{ x: 760 }}
+            pagination={{
+              current: page,
+              pageSize,
+              total,
+              showSizeChanger: false,
+              onChange: setPage,
+              hideOnSinglePage: true,
+            }}
+            scroll={{ x: 920 }}
             size="middle"
             columns={[
-              { title: "名称", dataIndex: "name" },
+              {
+                title: "名称",
+                dataIndex: "name",
+                render: (v: string, row) => (
+                  <Space size={6}>
+                    {v}
+                    {row.is_bootstrap && (
+                      <Tooltip title={bootstrapHint}>
+                        <Tag color="processing" style={{ marginInlineEnd: 0 }}>
+                          环境变量托管
+                        </Tag>
+                      </Tooltip>
+                    )}
+                  </Space>
+                ),
+              },
               {
                 title: "识别前缀",
                 dataIndex: "prefix",
@@ -119,8 +254,15 @@ export function TokensPage() {
               {
                 title: "状态",
                 key: "state",
-                render: (_, row) =>
-                  row.revoked_at ? <Tag>已吊销</Tag> : <Tag color="success">有效</Tag>,
+                render: (_, row) => {
+                  const s = statusTag[tokenStatus(row)];
+                  return <Tag color={s.color}>{s.label}</Tag>;
+                },
+              },
+              {
+                title: "到期",
+                dataIndex: "expires_at",
+                render: (v: string | null) => (v ? formatTime(v) : "永久"),
               },
               {
                 title: "最近使用",
@@ -131,20 +273,57 @@ export function TokensPage() {
               {
                 title: "操作",
                 key: "actions",
-                width: 100,
-                render: (_, row) =>
-                  row.revoked_at ? null : (
+                width: 150,
+                render: (_, row) => {
+                  if (row.is_bootstrap) {
+                    return (
+                      <Tooltip title={bootstrapHint}>
+                        <Button size="small" type="text" disabled>
+                          托管中
+                        </Button>
+                      </Tooltip>
+                    );
+                  }
+                  if (tokenStatus(row) === "active") {
+                    return (
+                      <Space size={0}>
+                        {viewingSelf && (
+                          <Popconfirm
+                            title="轮转该 Token?"
+                            description="生成同名新 Token,旧 Token 立即失效;新明文仅展示一次。"
+                            onConfirm={() => rotate(row.id)}
+                          >
+                            <Button size="small" type="text" icon={<SyncOutlined />}>
+                              轮转
+                            </Button>
+                          </Popconfirm>
+                        )}
+                        <Popconfirm
+                          title="吊销该 Token?"
+                          description="使用该 Token 的客户端将立即无法上传。"
+                          okButtonProps={{ danger: true }}
+                          onConfirm={() => revoke(row.id)}
+                        >
+                          <Button size="small" danger type="text">
+                            吊销
+                          </Button>
+                        </Popconfirm>
+                      </Space>
+                    );
+                  }
+                  return (
                     <Popconfirm
-                      title="吊销该 Token?"
-                      description="使用该 Token 的客户端将立即无法上传。"
+                      title="删除该记录?"
+                      description="失效记录从列表移除,审计留痕保留。"
                       okButtonProps={{ danger: true }}
-                      onConfirm={() => revoke(row.id)}
+                      onConfirm={() => removeRecord(row.id)}
                     >
                       <Button size="small" danger type="text">
-                        吊销
+                        删除
                       </Button>
                     </Popconfirm>
-                  ),
+                  );
+                },
               },
             ]}
           />
@@ -159,7 +338,12 @@ export function TokensPage() {
         confirmLoading={creating}
         okText="签发"
       >
-        <Form form={form} layout="vertical" onFinish={create}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={create}
+          initialValues={{ expires_in_hours: 0 }}
+        >
           <Form.Item
             name="name"
             label="用途名称"
@@ -167,6 +351,13 @@ export function TokensPage() {
             extra="如 picgo、blog-script;同名有效 Token 不可重复"
           >
             <Input maxLength={64} placeholder="picgo" />
+          </Form.Item>
+          <Form.Item
+            name="expires_in_hours"
+            label="有效期"
+            extra="到期后 Token 自动失效,与吊销同等对待"
+          >
+            <Select options={expiryOptions} />
           </Form.Item>
         </Form>
       </Modal>
