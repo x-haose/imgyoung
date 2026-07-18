@@ -95,8 +95,8 @@ func TestPurgeEmptyNoCall(t *testing.T) {
 	}
 }
 
-// TestPurgeAPIFailure 验证失败路径:信封 success=false 带出错误码文案,非 2xx 亦报错,
-// 且错误消息不含 Token。
+// TestPurgeAPIFailure 验证失败路径:信封显式 success=false 即报错(有明细带出错误码,
+// 无明细给通用文案,2xx 也不豁免),非 2xx 亦报错,且错误消息不含 Token。
 func TestPurgeAPIFailure(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -105,6 +105,7 @@ func TestPurgeAPIFailure(t *testing.T) {
 		want   string
 	}{
 		{"信封失败", http.StatusForbidden, `{"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}`, "10000"},
+		{"信封失败无明细且 2xx", http.StatusOK, `{"success":false,"errors":[]}`, "success=false"},
 		{"非 2xx 无信封", http.StatusBadGateway, "gateway error", "502"},
 	}
 	for _, tc := range cases {
@@ -124,5 +125,18 @@ func TestPurgeAPIFailure(t *testing.T) {
 				t.Errorf("错误消息泄露 Token: %q", err)
 			}
 		})
+	}
+}
+
+// TestPurgeNonEnvelope2xxOK 验证 success 字段缺失的非信封 2xx 响应仍视为成功。
+func TestPurgeNonEnvelope2xxOK(t *testing.T) {
+	for _, body := range []string{`{}`, "plain ok"} {
+		fake := &fakeCF{status: http.StatusOK, body: body}
+		srv := httptest.NewServer(fake.handler(t))
+		err := newPurger(srv.URL).Purge(t.Context(), []string{"https://img.example.com/i/x"})
+		srv.Close()
+		if err != nil {
+			t.Errorf("非信封 2xx(body %q)误判失败: %v", body, err)
+		}
 	}
 }

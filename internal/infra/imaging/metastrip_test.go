@@ -63,7 +63,7 @@ func hasPNGChunk(t *testing.T, img []byte, ctype string) bool {
 	return false
 }
 
-// encodeWebP 生成一张 2x2 的真实 WebP 字节(简单 VP8 容器,无 VP8X)。
+// encodeWebP 生成一张 2x2 的真实 WebP 字节(编码器产出 VP8X 打头的扩展容器)。
 func encodeWebP(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer

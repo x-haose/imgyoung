@@ -52,7 +52,7 @@ type purgeRequest struct {
 
 // purgeResponse purge_cache API 响应信封(只取判定成败所需字段)。
 type purgeResponse struct {
-	Success bool `json:"success"` // 调用是否成功
+	Success *bool `json:"success"` // 调用是否成功;nil 表示响应缺该字段(非标准信封),以 HTTP 状态码判定
 	Errors  []struct {
 		Code    int    `json:"code"`    // Cloudflare 错误码
 		Message string `json:"message"` // 错误描述
@@ -76,7 +76,7 @@ func (p *CloudflarePurger) Purge(ctx context.Context, urls []string) error {
 
 // purgeBatch 发起一次 purge API 调用。
 // @param urls 单批 URL(≤ purgeBatchSize)
-// @return 网络失败、非 2xx 或信封 success=false 时的错误
+// @return 网络失败、非 2xx 或信封显式 success=false 时的错误(success 缺失的 2xx 视为成功)
 func (p *CloudflarePurger) purgeBatch(ctx context.Context, urls []string) error {
 	body, err := json.Marshal(purgeRequest{Files: urls})
 	if err != nil {
@@ -101,9 +101,12 @@ func (p *CloudflarePurger) purgeBatch(ctx context.Context, urls []string) error 
 		return fmt.Errorf("读取 purge 响应: %w", err)
 	}
 	var envelope purgeResponse
-	if uerr := json.Unmarshal(payload, &envelope); uerr == nil && !envelope.Success && len(envelope.Errors) > 0 {
-		e := envelope.Errors[0]
-		return fmt.Errorf("cloudflare purge 失败(HTTP %d, 错误 %d): %s", resp.StatusCode, e.Code, e.Message)
+	if uerr := json.Unmarshal(payload, &envelope); uerr == nil && envelope.Success != nil && !*envelope.Success {
+		if len(envelope.Errors) > 0 {
+			e := envelope.Errors[0]
+			return fmt.Errorf("cloudflare purge 失败(HTTP %d, 错误 %d): %s", resp.StatusCode, e.Code, e.Message)
+		}
+		return fmt.Errorf("cloudflare purge 失败(HTTP %d): 信封 success=false 且无错误明细", resp.StatusCode)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return fmt.Errorf("cloudflare purge 失败(HTTP %d)", resp.StatusCode)

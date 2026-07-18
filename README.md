@@ -44,6 +44,21 @@ open http://localhost:8721/i/R0RjUyP1UW
 
 认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员初始密码首启时确定:配了 `IMGYOUNG_ADMIN_PASSWORD` 用它,否则自动生成并打印到日志;真相入库,之后一律在后台改。`IMGYOUNG_TOKEN` 是可选的引导 Token,设置后首启植入为管理员名下的 `bootstrap` Token;不设则登录后台自行签发。
 
+### 忘记密码
+
+初始密码只在首启日志打印一次,翻日志找不到时用 CLI 重置(直连数据目录下的 SQLite,服务运行中执行亦安全,该用户既有会话全部失效):
+
+```bash
+# 本机运行:在服务的工作目录下执行(或设 IMGYOUNG_DATA_DIR 指向数据目录)
+imgyoung reset-password             # 重置 admin,打印新随机密码
+imgyoung reset-password --user bob  # 重置指定登录名
+
+# Docker 部署:在运行中的容器里执行(镜像已内置 IMGYOUNG_DATA_DIR=/data)
+docker exec <容器名> /imgyoung reset-password
+```
+
+用打印的新密码登录后台,再到「设置 → 修改密码」改成自己的。
+
 ## 配置
 
 三层优先级(由低到高):**内嵌默认 `config.yml`(编译进二进制)< 外部配置文件 < 环境变量**。外部配置文件通过 `IMGYOUNG_CONFIG` 指定,或自动发现工作目录下的 `configs/config.yml`;两者都缺省时靠内嵌默认兜底,单文件即可运行。
@@ -60,7 +75,7 @@ open http://localhost:8721/i/R0RjUyP1UW
 | `IMGYOUNG_MAX_PIXELS_MP` | `max_pixels_mp` | `50` | 像素预算(百万像素) |
 | `IMGYOUNG_MAX_CONCURRENT_UPLOADS` | `max_concurrent_uploads` | `8` | 上传并发上限,满载返回 429 |
 | `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;留空按请求域名推导绝对地址,经反代 / CDN 对外域名与请求域名不一致时需显式配置 |
-| `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单,逗号分隔,支持 `*.example.com` |
+| `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单种子,逗号分隔,支持 `*.example.com`;规则在后台「设置」页管理、热生效,此配置仅在规则表为空时首启播种一次 |
 | `IMGYOUNG_ALLOW_EMPTY_REFERER` | `allow_empty_referer` | `true` | 空 Referer 是否放行 |
 | `IMGYOUNG_MASTER_KEY` | `master_key` | (自动生成 `data/master.key`) | 主密钥(64 位 hex),加密渠道凭证与派生渠道加密密码;**丢失则渠道配置与密文数据不可恢复** |
 | `IMGYOUNG_MIN_SUCCESS` | `min_success` | `1` | 上传返回成功所需的最少同步副本数 |

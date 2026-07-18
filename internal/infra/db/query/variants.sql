@@ -7,6 +7,7 @@ WHERE blob_id = ? AND params_hash = ?;
 INSERT INTO variants (blob_id, params_hash, width, format, size)
 VALUES (?, ?, ?, ?, ?)
 ON CONFLICT (blob_id, params_hash) DO UPDATE SET
+    width = excluded.width,
     size = excluded.size,
     last_access = datetime('now');
 

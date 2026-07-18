@@ -55,6 +55,10 @@ func runResetPassword(args []string) int {
 	fs := flag.NewFlagSet("reset-password", flag.ContinueOnError)
 	user := fs.String("user", "admin", "要重置密码的登录名")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			// --help 是正常求助路径,flag 包已打印用法,以成功码退出。
+			return 0
+		}
 		return 2
 	}
 	password, err := resetPassword(context.Background(), *user)

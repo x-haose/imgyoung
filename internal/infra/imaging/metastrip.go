@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // StripMetadata 按 MIME 分发到对应格式的元数据剥离器,返回新的字节切片。
@@ -62,7 +63,12 @@ func StripPNGMetadata(data []byte) ([]byte, error) {
 		if i+pngChunkOverhead > len(data) {
 			return nil, fmt.Errorf("%w: chunk 表在偏移 %d 处截断", errMalformedPNG, i)
 		}
-		length := int(binary.BigEndian.Uint32(data[i : i+4]))
+		rawLen := binary.BigEndian.Uint32(data[i : i+4])
+		// PNG 规范禁止 chunk 长度超过 2^31-1;显式拒绝亦防 32 位平台 int 转换为负后错位。
+		if rawLen > math.MaxInt32 {
+			return nil, fmt.Errorf("%w: 偏移 %d 处 chunk 长度超出规范上限", errMalformedPNG, i)
+		}
+		length := int(rawLen)
 		end := i + pngChunkOverhead + length
 		if end < i || end > len(data) {
 			return nil, fmt.Errorf("%w: 偏移 %d 处 chunk 长度越界", errMalformedPNG, i)
@@ -104,7 +110,12 @@ func StripWebPMetadata(data []byte) ([]byte, error) {
 	if len(data) < webpHeaderSize || string(data[:4]) != "RIFF" || string(data[8:webpHeaderSize]) != "WEBP" {
 		return nil, fmt.Errorf("%w: 缺少 RIFF/WEBP 头", errMalformedWebP)
 	}
-	riffEnd := riffChunkHeader + int(binary.LittleEndian.Uint32(data[4:riffChunkHeader]))
+	riffLen := binary.LittleEndian.Uint32(data[4:riffChunkHeader])
+	// 上限校验防 32 位平台 int 转换为负/加法回绕后错位。
+	if riffLen > math.MaxInt32-riffChunkHeader {
+		return nil, fmt.Errorf("%w: RIFF 总长度越界", errMalformedWebP)
+	}
+	riffEnd := riffChunkHeader + int(riffLen)
 	if riffEnd < webpHeaderSize || riffEnd > len(data) {
 		return nil, fmt.Errorf("%w: RIFF 总长度越界", errMalformedWebP)
 	}
@@ -116,7 +127,12 @@ func StripWebPMetadata(data []byte) ([]byte, error) {
 			return nil, fmt.Errorf("%w: chunk 表在偏移 %d 处截断", errMalformedWebP, i)
 		}
 		fourCC := string(data[i : i+4])
-		size := int(binary.LittleEndian.Uint32(data[i+4 : i+riffChunkHeader]))
+		rawSize := binary.LittleEndian.Uint32(data[i+4 : i+riffChunkHeader])
+		// 上限校验防 32 位平台 int 转换为负后错位。
+		if rawSize > math.MaxInt32 {
+			return nil, fmt.Errorf("%w: 偏移 %d 处 chunk 长度越界", errMalformedWebP, i)
+		}
+		size := int(rawSize)
 		// chunk 数据按偶数对齐,奇数长度补一填充字节;末 chunk 允许缺失该填充。
 		padded := size + size%2
 		end := i + riffChunkHeader + padded

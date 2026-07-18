@@ -95,9 +95,9 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &replicateWorker{cfg: cfg})
 	river.AddWorker(workers, &deleteObjectWorker{cfg: cfg})
-	if cfg.Purger != nil {
-		river.AddWorker(workers, &cdnPurgeWorker{purger: cfg.Purger, cfg: cfg})
-	}
+	// 无条件注册:purge 配置关停后,历史遗留的 cdn_purge 任务仍能被认领并
+	// 安静消化(Work 内空操作成功),不产生 unknown kind 噪音。
+	river.AddWorker(workers, &cdnPurgeWorker{cfg: cfg})
 	client, err := river.NewClient(driver, &river.Config{
 		Logger: cfg.Logger,
 		Queues: map[string]river.QueueConfig{

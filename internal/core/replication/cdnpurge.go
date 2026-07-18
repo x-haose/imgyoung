@@ -48,8 +48,7 @@ func (r *Runner) EnqueuePurge(ctx context.Context, urls []string) error {
 // cdnPurgeWorker CDN 缓存清理执行器(删除级联的异步收尾)。
 type cdnPurgeWorker struct {
 	river.WorkerDefaults[CDNPurgeArgs]
-	purger ObjectPurger // 清理执行口
-	cfg    RunnerConfig // Runner 依赖(共享,取日志)
+	cfg RunnerConfig // Runner 依赖(共享,取 Purger 与日志)
 }
 
 // Timeout 单任务执行超时。
@@ -58,10 +57,15 @@ func (w *cdnPurgeWorker) Timeout(*river.Job[CDNPurgeArgs]) time.Duration {
 }
 
 // Work 清理一组 URL 的边缘缓存。
-// @Description: purge 幂等,失败整体交 River 退避重试;最终失败也无数据风险——
+// @Description: Purger 未配置时直接成功——purge 配置关停后遗留任务安静消化,
+// 与 EnqueuePurge 的空操作语义对齐;边缘缓存由 CDN 自身 TTL 兜底过期。
+// purge 幂等,失败整体交 River 退避重试;最终失败也无数据风险——
 // 源站对象已删,边缘缓存至多存活到 CDN 自身 TTL 到期。
 func (w *cdnPurgeWorker) Work(ctx context.Context, job *river.Job[CDNPurgeArgs]) error {
-	if err := w.purger.Purge(ctx, job.Args.URLs); err != nil {
+	if w.cfg.Purger == nil {
+		return nil
+	}
+	if err := w.cfg.Purger.Purge(ctx, job.Args.URLs); err != nil {
 		return fmt.Errorf("清理 CDN 缓存(%d 个 URL): %w", len(job.Args.URLs), err)
 	}
 	w.cfg.Logger.Info("CDN 缓存已清理", "urls", len(job.Args.URLs))

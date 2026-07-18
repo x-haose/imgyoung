@@ -40,6 +40,8 @@ func WriteError(l *slog.Logger, w http.ResponseWriter, status int, msg string) {
 // @Description: 未配置 base_url 时的兜底:反代场景优先信 X-Forwarded-Proto /
 // X-Forwarded-Host(多级代理取首值),否则回退 Host 头与本连接的 TLS 判定。
 // 推导结果即客户端本次所见域名;反代/CDN 对外域名与请求头不一致时仍须配置 base_url。
+// 硬约束:推导值来自不可信请求头,仅可回显给当前请求方(如响应里拼本次上传的 URL);
+// 禁止落库、禁止用于拼 CDN purge URL、禁止跨请求复用——这些场景一律以配置的 base_url 为准。
 // @param r 当前请求
 // @return 站点根地址
 func RequestBaseURL(r *http.Request) string {
