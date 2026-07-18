@@ -1,5 +1,6 @@
 import {
   AuditOutlined,
+  BookOutlined,
   ClearOutlined,
   ClusterOutlined,
   DashboardOutlined,
@@ -24,6 +25,7 @@ import { ChannelsPage } from "./pages/channels";
 import { CleanupPage } from "./pages/cleanup";
 import { DashboardPage } from "./pages/dashboard";
 import { DedupPage } from "./pages/dedup";
+import { GuidePage } from "./pages/guide";
 import { ImagesPage } from "./pages/images";
 import { LoginPage } from "./pages/login";
 import { NotFoundPage } from "./pages/not-found";
@@ -109,6 +111,11 @@ export function App() {
                 meta: { label: "审计日志", icon: <AuditOutlined />, adminOnly: true },
               },
               {
+                name: "guide",
+                list: "/guide",
+                meta: { label: "使用指南", icon: <BookOutlined /> },
+              },
+              {
                 name: "settings",
                 list: "/settings",
                 meta: { label: "设置", icon: <SettingOutlined /> },
@@ -133,6 +140,7 @@ export function App() {
                 <Route path="/dedup" element={<DedupPage />} />
                 <Route path="/cleanup" element={<CleanupPage />} />
                 <Route path="/audit" element={<AuditPage />} />
+                <Route path="/guide" element={<GuidePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Route>

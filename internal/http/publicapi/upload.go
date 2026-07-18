@@ -57,18 +57,37 @@ func (h *Handlers) resolveExpiry(r *http.Request) (time.Time, bool) {
 	}
 }
 
-// HandleUpload 处理图片上传:HTTP 解包 → 交给上传服务 → 翻译结果。
-// @Description: 业务管道(格式校验/像素预算/净化/哈希/落库)在 upload.Service;
-// 本函数只负责 HTTP 层:大小闸、multipart 解析、TTL 解析、错误码映射;
-// 归属用户与来源 Token 由认证中间件解析、此处显式传参进 core。
+// HandleUpload 处理数据面图片上传(Bearer Token 认证)。
+// @Description: 归属用户与来源 Token 由 TokenAuth 中间件解析,此处取出后
+// 交给共享上传管道;取不到主体属路由装配错误。
 func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	tp, ok := middleware.TokenPrincipalFrom(r.Context())
 	if !ok {
-		// 路由保证本 handler 挂在 Token 认证之后,取不到主体属装配错误。
-		h.cfg.Logger.Error("上传请求缺少认证主体,检查路由装配")
+		h.cfg.Logger.Error("上传请求缺少 Token 主体,检查路由装配")
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
+	h.serveUpload(w, r, tp.UserID, tp.TokenID)
+}
+
+// HandleSessionUpload 处理管理后台图片上传(会话认证)。
+// @Description: 与数据面走完全相同的上传管道与错误映射;归属用户取会话主体,
+// token_id 记空(非 Token 途径)。挂在 SessionAuth+CSRF 之后,取不到会话属路由装配错误。
+func (h *Handlers) HandleSessionUpload(w http.ResponseWriter, r *http.Request) {
+	si, ok := middleware.SessionFrom(r.Context())
+	if !ok {
+		h.cfg.Logger.Error("后台上传请求缺少会话主体,检查路由装配")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
+	h.serveUpload(w, r, si.Principal.UserID, 0)
+}
+
+// serveUpload 上传的共享 HTTP 管道:大小闸、multipart 解析、档位与 TTL 解析、
+// 调用上传服务并写响应;业务管道(格式校验/像素预算/净化/哈希/落库)在 upload.Service。
+// @param userID 归属用户 id,由认证中间件解析后显式传入
+// @param tokenID 来源 Token 记录 id,0 表示非 Token 途径(后台会话上传)
+func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID string, tokenID int64) {
 	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.MaxUploadBytes)
 
 	file, header, err := r.FormFile("file")
@@ -100,36 +119,15 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.cfg.Upload.Process(r.Context(), data, upload.Options{
-		UserID:         tp.UserID,
-		TokenID:        tp.TokenID,
+		UserID:         userID,
+		TokenID:        tokenID,
 		FileName:       header.Filename,
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
 		EXIFPolicy:     policy,
 		ExpireAt:       expireAt,
 	})
-	switch {
-	case errors.Is(err, upload.ErrUnsupportedType):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnsupportedMediaType, "仅支持图片文件(jpeg/png/gif/webp)")
-		return
-	case errors.Is(err, upload.ErrTooManyPixels):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, "图片分辨率超出限制")
-		return
-	case errors.Is(err, upload.ErrInvalidImage):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "图片内容无法解析")
-		return
-	case errors.Is(err, imaging.ErrUnknownPolicy):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
-		return
-	case errors.Is(err, upload.ErrQuotaExceeded):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "存储配额已满")
-		return
-	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
-		h.cfg.Logger.Error("渠道不可用,上传失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "存储渠道暂不可用,请稍后重试")
-		return
-	case err != nil:
-		h.cfg.Logger.Error("上传处理失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+	if err != nil {
+		h.writeUploadError(w, err)
 		return
 	}
 
@@ -138,6 +136,28 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		ID:  res.ImageID,
 		URL: h.cfg.BaseURL + "/i/" + res.ImageID,
 	})
+}
+
+// writeUploadError 把上传服务的业务错误映射为 HTTP 状态码与用户可读消息。
+func (h *Handlers) writeUploadError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, upload.ErrUnsupportedType):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnsupportedMediaType, "仅支持图片文件(jpeg/png/gif/webp)")
+	case errors.Is(err, upload.ErrTooManyPixels):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, "图片分辨率超出限制")
+	case errors.Is(err, upload.ErrInvalidImage):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "图片内容无法解析")
+	case errors.Is(err, imaging.ErrUnknownPolicy):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
+	case errors.Is(err, upload.ErrQuotaExceeded):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "存储配额已满")
+	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
+		h.cfg.Logger.Error("渠道不可用,上传失败", "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "存储渠道暂不可用,请稍后重试")
+	default:
+		h.cfg.Logger.Error("上传处理失败", "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+	}
 }
 
 // uploadErrStatus 将上传读取错误映射为 HTTP 状态码。

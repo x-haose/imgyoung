@@ -23,8 +23,22 @@ type rateEntry struct {
 	lastSeen time.Time     // 最近一次请求时刻,闲置回收依据
 }
 
+// uploadSubject 解析上传请求的认证主体用户 id:Token 主体或会话主体皆可。
+// @param r 已过认证中间件的请求
+// @return 用户 id 与是否存在
+func uploadSubject(r *http.Request) (string, bool) {
+	if tp, ok := TokenPrincipalFrom(r.Context()); ok {
+		return tp.UserID, true
+	}
+	if si, ok := SessionFrom(r.Context()); ok {
+		return si.Principal.UserID, true
+	}
+	return "", false
+}
+
 // UploadRateLimit 按用户的上传频率限制中间件(进程内令牌桶)。
-// @Description: 须挂在 TokenAuth 之后,以认证主体的用户 id 为键;
+// @Description: 须挂在认证中间件(TokenAuth 或 SessionAuth)之后,以认证主体的
+// 用户 id 为键——同一用户经 Token 与后台会话上传共享同一额度;
 // perMinute <= 0 表示不启用。突发额度等于每分钟额度,满则 429 + Retry-After。
 // @param perMinute 每用户每分钟允许的上传次数
 // @param l 结构化日志
@@ -37,14 +51,14 @@ func UploadRateLimit(perMinute int, l *slog.Logger) func(http.Handler) http.Hand
 	entries := map[string]*rateEntry{}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tp, ok := TokenPrincipalFrom(r.Context())
+			userID, ok := uploadSubject(r)
 			if !ok {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "无效的上传 Token")
+				httpx.WriteError(l, w, http.StatusUnauthorized, "未认证的上传请求")
 				return
 			}
 			mu.Lock()
 			now := time.Now()
-			e, exists := entries[tp.UserID]
+			e, exists := entries[userID]
 			if !exists {
 				if len(entries) >= rateLimiterMaxEntries {
 					for k, v := range entries {
@@ -54,7 +68,7 @@ func UploadRateLimit(perMinute int, l *slog.Logger) func(http.Handler) http.Hand
 					}
 				}
 				e = &rateEntry{lim: rate.NewLimiter(rate.Every(time.Minute/time.Duration(perMinute)), perMinute)}
-				entries[tp.UserID] = e
+				entries[userID] = e
 			}
 			e.lastSeen = now
 			allowed := e.lim.AllowN(now, 1)

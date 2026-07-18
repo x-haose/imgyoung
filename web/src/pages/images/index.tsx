@@ -1,4 +1,4 @@
-import { DeleteOutlined, LinkOutlined } from "@ant-design/icons";
+import { BookOutlined, DeleteOutlined, LinkOutlined, UploadOutlined } from "@ant-design/icons";
 import { useInvalidate, useList, usePermissions } from "@refinedev/core";
 import {
   App as AntdApp,
@@ -13,16 +13,19 @@ import {
   Pagination,
   Popconfirm,
   Row,
+  Space,
   Tag,
   Typography,
   theme,
 } from "antd";
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
-import { formatBytes, formatTime } from "../../lib/format";
+import { absoluteURL, formatBytes, formatTime } from "../../lib/format";
+import { UploadModal } from "./UploadModal";
 
 /** 图片列表项(对应 /api/admin/images 响应)。 */
 export interface ImageItem {
@@ -52,6 +55,7 @@ export function ImagesPage() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [active, setActive] = useState<ImageItem | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const { data: role } = usePermissions<string>({});
   const invalidate = useInvalidate();
   const { message } = AntdApp.useApp();
@@ -90,20 +94,49 @@ export function ImagesPage() {
             {role === "admin" ? "全站图片" : "我的图片"} · 共 {total} 张
           </Typography.Text>
         </div>
-        <Input.Search
-          allowClear
-          placeholder="按短 ID / 文件名搜索"
-          style={{ width: 280 }}
-          onSearch={(v) => {
-            setPage(1);
-            setSearch(v.trim());
-          }}
-        />
+        <Space wrap>
+          <Input.Search
+            allowClear
+            placeholder="按短 ID / 文件名搜索"
+            style={{ width: 280 }}
+            onSearch={(v) => {
+              setPage(1);
+              setSearch(v.trim());
+            }}
+          />
+          <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+            上传图片
+          </Button>
+        </Space>
       </Flex>
 
       <QueryState query={list.query}>
         {items.length === 0 ? (
-          <Empty description="没有图片" style={{ padding: "64px 0" }} />
+          search ? (
+            <Empty description="没有匹配的图片" style={{ padding: "64px 0" }} />
+          ) : (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              style={{ padding: "64px 0" }}
+              description={
+                <Flex vertical gap={4}>
+                  <Typography.Text strong>还没有图片</Typography.Text>
+                  <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                    从这里直接上传,或用 PicGo / curl 等客户端带 Token 上传
+                  </Typography.Text>
+                </Flex>
+              }
+            >
+              <Space wrap>
+                <Button type="primary" icon={<UploadOutlined />} onClick={() => setUploadOpen(true)}>
+                  上传第一张图
+                </Button>
+                <Link to="/guide">
+                  <Button icon={<BookOutlined />}>查看使用指南</Button>
+                </Link>
+              </Space>
+            </Empty>
+          )
         ) : (
           <Row gutter={[16, 16]}>
             {items.map((img) => (
@@ -195,7 +228,7 @@ export function ImagesPage() {
                 {
                   label: "链接",
                   children: (
-                    <Typography.Text copyable={{ text: `${location.origin}${active.url}` }}>
+                    <Typography.Text copyable={{ text: absoluteURL(active.url) }}>
                       <LinkOutlined /> {active.url}
                     </Typography.Text>
                   ),
@@ -222,6 +255,8 @@ export function ImagesPage() {
           </Flex>
         )}
       </Drawer>
+
+      <UploadModal open={uploadOpen} onClose={() => setUploadOpen(false)} onUploaded={refresh} />
     </Flex>
   );
 }

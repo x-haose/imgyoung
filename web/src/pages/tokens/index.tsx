@@ -1,10 +1,11 @@
-import { KeyOutlined, PlusOutlined, SyncOutlined } from "@ant-design/icons";
+import { BookOutlined, KeyOutlined, PlusOutlined, SyncOutlined } from "@ant-design/icons";
 import { useInvalidate, useList, usePermissions } from "@refinedev/core";
 import {
   App as AntdApp,
   Alert,
   Button,
   Card,
+  Empty,
   Flex,
   Form,
   Input,
@@ -18,6 +19,7 @@ import {
   Typography,
 } from "antd";
 import { useState } from "react";
+import { Link } from "react-router";
 
 import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
@@ -229,6 +231,33 @@ export function TokensPage() {
             }}
             scroll={{ x: 920 }}
             size="middle"
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  style={{ padding: "40px 0" }}
+                  description={
+                    <Flex vertical gap={4}>
+                      <Typography.Text strong>还没有 Token</Typography.Text>
+                      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                        给 PicGo 或脚本签发第一个,客户端才能调上传接口
+                      </Typography.Text>
+                    </Flex>
+                  }
+                >
+                  <Space wrap>
+                    {viewingSelf && (
+                      <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                        签发第一个 Token
+                      </Button>
+                    )}
+                    <Link to="/guide">
+                      <Button icon={<BookOutlined />}>查看使用指南</Button>
+                    </Link>
+                  </Space>
+                </Empty>
+              ),
+            }}
             columns={[
               {
                 title: "名称",

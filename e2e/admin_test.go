@@ -3,9 +3,11 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
@@ -265,5 +267,86 @@ func TestUserDeleteGuards(t *testing.T) {
 	}
 	if code := postLogin(t, http.DefaultClient, inst.baseURL, "carol", "carol-secret-1"); code != http.StatusUnauthorized {
 		t.Fatalf("已删用户登录状态码 = %d, 期望 401", code)
+	}
+}
+
+// sessionUpload 以会话 + CSRF 头向后台上传端点发 multipart 图片,返回响应。
+func sessionUpload(t *testing.T, inst *instance, client *http.Client, csrf, filename string, payload []byte) *http.Response {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	fw, err := w.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatalf("创建文件字段: %v", err)
+	}
+	if _, err := fw.Write(payload); err != nil {
+		t.Fatalf("写文件内容: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("关闭 multipart: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, inst.baseURL+"/api/admin/upload", &buf)
+	if err != nil {
+		t.Fatalf("构造后台上传请求: %v", err)
+	}
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	if csrf != "" {
+		req.Header.Set("X-CSRF-Token", csrf)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("发送后台上传请求: %v", err)
+	}
+	return resp
+}
+
+// TestAdminSessionUpload 验收:登录 → 后台端点传图 → 列表可见 → 图可公开访问;
+// 无 CSRF 头 403、无会话 401。
+func TestAdminSessionUpload(t *testing.T) {
+	inst := startInstance(t, nil)
+	admin, csrf := adminSession(t, inst)
+
+	resp := sessionUpload(t, inst, admin, csrf, "panel.png", pngBytes(t))
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("后台上传状态码 = %d, 期望 200; body=%s", resp.StatusCode, raw)
+	}
+	var out struct {
+		ID  string `json:"id"`
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("解析后台上传响应: %v", err)
+	}
+	if out.ID == "" || out.URL == "" {
+		t.Fatalf("后台上传响应缺字段: %+v", out)
+	}
+
+	ids, _ := listImages(t, inst, admin, csrf)
+	if !ids[out.ID] {
+		t.Fatalf("后台上传的图片 %s 未出现在列表中", out.ID)
+	}
+
+	pub := fetch(t, inst, out.URL, "")
+	code := pub.StatusCode
+	_ = pub.Body.Close()
+	if code != http.StatusOK {
+		t.Fatalf("公开访问状态码 = %d, 期望 200", code)
+	}
+
+	noCSRF := sessionUpload(t, inst, admin, "", "panel.png", pngBytes(t))
+	code = noCSRF.StatusCode
+	_ = noCSRF.Body.Close()
+	if code != http.StatusForbidden {
+		t.Fatalf("无 CSRF 上传状态码 = %d, 期望 403", code)
+	}
+
+	anon := &http.Client{}
+	noSession := sessionUpload(t, inst, anon, csrf, "panel.png", pngBytes(t))
+	code = noSession.StatusCode
+	_ = noSession.Body.Close()
+	if code != http.StatusUnauthorized {
+		t.Fatalf("无会话上传状态码 = %d, 期望 401", code)
 	}
 }

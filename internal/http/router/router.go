@@ -40,10 +40,14 @@ func New(cfg Config) http.Handler {
 	r.Use(middleware.SecurityHeaders())
 	r.Get("/healthz", cfg.Public.HandleHealth)
 	r.Handle("/metrics", cfg.Metrics.Handler())
+	// 上传防护闸只此一份,数据面与后台上传共享:频率限制按认证主体的用户 id 计,
+	// 并发闸全局共享(峰值内存由总并发决定,与入口无关)。
+	uploadRate := middleware.UploadRateLimit(cfg.UploadRatePerMinute, cfg.Logger)
+	uploadGate := middleware.ConcurrencyLimit(cfg.MaxConcurrentUploads, cfg.Logger)
 	r.Group(func(g chi.Router) {
 		g.Use(middleware.TokenAuth(cfg.Auth, "upload", cfg.Logger))
-		g.Use(middleware.UploadRateLimit(cfg.UploadRatePerMinute, cfg.Logger))
-		g.Use(middleware.ConcurrencyLimit(cfg.MaxConcurrentUploads, cfg.Logger))
+		g.Use(uploadRate)
+		g.Use(uploadGate)
 		g.Post("/api/upload", cfg.Public.HandleUpload)
 	})
 	r.Route("/api/admin", func(a chi.Router) {
@@ -53,6 +57,8 @@ func New(cfg Config) http.Handler {
 			g.Use(middleware.SessionAuth(cfg.Auth, cfg.Logger))
 			g.Use(middleware.CSRF(cfg.Logger))
 			g.Post("/auth/logout", cfg.Admin.HandleLogout)
+			// 后台上传:所有登录用户可用,与数据面同一上传管道与防护闸。
+			g.With(uploadRate, uploadGate).Post("/upload", cfg.Public.HandleSessionUpload)
 			g.Get("/me", cfg.Admin.HandleMe)
 			g.Put("/me/password", cfg.Admin.HandleChangePassword)
 			g.Get("/dashboard", cfg.Admin.HandleDashboard)

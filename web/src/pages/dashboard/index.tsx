@@ -1,8 +1,18 @@
+import {
+  BookOutlined,
+  CloseOutlined,
+  CloudUploadOutlined,
+  ClusterOutlined,
+  KeyOutlined,
+  RocketOutlined,
+} from "@ant-design/icons";
 import { useCustom } from "@refinedev/core";
-import { Card, Col, Flex, Row, Statistic, Table, Tag, Typography } from "antd";
+import { Button, Card, Col, Flex, Row, Statistic, Table, Tag, Typography, theme } from "antd";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import { QueryState } from "../../components/QueryState";
+import { QuickStepCard } from "../../components/QuickStepCard";
 import { formatBytes } from "../../lib/format";
 
 /** 仪表盘聚合响应(管理员视图;普通用户仅前三项有意义)。 */
@@ -31,6 +41,33 @@ export function DashboardPage() {
   const { query } = useCustom<DashboardData>({ url: "/api/admin/dashboard", method: "get" });
   const data = query.data?.data;
   const isAdmin = data?.users !== undefined;
+  const [quickStartClosed, setQuickStartClosed] = useState(false);
+  const { token } = theme.useToken();
+
+  /** 快速开始的三步导引;仅在还没有任何图片时展示,渠道页仅管理员可进。 */
+  const quickStartSteps = [
+    {
+      to: "/channels",
+      icon: <ClusterOutlined style={{ fontSize: 22, color: token.colorPrimary }} />,
+      label: "确认存储渠道",
+      hint: "已内置 local 本地渠道,可直接用",
+      adminOnly: true,
+    },
+    {
+      to: "/tokens",
+      icon: <KeyOutlined style={{ fontSize: 22, color: token.colorPrimary }} />,
+      label: "签发上传 Token",
+      hint: "给 PicGo、脚本各一个具名 Token",
+      adminOnly: false,
+    },
+    {
+      to: "/images",
+      icon: <CloudUploadOutlined style={{ fontSize: 22, color: token.colorPrimary }} />,
+      label: "上传第一张图",
+      hint: "后台可直接拖拽 / 粘贴,无需 Token",
+      adminOnly: false,
+    },
+  ];
 
   return (
     <Flex vertical gap={16}>
@@ -38,6 +75,47 @@ export function DashboardPage() {
         总览
       </Typography.Title>
       <QueryState query={query}>
+        {data?.images === 0 && !quickStartClosed && (
+          <Card
+            title={
+              <Flex align="center" gap={8}>
+                <RocketOutlined />
+                快速开始
+              </Flex>
+            }
+            extra={
+              <Button
+                type="text"
+                size="small"
+                icon={<CloseOutlined />}
+                aria-label="关闭快速开始"
+                onClick={() => setQuickStartClosed(true)}
+              />
+            }
+          >
+            <Flex vertical gap={12}>
+              <Row gutter={[16, 16]}>
+                {quickStartSteps
+                  .filter((s) => isAdmin || !s.adminOnly)
+                  .map((s, i) => (
+                    <Col key={s.to} xs={24} md={8}>
+                      <QuickStepCard
+                        icon={s.icon}
+                        title={`${i + 1}. ${s.label}`}
+                        desc={s.hint}
+                        to={s.to}
+                      />
+                    </Col>
+                  ))}
+              </Row>
+              <Link to="/guide">
+                <Button size="small" icon={<BookOutlined />}>
+                  查看完整使用指南
+                </Button>
+              </Link>
+            </Flex>
+          </Card>
+        )}
         <Row gutter={[16, 16]}>
           <Col xs={12} md={6}>
             <Card>

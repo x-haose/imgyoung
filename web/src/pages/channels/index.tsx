@@ -1,6 +1,17 @@
 import { PlusOutlined } from "@ant-design/icons";
 import { useInvalidate, useList } from "@refinedev/core";
-import { App as AntdApp, Button, Card, Flex, Popconfirm, Space, Table, Tag, Typography } from "antd";
+import {
+  App as AntdApp,
+  Button,
+  Card,
+  Empty,
+  Flex,
+  Popconfirm,
+  Space,
+  Table,
+  Tag,
+  Typography,
+} from "antd";
 import { useState } from "react";
 
 import { apiFetch } from "../../api/http";
@@ -66,6 +77,26 @@ export function ChannelsPage() {
             pagination={false}
             scroll={{ x: 640 }}
             size="middle"
+            locale={{
+              emptyText: (
+                <Empty
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                  style={{ padding: "40px 0" }}
+                  description={
+                    <Flex vertical gap={4}>
+                      <Typography.Text strong>还没有存储渠道</Typography.Text>
+                      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                        先新建一个,上传的图片才有落脚点
+                      </Typography.Text>
+                    </Flex>
+                  }
+                >
+                  <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+                    新建渠道
+                  </Button>
+                </Empty>
+              ),
+            }}
             columns={[
               { title: "渠道", dataIndex: "name" },
               { title: "驱动", dataIndex: "driver", render: (v: string) => <Tag>{v}</Tag> },

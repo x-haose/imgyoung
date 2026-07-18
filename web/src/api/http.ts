@@ -39,7 +39,8 @@ async function rawFetch(path: string, init: RequestInit | undefined, withCsrf: b
   const headers = new Headers(init?.headers);
   if (withCsrf) {
     headers.set("X-CSRF-Token", csrfToken);
-    if (init?.body != null && !headers.has("Content-Type")) {
+    // FormData 必须由浏览器自设带 boundary 的 multipart Content-Type,不能手写。
+    if (init?.body != null && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
   }
