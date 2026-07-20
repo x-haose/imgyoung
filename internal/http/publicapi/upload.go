@@ -12,6 +12,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -89,11 +90,12 @@ func (h *Handlers) HandleSessionUpload(w http.ResponseWriter, r *http.Request) {
 // @param userID 归属用户 id,由认证中间件解析后显式传入
 // @param tokenID 来源 Token 记录 id,0 表示非 Token 途径(后台会话上传)
 func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID string, tokenID int64) {
-	r.Body = http.MaxBytesReader(w, r.Body, h.cfg.MaxUploadBytes)
+	set := h.cfg.Settings()
+	r.Body = http.MaxBytesReader(w, r.Body, set.MaxUploadBytes())
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		h.writeReadError(w, err, "无法读取 file 字段(需要 multipart/form-data 的 file 字段)")
+		h.writeReadError(w, set, err, "无法读取 file 字段(需要 multipart/form-data 的 file 字段)")
 		return
 	}
 	defer func() {
@@ -103,14 +105,14 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 	}()
 	data, err := io.ReadAll(file)
 	if err != nil {
-		h.writeReadError(w, err, "读取上传内容失败")
+		h.writeReadError(w, set, err, "读取上传内容失败")
 		return
 	}
 
 	// 档位决策:单次表单字段 > 全局默认(在 API 层定死,Service 不做隐式回退)。
 	policy := imaging.EXIFPolicy(r.FormValue("exif_policy"))
 	if policy == "" {
-		policy = h.cfg.DefaultEXIFPolicy
+		policy = set.EXIFPolicy
 	}
 
 	ttl, ttlSet, ok := h.resolveTTL(r)
@@ -130,12 +132,12 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		TTLSet:         ttlSet,
 	})
 	if err != nil {
-		h.writeUploadError(w, err)
+		h.writeUploadError(w, set, err)
 		return
 	}
 
 	// 站点地址:配置了 base_url 一律用配置;未配置则按请求推导绝对地址。
-	base := h.cfg.BaseURL
+	base := set.BaseURL
 	if base == "" {
 		base = httpx.RequestBaseURL(r)
 	}
@@ -147,13 +149,14 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 }
 
 // writeUploadError 把上传服务的业务错误映射为 HTTP 状态码与用户可读消息。
-func (h *Handlers) writeUploadError(w http.ResponseWriter, err error) {
+// @param set 本次请求生效的配置快照,错误文案里的阈值与闸值判定同源
+func (h *Handlers) writeUploadError(w http.ResponseWriter, set config.Settings, err error) {
 	switch {
 	case errors.Is(err, upload.ErrUnsupportedType):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusUnsupportedMediaType, "仅支持图片文件(jpeg/png/gif/webp)")
 	case errors.Is(err, upload.ErrTooManyPixels):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity,
-			fmt.Sprintf("图片分辨率超出限制(像素预算 %d 百万像素)", h.cfg.MaxPixels/megapixel))
+			fmt.Sprintf("图片分辨率超出限制(像素预算 %d 百万像素)", set.MaxPixelsMP))
 	case errors.Is(err, upload.ErrInvalidImage):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "图片内容无法解析")
 	case errors.Is(err, imaging.ErrUnknownPolicy):
@@ -169,18 +172,16 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, err error) {
 	}
 }
 
-// megapixel 一百万像素(错误文案换算用)。
-const megapixel = 1_000_000
-
 // writeReadError 把请求体读取错误写为带数值的用户可读响应。
 // @Description: 超过 MaxBytesReader 上限 → 413 并给出大小上限;其余按客户端请求错误 → 400 用 fallback 文案。
+// @param set 本次请求生效的配置快照,错误文案里的上限与大小闸同源
 // @param err 读取阶段的原始错误
 // @param fallback 非超限错误时的 400 文案
-func (h *Handlers) writeReadError(w http.ResponseWriter, err error, fallback string) {
+func (h *Handlers) writeReadError(w http.ResponseWriter, set config.Settings, err error, fallback string) {
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("文件超过大小上限(%d MB)", h.cfg.MaxUploadBytes>>20))
+			fmt.Sprintf("文件超过大小上限(%d MB)", set.MaxUploadMB))
 		return
 	}
 	httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, fallback)

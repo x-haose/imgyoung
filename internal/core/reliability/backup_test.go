@@ -69,7 +69,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		Conn:     conn,
 		Channels: mgr,
 		DataDir:  dir,
-		Keep:     2,
+		Keep:     func() int { return 2 },
 		Logger:   slog.New(slog.DiscardHandler),
 	})
 	return &testEnv{svc: svc, queries: queries, mgr: mgr, dataDir: dir}

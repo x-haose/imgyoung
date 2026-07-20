@@ -12,16 +12,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // Config Merger 依赖与参数。
 type Config struct {
-	Conn                *sql.DB       // 数据库连接(合并事务用)
-	Queries             *sqlc.Queries // sqlc 查询集
-	Grace               time.Duration // 冗余 blob 物理删宽限(与生命周期一致);合并后冗余 blob 交 sweeper 物理删
-	SimilarityThreshold int           // pHash 汉明距离阈值,距离 ≤ 阈值入候选;<= 0 表示不启用相似扫描
-	Logger              *slog.Logger  // 结构化日志
+	Conn     *sql.DB                // 数据库连接(合并事务用)
+	Queries  *sqlc.Queries          // sqlc 查询集
+	Settings func() config.Settings // 运营配置快照读取口(逐轮取值,热生效);物理删宽限与 pHash 阈值出自它
+	Logger   *slog.Logger           // 结构化日志
 }
 
 // Merger 查重执行器:精确重复自动合并 + 相似候选发现与人工裁决执行,并发安全。
@@ -73,7 +73,8 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 		return 0, nil // 竞态下已被其他轮合并
 	}
 	keeper := blobs[0]
-	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(m.cfg.Grace)), Valid: true}
+	grace := time.Duration(m.cfg.Settings().DeleteGraceMinutes) * time.Minute
+	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(grace)), Valid: true}
 
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -114,19 +115,20 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 	return len(blobs) - 1, nil
 }
 
-// Run 按 interval 周期查重(先精确合并,再相似扫描),直至 ctx 取消;启动即先跑一轮。
+// Run 周期查重(先精确合并,再相似扫描),直至 ctx 取消;启动即先跑一轮。
 // @Description: 精确合并先行,把字节相同的组收敛掉,相似扫描只对幸存 blob 工作。
-// @param interval 扫描间隔
-func (m *Merger) Run(ctx context.Context, interval time.Duration) {
+// @param interval 扫描间隔读取口,逐轮取值热生效
+func (m *Merger) Run(ctx context.Context, interval func() time.Duration) {
 	m.runOnce(ctx, "启动")
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			m.runOnce(ctx, "定期")
+			timer.Reset(interval())
 		}
 	}
 }

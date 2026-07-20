@@ -3,7 +3,9 @@ package router_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -29,14 +31,14 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
 	"github.com/x-haose/imgyoung/internal/http/router"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
-// testToken 测试用上传 Token(经 bootstrap 植入)。
+// testToken 测试用上传 Token 明文;newTestServer 以其 SHA256 直插一行有效 Token。
 const testToken = "test-token"
 
 // testAdminPass 测试用管理员密码。
@@ -48,6 +50,7 @@ type testEnv struct {
 	Conn    *sql.DB          // 数据库连接
 	Queries *sqlc.Queries    // sqlc 查询集
 	Mgr     *channel.Manager // 渠道管理器
+	Store   *config.Store    // 运营配置存储,applySettings 据此热改
 }
 
 // testConfig 三面配置的聚合,mutate 回调据此按用例定制。
@@ -57,10 +60,39 @@ type testConfig struct {
 	Router router.Config    // 路由级配置(Public/Admin 字段由助手最终填充)
 }
 
+// clearTestEnv 置空当前环境里全部 IMGYOUNG_ 变量,防止开发机残留影响配置播种。
+func clearTestEnv(t *testing.T) {
+	t.Helper()
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "IMGYOUNG_") {
+			t.Setenv(k, "")
+		}
+	}
+}
+
+// applySettings 经存储热改运营配置:当前快照上覆写后整体写回,立即生效。
+func applySettings(t *testing.T, store *config.Store, mod func(*config.Settings)) {
+	t.Helper()
+	set := store.Current()
+	mod(&set)
+	blob, err := json.Marshal(set)
+	if err != nil {
+		t.Fatalf("编码配置: %v", err)
+	}
+	var patch map[string]json.RawMessage
+	if err := json.Unmarshal(blob, &patch); err != nil {
+		t.Fatalf("展开配置: %v", err)
+	}
+	if _, err := store.Update(t.Context(), patch); err != nil {
+		t.Fatalf("应用配置: %v", err)
+	}
+}
+
 // newTestServer 组装一个使用临时目录(DB + local 渠道)的完整测试服务。
 // @param mutate 可选的配置修改器,用于按用例定制防盗链/BaseURL/按需处理等
 func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Server {
 	t.Helper()
+	clearTestEnv(t)
 	dir := t.TempDir()
 	discard := slog.New(slog.DiscardHandler)
 
@@ -82,6 +114,15 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 		t.Fatalf("生成主密钥: %v", err)
 	}
 	queries := sqlc.New(conn)
+	store, err := config.LoadStore(t.Context(), conn, queries, master)
+	if err != nil {
+		t.Fatalf("装载运营配置: %v", err)
+	}
+	// 测试用小额度:单图 1MB、像素预算 1MP,便于构造超限用例。
+	applySettings(t, store, func(s *config.Settings) {
+		s.MaxUploadMB = 1
+		s.MaxPixelsMP = 1
+	})
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn:    conn,
 		Queries: queries,
@@ -93,53 +134,57 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 		t.Fatalf("创建渠道管理器: %v", err)
 	}
 	svc := upload.New(upload.Config{
-		Conn:      conn,
-		Queries:   queries,
-		Channels:  mgr,
-		MaxPixels: 1 << 20,
-		Logger:    discard,
+		Conn:     conn,
+		Queries:  queries,
+		Channels: mgr,
+		Settings: store.Current,
+		Logger:   discard,
 	})
 	authSvc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: discard})
-	if err := authSvc.EnsureBootstrapToken(t.Context(), sqlc.DefaultUserID, testToken); err != nil {
+	sum := sha256.Sum256([]byte(testToken))
+	if _, err := queries.CreateToken(t.Context(), sqlc.CreateTokenParams{
+		UserID: sqlc.DefaultUserID, Name: "test", TokenHash: hex.EncodeToString(sum[:]),
+		Prefix: testToken, Scopes: "upload",
+	}); err != nil {
 		t.Fatalf("植入测试 Token: %v", err)
 	}
 	if err := authSvc.SetPassword(t.Context(), sqlc.DefaultUserID, testAdminPass); err != nil {
 		t.Fatalf("设置管理员密码: %v", err)
 	}
-	refererSvc, err := referer.New(t.Context(), queries, nil)
+	refererSvc, err := referer.New(t.Context(), queries)
 	if err != nil {
 		t.Fatalf("创建防盗链服务: %v", err)
 	}
 
 	tc := testConfig{
 		Public: publicapi.Config{
-			Queries:           queries,
-			Channels:          mgr,
-			Upload:            svc,
-			MaxUploadBytes:    1 << 20,
-			DefaultEXIFPolicy: imaging.PolicyPassthrough,
-			Activity:          lifecycle.NewTracker(conn, queries, false, discard),
-			Logger:            discard,
+			Queries:  queries,
+			Channels: mgr,
+			Upload:   svc,
+			Settings: store.Current,
+			Activity: lifecycle.NewTracker(conn, queries, func() bool { return false }, discard),
+			Logger:   discard,
 		},
 		Admin: adminapi.Config{
-			Admin:   mgr,
-			Auth:    authSvc,
-			Queries: queries,
-			Audit:   audit.New(queries),
-			Referer: refererSvc,
-			Logger:  discard,
+			Admin:    mgr,
+			Auth:     authSvc,
+			Queries:  queries,
+			Audit:    audit.New(queries),
+			Referer:  refererSvc,
+			Settings: store,
+			Boot:     config.LoadBootstrap(),
+			Logger:   discard,
 		},
 		Router: router.Config{
-			Auth:                 authSvc,
-			MaxConcurrentUploads: 4,
-			RefererPatterns:      refererSvc.Patterns,
-			AllowEmptyReferer:    true,
-			Metrics:              observability.New(),
-			Logger:               discard,
+			Auth:            authSvc,
+			Settings:        store.Current,
+			RefererPatterns: refererSvc.Patterns,
+			Metrics:         observability.New(),
+			Logger:          discard,
 		},
 	}
 	if mutate != nil {
-		mutate(&tc, testEnv{Dir: dir, Conn: conn, Queries: queries, Mgr: mgr})
+		mutate(&tc, testEnv{Dir: dir, Conn: conn, Queries: queries, Mgr: mgr, Store: store})
 	}
 	tc.Router.Public = publicapi.New(tc.Public)
 	tc.Router.Admin = adminapi.New(tc.Admin)
@@ -374,7 +419,9 @@ func rawUploadURL(t *testing.T, resp *http.Response) string {
 
 // TestUploadBaseURL 验证配置 BaseURL 后响应一律用配置的绝对地址(PicGo 等客户端需要)。
 func TestUploadBaseURL(t *testing.T) {
-	ts := newTestServer(t, func(tc *testConfig, _ testEnv) { tc.Public.BaseURL = "https://img.example.com" })
+	ts := newTestServer(t, func(_ *testConfig, env testEnv) {
+		applySettings(t, env.Store, func(s *config.Settings) { s.BaseURL = "https://img.example.com" })
+	})
 	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
 	defer closeBody(t, resp)
 	if got := rawUploadURL(t, resp); !strings.HasPrefix(got, "https://img.example.com/i/") {
@@ -400,7 +447,6 @@ func TestUploadURLDerivedFromRequest(t *testing.T) {
 func TestRefererProtection(t *testing.T) {
 	ts := newTestServer(t, func(tc *testConfig, _ testEnv) {
 		tc.Router.RefererPatterns = func() []string { return []string{"*.ok.com"} }
-		tc.Router.AllowEmptyReferer = true
 	})
 	resp := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
 	defer closeBody(t, resp)
@@ -675,7 +721,9 @@ func TestAdminOnlyChannels(t *testing.T) {
 
 // TestRedirectMode 验证 302 省流量模式:允许直链的候选渠道返回重定向。
 func TestRedirectMode(t *testing.T) {
-	ts := newTestServer(t, func(tc *testConfig, _ testEnv) { tc.Public.RedirectMode = true })
+	ts := newTestServer(t, func(_ *testConfig, env testEnv) {
+		applySettings(t, env.Store, func(s *config.Settings) { s.AccessMode = "redirect" })
+	})
 
 	// 高优先级 + 允许直链的渠道成为主渠道,上传即落在它上面。
 	body := fmt.Sprintf(
@@ -747,7 +795,7 @@ func TestAdminServeSkipsAccessTracking(t *testing.T) {
 	var tracker *lifecycle.Tracker
 	var queries *sqlc.Queries
 	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
-		tracker = lifecycle.NewTracker(env.Conn, env.Queries, false, slog.New(slog.DiscardHandler))
+		tracker = lifecycle.NewTracker(env.Conn, env.Queries, func() bool { return false }, slog.New(slog.DiscardHandler))
 		tc.Public.Activity = tracker
 		queries = env.Queries
 	})

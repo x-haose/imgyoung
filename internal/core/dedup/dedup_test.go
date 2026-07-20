@@ -4,26 +4,30 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/dedup"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
+
+// testSettings 构造运营配置读取口:内嵌默认值上按需覆写(mod 为 nil 即取默认)。
+// @param mod 覆写钩子,按需改动默认配置副本
+// @return 逐轮取值的配置读取口
+func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
+	t.Helper()
+	set := config.Defaults()
+	if mod != nil {
+		mod(&set)
+	}
+	return func() config.Settings { return set }
+}
 
 // setup 打开临时库并迁移。
 func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试数据库: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移测试数据库: %v", err)
-	}
-	return conn, sqlc.New(conn)
+	return dbtest.New(t)
 }
 
 // mkBlobWithImage 造一个 blob(指定 sha256/key)及其一条引用。
@@ -54,7 +58,7 @@ func TestMergeExactCollapsesDuplicates(t *testing.T) {
 	keeperID := mkBlobWithImage(t, ctx, q, "samehash", "img_a_key", "imageaaaa1")
 	redundantID := mkBlobWithImage(t, ctx, q, "samehash", "img_b_key", "imagebbbb1")
 
-	m := dedup.New(dedup.Config{Conn: conn, Queries: q, Grace: 0, Logger: slog.New(slog.DiscardHandler)})
+	m := dedup.New(dedup.Config{Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
 	n, err := m.MergeExactOnce(ctx)
 	if err != nil {
 		t.Fatalf("MergeExactOnce 返回错误: %v", err)

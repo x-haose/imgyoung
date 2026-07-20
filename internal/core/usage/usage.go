@@ -23,7 +23,7 @@ type StorageGauge interface {
 type Config struct {
 	Queries    *sqlc.Queries // sqlc 查询集
 	Gauge      StorageGauge  // 存储用量量表设置口
-	QuotaBytes int64         // 单渠道用量告警阈值(字节);<=0 表示不告警,仅上报指标
+	QuotaBytes func() int64  // 单渠道用量告警阈值读取口(字节),逐轮取值热生效;<=0 表示不告警,仅上报指标
 	Logger     *slog.Logger  // 结构化日志
 }
 
@@ -44,32 +44,34 @@ func (r *Reporter) ReportOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("统计渠道用量: %w", err)
 	}
+	quota := r.cfg.QuotaBytes()
 	for _, row := range rows {
 		r.cfg.Gauge.SetChannelStorage(row.Name, float64(row.Bytes))
-		if r.cfg.QuotaBytes > 0 && row.Bytes > r.cfg.QuotaBytes {
+		if quota > 0 && row.Bytes > quota {
 			r.cfg.Logger.Warn("渠道存储用量超过配额阈值,请留意账单/容量",
-				"channel", row.Name, "bytes", row.Bytes, "quota_bytes", r.cfg.QuotaBytes)
+				"channel", row.Name, "bytes", row.Bytes, "quota_bytes", quota)
 		}
 	}
 	return nil
 }
 
-// Run 按 interval 周期上报,直至 ctx 取消;启动即先报一次。
-// @param interval 上报间隔
-func (r *Reporter) Run(ctx context.Context, interval time.Duration) {
+// Run 周期上报,直至 ctx 取消;启动即先报一次。
+// @param interval 上报间隔读取口,逐轮取值热生效
+func (r *Reporter) Run(ctx context.Context, interval func() time.Duration) {
 	if err := r.ReportOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		r.cfg.Logger.Warn("启动用量上报未完成", "err", err)
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if err := r.ReportOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				r.cfg.Logger.Warn("定期用量上报未完成", "err", err)
 			}
+			timer.Reset(interval())
 		}
 	}
 }

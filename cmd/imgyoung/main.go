@@ -1,58 +1,28 @@
-// ImgYoung 图床服务入口:以 uber/fx 装配配置、数据库、存储、任务与 HTTP 服务。
-// fx 仅在本装配根(composition root)出现,业务包保持零 fx 依赖。
+// ImgYoung 图床服务入口:手工装配各组件并启动;生命周期编排见 serve。
 package main
 
 import (
 	"log/slog"
-	"net/http"
 	"os"
-
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxevent"
 )
 
-// main 进程入口:无参数即启动服务,带参数则分发到运维子命令(如 reset-password)。
+// main 进程入口:装配并启动服务,阻塞至优雅停机;失败退出码 1。
 func main() {
-	if len(os.Args) > 1 {
-		os.Exit(runSubcommand(os.Args[1:]))
+	// os.Exit 放在此处而非 runServer 内:确保 runServer 的 defer cleanup 先跑完再退出。
+	if err := runServer(newLogger()); err != nil {
+		os.Exit(1)
 	}
-	runServer()
 }
 
-// runServer 构建 fx 应用并运行,直至收到 SIGINT/SIGTERM 优雅停机。
-func runServer() {
-	fx.New(
-		fx.Provide(
-			provideLogger,
-			provideConfig,
-			provideDB,
-			provideQueries,
-			provideMasterKey,
-			provideAuth,
-			provideManager,
-			provideRunner,
-			provideUpload,
-			provideMetrics,
-			provideAudit,
-			provideReferer,
-			provideVariantStore,
-			provideVariants,
-			providePublicAPI,
-			provideAdminAPI,
-			provideRouter,
-			provideSweeper,
-			provideTracker,
-			provideUsageReporter,
-			provideMerger,
-			provideHTTPServer,
-		),
-		// fx 只在出错时说话:略过逐条装配噪音,但绝不吞启动/停机错误。
-		fx.WithLogger(func(logger *slog.Logger) fxevent.Logger {
-			return fxErrorLogger{log: logger}
-		}),
-		// 强制实例化:HTTP 服务器拉起整条依赖链;后台循环单独注册。
-		fx.Invoke(bootstrapCredentials),
-		fx.Invoke(func(*http.Server) {}),
-		fx.Invoke(registerBackgroundLoops),
-	).Run()
+// runServer 装配并运行服务直至停机;装配失败或运行致命错误时返回错误。
+// @param logger 结构化日志
+// @return 启动或运行错误
+func runServer(logger *slog.Logger) error {
+	a, cleanup, err := build(logger)
+	if err != nil {
+		logger.Error("启动失败", "err", err)
+		return err
+	}
+	defer cleanup()
+	return a.serve()
 }

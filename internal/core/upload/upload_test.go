@@ -20,6 +20,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
@@ -35,8 +36,20 @@ type testEnv struct {
 	mgr     *channel.Manager
 }
 
-// newTestEnv 组装测试环境,maxPixels 为像素预算上限。
-func newTestEnv(t *testing.T, maxPixels int64) *testEnv {
+// testSettings 构造运营配置读取口:内嵌默认值上按需覆写(mod 为 nil 即取默认)。
+// @param mod 覆写钩子,按需改动默认配置副本
+// @return 逐次上传取值的配置读取口
+func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
+	t.Helper()
+	set := config.Defaults()
+	if mod != nil {
+		mod(&set)
+	}
+	return func() config.Settings { return set }
+}
+
+// newTestEnv 组装测试环境,maxPixelsMP 为像素预算上限(百万像素)。
+func newTestEnv(t *testing.T, maxPixelsMP int64) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 	conn, err := db.Open(filepath.Join(dir, "test.db"))
@@ -71,11 +84,11 @@ func newTestEnv(t *testing.T, maxPixels int64) *testEnv {
 		t.Fatalf("取主渠道: %v", err)
 	}
 	svc := upload.New(upload.Config{
-		Conn:      conn,
-		Queries:   queries,
-		Channels:  mgr,
-		MaxPixels: maxPixels,
-		Logger:    slog.New(slog.DiscardHandler),
+		Conn:     conn,
+		Queries:  queries,
+		Channels: mgr,
+		Settings: testSettings(t, func(s *config.Settings) { s.MaxPixelsMP = maxPixelsMP }),
+		Logger:   slog.New(slog.DiscardHandler),
 	})
 	return &testEnv{svc: svc, queries: queries, driver: primary.Driver, mgr: mgr}
 }
@@ -86,6 +99,16 @@ func pngBytes(t *testing.T) []byte {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
 		t.Fatalf("编码测试 PNG: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// bigPNG 生成一张像素数超过一百万的真实 PNG,用于触发像素预算闸(尺寸取自图片头即拒)。
+func bigPNG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1024, 1024))); err != nil {
+		t.Fatalf("编码大 PNG: %v", err)
 	}
 	return buf.Bytes()
 }
@@ -132,7 +155,7 @@ func fetchStored(t *testing.T, env *testEnv, imageID string) []byte {
 
 // TestProcessStoresPNG 验证 PNG 上传:字节原样存储、记录完整、对象键含哈希前缀。
 func TestProcessStoresPNG(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	payload := pngBytes(t)
 
 	res, err := env.svc.Process(t.Context(), payload, upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough})
@@ -165,7 +188,7 @@ func TestProcessStoresPNG(t *testing.T) {
 // TestProcessStripsJPEGMetadata 验证 JPEG 上传时 EXIF 被剥离,
 // 且哈希基于净化后的字节(先净化后哈希)。
 func TestProcessStripsJPEGMetadata(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	payload := jpegWithEXIF(t)
 
 	res, err := env.svc.Process(t.Context(), payload, upload.Options{
@@ -196,7 +219,7 @@ func TestProcessStripsJPEGMetadata(t *testing.T) {
 
 // TestProcessPassthroughKeepsEXIF 验证 passthrough 档位原样存储、不动元数据。
 func TestProcessPassthroughKeepsEXIF(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	payload := jpegWithEXIF(t)
 
 	res, err := env.svc.Process(t.Context(), payload, upload.Options{
@@ -217,7 +240,7 @@ func TestProcessPassthroughKeepsEXIF(t *testing.T) {
 // @Description: 档位决策在调用方(API 层)完成,Service 只接受明确档位——
 // 空值同样拒绝,未实现的 spoof 与乱填值一视同仁。
 func TestProcessRejectsUnknownPolicy(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	for _, policy := range []imaging.EXIFPolicy{"", "spoof", "bogus"} {
 		_, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
 			UserID:     sqlc.DefaultUserID,
@@ -232,7 +255,7 @@ func TestProcessRejectsUnknownPolicy(t *testing.T) {
 
 // TestProcessMarksReplicaStates 验证多渠道写入语义:主渠道副本 done,其余渠道 pending。
 func TestProcessMarksReplicaStates(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	cfgJSON, err := json.Marshal(map[string]string{"path": t.TempDir()})
 	if err != nil {
 		t.Fatalf("编码渠道配置: %v", err)
@@ -286,7 +309,7 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 // TestProcessFallsBackWhenPrimaryFails 验证上传降级:主渠道写入失败时
 // 自动顺延下一健康渠道,不整体报错。
 func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	brokenDir := t.TempDir()
 	cfgJSON, err := json.Marshal(map[string]string{"path": brokenDir})
 	if err != nil {
@@ -342,7 +365,7 @@ func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
 
 // TestProcessTruncatesLongFileName 验证超长文件名被 UTF-8 安全截断到 255 字节。
 func TestProcessTruncatesLongFileName(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	longName := strings.Repeat("图", 100) + ".png" // 304 字节,截断点落在多字节字符上
 
 	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
@@ -367,7 +390,7 @@ func TestProcessTruncatesLongFileName(t *testing.T) {
 
 // TestProcessRejectsUnsupportedType 验证非白名单类型返回 ErrUnsupportedType。
 func TestProcessRejectsUnsupportedType(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	_, err := env.svc.Process(t.Context(), []byte("just some text"), upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.txt", EXIFPolicy: imaging.PolicyPassthrough})
 	if !errors.Is(err, upload.ErrUnsupportedType) {
 		t.Fatalf("错误 = %v, 期望 ErrUnsupportedType", err)
@@ -376,8 +399,8 @@ func TestProcessRejectsUnsupportedType(t *testing.T) {
 
 // TestProcessRejectsTooManyPixels 验证超出像素预算返回 ErrTooManyPixels(不进解码器)。
 func TestProcessRejectsTooManyPixels(t *testing.T) {
-	env := newTestEnv(t, 1) // 预算 1 像素,2x2 必超
-	_, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough})
+	env := newTestEnv(t, 1) // 预算 1 百万像素,1024x1024 必超
+	_, err := env.svc.Process(t.Context(), bigPNG(t), upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough})
 	if !errors.Is(err, upload.ErrTooManyPixels) {
 		t.Fatalf("错误 = %v, 期望 ErrTooManyPixels", err)
 	}
@@ -385,7 +408,7 @@ func TestProcessRejectsTooManyPixels(t *testing.T) {
 
 // TestProcessIdempotency 验证同一幂等键重复上传返回同一 ImageID。
 func TestProcessIdempotency(t *testing.T) {
-	env := newTestEnv(t, 1<<20)
+	env := newTestEnv(t, 50)
 	payload := pngBytes(t)
 
 	first, err := env.svc.Process(t.Context(), payload, upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", IdempotencyKey: "retry-key-1", EXIFPolicy: imaging.PolicyPassthrough})

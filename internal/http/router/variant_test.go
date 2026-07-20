@@ -15,30 +15,33 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/variants"
-	"github.com/x-haose/imgyoung/internal/infra/imaging"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 )
 
 // setupVariants 组装一个启用按需处理的测试服务,返回服务与 variant 文件目录(供断言缓存状态)。
-// @param procMaxPixels 处理引擎像素预算(独立于上传预算),置小可强制处理失败以测降级回退。
-func setupVariants(t *testing.T, procMaxPixels int64) (*httptest.Server, string) {
+// @param procMaxPixelsMP 处理引擎像素预算(百万像素,独立于上传预算);
+// 置 0 可强制任何源图超预算、处理失败,以测降级回退。
+func setupVariants(t *testing.T, procMaxPixelsMP int64) (*httptest.Server, string) {
 	t.Helper()
 	var vdir string
 	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
 		discard := slog.New(slog.DiscardHandler)
 		vdir = filepath.Join(env.Dir, "variants")
-		set := imaging.EncodeSettings{
-			QualityWebP: 80, QualityJPEG: 85, WebPMethod: 4, MaxPixels: procMaxPixels,
-		}
-		store := variants.New(variants.Config{Dir: vdir, Capacity: 1 << 30, Queries: env.Queries, Logger: discard})
-		tc.Public.Variants = variants.NewService(variants.ServiceConfig{
-			Store: store, Proc: imaging.NewProcessor(set), Settings: set,
-			Workers: 4, Timeout: 3 * time.Second, Logger: discard,
+		applySettings(t, env.Store, func(s *config.Settings) {
+			s.ProcessWidths = []int{100, 200, 400}
 		})
-		tc.Public.ProcessWidths = []int{100, 200, 400}
-		tc.Public.ProcessFormats = []string{"webp", "jpeg", "png"}
+		procSet := env.Store.Current()
+		procSet.MaxPixelsMP = procMaxPixelsMP
+		store := variants.New(variants.Config{
+			Dir: vdir, Capacity: func() int64 { return 1 << 30 }, Queries: env.Queries, Logger: discard,
+		})
+		tc.Public.Variants = variants.NewService(variants.ServiceConfig{
+			Store:    store,
+			Settings: func() config.Settings { return procSet },
+			Logger:   discard,
+		})
 	})
 	return ts, vdir
 }
@@ -97,7 +100,7 @@ func countFiles(t *testing.T, dir string) int {
 
 // TestServeVariantResizeAndCache 验收:?w=200&format=webp 生效、缩放正确、二次访问命中缓存(不新增文件)。
 func TestServeVariantResizeAndCache(t *testing.T) {
-	ts, vdir := setupVariants(t, 1<<20)
+	ts, vdir := setupVariants(t, 50)
 
 	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
@@ -155,7 +158,7 @@ func TestServeVariantResizeAndCache(t *testing.T) {
 
 // TestServeVariantRejectsBadTier 验收:档外宽度/格式返回 400。
 func TestServeVariantRejectsBadTier(t *testing.T) {
-	ts, _ := setupVariants(t, 1<<20)
+	ts, _ := setupVariants(t, 50)
 	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
@@ -174,7 +177,7 @@ func TestServeVariantRejectsBadTier(t *testing.T) {
 
 // TestServeVariantNegotiatesFormat 验收:Accept: image/webp 时无 format 参数也协商为 webp。
 func TestServeVariantNegotiatesFormat(t *testing.T) {
-	ts, _ := setupVariants(t, 1<<20)
+	ts, _ := setupVariants(t, 50)
 	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
@@ -200,7 +203,7 @@ func TestServeVariantNegotiatesFormat(t *testing.T) {
 
 // TestServeVariantGifNotProcessed 验收:gif 源即便显式请求处理参数也只发原图(不解码首帧转静图、动画不丢)。
 func TestServeVariantGifNotProcessed(t *testing.T) {
-	ts, vdir := setupVariants(t, 1<<20)
+	ts, vdir := setupVariants(t, 50)
 	up := uploadReq(t, ts, testToken, "a.gif", gifBytes(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
@@ -225,7 +228,7 @@ func TestServeVariantGifNotProcessed(t *testing.T) {
 // TestServeVariantDegradedFallbackNoStore 验收:处理失败时降级回退原图,且响应 no-store 不被当衍生图缓存(防投毒)。
 func TestServeVariantDegradedFallbackNoStore(t *testing.T) {
 	// 处理引擎像素预算置极小(100),300x200 源必超预算 → 处理失败 → 降级回退;但原图服务不解码,照常可用。
-	ts, vdir := setupVariants(t, 100)
+	ts, vdir := setupVariants(t, 0)
 	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)

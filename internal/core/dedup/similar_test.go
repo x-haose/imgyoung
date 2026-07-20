@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/dedup"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
@@ -29,11 +30,13 @@ func mkBlobWithPhash(t *testing.T, ctx context.Context, q *sqlc.Queries, sha, ke
 	return blobID
 }
 
-// newSimilarMerger 建一个启用相似扫描的执行器(阈值 4)。
-func newSimilarMerger(conn *sql.DB, q *sqlc.Queries) *dedup.Merger {
+// newSimilarMerger 建一个启用相似扫描的执行器(pHash 汉明距离阈值 4)。
+func newSimilarMerger(t *testing.T, conn *sql.DB, q *sqlc.Queries) *dedup.Merger {
+	t.Helper()
 	return dedup.New(dedup.Config{
-		Conn: conn, Queries: q, Grace: 0, SimilarityThreshold: 4,
-		Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q,
+		Settings: testSettings(t, func(s *config.Settings) { s.DedupPhashMaxDistance = 4 }),
+		Logger:   slog.New(slog.DiscardHandler),
 	})
 }
 
@@ -56,7 +59,7 @@ func TestScanSimilarFindsPairsWithinThreshold(t *testing.T) {
 	b := mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 0b0011)
 	mkBlobWithPhash(t, ctx, q, "sha-c", "key-c", "imagecccc1", -1)
 
-	m := newSimilarMerger(conn, q)
+	m := newSimilarMerger(t, conn, q)
 	n, err := m.ScanSimilarOnce(ctx)
 	if err != nil {
 		t.Fatalf("扫描失败: %v", err)
@@ -85,7 +88,7 @@ func TestScanSimilarDismissAbsorbsRescan(t *testing.T) {
 	mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
 	mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 1)
 
-	m := newSimilarMerger(conn, q)
+	m := newSimilarMerger(t, conn, q)
 	if _, err := m.ScanSimilarOnce(ctx); err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
@@ -101,7 +104,7 @@ func TestScanSimilarDismissAbsorbsRescan(t *testing.T) {
 	}
 
 	// 新执行器 = 水位归零全量重扫:唯一约束吸收,dismissed 不复活。
-	m2 := newSimilarMerger(conn, q)
+	m2 := newSimilarMerger(t, conn, q)
 	if n, err := m2.ScanSimilarOnce(ctx); err != nil || n != 0 {
 		t.Fatalf("重扫应被吸收: n=%d err=%v", n, err)
 	}
@@ -118,7 +121,7 @@ func TestMergeCandidateRepointsAndCleans(t *testing.T) {
 	a := mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
 	b := mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 1)
 
-	m := newSimilarMerger(conn, q)
+	m := newSimilarMerger(t, conn, q)
 	if _, err := m.ScanSimilarOnce(ctx); err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
@@ -169,7 +172,7 @@ func TestMergeCandidateStaleBlob(t *testing.T) {
 	a := mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
 	b := mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 1)
 
-	m := newSimilarMerger(conn, q)
+	m := newSimilarMerger(t, conn, q)
 	if _, err := m.ScanSimilarOnce(ctx); err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
@@ -200,7 +203,7 @@ func TestMergeCandidateCountsActualRefs(t *testing.T) {
 		t.Fatalf("提升被并方计数: %v", err)
 	}
 
-	m := newSimilarMerger(conn, q)
+	m := newSimilarMerger(t, conn, q)
 	if _, err := m.ScanSimilarOnce(ctx); err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
@@ -234,7 +237,7 @@ func TestMergeCandidateRejectsDyingKeeper(t *testing.T) {
 	keep := mkBlobWithPhash(t, ctx, q, "sha-keep", "key-keep", "keepimg001", 0)
 	drop := mkBlobWithPhash(t, ctx, q, "sha-drop", "key-drop", "dropimg001", 1)
 
-	m := newSimilarMerger(conn, q)
+	m := newSimilarMerger(t, conn, q)
 	if _, err := m.ScanSimilarOnce(ctx); err != nil {
 		t.Fatalf("扫描失败: %v", err)
 	}
@@ -267,7 +270,11 @@ func TestScanSimilarDisabled(t *testing.T) {
 	mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
 	mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 0)
 
-	m := dedup.New(dedup.Config{Conn: conn, Queries: q, Logger: slog.New(slog.DiscardHandler)})
+	m := dedup.New(dedup.Config{
+		Conn: conn, Queries: q,
+		Settings: testSettings(t, func(s *config.Settings) { s.DedupPhashMaxDistance = 0 }),
+		Logger:   slog.New(slog.DiscardHandler),
+	})
 	if n, err := m.ScanSimilarOnce(ctx); err != nil || n != 0 {
 		t.Fatalf("关闭时不应产生候选: n=%d err=%v", n, err)
 	}

@@ -3,7 +3,6 @@ package auth_test
 import (
 	"database/sql"
 	"errors"
-	"log/slog"
 	"testing"
 	"time"
 
@@ -198,99 +197,6 @@ func TestDeleteTokenRecordNullsImageSource(t *testing.T) {
 	}
 	if tid.Valid {
 		t.Errorf("token_id 应被置空, got %v", tid.Int64)
-	}
-}
-
-// TestBootstrapGuard bootstrap 守卫:环境变量托管时吊销/轮转/删除一律拒绝,
-// 未托管时按普通 Token 处理。
-func TestBootstrapGuard(t *testing.T) {
-	svc, queries, conn := newTestService(t)
-	ctx := t.Context()
-	managed := auth.New(auth.Config{
-		Conn: conn, Queries: queries, BootstrapManaged: true,
-		Logger: slog.New(slog.DiscardHandler),
-	})
-	if err := managed.EnsureBootstrapToken(ctx, sqlc.DefaultUserID, "boot-secret"); err != nil {
-		t.Fatalf("植入引导 Token: %v", err)
-	}
-	rows, err := queries.ListTokensByUser(ctx, sqlc.ListTokensByUserParams{
-		UserID: sqlc.DefaultUserID, Limit: 10, Offset: 0,
-	})
-	if err != nil || len(rows) != 1 || rows[0].Name != "bootstrap" {
-		t.Fatalf("引导 Token 应在库: rows=%+v err=%v", rows, err)
-	}
-	bootID := rows[0].ID
-
-	if !managed.IsBootstrapToken(rows[0]) {
-		t.Error("托管中的引导 Token 应被识别")
-	}
-	other := rows[0]
-	other.UserID = "u1"
-	if managed.IsBootstrapToken(other) {
-		t.Error("他人同名 Token 不应视为引导 Token")
-	}
-	if svc.IsBootstrapToken(rows[0]) {
-		t.Error("未配置环境变量时不应视为托管")
-	}
-	revoked := rows[0]
-	revoked.RevokedAt = sqlc.TimeNull(time.Now())
-	if managed.IsBootstrapToken(revoked) {
-		t.Error("已吊销的引导历史行不应视为托管")
-	}
-
-	if err := managed.RevokeToken(ctx, sqlc.DefaultUserID, bootID); !errors.Is(err, auth.ErrTokenProtected) {
-		t.Errorf("托管引导 Token 吊销应拒绝, got %v", err)
-	}
-	if _, err := managed.RotateToken(ctx, sqlc.DefaultUserID, bootID); !errors.Is(err, auth.ErrTokenProtected) {
-		t.Errorf("托管引导 Token 轮转应拒绝, got %v", err)
-	}
-	if err := managed.DeleteTokenRecord(ctx, sqlc.DefaultUserID, bootID); !errors.Is(err, auth.ErrTokenProtected) {
-		t.Errorf("托管引导 Token 删除应拒绝, got %v", err)
-	}
-
-	// 未托管(环境变量已移除)时按普通 Token 处理:可正常吊销。
-	if err := svc.RevokeToken(ctx, sqlc.DefaultUserID, bootID); err != nil {
-		t.Errorf("未托管时应可吊销, got %v", err)
-	}
-}
-
-// TestBootstrapHistoryDeletable 环境变量换值后:旧引导行被吊销为历史行,
-// 托管守卫只护当前有效行,历史行可正常删除。
-func TestBootstrapHistoryDeletable(t *testing.T) {
-	_, queries, conn := newTestService(t)
-	ctx := t.Context()
-	managed := auth.New(auth.Config{
-		Conn: conn, Queries: queries, BootstrapManaged: true,
-		Logger: slog.New(slog.DiscardHandler),
-	})
-	if err := managed.EnsureBootstrapToken(ctx, sqlc.DefaultUserID, "boot-v1"); err != nil {
-		t.Fatalf("植入引导 Token: %v", err)
-	}
-	if err := managed.EnsureBootstrapToken(ctx, sqlc.DefaultUserID, "boot-v2"); err != nil {
-		t.Fatalf("换值重建引导 Token: %v", err)
-	}
-	rows, err := queries.ListTokensByUser(ctx, sqlc.ListTokensByUserParams{
-		UserID: sqlc.DefaultUserID, Limit: 10, Offset: 0,
-	})
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("换值后应有新旧两行: rows=%+v err=%v", rows, err)
-	}
-	var oldID, newID int64
-	for _, row := range rows {
-		if row.RevokedAt.Valid {
-			oldID = row.ID
-		} else {
-			newID = row.ID
-		}
-	}
-	if oldID == 0 || newID == 0 {
-		t.Fatalf("应恰有一条已吊销与一条有效: rows=%+v", rows)
-	}
-	if err := managed.DeleteTokenRecord(ctx, sqlc.DefaultUserID, oldID); err != nil {
-		t.Errorf("已吊销的引导历史行应可删, got %v", err)
-	}
-	if err := managed.DeleteTokenRecord(ctx, sqlc.DefaultUserID, newID); !errors.Is(err, auth.ErrTokenProtected) {
-		t.Errorf("当前托管行删除应拒绝, got %v", err)
 	}
 }
 

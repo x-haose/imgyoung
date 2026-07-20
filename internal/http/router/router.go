@@ -12,21 +12,20 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 )
 
 // Config 路由组装的全部依赖与参数。
 type Config struct {
-	Public               *publicapi.Handlers    // 数据面处理器集
-	Admin                *adminapi.Handlers     // 管理面处理器集
-	Auth                 *auth.Service          // 认证服务(Token 与会话校验)
-	UploadRatePerMinute  int                    // 每用户每分钟上传次数上限;<= 0 表示不启用
-	MaxConcurrentUploads int                    // 上传并发上限(内存三道闸之一),必须 > 0
-	RefererPatterns      func() []string        // 防盗链白名单快照读取口(热生效);nil 或返回空表示不启用
-	AllowEmptyReferer    bool                   // 空 Referer 是否放行
-	Metrics              *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
-	Web                  fs.FS                  // 后台前端产物;nil 表示不服务页面
-	Logger               *slog.Logger           // 结构化日志
+	Public          *publicapi.Handlers    // 数据面处理器集
+	Admin           *adminapi.Handlers     // 管理面处理器集
+	Auth            *auth.Service          // 认证服务(Token 与会话校验)
+	Settings        func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);上传频率/并发上限/空 Referer 策略出自它
+	RefererPatterns func() []string        // 防盗链白名单快照读取口(热生效);nil 或返回空表示不启用
+	Metrics         *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
+	Web             fs.FS                  // 后台前端产物;nil 表示不服务页面
+	Logger          *slog.Logger           // 结构化日志
 }
 
 // New 构建完整路由。
@@ -42,8 +41,8 @@ func New(cfg Config) http.Handler {
 	r.Handle("/metrics", cfg.Metrics.Handler())
 	// 上传防护闸只此一份,数据面与后台上传共享:频率限制按认证主体的用户 id 计,
 	// 并发闸全局共享(峰值内存由总并发决定,与入口无关)。
-	uploadRate := middleware.UploadRateLimit(cfg.UploadRatePerMinute, cfg.Logger)
-	uploadGate := middleware.ConcurrencyLimit(cfg.MaxConcurrentUploads, cfg.Logger)
+	uploadRate := middleware.UploadRateLimit(func() int { return cfg.Settings().UploadRatePerMin }, cfg.Logger)
+	uploadGate := middleware.ConcurrencyLimit(func() int { return cfg.Settings().MaxConcurrentUploads }, cfg.Logger)
 	r.Group(func(g chi.Router) {
 		g.Use(middleware.TokenAuth(cfg.Auth, "upload", cfg.Logger))
 		g.Use(uploadRate)
@@ -95,6 +94,7 @@ func New(cfg Config) http.Handler {
 				ad.Post("/users/{id}/password", cfg.Admin.HandleUserResetPassword)
 				ad.Delete("/users/{id}", cfg.Admin.HandleUserDelete)
 				ad.Get("/config/full", cfg.Admin.HandleConfigFull)
+				ad.Put("/config", cfg.Admin.HandleConfigUpdate)
 				ad.Get("/referer-whitelist", cfg.Admin.HandleRefererList)
 				ad.Post("/referer-whitelist", cfg.Admin.HandleRefererAdd)
 				ad.Delete("/referer-whitelist/{id}", cfg.Admin.HandleRefererDelete)
@@ -110,7 +110,7 @@ func New(cfg Config) http.Handler {
 	})
 	r.Group(func(g chi.Router) {
 		// 防盗链只作用于对外公开图片入口。
-		g.Use(middleware.RefererCheck(cfg.RefererPatterns, cfg.AllowEmptyReferer))
+		g.Use(middleware.RefererCheck(cfg.RefererPatterns, func() bool { return cfg.Settings().AllowEmptyReferer }))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
 	})
 	if cfg.Web != nil {

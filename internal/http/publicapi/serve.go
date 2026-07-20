@@ -95,7 +95,7 @@ func (h *Handlers) serveOriginal(w http.ResponseWriter, r *http.Request, row sql
 	}
 
 	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向;降级路径强制代理不 302。
-	if !degraded && h.cfg.RedirectMode {
+	if !degraded && h.cfg.Settings().AccessMode == "redirect" {
 		for _, cand := range candidates {
 			if cand.AllowDirectLink && !cand.Encrypted && cand.PublicBaseURL != "" {
 				http.Redirect(w, r, cand.PublicBaseURL+"/"+row.StorageKey, http.StatusFound)

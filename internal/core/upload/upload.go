@@ -19,6 +19,7 @@ import (
 	"github.com/corona10/goimagehash"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
@@ -100,14 +101,12 @@ type ReplicationEnqueuer interface {
 
 // Config Service 的全部依赖与参数。
 type Config struct {
-	Conn       *sql.DB             // 数据库连接(事务用)
-	Queries    *sqlc.Queries       // sqlc 查询集
-	Channels   ChannelSelector     // 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐
-	Replicator ReplicationEnqueuer // 补齐入队口;可为 nil(pending 行由恢复扫描兜底)
-	MaxPixels  int64               // 像素预算(width × height 上限)
-	MinSuccess int                 // 返回成功所需的最少副本数,小于 1 视为 1
-	DefaultTTL time.Duration       // 全局默认 TTL,<=0 表示永不过期;TTL 三层解析的最低层
-	Logger     *slog.Logger        // 结构化日志
+	Conn       *sql.DB                // 数据库连接(事务用)
+	Queries    *sqlc.Queries          // sqlc 查询集
+	Channels   ChannelSelector        // 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐
+	Replicator ReplicationEnqueuer    // 补齐入队口;可为 nil(pending 行由恢复扫描兜底)
+	Settings   func() config.Settings // 运营配置快照读取口(逐次上传取值,热生效);像素预算/最少副本数/全局默认 TTL 出自它
+	Logger     *slog.Logger           // 结构化日志
 }
 
 // ErrInsufficientReplicas 同步副本数不足 MinSuccess 要求。
@@ -151,6 +150,8 @@ func New(cfg Config) *Service {
 // @return 上传结果
 // @return 业务错误(见哨兵)或基础设施错误
 func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Result, error) {
+	// 单次快照贯穿整个上传:同一请求内各配置项取值一致,不受并发热改影响。
+	set := s.cfg.Settings()
 	// 输入验证先行:归属用户必填(多租户隔离的前提),档位必须是明确合法值,
 	// 文件名限长(仅元数据,不影响逻辑)。
 	if opts.UserID == "" {
@@ -186,7 +187,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	if formatMIME[format] != mime {
 		return Result{}, fmt.Errorf("%w: 嗅探类型 %s 与解码格式 %s 不一致", ErrInvalidImage, mime, format)
 	}
-	if int64(meta.Width)*int64(meta.Height) > s.cfg.MaxPixels {
+	if int64(meta.Width)*int64(meta.Height) > set.MaxPixels() {
 		return Result{}, ErrTooManyPixels
 	}
 
@@ -219,10 +220,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		return Result{}, fmt.Errorf("计算感知哈希: %w", err)
 	}
 
-	shortID, err := id.New()
-	if err != nil {
-		return Result{}, fmt.Errorf("生成短 ID: %w", err)
-	}
+	shortID := id.New()
 	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段。
 	key := shortID + "_" + hex.EncodeToString(sum[:4])
 
@@ -233,9 +231,10 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 	if len(healthy) == 0 {
 		return Result{}, fmt.Errorf("选择主渠道: %w", channel.ErrNoHealthyChannel)
 	}
-	doneIDs := make([]int64, 0, s.minSuccess())
+	need := minSuccess(set)
+	doneIDs := make([]int64, 0, need)
 	for _, h := range healthy {
-		if len(doneIDs) >= s.minSuccess() {
+		if len(doneIDs) >= need {
 			break
 		}
 		if perr := putWithTimeout(ctx, h, key, data); perr != nil {
@@ -244,8 +243,8 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		}
 		doneIDs = append(doneIDs, h.ID)
 	}
-	if len(doneIDs) < s.minSuccess() {
-		return Result{}, fmt.Errorf("%w: 要求 %d 份,仅写入 %d 份", ErrInsufficientReplicas, s.minSuccess(), len(doneIDs))
+	if len(doneIDs) < need {
+		return Result{}, fmt.Errorf("%w: 要求 %d 份,仅写入 %d 份", ErrInsufficientReplicas, need, len(doneIDs))
 	}
 	all := s.cfg.Channels.All()
 
@@ -265,7 +264,7 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 		size:     int64(len(data)),
 		width:    int64(meta.Width),
 		height:   int64(meta.Height),
-		ttl:      resolveTTL(opts, user.DefaultTtlHours, s.cfg.DefaultTTL),
+		ttl:      resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()),
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -329,11 +328,13 @@ func resolveTTL(opts Options, userHours sql.NullInt64, global time.Duration) tim
 }
 
 // minSuccess 归一化最少副本数(至少 1)。
-func (s *Service) minSuccess() int {
-	if s.cfg.MinSuccess < 1 {
-		return 1
+// @param set 本次上传生效的配置快照
+// @return 最少同步副本数
+func minSuccess(set config.Settings) int {
+	if set.MinSuccess >= 1 {
+		return set.MinSuccess
 	}
-	return s.cfg.MinSuccess
+	return 1
 }
 
 // pendingIDs 返回未同步写入的渠道 ID 集(待异步补齐)。

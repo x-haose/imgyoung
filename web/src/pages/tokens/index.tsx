@@ -15,7 +15,6 @@ import {
   Space,
   Table,
   Tag,
-  Tooltip,
   Typography,
 } from "antd";
 import { useState } from "react";
@@ -37,7 +36,6 @@ interface TokenItem {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
-  is_bootstrap: boolean;
 }
 
 /** 用户下拉项(管理员筛选用,对应 /api/admin/users 响应的子集)。 */
@@ -71,10 +69,6 @@ const expiryOptions = [
 
 /** 每页 Token 数(后端单次上限 100)。 */
 const pageSize = 50;
-
-/** bootstrap 托管说明:吊销无效的原因与正确的停用方式。 */
-const bootstrapHint =
-  "由环境变量托管:后台吊销会在下次重启时被环境变量复活;停用需移除环境变量后重启";
 
 /** Token 的展示状态:有效 / 已过期 / 已吊销。 */
 type TokenStatus = "active" | "expired" | "revoked";
@@ -262,18 +256,6 @@ export function TokensPage() {
               {
                 title: "名称",
                 dataIndex: "name",
-                render: (v: string, row) => (
-                  <Space size={6}>
-                    {v}
-                    {row.is_bootstrap && (
-                      <Tooltip title={bootstrapHint}>
-                        <Tag color="processing" style={{ marginInlineEnd: 0 }}>
-                          环境变量托管
-                        </Tag>
-                      </Tooltip>
-                    )}
-                  </Space>
-                ),
               },
               {
                 title: "识别前缀",
@@ -304,15 +286,6 @@ export function TokensPage() {
                 key: "actions",
                 width: 150,
                 render: (_, row) => {
-                  if (row.is_bootstrap) {
-                    return (
-                      <Tooltip title={bootstrapHint}>
-                        <Button size="small" type="text" disabled>
-                          托管中
-                        </Button>
-                      </Tooltip>
-                    );
-                  }
                   if (tokenStatus(row) === "active") {
                     return (
                       <Space size={0}>

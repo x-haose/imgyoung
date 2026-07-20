@@ -13,9 +13,6 @@ import (
 // sqliteConstraintUnique modernc 驱动的唯一约束冲突扩展错误码(SQLITE_CONSTRAINT_UNIQUE)。
 const sqliteConstraintUnique = 2067
 
-// bootstrapTokenName 环境变量托管的引导 Token 在库中的固定用途名。
-const bootstrapTokenName = "bootstrap"
-
 // IssueToken 为用户签发一个具名上传 Token。
 // @Description: 明文仅此一次返回,落库只存 SHA256 与识别前缀;同一用户的有效
 // Token 名唯一,与已吊销 Token 重名不冲突。到期与吊销同等失效:同名旧 Token
@@ -111,33 +108,17 @@ func (s *Service) AuthenticateToken(ctx context.Context, plaintext string) (Toke
 	return TokenPrincipal{UserID: row.UserID, TokenID: row.ID, Scopes: row.Scopes}, nil
 }
 
-// IsBootstrapToken 判定 Token 行是否为环境变量托管中的引导 Token。
-// @Description: 仅当环境变量当前配置、且该行未吊销未过期时才视为托管;
-// 未配置时同名 Token 按普通 Token 处理,环境变量换值遗留的已吊销历史行
-// 按普通失效记录处理(可正常删除)。
-// @param row Token 行
-// @return 托管中的引导 Token 为 true
-func (s *Service) IsBootstrapToken(row sqlc.Token) bool {
-	return s.cfg.BootstrapManaged && row.UserID == sqlc.DefaultUserID &&
-		row.Name == bootstrapTokenName &&
-		!row.RevokedAt.Valid && !isExpired(row.ExpiresAt, time.Now())
-}
-
 // RevokeToken 吊销用户名下的一个 Token。
 // @Description: user_id 同时作为归属校验,普通用户无法吊销他人 Token;
-// 已吊销或不存在均归一为 ErrTokenNotFound。托管中的引导 Token 拒绝吊销——
-// 吊销会在下次重启被环境变量复活,假反馈比无操作更糟。
+// 已吊销或不存在均归一为 ErrTokenNotFound。
 // @param ctx 控制超时与取消
 // @param userID Token 所属用户 id
 // @param tokenID Token 记录 id
-// @return ErrTokenNotFound / ErrTokenProtected 或基础设施错误
+// @return ErrTokenNotFound 或基础设施错误
 func (s *Service) RevokeToken(ctx context.Context, userID string, tokenID int64) error {
-	row, err := s.getOwnedToken(ctx, userID, tokenID)
-	if err != nil {
+	// 归属校验:非本人 Token 归一为 ErrTokenNotFound,不泄露他人 Token 存在性。
+	if _, err := s.getOwnedToken(ctx, userID, tokenID); err != nil {
 		return err
-	}
-	if s.IsBootstrapToken(row) {
-		return ErrTokenProtected
 	}
 	n, err := s.cfg.Queries.RevokeToken(ctx, sqlc.RevokeTokenParams{
 		RevokedAt: sqlc.TimeNull(time.Now()),
@@ -161,14 +142,11 @@ func (s *Service) RevokeToken(ctx context.Context, userID string, tokenID int64)
 // @param userID Token 所属用户 id(归属校验)
 // @param tokenID 待轮转的 Token 记录 id
 // @return 新 Token 签发结果(含明文)
-// @return ErrTokenNotFound / ErrTokenProtected 或基础设施错误
+// @return ErrTokenNotFound 或基础设施错误
 func (s *Service) RotateToken(ctx context.Context, userID string, tokenID int64) (IssuedToken, error) {
 	row, err := s.getOwnedToken(ctx, userID, tokenID)
 	if err != nil {
 		return IssuedToken{}, err
-	}
-	if s.IsBootstrapToken(row) {
-		return IssuedToken{}, ErrTokenProtected
 	}
 	now := time.Now()
 	if row.RevokedAt.Valid || isExpired(row.ExpiresAt, now) {
@@ -208,12 +186,11 @@ func (s *Service) RotateToken(ctx context.Context, userID string, tokenID int64)
 
 // DeleteTokenRecord 删除一条已失效(已吊销或已过期)的 Token 记录。
 // @Description: 有效 Token 拒绝删除——止损入口是吊销,删除只负责清理历史行;
-// 审计留痕不受影响。托管守卫只护当前有效的引导 Token,已失效的引导历史行
-// 与普通失效记录同等可删。user_id 同时作为归属校验。
+// 审计留痕不受影响。user_id 同时作为归属校验。
 // @param ctx 控制超时与取消
 // @param userID Token 所属用户 id
 // @param tokenID Token 记录 id
-// @return ErrTokenNotFound / ErrTokenActive / ErrTokenProtected 或基础设施错误
+// @return ErrTokenNotFound / ErrTokenActive 或基础设施错误
 func (s *Service) DeleteTokenRecord(ctx context.Context, userID string, tokenID int64) error {
 	row, err := s.getOwnedToken(ctx, userID, tokenID)
 	if err != nil {
@@ -221,9 +198,6 @@ func (s *Service) DeleteTokenRecord(ctx context.Context, userID string, tokenID 
 	}
 	now := time.Now()
 	if !row.RevokedAt.Valid && !isExpired(row.ExpiresAt, now) {
-		if s.IsBootstrapToken(row) {
-			return ErrTokenProtected
-		}
 		return ErrTokenActive
 	}
 	// DELETE 条件与上面的判断一致,防查后写前的状态漂移。
@@ -237,48 +211,6 @@ func (s *Service) DeleteTokenRecord(ctx context.Context, userID string, tokenID 
 	}
 	if n == 0 {
 		return ErrTokenNotFound
-	}
-	return nil
-}
-
-// EnsureBootstrapToken 确保环境变量指定的引导 Token 在库,幂等。
-// @Description: 明文哈希已在库(任意名下)即不动;否则吊销该用户旧的 bootstrap
-// Token 并以当前明文重建——环境变量的当前值即 bootstrap 名下的唯一真相,
-// headless 部署不进 UI 即可上传。引导 Token 恒为永久,有效期由环境变量的存续决定。
-// @param ctx 控制超时与取消
-// @param userID 归属用户 id
-// @param plaintext 引导 Token 明文(来自环境变量,长度形态不限)
-// @return 基础设施错误
-func (s *Service) EnsureBootstrapToken(ctx context.Context, userID, plaintext string) error {
-	_, err := s.cfg.Queries.GetActiveTokenByHash(ctx, sqlc.GetActiveTokenByHashParams{
-		TokenHash: hashSecret(plaintext),
-		Now:       sqlc.TimeNull(time.Now()),
-	})
-	switch {
-	case err == nil:
-		return nil
-	case !errors.Is(err, sql.ErrNoRows):
-		return fmt.Errorf("查询引导 Token: %w", err)
-	}
-	if _, err := s.cfg.Queries.RevokeTokenByName(ctx, sqlc.RevokeTokenByNameParams{
-		RevokedAt: sqlc.TimeNull(time.Now()),
-		UserID:    userID,
-		Name:      bootstrapTokenName,
-	}); err != nil {
-		return fmt.Errorf("吊销旧引导 Token: %w", err)
-	}
-	prefix := plaintext
-	if len(prefix) > tokenPrefixChars {
-		prefix = prefix[:tokenPrefixChars]
-	}
-	if _, err := s.cfg.Queries.CreateToken(ctx, sqlc.CreateTokenParams{
-		UserID:    userID,
-		Name:      bootstrapTokenName,
-		TokenHash: hashSecret(plaintext),
-		Prefix:    prefix,
-		Scopes:    "upload",
-	}); err != nil {
-		return fmt.Errorf("写入引导 Token: %w", err)
 	}
 	return nil
 }

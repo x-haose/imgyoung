@@ -23,20 +23,16 @@ const tokenNameMaxLen = 64
 // tokenExpiresMaxHours 有效期小时数上限(100 年),防 time.Duration 乘法溢出。
 const tokenExpiresMaxHours = 876000
 
-// bootstrapProtectedMsg 托管中的引导 Token 拒绝吊销/轮转/删除时的统一文案。
-const bootstrapProtectedMsg = "引导 Token 由环境变量托管,吊销会在重启后复活;停用请移除环境变量"
-
 // tokenItem 面向前端的 Token 列表项(仅识别前缀,无哈希无明文)。
 type tokenItem struct {
-	ID          int64   `json:"id"`           // Token 记录 id
-	Name        string  `json:"name"`         // 用途名
-	Prefix      string  `json:"prefix"`       // 明文前缀,识别用
-	Scopes      string  `json:"scopes"`       // 授权范围
-	ExpiresAt   *string `json:"expires_at"`   // 到期时刻;null 表示永久
-	LastUsedAt  *string `json:"last_used_at"` // 最近使用时刻;null 表示从未使用
-	RevokedAt   *string `json:"revoked_at"`   // 吊销时刻;null 表示未吊销
-	CreatedAt   string  `json:"created_at"`   // 签发时刻
-	IsBootstrap bool    `json:"is_bootstrap"` // 是否为环境变量托管中的引导 Token
+	ID         int64   `json:"id"`           // Token 记录 id
+	Name       string  `json:"name"`         // 用途名
+	Prefix     string  `json:"prefix"`       // 明文前缀,识别用
+	Scopes     string  `json:"scopes"`       // 授权范围
+	ExpiresAt  *string `json:"expires_at"`   // 到期时刻;null 表示永久
+	LastUsedAt *string `json:"last_used_at"` // 最近使用时刻;null 表示从未使用
+	RevokedAt  *string `json:"revoked_at"`   // 吊销时刻;null 表示未吊销
+	CreatedAt  string  `json:"created_at"`   // 签发时刻
 }
 
 // HandleTokenList 分页列出 Token:默认本人;管理员可带 ?user_id= 查看指定用户。
@@ -71,7 +67,6 @@ func (h *Handlers) HandleTokenList(w http.ResponseWriter, r *http.Request) {
 			ID: t.ID, Name: t.Name, Prefix: t.Prefix, Scopes: t.Scopes,
 			ExpiresAt: nullableStr(t.ExpiresAt), LastUsedAt: nullableStr(t.LastUsedAt),
 			RevokedAt: nullableStr(t.RevokedAt), CreatedAt: t.CreatedAt,
-			IsBootstrap: h.cfg.Auth.IsBootstrapToken(t),
 		})
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: items, Total: total})
@@ -203,8 +198,6 @@ func (h *Handlers) writeTokenActionError(w http.ResponseWriter, err error, actio
 		return true
 	case errors.Is(err, auth.ErrTokenNotFound):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "Token 不存在或已失效")
-	case errors.Is(err, auth.ErrTokenProtected):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, bootstrapProtectedMsg)
 	case errors.Is(err, auth.ErrTokenActive):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "Token 仍有效,请先吊销再删除")
 	default:

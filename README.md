@@ -36,64 +36,75 @@ curl -H "Authorization: Bearer <后台签发的Token>" -F "file=@a.png" http://l
 open http://localhost:8721/i/R0RjUyP1UW
 ```
 
-需要完全无人值守初始化(不进 UI)时,用环境变量播种:`IMGYOUNG_ADMIN_PASSWORD` 指定初始密码,`IMGYOUNG_TOKEN` 指定引导 Token。
+需要完全无人值守初始化时,用 `IMGYOUNG_ADMIN_PASSWORD` 指定管理员初始密码;上传 Token 登录后台后签发。
 
 ## 管理后台
 
 浏览器打开 `http://localhost:8721/`,以 `admin` + 初始密码登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
 
-认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员初始密码首启时确定:配了 `IMGYOUNG_ADMIN_PASSWORD` 用它,否则自动生成并打印到日志;真相入库,之后一律在后台改。`IMGYOUNG_TOKEN` 是可选的引导 Token,设置后首启植入为管理员名下的 `bootstrap` Token;不设则登录后台自行签发。
+认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员初始密码首启时确定:配了 `IMGYOUNG_ADMIN_PASSWORD` 用它,否则自动生成并打印到日志;真相入库,之后一律在后台改。上传 Token 一律在后台签发,不设环境变量托管的引导 Token。
 
 ### 忘记密码
 
-初始密码只在首启日志打印一次,翻日志找不到时用 CLI 重置(直连数据目录下的 SQLite,服务运行中执行亦安全,该用户既有会话全部失效):
+密码在库里是 argon2id 哈希、无法手写,但首启播种逻辑是「管理员尚未设密时才播种」——所以清空该用户的 `password_hash` 再重启,进程会当作首启重新生成随机密码并打印到日志:
 
 ```bash
-# 本机运行:在服务的工作目录下执行(或设 IMGYOUNG_DATA_DIR 指向数据目录)
-imgyoung reset-password             # 重置 admin,打印新随机密码
-imgyoung reset-password --user bob  # 重置指定登录名
-
-# Docker 部署:在运行中的容器里执行(镜像已内置 IMGYOUNG_DATA_DIR=/data)
-docker exec <容器名> /imgyoung reset-password
+# 停服后,对数据目录下的 imgyoung.db 执行(需要 sqlite3 或任意 SQLite 工具):
+sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 ```
 
-用打印的新密码登录后台,再到「设置 → 修改密码」改成自己的。
+重启服务,翻启动日志拿新随机密码(或先设 `IMGYOUNG_ADMIN_PASSWORD` 再重启,用它作新密码),登录后到「设置 → 修改密码」改成自己的。
 
 ## 配置
 
-三层优先级(由低到高):**内嵌默认 `config.yml`(编译进二进制)< 外部配置文件 < 环境变量**。外部配置文件通过 `IMGYOUNG_CONFIG` 指定,或自动发现工作目录下的 `configs/config.yml`;两者都缺省时靠内嵌默认兜底,单文件即可运行。
+配置一刀切两类,规则一句话:**环境变量只管把进程启动起来,运营参数一律后台改、即时生效**。不设外部配置文件、不引 koanf。
 
-| 环境变量 | yaml 键 | 默认 | 说明 |
-|---|---|---|---|
-| `IMGYOUNG_LISTEN` | `listen` | `:8721` | HTTP 监听地址 |
-| `IMGYOUNG_DATA_DIR` | `data_dir` | `data` | 数据目录(SQLite 与本地存储) |
-| `IMGYOUNG_TOKEN` | `token` | (空) | 引导 Token:首启幂等植入为管理员的 `bootstrap` Token;留空则仅经后台签发 |
-| `IMGYOUNG_ADMIN_PASSWORD` | `admin_password` | (空) | 管理员初始密码,仅在尚未设密时生效;之后以后台修改为准 |
-| `IMGYOUNG_UPLOAD_RATE_PER_MIN` | `upload_rate_per_min` | `0` | 每用户每分钟上传次数上限,超出 429;`0` = 不启用 |
-| `IMGYOUNG_DEDUP_PHASH_MAX_DISTANCE` | `dedup_phash_max_distance` | `10` | pHash 相似判定的汉明距离上限;`0` = 不做相似扫描 |
-| `IMGYOUNG_MAX_UPLOAD_MB` | `max_upload_mb` | `50` | 单图上限(MB) |
-| `IMGYOUNG_MAX_PIXELS_MP` | `max_pixels_mp` | `50` | 像素预算(百万像素) |
-| `IMGYOUNG_MAX_CONCURRENT_UPLOADS` | `max_concurrent_uploads` | `8` | 上传并发上限,满载返回 429 |
-| `IMGYOUNG_BASE_URL` | `base_url` | (空) | 对外站点地址;留空按请求域名推导绝对地址,经反代 / CDN 对外域名与请求域名不一致时需显式配置 |
-| `IMGYOUNG_REFERER_WHITELIST` | `referer_whitelist` | (空 = 不启用) | 防盗链白名单种子,逗号分隔,支持 `*.example.com`;规则在后台「设置」页管理、热生效,此配置仅在规则表为空时首启播种一次 |
-| `IMGYOUNG_ALLOW_EMPTY_REFERER` | `allow_empty_referer` | `true` | 空 Referer 是否放行 |
-| `IMGYOUNG_MASTER_KEY` | `master_key` | (自动生成 `data/master.key`) | 主密钥(64 位 hex),加密渠道凭证与派生渠道加密密码;**丢失则渠道配置与密文数据不可恢复** |
-| `IMGYOUNG_MIN_SUCCESS` | `min_success` | `1` | 上传返回成功所需的最少同步副本数 |
-| `IMGYOUNG_ACCESS_MODE` | `access_mode` | `proxy` | `proxy`(代理,容灾即时)/ `redirect`(302 省流量,需渠道允许直链) |
-| `IMGYOUNG_ENCRYPT_NEW_CHANNELS` | `encrypt_new_channels` | `false` | 新建渠道未显式指定时的加密默认值(创建时固化) |
-| `IMGYOUNG_HEALTH_CHECK_SECONDS` | `health_check_seconds` | `60` | 渠道健康检查间隔(秒) |
-| `IMGYOUNG_BACKUP_INTERVAL_HOURS` | `backup_interval_hours` | `24` | 元数据库自动备份间隔(小时);快照上传到最高优先级健康渠道 |
-| `IMGYOUNG_BACKUP_KEEP` | `backup_keep` | `7` | 备份保留份数,超出的旧快照自动清理 |
-| `IMGYOUNG_EXIF_POLICY` | `exif_policy` | `passthrough` | 全局默认 EXIF 档位:`passthrough`(原样保留)/ `strip`(剥离元数据);`spoof` 为实验特性尚未开放。单次上传可用表单字段 `exif_policy` 覆盖 |
-| `IMGYOUNG_CDN_CLOUDFLARE_ZONE_ID` | `cdn_cloudflare_zone_id` | (空) | Cloudflare Zone ID;与 `cdn_cloudflare_api_token`、`base_url` 三者齐备时,删除图片级联清除 CDN 缓存 |
-| `IMGYOUNG_CDN_CLOUDFLARE_API_TOKEN` | `cdn_cloudflare_api_token` | (空) | Cloudflare API Token,需 Zone.Cache Purge 权限;敏感项,不进日志与配置端点 |
+**引导配置**(只认环境变量,改动需重启):
 
-```yaml
-# configs/config.yml 示例(只需写要覆盖的项)
-listen: ":8721"
-data_dir: /srv/imgyoung
-max_upload_mb: 50
-```
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `IMGYOUNG_LISTEN` | `:8721` | HTTP 监听地址 |
+| `IMGYOUNG_DATA_DIR` | `data` | 数据目录(SQLite 与本地存储) |
+| `IMGYOUNG_MASTER_KEY` | (自动生成 `data/master.key`) | 主密钥(64 位 hex),加密渠道凭证与派生渠道加密密码;**丢失则渠道配置与密文数据不可恢复** |
+| `IMGYOUNG_ADMIN_PASSWORD` | (空) | 管理员初始密码,仅在尚未设密时生效;之后以后台修改为准 |
+
+**运营配置**(真相在数据库 `settings` 单行宽表,后台「设置 → 运行配置」修改、保存即热生效):**不接受环境变量**——新实例登录后台配置一次即可,DB 随数据卷持久。下表列出各键与出厂默认(默认值即表列 `DEFAULT`,防盗链白名单在设置页单独管理):
+
+| 配置键 | 默认 | 说明 |
+|---|---|---|
+| `max_upload_mb` | `50` | 单图上限(MB) |
+| `max_pixels_mp` | `50` | 像素预算(百万像素) |
+| `max_concurrent_uploads` | `8` | 上传并发上限,满载返回 429 |
+| `upload_rate_per_min` | `0` | 每用户每分钟上传次数上限,超出 429;`0` = 不启用 |
+| `base_url` | (空) | 对外站点地址;留空按请求域名推导绝对地址,经反代 / CDN 对外域名与请求域名不一致时需显式配置 |
+| `access_mode` | `proxy` | `proxy`(代理,容灾即时)/ `redirect`(302 省流量,需渠道允许直链) |
+| `min_success` | `1` | 上传返回成功所需的最少同步副本数 |
+| `allow_empty_referer` | `true` | 空 Referer 是否放行 |
+| `exif_policy` | `passthrough` | 全局默认 EXIF 档位:`passthrough`(原样保留)/ `strip`(剥离元数据);`spoof` 为实验特性尚未开放。单次上传可用表单字段 `exif_policy` 覆盖 |
+| `encrypt_new_channels` | `false` | 新建渠道未显式指定时的加密默认值(创建时固化) |
+| `default_ttl_hours` | `0` | 全局默认有效期(小时);`0` = 永不过期 |
+| `ttl_renew_on_access` | `true` | 访问即续期:公开访问把带有效期图片的到期时刻按其时长顺延 |
+| `cold_cleanup_days` | `90` | 冷图待清理阈值(天);`0` = 不启用 |
+| `delete_grace_minutes` | `0` | 引用归零到物理删的宽限(分钟);`0` = 立即 |
+| `cleanup_sweep_seconds` | `60` | 生命周期清理扫描间隔(秒) |
+| `activity_flush_seconds` | `60` | 访问活跃度批量落库间隔(秒) |
+| `health_check_seconds` | `60` | 渠道健康检查间隔(秒) |
+| `backup_interval_hours` | `24` | 元数据库自动备份间隔(小时);快照上传到最高优先级健康渠道 |
+| `backup_keep` | `7` | 备份保留份数,超出的旧快照自动清理 |
+| `usage_report_seconds` | `300` | 渠道用量上报间隔(秒) |
+| `channel_quota_gb` | `0` | 单渠道用量告警阈值(GB);`0` = 只上报不告警 |
+| `dedup_scan_seconds` | `300` | 后台查重扫描间隔(秒) |
+| `dedup_phash_max_distance` | `10` | pHash 相似判定的汉明距离上限;`0` = 不做相似扫描 |
+| `process_widths` | `100,200,400,800,1600` | 按需处理允许的宽度档(像素);清空 = 不允许缩放 |
+| `process_formats` | `webp,jpeg,png` | 按需处理允许的目标格式 |
+| `process_quality_webp` | `80` | webp 质量档 [0,100] |
+| `process_quality_jpeg` | `85` | jpeg 质量档 [1,100] |
+| `process_webp_method` | `4` | webp 质量/速度权衡 [0,6] |
+| `process_workers` | `4` | 处理并发上限 |
+| `process_timeout_ms` | `5000` | 单请求处理超时(毫秒),超时回退原图 |
+| `variants_cache_mb` | `10240` | 衍生图磁盘缓存上限(MB),超过按最近访问 LRU 淘汰 |
+| `cdn_cloudflare_zone_id` | (空) | Cloudflare Zone ID;与 `cdn_cloudflare_api_token`、`base_url` 三者齐备时,删除图片级联清除 CDN 缓存 |
+| `cdn_cloudflare_api_token` | (空) | Cloudflare API Token,需 Zone.Cache Purge 权限;加密入库,不进日志与任何响应 |
 
 ## 渠道管理
 

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -18,22 +20,39 @@ var ErrBusy = errors.New("处理繁忙,超时未获得处理槽")
 // ServiceConfig 按需处理服务依赖。
 type ServiceConfig struct {
 	Store    *Store                 // 衍生图磁盘缓存
-	Proc     *imaging.Processor     // 图像处理引擎
-	Settings imaging.EncodeSettings // 编码档位,须与 Proc 一致,用于算缓存键
-	Workers  int                    // 并发处理上限
-	Timeout  time.Duration          // 单请求获取处理槽 + 处理的总超时
+	Settings func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);编码档位/并发上限/超时出自它
 	Logger   *slog.Logger           // 结构化日志
 }
 
 // Service 按需处理协调器:命中缓存直取,未命中在并发上限内处理并落缓存,同键并发合并为一次。
 type Service struct {
-	store   *Store
-	proc    *imaging.Processor
-	set     imaging.EncodeSettings
-	sem     chan struct{}      // 信号量,容量 = Workers
-	sf      singleflight.Group // 合并同缓存键的并发首请求,避免重复重编码
-	timeout time.Duration
-	log     *slog.Logger
+	store *Store
+	set   func() config.Settings
+	sem   resizableSem       // 处理槽信号量,容量随配置热调整
+	sf    singleflight.Group // 合并同缓存键的并发首请求,避免重复重编码
+	log   *slog.Logger
+}
+
+// resizableSem 容量可热调整的信号量:容量变更时换新通道,在途持有者向旧通道释放。
+// 变更瞬间在途 + 新容量可能短暂超额,随在途请求结束自然收敛——处理槽是防打满
+// CPU 的软闸,瞬时超额可接受,换取无锁等待语义。
+type resizableSem struct {
+	mu  sync.Mutex
+	cap int           // 当前通道容量
+	ch  chan struct{} // 当前信号量通道
+}
+
+// channel 返回容量与 want 一致的信号量通道,不一致时换新。
+// @param want 期望容量
+// @return 信号量通道
+func (s *resizableSem) channel(want int) chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ch == nil || s.cap != want {
+		s.ch = make(chan struct{}, want)
+		s.cap = want
+	}
+	return s.ch
 }
 
 // result 单次处理产物,经 singleflight 在并发调用间共享。
@@ -47,12 +66,9 @@ type result struct {
 // @return 服务
 func NewService(cfg ServiceConfig) *Service {
 	return &Service{
-		store:   cfg.Store,
-		proc:    cfg.Proc,
-		set:     cfg.Settings,
-		sem:     make(chan struct{}, cfg.Workers),
-		timeout: cfg.Timeout,
-		log:     cfg.Logger,
+		store: cfg.Store,
+		set:   cfg.Settings,
+		log:   cfg.Logger,
 	}
 }
 
@@ -68,7 +84,8 @@ func NewService(cfg ServiceConfig) *Service {
 // @return 目标 MIME
 // @return 错误(ErrBusy 表示应回退原图)
 func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.ProcessParams, srcFn func(context.Context) ([]byte, error)) ([]byte, string, error) {
-	quality, tuning := s.encodeParams(p.Format)
+	set := s.set()
+	quality, tuning := encodeParams(set, p.Format)
 	key := Key(blobID, p.Width, p.Format, quality, tuning)
 
 	if data, format, ok, err := s.store.Get(ctx, blobID, key); err != nil {
@@ -78,7 +95,7 @@ func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.Proc
 	}
 
 	v, err, _ := s.sf.Do(key, func() (any, error) {
-		return s.process(blobID, key, p, srcFn)
+		return s.process(set, blobID, key, p, srcFn)
 	})
 	if err != nil {
 		return nil, "", err
@@ -90,21 +107,24 @@ func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.Proc
 // process 在超时预算内抢占处理槽,拉源图、重编码、落缓存。
 // @Description: 处理 ctx 与触发它的单个请求解耦(WithoutCancel + 独立超时)——因结果经 singleflight
 // 供所有并发首请求共享,不应因某一个调用方断开就取消共享工作;超时仅约束抢槽与源图拉取(编码本身不吃 ctx)。
+// 编码档位取触发请求见到的配置快照,与缓存键一致。
+// @param set 本次处理生效的配置快照
 // @param blobID 源物理图主键
 // @param key 缓存键
 // @param p 处理参数
 // @param srcFn 源图字节拉取器
 // @return 处理产物
 // @return 错误
-func (s *Service) process(blobID int64, key string, p imaging.ProcessParams, srcFn func(context.Context) ([]byte, error)) (result, error) {
+func (s *Service) process(set config.Settings, blobID int64, key string, p imaging.ProcessParams, srcFn func(context.Context) ([]byte, error)) (result, error) {
 	// 用 Background 而非调用方 ctx:处理结果供所有并发首请求共享,不因某调用方断开而取消。
-	pctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	pctx, cancel := context.WithTimeout(context.Background(), time.Duration(set.ProcessTimeoutMS)*time.Millisecond)
 	defer cancel()
 
 	// 抢占处理槽:排队超时即返回 ErrBusy,不让请求无限等待。
+	sem := s.sem.channel(set.ProcessWorkers)
 	select {
-	case s.sem <- struct{}{}:
-		defer func() { <-s.sem }()
+	case sem <- struct{}{}:
+		defer func() { <-sem }()
 	case <-pctx.Done():
 		return result{}, ErrBusy
 	}
@@ -113,27 +133,46 @@ func (s *Service) process(blobID int64, key string, p imaging.ProcessParams, src
 	if err != nil {
 		return result{}, fmt.Errorf("拉取源图: %w", err)
 	}
-	out, mime, err := s.proc.Process(src, p)
+	out, mime, err := imaging.NewProcessor(EncodeSettingsFrom(set)).Process(src, p)
 	if err != nil {
 		return result{}, fmt.Errorf("处理图片: %w", err)
 	}
-	// 落缓存失败不影响本次返回,仅记日志:下次访问会重建。
-	if perr := s.store.Put(pctx, blobID, key, p.Width, p.Format, out); perr != nil {
+	// 落缓存用独立超时,不吃处理预算的剩余额度——编码恰好耗尽预算时缓存仍应写入,
+	// 否则该键每次访问都重复重编码;失败不影响本次返回,仅记日志,下次访问重建。
+	putCtx, putCancel := context.WithTimeout(context.WithoutCancel(pctx), cachePutTimeout)
+	defer putCancel()
+	if perr := s.store.Put(putCtx, blobID, key, p.Width, p.Format, out); perr != nil {
 		s.log.Warn("写衍生图缓存失败", "blob", blobID, "key", key, "err", perr)
 	}
 	return result{data: out, mime: mime}, nil
 }
 
+// cachePutTimeout 衍生图落缓存(写文件 + 记索引)的独立超时。
+const cachePutTimeout = 10 * time.Second
+
+// EncodeSettingsFrom 从运营配置摘取编码档位,处理引擎与缓存键计算共用同一来源。
+// @param set 运营配置快照
+// @return 编码档位
+func EncodeSettingsFrom(set config.Settings) imaging.EncodeSettings {
+	return imaging.EncodeSettings{
+		QualityWebP: set.ProcessQualityWebP,
+		QualityJPEG: set.ProcessQualityJPEG,
+		WebPMethod:  set.ProcessWebPMethod,
+		MaxPixels:   set.MaxPixels(),
+	}
+}
+
 // encodeParams 返回某格式对应的质量档与编码调参,用于算缓存键(须与实际编码一致)。
+// @param set 本次处理生效的配置快照
 // @param format 目标格式
 // @return 质量档
 // @return 编码调参(webp method / avif speed / jpeg 取 0)
-func (s *Service) encodeParams(format string) (quality, tuning int) {
+func encodeParams(set config.Settings, format string) (quality, tuning int) {
 	switch format {
 	case imaging.FormatWebP:
-		return s.set.QualityWebP, s.set.WebPMethod
+		return set.ProcessQualityWebP, set.ProcessWebPMethod
 	case imaging.FormatJPEG:
-		return s.set.QualityJPEG, 0
+		return set.ProcessQualityJPEG, 0
 	default:
 		// PNG 无损无调参,其余格式亦无参;质量/调参取 0 即可唯一定键。
 		return 0, 0

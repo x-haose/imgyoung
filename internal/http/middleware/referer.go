@@ -30,13 +30,13 @@ func matchRefererHost(patterns []string, host string) bool {
 }
 
 // RefererCheck 防盗链中间件。
-// @Description: 白名单逐请求从 patterns 取快照,规则变更即时生效(热生效);
-// nil 或返回空 = 不启用;空 Referer 按 allowEmpty 决定;
+// @Description: 白名单与空 Referer 策略逐请求取快照,变更即时生效(热生效);
+// patterns 为 nil 或返回空 = 不启用;空 Referer 按 allowEmpty 决定;
 // Referer 主机未命中白名单返回 403。仅挂在对外图片访问路由上。
 // @param patterns 白名单快照读取口(须并发安全)
-// @param allowEmpty 空 Referer 是否放行
+// @param allowEmpty 空 Referer 放行开关读取口
 // @return 中间件
-func RefererCheck(patterns func() []string, allowEmpty bool) func(http.Handler) http.Handler {
+func RefererCheck(patterns func() []string, allowEmpty func() bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var whitelist []string
@@ -49,7 +49,7 @@ func RefererCheck(patterns func() []string, allowEmpty bool) func(http.Handler) 
 			}
 			ref := r.Header.Get("Referer")
 			if ref == "" {
-				if allowEmpty {
+				if allowEmpty() {
 					next.ServeHTTP(w, r)
 					return
 				}

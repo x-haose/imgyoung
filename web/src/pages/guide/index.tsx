@@ -156,7 +156,7 @@ export function GuidePage() {
   ].join("\n");
 
   return (
-    <Flex vertical gap={16} style={{ maxWidth: 920 }}>
+    <Flex vertical gap={16}>
       <div>
         <Typography.Title level={4} style={{ margin: 0 }}>
           使用指南
@@ -176,69 +176,75 @@ export function GuidePage() {
         </Row>
       </Card>
 
-      <Card title={sectionTitle("02", <ApiOutlined />, "curl / 脚本上传")}>
-        <Flex vertical gap={12}>
-          <CodeBlock code={curlExample} />
-          <Descriptions
-            column={1}
-            size="small"
-            bordered
-            items={[
-              { label: "file", children: "必填,multipart 文件字段;按内容识别格式,仅收 jpeg / png / gif / webp" },
-              { label: "ttl", children: "可选,过期秒数;0 或 never 表示永久,留空跟随默认(用户默认有效期,未设置则全局默认)" },
-              { label: "exif_policy", children: "可选,strip(剥离元数据)/ passthrough(原样保留),留空跟随全局默认" },
-              { label: "Idempotency-Key 头", children: "可选,幂等键;网络重试时带同一键不会重复建图" },
-            ]}
-          />
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-              成功响应(200):
-            </Typography.Text>
-            <div style={{ marginTop: 8 }}>
-              <CodeBlock code={responseExample} />
-            </div>
-          </div>
-        </Flex>
-      </Card>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={12}>
+          <Card title={sectionTitle("02", <ApiOutlined />, "curl / 脚本上传")} style={{ height: "100%" }}>
+            <Flex vertical gap={12}>
+              <CodeBlock code={curlExample} />
+              <Descriptions
+                column={1}
+                size="small"
+                bordered
+                items={[
+                  { label: "file", children: "必填,multipart 文件字段;按内容识别格式,仅收 jpeg / png / gif / webp" },
+                  { label: "ttl", children: "可选,过期秒数;0 或 never 表示永久,留空跟随默认(用户默认有效期,未设置则全局默认)" },
+                  { label: "exif_policy", children: "可选,strip(剥离元数据)/ passthrough(原样保留),留空跟随全局默认" },
+                  { label: "Idempotency-Key 头", children: "可选,幂等键;网络重试时带同一键不会重复建图" },
+                ]}
+              />
+              <div>
+                <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                  成功响应(200):
+                </Typography.Text>
+                <div style={{ marginTop: 8 }}>
+                  <CodeBlock code={responseExample} />
+                </div>
+              </div>
+            </Flex>
+          </Card>
+        </Col>
 
-      <Card title={sectionTitle("03", <CameraOutlined />, "PicGo / PicList 配置")}>
-        <Flex vertical gap={12}>
-          <Typography.Text type="secondary" style={{ fontSize: 13 }}>
-            使用 PicList 自带的「自定义图床」或 PicGo 的 web-uploader 插件,按下表逐项填写:
-          </Typography.Text>
-          <Descriptions
-            column={1}
-            size="small"
-            bordered
-            items={[
-              {
-                label: "API 地址",
-                children: (
-                  <Typography.Text code copyable style={{ fontFamily: monoFont }}>
-                    {origin}/api/upload
-                  </Typography.Text>
-                ),
-              },
-              { label: "请求方式", children: "POST" },
-              { label: "POST 参数名", children: <Typography.Text code>file</Typography.Text> },
-              {
-                label: "自定义请求头",
-                children: (
-                  <Typography.Text code copyable style={{ fontFamily: monoFont, fontSize: 12 }}>
-                    {'{"Authorization": "Bearer 你的Token"}'}
-                  </Typography.Text>
-                ),
-              },
-              { label: "响应 URL 路径(JSON 路径)", children: <Typography.Text code>url</Typography.Text> },
-            ]}
-          />
-          <Alert
-            type="info"
-            showIcon
-            message="未配置 base_url 时,返回的 url 按请求域名推导为绝对地址,直连场景开箱即用;经反代 / CDN 后对外域名与请求域名不一致时,需在服务端配置 base_url(环境变量 IMGYOUNG_BASE_URL)为你的对外域名。"
-          />
-        </Flex>
-      </Card>
+        <Col xs={24} xl={12}>
+          <Card title={sectionTitle("03", <CameraOutlined />, "PicGo / PicList 配置")} style={{ height: "100%" }}>
+            <Flex vertical gap={12}>
+              <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+                使用 PicList 自带的「自定义图床」或 PicGo 的 web-uploader 插件,按下表逐项填写:
+              </Typography.Text>
+              <Descriptions
+                column={1}
+                size="small"
+                bordered
+                items={[
+                  {
+                    label: "API 地址",
+                    children: (
+                      <Typography.Text code copyable style={{ fontFamily: monoFont }}>
+                        {origin}/api/upload
+                      </Typography.Text>
+                    ),
+                  },
+                  { label: "请求方式", children: "POST" },
+                  { label: "POST 参数名", children: <Typography.Text code>file</Typography.Text> },
+                  {
+                    label: "自定义请求头",
+                    children: (
+                      <Typography.Text code copyable style={{ fontFamily: monoFont, fontSize: 12 }}>
+                        {'{"Authorization": "Bearer 你的Token"}'}
+                      </Typography.Text>
+                    ),
+                  },
+                  { label: "响应 URL 路径(JSON 路径)", children: <Typography.Text code>url</Typography.Text> },
+                ]}
+              />
+              <Alert
+                type="info"
+                showIcon
+                message="未配置 base_url 时,返回的 url 按请求域名推导为绝对地址,直连场景开箱即用;经反代 / CDN 后对外域名与请求域名不一致时,需在服务端配置 base_url(环境变量 IMGYOUNG_BASE_URL)为你的对外域名。"
+              />
+            </Flex>
+          </Card>
+        </Col>
+      </Row>
 
       <Card
         title={sectionTitle("04", <ApiOutlined />, "上传接口错误码")}

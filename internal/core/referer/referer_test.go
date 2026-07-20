@@ -4,30 +4,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"testing"
 
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // newQueries 打开并迁移一个临时 SQLite 库,返回查询集。
 func newQueries(t *testing.T) *sqlc.Queries {
 	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试数据库: %v", err)
-	}
-	t.Cleanup(func() {
-		if cerr := conn.Close(); cerr != nil {
-			t.Errorf("关闭测试数据库: %v", cerr)
-		}
-	})
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移测试数据库: %v", err)
-	}
-	return sqlc.New(conn)
+	_, q := dbtest.New(t)
+	return q
 }
 
 // TestNormalizePattern 表驱动验证规则语法:裸域与子域通配合法,
@@ -66,48 +54,10 @@ func TestNormalizePattern(t *testing.T) {
 	}
 }
 
-// TestSeedOnceThenIgnore 验证种子语义:空表播种一次,表非空后种子整体忽略;
-// 重复构造(进程重启)不产生重复行。
-func TestSeedOnceThenIgnore(t *testing.T) {
-	ctx := context.Background()
-	queries := newQueries(t)
-
-	first, err := New(ctx, queries, []string{"*.a.com", "B.com", "b.com"})
-	if err != nil {
-		t.Fatalf("首次构造: %v", err)
-	}
-	if got := first.Patterns(); len(got) != 2 {
-		t.Fatalf("首启播种后规则 = %v, 期望 2 条(种子内重复被吸收)", got)
-	}
-
-	// "重启":同库再构造,携带不同种子——表非空,种子必须被忽略。
-	second, err := New(ctx, queries, []string{"*.other.io"})
-	if err != nil {
-		t.Fatalf("二次构造: %v", err)
-	}
-	got := second.Patterns()
-	if len(got) != 2 {
-		t.Fatalf("二次构造后规则 = %v, 期望仍为首启播种的 2 条", got)
-	}
-	for _, p := range got {
-		if p == "*.other.io" {
-			t.Fatal("表非空时种子不应再播入")
-		}
-	}
-}
-
-// TestSeedRejectsInvalid 验证非法种子导致构造失败(快速失败,不静默丢规则)。
-func TestSeedRejectsInvalid(t *testing.T) {
-	_, err := New(context.Background(), newQueries(t), []string{"https://bad.com"})
-	if !errors.Is(err, ErrPatternInvalid) {
-		t.Fatalf("err = %v, 期望 ErrPatternInvalid", err)
-	}
-}
-
 // TestAddRemoveRefreshSnapshot 验证增删即时刷新快照,且哨兵错误语义正确。
 func TestAddRemoveRefreshSnapshot(t *testing.T) {
 	ctx := context.Background()
-	svc, err := New(ctx, newQueries(t), nil)
+	svc, err := New(ctx, newQueries(t))
 	if err != nil {
 		t.Fatalf("构造服务: %v", err)
 	}
@@ -149,7 +99,7 @@ func TestAddRemoveRefreshSnapshot(t *testing.T) {
 // 写路径互斥保证快照发布顺序与 DB 变更顺序一致,不残留过期快照。
 func TestConcurrentWritesPublishConsistentSnapshot(t *testing.T) {
 	ctx := context.Background()
-	svc, err := New(ctx, newQueries(t), nil)
+	svc, err := New(ctx, newQueries(t))
 	if err != nil {
 		t.Fatalf("构造服务: %v", err)
 	}

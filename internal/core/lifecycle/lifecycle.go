@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
@@ -41,15 +42,13 @@ type PurgeEnqueuer interface {
 
 // Config Sweeper 的依赖与参数。
 type Config struct {
-	Conn          *sql.DB        // 数据库连接(多步删除的事务用)
-	Queries       *sqlc.Queries  // sqlc 查询集
-	Deleter       Deleter        // 渠道对象删除入队口
-	Variants      VariantCleaner // 衍生图缓存清理;为 nil 时跳过
-	Purger        PurgeEnqueuer  // CDN 缓存清理入队口;为 nil 时跳过
-	BaseURL       string         // 对外站点地址(无尾斜杠),拼 purge 绝对 URL;purge 只认配置值——异步任务无请求上下文可推导,为空时跳过 purge
-	Grace         time.Duration  // 物理删宽限:引用归零打标到实际物理删的等待,可为 0
-	ColdThreshold time.Duration  // 冷图待清理阈值:超过此时长未被公开访问的引用打 pending_cleanup 标签;<=0 表示不启用
-	Logger        *slog.Logger   // 结构化日志
+	Conn     *sql.DB                // 数据库连接(多步删除的事务用)
+	Queries  *sqlc.Queries          // sqlc 查询集
+	Deleter  Deleter                // 渠道对象删除入队口
+	Variants VariantCleaner         // 衍生图缓存清理;为 nil 时跳过
+	Purger   PurgeEnqueuer          // CDN 缓存清理入队口;为 nil 时跳过
+	Settings func() config.Settings // 运营配置快照读取口(逐轮/逐次取值,热生效);物理删宽限/冷图阈值/purge 启用与 base_url 出自它
+	Logger   *slog.Logger           // 结构化日志
 }
 
 // Sweeper 清理器,无可变状态、并发安全。
@@ -62,22 +61,23 @@ type Sweeper struct {
 // @return 就绪的清理器
 func New(cfg Config) *Sweeper { return &Sweeper{cfg: cfg} }
 
-// Run 按 interval 周期清理,直至 ctx 取消;启动即先跑一轮。
-// @param interval 扫描间隔
-func (s *Sweeper) Run(ctx context.Context, interval time.Duration) {
+// Run 周期清理,直至 ctx 取消;启动即先跑一轮。
+// @param interval 扫描间隔读取口,逐轮取值热生效
+func (s *Sweeper) Run(ctx context.Context, interval func() time.Duration) {
 	if err := s.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.cfg.Logger.Warn("启动清理未完成", "err", err)
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if err := s.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				s.cfg.Logger.Warn("定期清理未完成", "err", err)
 			}
+			timer.Reset(interval())
 		}
 	}
 }
@@ -96,14 +96,15 @@ func (s *Sweeper) SweepOnce(ctx context.Context) error {
 }
 
 // labelColdImages 给超阈值未被公开访问的引用打 pending_cleanup 标签(不自动删,进后台待裁决)。
-// @Description: 冷判据取 COALESCE(last_public_access_at, created_at);ColdThreshold<=0 时跳过。
+// @Description: 冷判据取 COALESCE(last_public_access_at, created_at);阈值 <=0 时跳过。
 // 有真实访问会在活跃度 flush 时摘除标签(Tracker)。
 // @return 更新失败时的错误
 func (s *Sweeper) labelColdImages(ctx context.Context) error {
-	if s.cfg.ColdThreshold <= 0 {
+	threshold := time.Duration(s.cfg.Settings().ColdCleanupDays) * 24 * time.Hour
+	if threshold <= 0 {
 		return nil
 	}
-	cutoff := sql.NullString{String: sqlc.TimeText(time.Now().Add(-s.cfg.ColdThreshold)), Valid: true}
+	cutoff := sql.NullString{String: sqlc.TimeText(time.Now().Add(-threshold)), Valid: true}
 	n, err := s.cfg.Queries.LabelColdImages(ctx, cutoff)
 	if err != nil {
 		return fmt.Errorf("标记冷图待清理: %w", err)
@@ -181,7 +182,8 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 		return fmt.Errorf("递减引用计数: %w", err)
 	}
 	if refCount <= 0 {
-		deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(s.cfg.Grace)), Valid: true}
+		grace := time.Duration(s.cfg.Settings().DeleteGraceMinutes) * time.Minute
+		deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(grace)), Valid: true}
 		if err := q.MarkBlobForDelete(ctx, sqlc.MarkBlobForDeleteParams{DeleteAfter: deleteAfter, ID: blobID}); err != nil {
 			return fmt.Errorf("标记物理图待删: %w", err)
 		}
@@ -196,17 +198,18 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 
 // collectPurgeURLs 枚举一条引用对外可能被 CDN 缓存的 URL:原图 /i/{id},
 // 加上该物理图实际生成过的变体参数组合(显式 ?w=&format= 与协商 ?w= 两种形态)。
-// @Description: purge 未启用(无 Purger 或无 BaseURL)时返回 nil,不做无谓枚举;
+// @Description: purge 未启用(无 Purger 或配置不齐)时返回 nil,不做无谓枚举;
 // 枚举失败降级为只清原图 URL。format=auto 等其余查询串形态无法穷举,
 // 漏网 URL 由 CDN 自身缓存 TTL 兜底过期。
 // @param imageID 引用短 ID
 // @param blobID 引用指向的物理图主键
 // @return 待清理的绝对 URL 列表;purge 未启用时为 nil
 func (s *Sweeper) collectPurgeURLs(ctx context.Context, imageID string, blobID int64) []string {
-	if s.cfg.Purger == nil || s.cfg.BaseURL == "" {
+	set := s.cfg.Settings()
+	if s.cfg.Purger == nil || !set.CDNPurgeEnabled() {
 		return nil
 	}
-	base := s.cfg.BaseURL + "/i/" + imageID
+	base := set.BaseURL + "/i/" + imageID
 	urls := []string{base}
 	rows, err := s.cfg.Queries.ListVariantURLParams(ctx, blobID)
 	if err != nil {

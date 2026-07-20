@@ -27,7 +27,7 @@ type Config struct {
 	Conn     *sql.DB          // 数据库连接(执行 VACUUM INTO)
 	Channels *channel.Manager // 渠道管理器(选择上传目标)
 	DataDir  string           // 数据目录(快照临时文件所在)
-	Keep     int              // 保留的备份份数,必须 > 0
+	Keep     func() int       // 备份保留份数读取口,逐轮取值热生效;取值必须 > 0
 	Logger   *slog.Logger     // 结构化日志
 }
 
@@ -83,22 +83,23 @@ func (s *Service) RunOnce(ctx context.Context) error {
 	return s.prune(ctx, primary)
 }
 
-// Run 按 interval 周期执行备份,直至 ctx 取消;启动即先备份一次。
-// @param interval 备份间隔
-func (s *Service) Run(ctx context.Context, interval time.Duration) {
+// Run 周期执行备份,直至 ctx 取消;启动即先备份一次。
+// @param interval 备份间隔读取口,逐轮取值热生效
+func (s *Service) Run(ctx context.Context, interval func() time.Duration) {
 	if err := s.RunOnce(ctx); err != nil {
 		s.cfg.Logger.Warn("启动备份未完成", "err", err)
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if err := s.RunOnce(ctx); err != nil {
 				s.cfg.Logger.Warn("定时备份未完成", "err", err)
 			}
+			timer.Reset(interval())
 		}
 	}
 }
@@ -111,11 +112,12 @@ func (s *Service) prune(ctx context.Context, h channel.Handle) error {
 	if err != nil {
 		return fmt.Errorf("列举备份目录: %w", err)
 	}
-	if len(objs) <= s.cfg.Keep {
+	keep := s.cfg.Keep()
+	if len(objs) <= keep {
 		return nil
 	}
 	sort.Slice(objs, func(i, j int) bool { return objs[i].Key > objs[j].Key })
-	for _, o := range objs[s.cfg.Keep:] {
+	for _, o := range objs[keep:] {
 		if err := h.Driver.Delete(ctx, o.Key); err != nil {
 			return fmt.Errorf("清理旧备份 %q: %w", o.Key, err)
 		}

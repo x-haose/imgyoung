@@ -7,22 +7,14 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/variants"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // newStore 打开临时库、迁移,造一个 blob,返回存储、blob 主键、文件根目录。
 func newStore(t *testing.T, capacity int64) (*variants.Store, int64, string) {
 	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试数据库: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移: %v", err)
-	}
-	q := sqlc.New(conn)
+	_, q := dbtest.New(t)
 	blobID, err := q.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
 	})
@@ -30,7 +22,7 @@ func newStore(t *testing.T, capacity int64) (*variants.Store, int64, string) {
 		t.Fatalf("建 blob: %v", err)
 	}
 	dir := t.TempDir()
-	s := variants.New(variants.Config{Dir: dir, Capacity: capacity, Queries: q, Logger: slog.New(slog.DiscardHandler)})
+	s := variants.New(variants.Config{Dir: dir, Capacity: func() int64 { return capacity }, Queries: q, Logger: slog.New(slog.DiscardHandler)})
 	return s, blobID, dir
 }
 

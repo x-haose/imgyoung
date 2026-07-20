@@ -54,10 +54,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateUserParams) (sqlc.User
 	if err != nil {
 		return sqlc.User{}, err
 	}
-	userID, err := id.New()
-	if err != nil {
-		return sqlc.User{}, fmt.Errorf("生成用户 id: %w", err)
-	}
+	userID := id.New()
 	if err := s.cfg.Queries.CreateUser(ctx, sqlc.CreateUserParams{
 		ID:              userID,
 		Name:            p.Name,

@@ -12,11 +12,3 @@ RETURNING *;
 DELETE FROM referer_whitelist
 WHERE id = ?
 RETURNING pattern;
-
--- name: CountRefererWhitelist :one
-SELECT COUNT(*)
-FROM referer_whitelist;
-
--- name: SeedRefererPattern :exec
-INSERT OR IGNORE INTO referer_whitelist (pattern)
-VALUES (?);

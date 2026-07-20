@@ -14,8 +14,21 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/variants"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
+
+// testSettings 构造运营配置读取口:内嵌默认值上按需覆写(mod 为 nil 即取默认)。
+// @param mod 覆写钩子,按需改动默认配置副本
+// @return 逐请求取值的配置读取口
+func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
+	t.Helper()
+	set := config.Defaults()
+	if mod != nil {
+		mod(&set)
+	}
+	return func() config.Settings { return set }
+}
 
 // pngBytes 合成一张小 PNG 作源图。
 func pngBytes(t *testing.T) []byte {
@@ -33,16 +46,16 @@ func pngBytes(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// newService 基于 newStore 构造一个按需处理服务。
+// newService 基于 newStore 构造一个按需处理服务,并发上限与超时按参数覆写默认配置。
 func newService(t *testing.T, workers int, timeout time.Duration) (*variants.Service, int64) {
 	t.Helper()
 	store, blobID, _ := newStore(t, 1<<30)
-	set := imaging.EncodeSettings{
-		QualityWebP: 80, QualityJPEG: 85, WebPMethod: 4, MaxPixels: 50_000_000,
-	}
+	settings := testSettings(t, func(s *config.Settings) {
+		s.ProcessWorkers = workers
+		s.ProcessTimeoutMS = int(timeout / time.Millisecond)
+	})
 	svc := variants.NewService(variants.ServiceConfig{
-		Store: store, Proc: imaging.NewProcessor(set), Settings: set,
-		Workers: workers, Timeout: timeout, Logger: slog.New(slog.DiscardHandler),
+		Store: store, Settings: settings, Logger: slog.New(slog.DiscardHandler),
 	})
 	return svc, blobID
 }

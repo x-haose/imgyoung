@@ -47,6 +47,8 @@ const (
 	ActionRefererAdd = "referer.add"
 	// ActionRefererRemove 防盗链白名单规则删除。
 	ActionRefererRemove = "referer.remove"
+	// ActionConfigUpdate 运营配置修改(热生效)。
+	ActionConfigUpdate = "config.update"
 )
 
 // Recorder 审计记录器,追加写 audit_log。

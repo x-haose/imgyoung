@@ -26,7 +26,7 @@ type Tracker struct {
 	conn     *sql.DB             // 数据库连接(批量事务用)
 	queries  *sqlc.Queries       // sqlc 查询集
 	logger   *slog.Logger        // 结构化日志
-	renewTTL bool                // 访问即续期:flush 时把本批带 TTL 的引用到期时刻顺延
+	renewTTL func() bool         // 访问即续期开关读取口(逐次 flush 取值,热生效)
 	mu       sync.Mutex          // 保护 touched
 	touched  map[string]struct{} // 自上次 flush 以来被访问的引用 id 集合
 }
@@ -34,10 +34,10 @@ type Tracker struct {
 // NewTracker 创建活跃度追踪器。
 // @param conn 数据库连接
 // @param queries 查询集
-// @param renewTTL 是否在 flush 时对本批活跃引用做 TTL 续期(仅 expire_at 与 ttl_seconds 均非空的行)
+// @param renewTTL 访问即续期开关读取口:flush 时是否对本批活跃引用做 TTL 续期(仅 expire_at 与 ttl_seconds 均非空的行)
 // @param logger 日志
 // @return 就绪的追踪器
-func NewTracker(conn *sql.DB, queries *sqlc.Queries, renewTTL bool, logger *slog.Logger) *Tracker {
+func NewTracker(conn *sql.DB, queries *sqlc.Queries, renewTTL func() bool, logger *slog.Logger) *Tracker {
 	return &Tracker{conn: conn, queries: queries, renewTTL: renewTTL, logger: logger, touched: make(map[string]struct{})}
 }
 
@@ -82,7 +82,7 @@ func (t *Tracker) Flush(ctx context.Context) error {
 			return fmt.Errorf("更新活跃度: %w", err)
 		}
 	}
-	if t.renewTTL {
+	if t.renewTTL() {
 		// IN 批量顺延,按 renewChunkSize 分片仍在同一事务内;
 		// 永久/无 ttl_seconds 的行由 WHERE 过滤,不逐行判断。
 		ids := make([]string, 0, len(batch))
@@ -104,11 +104,11 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	return nil
 }
 
-// Run 按 interval 周期 flush,直至 ctx 取消;停机前做最后一次 flush 不丢累积。
-// @param interval flush 间隔
-func (t *Tracker) Run(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// Run 周期 flush,直至 ctx 取消;停机前做最后一次 flush 不丢累积。
+// @param interval flush 间隔读取口,逐轮取值热生效
+func (t *Tracker) Run(ctx context.Context, interval func() time.Duration) {
+	timer := time.NewTimer(interval())
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -118,10 +118,11 @@ func (t *Tracker) Run(ctx context.Context, interval time.Duration) {
 			}
 			cancel()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			if err := t.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				t.logger.Warn("活跃度 flush 未完成", "err", err)
 			}
+			timer.Reset(interval())
 		}
 	}
 }

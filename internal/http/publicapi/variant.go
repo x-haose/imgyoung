@@ -97,7 +97,7 @@ func originalProcessableFormat(mime string) string {
 // @param w 目标宽度
 // @return 是否允许
 func (h *Handlers) widthAllowed(w int) bool {
-	for _, aw := range h.cfg.ProcessWidths {
+	for _, aw := range h.cfg.Settings().ProcessWidths {
 		if aw == w {
 			return true
 		}
@@ -109,7 +109,7 @@ func (h *Handlers) widthAllowed(w int) bool {
 // @param f 目标格式
 // @return 是否允许
 func (h *Handlers) formatAllowed(f string) bool {
-	for _, af := range h.cfg.ProcessFormats {
+	for _, af := range h.cfg.Settings().ProcessFormats {
 		if af == f {
 			return true
 		}
@@ -183,13 +183,14 @@ func (h *Handlers) fetchBlobBytes(ctx context.Context, row sqlc.GetImageBlobRow)
 			continue
 		}
 		// 多读 1 字节以区分"恰好足额"与"超限被截断":截断的残缺字节喂解码器会误判为坏图。
-		data, rerr := io.ReadAll(io.LimitReader(rc, h.cfg.MaxUploadBytes+1))
+		maxBytes := h.cfg.Settings().MaxUploadBytes()
+		data, rerr := io.ReadAll(io.LimitReader(rc, maxBytes+1))
 		_ = rc.Close()
 		if rerr != nil {
 			return nil, fmt.Errorf("读取源图字节: %w", rerr)
 		}
-		if int64(len(data)) > h.cfg.MaxUploadBytes {
-			return nil, fmt.Errorf("源图字节超上限 %d", h.cfg.MaxUploadBytes)
+		if int64(len(data)) > maxBytes {
+			return nil, fmt.Errorf("源图字节超上限 %d", maxBytes)
 		}
 		return data, nil
 	}

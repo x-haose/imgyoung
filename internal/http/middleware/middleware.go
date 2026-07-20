@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,24 +18,33 @@ import (
 // bearerPrefix Authorization 头的 Bearer 方案前缀。
 const bearerPrefix = "Bearer "
 
-// ConcurrencyLimit 并发闸中间件:同时处理的请求数不超过 n,满载立即 429。
+// ConcurrencyLimit 并发闸中间件:同时处理的请求数不超过上限,满载立即 429。
 // @Description: 内存三道闸之一——上传解码的峰值内存由"并发数 × 解码位图大小"
 // 决定,必须有硬上限。满载快速失败并带 Retry-After,把排队决策交给客户端。
-// @param n 最大并发数,必须 > 0
+// 上限逐请求取值,后台调整热生效。
+// @param limit 最大并发数读取口,取值必须 > 0
 // @param l 结构化日志
 // @return 中间件
-func ConcurrencyLimit(n int, l *slog.Logger) func(http.Handler) http.Handler {
-	sem := make(chan struct{}, n)
+func ConcurrencyLimit(limit func() int, l *slog.Logger) func(http.Handler) http.Handler {
+	var mu sync.Mutex
+	active := 0
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			select {
-			case sem <- struct{}{}:
-				defer func() { <-sem }()
-				next.ServeHTTP(w, r)
-			default:
+			mu.Lock()
+			if active >= limit() {
+				mu.Unlock()
 				w.Header().Set("Retry-After", "1")
 				httpx.WriteError(l, w, http.StatusTooManyRequests, "上传并发已满,请稍后重试")
+				return
 			}
+			active++
+			mu.Unlock()
+			defer func() {
+				mu.Lock()
+				active--
+				mu.Unlock()
+			}()
+			next.ServeHTTP(w, r)
 		})
 	}
 }

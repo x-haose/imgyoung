@@ -20,7 +20,7 @@ func TestConcurrencyLimitRejectsWhenFull(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := ConcurrencyLimit(1, slog.New(slog.DiscardHandler))(blocked)
+	handler := ConcurrencyLimit(func() int { return 1 }, slog.New(slog.DiscardHandler))(blocked)
 
 	// 第一个请求占住唯一槽位。
 	var wg sync.WaitGroup

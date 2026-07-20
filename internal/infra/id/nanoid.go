@@ -1,9 +1,8 @@
-// Package id 提供对外短 ID 的生成(自实现 nanoid)。
+// Package id 生成对外短 ID(NanoID:crypto/rand + 拒绝采样,均匀无偏)。
 package id
 
 import (
-	"crypto/rand"
-	"fmt"
+	gonanoid "github.com/jaevor/go-nanoid"
 )
 
 // Length 短 ID 的固定长度。
@@ -14,30 +13,14 @@ const Length = 10
 // alphabet 短 ID 字符集,仅含 URL 安全的字母数字,避免 -_ 以便双击全选。
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// maxUnbiasedByte 拒绝采样上界:248 = 62*4,是不超过 256 的最大 62 倍数。
-// 丢弃 ≥248 的字节可消除 b%62 的模偏差,保证字符均匀分布。
-const maxUnbiasedByte = byte(len(alphabet) * (256 / len(alphabet)))
+// generate 预构建的定长生成器,进程内复用。
+// @Description: alphabet 与 Length 均为合法常量,故用 Must 变体——非法配置在包初始化即
+// panic(等价编译期保证)。底层 crypto/rand 失败由运行时兜底(直接终止而非降级弱随机),
+// 故生成本身无错误路径。
+var generate = gonanoid.MustCustomASCII(alphabet, Length)
 
 // New 生成一个新的对外短 ID。
-// @Description: 基于 crypto/rand + 拒绝采样的均匀取字符,失败时返回错误(不降级到弱随机)。
 // @return 生成的短 ID
-// @return 随机源不可用时的错误
-func New() (string, error) {
-	buf := make([]byte, Length)
-	out := make([]byte, 0, Length)
-	for len(out) < Length {
-		if _, err := rand.Read(buf); err != nil {
-			return "", fmt.Errorf("读取随机源: %w", err)
-		}
-		for _, b := range buf {
-			if b >= maxUnbiasedByte {
-				continue
-			}
-			out = append(out, alphabet[int(b)%len(alphabet)])
-			if len(out) == Length {
-				break
-			}
-		}
-	}
-	return string(out), nil
+func New() string {
+	return generate()
 }

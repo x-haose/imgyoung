@@ -3,7 +3,6 @@ import { Alert, App as AntdApp, Button, Card, Flex, Input, Popconfirm, Space, Ta
 import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../../api/http";
-import { useFullConfig } from "./fullConfig";
 
 /** 防盗链白名单规则行(GET /api/admin/referer-whitelist)。 */
 interface RefererRule {
@@ -12,15 +11,19 @@ interface RefererRule {
   created_at: string; // 添加时刻
 }
 
-/** 防盗链卡片:规则列表 + 增删(即时生效),空 Referer 策略只读展示(仅管理员)。 */
-export function RefererCard() {
+/** RefererCard 的属性。 */
+interface RefererCardProps {
+  allowEmptyReferer?: boolean; // 空 Referer 放行策略(展示用);undefined 表示配置尚未加载
+}
+
+/** 防盗链卡片:规则列表 + 增删(即时生效),空 Referer 策略展示(仅管理员)。 */
+export function RefererCard({ allowEmptyReferer }: RefererCardProps) {
   const [rules, setRules] = useState<RefererRule[] | undefined>(undefined);
   const [loadError, setLoadError] = useState(false);
   const [pattern, setPattern] = useState("");
   const [adding, setAdding] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
   const { message } = AntdApp.useApp();
-  const config = useFullConfig();
 
   const load = useCallback(async () => {
     try {
@@ -69,11 +72,11 @@ export function RefererCard() {
   };
 
   return (
-    <Card title="防盗链" loading={rules === undefined && !loadError}>
+    <Card title="防盗链" loading={rules === undefined && !loadError} style={{ height: "100%" }}>
       <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 16 }}>
         仅命中白名单的 Referer 才能访问公开图片链接(/i/);规则增删即时生效,无需重启。
-        空 Referer{config?.security.allow_empty_referer === false ? "拒绝" : "放行"}
-        (allow_empty_referer,在配置文件中修改)。
+        空 Referer{allowEmptyReferer === false ? "拒绝" : "放行"}
+        (在「运行配置 · 安全」修改,同样即时生效)。
       </Typography.Paragraph>
       {loadError ? (
         <Alert

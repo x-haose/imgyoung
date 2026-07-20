@@ -9,18 +9,6 @@ import (
 	"context"
 )
 
-const countRefererWhitelist = `-- name: CountRefererWhitelist :one
-SELECT COUNT(*)
-FROM referer_whitelist
-`
-
-func (q *Queries) CountRefererWhitelist(ctx context.Context) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countRefererWhitelist)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createRefererPattern = `-- name: CreateRefererPattern :one
 INSERT INTO referer_whitelist (pattern)
 VALUES (?)
@@ -74,14 +62,4 @@ func (q *Queries) ListRefererWhitelist(ctx context.Context) ([]RefererWhitelist,
 		return nil, err
 	}
 	return items, nil
-}
-
-const seedRefererPattern = `-- name: SeedRefererPattern :exec
-INSERT OR IGNORE INTO referer_whitelist (pattern)
-VALUES (?)
-`
-
-func (q *Queries) SeedRefererPattern(ctx context.Context, pattern string) error {
-	_, err := q.db.ExecContext(ctx, seedRefererPattern, pattern)
-	return err
 }

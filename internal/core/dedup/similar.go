@@ -26,7 +26,8 @@ var (
 // @return 新增候选数
 // @return 扫描失败时的错误
 func (m *Merger) ScanSimilarOnce(ctx context.Context) (int, error) {
-	if m.cfg.SimilarityThreshold <= 0 {
+	threshold := m.cfg.Settings().DedupPhashMaxDistance
+	if threshold <= 0 {
 		return 0, nil
 	}
 	rows, err := m.cfg.Queries.ListBlobPhashes(ctx, 0)
@@ -44,7 +45,7 @@ func (m *Merger) ScanSimilarOnce(ctx context.Context) (int, error) {
 		}
 		for j := range i {
 			dist := bits.OnesCount64(uint64(blob.Phash) ^ uint64(rows[j].Phash)) //nolint:gosec // 哈希按位比较,数值无语义
-			if dist > m.cfg.SimilarityThreshold {
+			if dist > threshold {
 				continue
 			}
 			// OR IGNORE 吸收重扫已存在的对(含已忽略),按实际插入行数计数。
@@ -124,7 +125,8 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	if err := q.AddBlobRef(ctx, sqlc.AddBlobRefParams{RefCount: moved, ID: keepBlobID}); err != nil {
 		return fmt.Errorf("并入引用计数: %w", err)
 	}
-	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(m.cfg.Grace)), Valid: true}
+	grace := time.Duration(m.cfg.Settings().DeleteGraceMinutes) * time.Minute
+	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(grace)), Valid: true}
 	if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: loserID}); err != nil {
 		return fmt.Errorf("标记被并对象待删: %w", err)
 	}

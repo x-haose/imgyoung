@@ -1,15 +1,22 @@
 package config
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"os"
-	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
-// clearEnv 置空当前环境里全部 IMGYOUNG_ 变量,保证用例间隔离,
-// 并顺带覆盖开发者本机可能已设置的同前缀变量。
-// @Description: t.Setenv 置空即可——Load 将空值视为未设置,退出时自动还原。
+// clearEnv 置空当前环境里全部 IMGYOUNG_ 变量,保证用例间隔离。
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
@@ -19,280 +26,251 @@ func clearEnv(t *testing.T) {
 	}
 }
 
-// writeYAML 在临时目录写一个配置文件并返回其路径。
-func writeYAML(t *testing.T, content string) string {
+// testDB 打开并迁移一个临时 SQLite 库。
+func testDB(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "imgyoung.yml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("写测试配置文件: %v", err)
-	}
-	return path
+	return dbtest.New(t)
 }
 
-// TestLoadDefaults 验证无环境变量、无配置文件时返回文档约定的默认值。
-func TestLoadDefaults(t *testing.T) {
-	clearEnv(t)
-	cfg, err := Load()
+// newStore 在指定库上装载配置存储(测试主密钥)。
+func newStore(t *testing.T, conn *sql.DB, queries *sqlc.Queries, master *secret.MasterKey) *Store {
+	t.Helper()
+	store, err := LoadStore(context.Background(), conn, queries, master)
 	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
+		t.Fatalf("LoadStore 返回错误: %v", err)
 	}
-	if cfg.Listen != ":8721" {
-		t.Errorf("Listen = %q, 期望 :8721", cfg.Listen)
-	}
-	if cfg.DataDir != "data" {
-		t.Errorf("DataDir = %q, 期望 data", cfg.DataDir)
-	}
-	if cfg.Token != "" {
-		t.Errorf("Token = %q, 期望空(由 main 生成随机值)", cfg.Token)
-	}
-	if cfg.MaxUploadBytes != 50<<20 {
-		t.Errorf("MaxUploadBytes = %d, 期望 %d", cfg.MaxUploadBytes, 50<<20)
-	}
-	if cfg.MaxConcurrentUploads != 8 {
-		t.Errorf("MaxConcurrentUploads = %d, 期望默认 8", cfg.MaxConcurrentUploads)
-	}
-	if cfg.BaseURL != "" {
-		t.Errorf("BaseURL = %q, 期望空", cfg.BaseURL)
-	}
-	if cfg.MaxPixels != 50_000_000 {
-		t.Errorf("MaxPixels = %d, 期望 50MP", cfg.MaxPixels)
-	}
-	if len(cfg.RefererWhitelist) != 0 {
-		t.Errorf("RefererWhitelist = %v, 期望空(不启用防盗链)", cfg.RefererWhitelist)
-	}
-	if !cfg.AllowEmptyReferer {
-		t.Error("AllowEmptyReferer = false, 期望默认 true(空 Referer 默认放行)")
-	}
-	if cfg.EXIFPolicy != "passthrough" {
-		t.Errorf("EXIFPolicy = %q, 期望默认 passthrough(默认不动用户原图)", cfg.EXIFPolicy)
-	}
-	if cfg.MinSuccess != 1 || cfg.AccessMode != "proxy" || cfg.EncryptNewChannels || cfg.HealthCheckSeconds != 60 {
-		t.Errorf("多渠道相关默认值异常: min_success=%d access_mode=%q encrypt_new=%v health=%d",
-			cfg.MinSuccess, cfg.AccessMode, cfg.EncryptNewChannels, cfg.HealthCheckSeconds)
-	}
-	if cfg.BackupIntervalHours != 24 || cfg.BackupKeep != 7 {
-		t.Errorf("备份默认值异常: interval_hours=%d keep=%d, 期望 24 / 7",
-			cfg.BackupIntervalHours, cfg.BackupKeep)
-	}
-	if len(cfg.ProcessWidths) != 5 || cfg.ProcessWidths[0] != 100 || cfg.ProcessWidths[4] != 1600 {
-		t.Errorf("ProcessWidths = %v, 期望 [100 200 400 800 1600]", cfg.ProcessWidths)
-	}
-	if len(cfg.ProcessFormats) != 3 {
-		t.Errorf("ProcessFormats = %v, 期望三格式(webp/jpeg/png)", cfg.ProcessFormats)
-	}
-	if cfg.ProcessWebPMethod != 4 || cfg.ProcessWorkers != 4 || cfg.VariantsCacheMB != 10240 {
-		t.Errorf("处理默认值异常: webp_method=%d workers=%d cache_mb=%d, 期望 4 / 4 / 10240",
-			cfg.ProcessWebPMethod, cfg.ProcessWorkers, cfg.VariantsCacheMB)
-	}
+	return store
 }
 
-// TestLoadProcessWhitelist 验证处理档位:环境变量覆盖档位、非法格式与档位快速失败。
-func TestLoadProcessWhitelist(t *testing.T) {
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_PROCESS_WIDTHS", "320, 640")
-	t.Setenv("IMGYOUNG_PROCESS_FORMATS", "webp, jpeg")
-	cfg, err := Load()
+// newMaster 生成测试用主密钥。
+func newMaster(t *testing.T) *secret.MasterKey {
+	t.Helper()
+	key, err := secret.NewMasterKey()
 	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
+		t.Fatalf("生成测试主密钥: %v", err)
 	}
-	if len(cfg.ProcessWidths) != 2 || cfg.ProcessWidths[1] != 640 {
-		t.Errorf("ProcessWidths = %v, 期望 [320 640]", cfg.ProcessWidths)
-	}
-	if len(cfg.ProcessFormats) != 2 || cfg.ProcessFormats[0] != "webp" {
-		t.Errorf("ProcessFormats = %v, 期望 [webp jpeg]", cfg.ProcessFormats)
-	}
-
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_PROCESS_FORMATS", "webp, tiff")
-	if _, err := Load(); err == nil {
-		t.Fatal("process_formats 含非法格式 tiff 应返回错误")
-	}
-
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_PROCESS_WEBP_METHOD", "9")
-	if _, err := Load(); err == nil {
-		t.Fatal("process_webp_method=9 越界应返回错误")
-	}
+	return key
 }
 
-// TestLoadInvalidAccessMode 验证非法访问模式快速失败。
-func TestLoadInvalidAccessMode(t *testing.T) {
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_ACCESS_MODE", "cdn")
-	if _, err := Load(); err == nil {
-		t.Fatal("access_mode=cdn 应返回错误")
-	}
-}
-
-// TestLoadEXIFPolicy 验证 EXIF 档位配置:合法值生效,非法值(含未实现的 spoof)快速失败。
-func TestLoadEXIFPolicy(t *testing.T) {
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_EXIF_POLICY", "strip")
-	cfg, err := Load()
+// rawPatch 把任意值编码为 Update 的 patch 项。
+func rawPatch(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	blob, err := json.Marshal(v)
 	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
+		t.Fatalf("编码 patch 值: %v", err)
 	}
-	if cfg.EXIFPolicy != "strip" {
-		t.Errorf("EXIFPolicy = %q, 期望 strip", cfg.EXIFPolicy)
-	}
-
-	for _, v := range []string{"spoof", "bogus"} {
-		t.Run(v, func(t *testing.T) {
-			clearEnv(t)
-			t.Setenv("IMGYOUNG_EXIF_POLICY", v)
-			if _, err := Load(); err == nil {
-				t.Fatalf("exif_policy=%q 应返回错误", v)
-			}
-		})
-	}
+	return blob
 }
 
-// TestLoadRefererAndBaseURL 验证防盗链与站点地址相关配置的读取。
-func TestLoadRefererAndBaseURL(t *testing.T) {
+// TestLoadBootstrapDefaults 验证无环境变量时引导配置取文档约定的默认值。
+func TestLoadBootstrapDefaults(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("IMGYOUNG_BASE_URL", "https://img.example.com/")
-	t.Setenv("IMGYOUNG_MAX_PIXELS_MP", "2")
-	t.Setenv("IMGYOUNG_REFERER_WHITELIST", "*.example.com, blog.foo.dev")
-	t.Setenv("IMGYOUNG_ALLOW_EMPTY_REFERER", "false")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
+	b := LoadBootstrap()
+	if b.Listen != ":8721" || b.DataDir != "data" {
+		t.Errorf("引导默认值异常: %+v", b)
 	}
-	if cfg.BaseURL != "https://img.example.com" {
-		t.Errorf("BaseURL = %q, 期望去除尾部斜杠", cfg.BaseURL)
-	}
-	if cfg.MaxPixels != 2_000_000 {
-		t.Errorf("MaxPixels = %d, 期望 2MP", cfg.MaxPixels)
-	}
-	want := []string{"*.example.com", "blog.foo.dev"}
-	if len(cfg.RefererWhitelist) != 2 || cfg.RefererWhitelist[0] != want[0] || cfg.RefererWhitelist[1] != want[1] {
-		t.Errorf("RefererWhitelist = %v, 期望 %v(逗号分隔并去空白)", cfg.RefererWhitelist, want)
-	}
-	if cfg.AllowEmptyReferer {
-		t.Error("AllowEmptyReferer = true, 期望 false")
+	if b.MasterKey != "" || b.AdminPassword != "" {
+		t.Errorf("密钥/密码期望默认为空: %+v", b)
 	}
 }
 
-// TestLoadEnvOverrides 验证环境变量能覆盖全部默认值。
-func TestLoadEnvOverrides(t *testing.T) {
+// TestLoadBootstrapEnv 验证引导配置的环境变量覆盖。
+func TestLoadBootstrapEnv(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("IMGYOUNG_LISTEN", "127.0.0.1:9000")
 	t.Setenv("IMGYOUNG_DATA_DIR", "/var/lib/imgyoung")
-	t.Setenv("IMGYOUNG_TOKEN", "secret")
-	t.Setenv("IMGYOUNG_MAX_UPLOAD_MB", "8")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
-	}
-	if cfg.Listen != "127.0.0.1:9000" || cfg.DataDir != "/var/lib/imgyoung" ||
-		cfg.Token != "secret" || cfg.MaxUploadBytes != 8<<20 {
-		t.Fatalf("配置未按环境变量覆盖: %+v", cfg)
+	t.Setenv("IMGYOUNG_MASTER_KEY", "deadbeef")
+	t.Setenv("IMGYOUNG_ADMIN_PASSWORD", "s3cret")
+	b := LoadBootstrap()
+	if b.Listen != "127.0.0.1:9000" || b.DataDir != "/var/lib/imgyoung" ||
+		b.MasterKey != "deadbeef" || b.AdminPassword != "s3cret" {
+		t.Fatalf("引导配置未按环境变量覆盖: %+v", b)
 	}
 }
 
-// TestLoadYAMLFile 验证 IMGYOUNG_CONFIG 指向的 yaml 文件生效。
-func TestLoadYAMLFile(t *testing.T) {
-	clearEnv(t)
-	path := writeYAML(t, "listen: \":7000\"\ndata_dir: /srv/img\ntoken: from-file\nmax_upload_mb: 12\n")
-	t.Setenv(envConfig, path)
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
-	}
-	if cfg.Listen != ":7000" || cfg.DataDir != "/srv/img" ||
-		cfg.Token != "from-file" || cfg.MaxUploadBytes != 12<<20 {
-		t.Fatalf("配置未按 yaml 文件加载: %+v", cfg)
+// TestDefaultsMatchSchema 漂移守卫:全新库的生效配置必须与 Go 侧 Defaults 逐字段一致,
+// 保证建表列 DEFAULT 与 Defaults 两处不漂移。
+func TestDefaultsMatchSchema(t *testing.T) {
+	conn, queries := testDB(t)
+	got := newStore(t, conn, queries, newMaster(t)).Current()
+	if !reflect.DeepEqual(got, Defaults()) {
+		t.Fatalf("首启配置与 Defaults 不一致:\n 表 = %+v\n Go = %+v", got, Defaults())
 	}
 }
 
-// TestLoadEnvBeatsFile 验证优先级:环境变量 > 配置文件 > 默认值。
-func TestLoadEnvBeatsFile(t *testing.T) {
-	clearEnv(t)
-	path := writeYAML(t, "listen: \":7000\"\nmax_upload_mb: 12\n")
-	t.Setenv(envConfig, path)
-	t.Setenv("IMGYOUNG_LISTEN", ":9999")
+// TestStoreUpdateHotAndPersist 验证修改即时可见、跨装载持久,且返回变更清单。
+func TestStoreUpdateHotAndPersist(t *testing.T) {
+	conn, queries := testDB(t)
+	master := newMaster(t)
+	store := newStore(t, conn, queries, master)
 
-	cfg, err := Load()
+	changes, err := store.Update(context.Background(), map[string]json.RawMessage{
+		"max_upload_mb": rawPatch(t, 100),
+		"access_mode":   rawPatch(t, "redirect"),
+		"base_url":      rawPatch(t, "https://img.example.com/"),
+	})
 	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
+		t.Fatalf("Update 返回错误: %v", err)
 	}
-	if cfg.Listen != ":9999" {
-		t.Errorf("Listen = %q, 期望环境变量覆盖为 :9999", cfg.Listen)
+	if len(changes) != 3 {
+		t.Fatalf("changes = %v, 期望 3 项", changes)
 	}
-	if cfg.MaxUploadBytes != 12<<20 {
-		t.Errorf("MaxUploadBytes = %d, 期望保留文件值 %d", cfg.MaxUploadBytes, 12<<20)
+	cur := store.Current()
+	if cur.MaxUploadMB != 100 || cur.AccessMode != "redirect" {
+		t.Fatalf("快照未热更新: %+v", cur)
 	}
-	if cfg.DataDir != "data" {
-		t.Errorf("DataDir = %q, 期望保留默认值 data", cfg.DataDir)
+	if cur.BaseURL != "https://img.example.com" {
+		t.Fatalf("BaseURL = %q, 期望归一去尾斜杠", cur.BaseURL)
+	}
+
+	if s := newStore(t, conn, queries, master).Current(); s.MaxUploadMB != 100 || s.AccessMode != "redirect" {
+		t.Fatalf("修改未持久化: %+v", s)
 	}
 }
 
-// TestLoadDefaultConfigFile 验证工作目录下的 configs/config.yml 会被自动发现。
-func TestLoadDefaultConfigFile(t *testing.T) {
-	clearEnv(t)
-	dir := t.TempDir()
-	confPath := filepath.Join(dir, defaultConfigFile)
-	if err := os.MkdirAll(filepath.Dir(confPath), 0o750); err != nil {
-		t.Fatalf("创建配置目录: %v", err)
-	}
-	if err := os.WriteFile(confPath, []byte("listen: \":6000\"\n"), 0o600); err != nil {
-		t.Fatalf("写默认配置文件: %v", err)
-	}
-	t.Chdir(dir)
+// TestStoreUpdateProcessWidths 验证数组类档位改动的编码/解码往返。
+func TestStoreUpdateProcessWidths(t *testing.T) {
+	conn, queries := testDB(t)
+	master := newMaster(t)
+	store := newStore(t, conn, queries, master)
 
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load 返回错误: %v", err)
+	if _, err := store.Update(context.Background(), map[string]json.RawMessage{
+		"process_widths":  rawPatch(t, []int{320, 640}),
+		"process_formats": rawPatch(t, []string{"webp"}),
+	}); err != nil {
+		t.Fatalf("Update 返回错误: %v", err)
 	}
-	if cfg.Listen != ":6000" {
-		t.Fatalf("Listen = %q, 期望自动发现 imgyoung.yml 中的 :6000", cfg.Listen)
+	s := newStore(t, conn, queries, master).Current()
+	if len(s.ProcessWidths) != 2 || s.ProcessWidths[1] != 640 {
+		t.Fatalf("ProcessWidths = %v, 期望 [320 640]", s.ProcessWidths)
+	}
+	if len(s.ProcessFormats) != 1 || s.ProcessFormats[0] != "webp" {
+		t.Fatalf("ProcessFormats = %v, 期望 [webp]", s.ProcessFormats)
 	}
 }
 
-// TestLoadInvalidMaxUpload 验证非法的上传上限快速失败。
-func TestLoadInvalidMaxUpload(t *testing.T) {
-	for name, v := range map[string]string{"非数字": "abc", "零": "0", "负数": "-3"} {
+// TestStoreUpdateRejectsInvalid 验证未知键与非法值被拒绝且快照不变。
+func TestStoreUpdateRejectsInvalid(t *testing.T) {
+	conn, queries := testDB(t)
+	store := newStore(t, conn, queries, newMaster(t))
+
+	if _, err := store.Update(context.Background(),
+		map[string]json.RawMessage{"listen": rawPatch(t, ":9999")}); !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("未知键 err = %v, 期望 ErrUnknownKey", err)
+	}
+	for name, patch := range map[string]map[string]json.RawMessage{
+		"取值越界":  {"access_mode": rawPatch(t, "cdn")},
+		"类型不符":  {"max_upload_mb": rawPatch(t, "abc")},
+		"档位清空":  {"process_formats": rawPatch(t, []string{})},
+		"档位含非法": {"process_widths": rawPatch(t, []int{0})},
+	} {
 		t.Run(name, func(t *testing.T) {
-			clearEnv(t)
-			t.Setenv("IMGYOUNG_MAX_UPLOAD_MB", v)
-			if _, err := Load(); err == nil {
-				t.Fatalf("%s=%q 应返回错误", "IMGYOUNG_MAX_UPLOAD_MB", v)
+			if _, err := store.Update(context.Background(), patch); !errors.Is(err, ErrInvalidSetting) {
+				t.Fatalf("err = %v, 期望 ErrInvalidSetting", err)
 			}
 		})
 	}
-}
-
-// TestLoadInvalidMaxConcurrentUploads 验证非法的并发上限快速失败。
-func TestLoadInvalidMaxConcurrentUploads(t *testing.T) {
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_MAX_CONCURRENT_UPLOADS", "0")
-	if _, err := Load(); err == nil {
-		t.Fatal("max_concurrent_uploads=0 应返回错误")
+	if s := store.Current(); s.AccessMode != "proxy" || s.MaxUploadMB != 50 {
+		t.Fatalf("被拒修改不应影响快照: %+v", s)
 	}
 }
 
-// TestLoadInvalidBackup 验证非正的备份间隔与保留份数快速失败。
-func TestLoadInvalidBackup(t *testing.T) {
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_BACKUP_KEEP", "0")
-	if _, err := Load(); err == nil {
-		t.Fatal("backup_keep=0 应返回错误")
+// TestStoreUpdateNoop 验证取值未变时不产生变更清单。
+func TestStoreUpdateNoop(t *testing.T) {
+	conn, queries := testDB(t)
+	store := newStore(t, conn, queries, newMaster(t))
+	changes, err := store.Update(context.Background(),
+		map[string]json.RawMessage{"max_upload_mb": rawPatch(t, 50)})
+	if err != nil {
+		t.Fatalf("Update 返回错误: %v", err)
 	}
-	clearEnv(t)
-	t.Setenv("IMGYOUNG_BACKUP_INTERVAL_HOURS", "0")
-	if _, err := Load(); err == nil {
-		t.Fatal("backup_interval_hours=0 应返回错误")
+	if len(changes) != 0 {
+		t.Fatalf("changes = %v, 期望空(取值未变)", changes)
 	}
 }
 
-// TestLoadMissingConfigFile 验证显式指定但不存在的配置文件快速失败。
-func TestLoadMissingConfigFile(t *testing.T) {
-	clearEnv(t)
-	t.Setenv(envConfig, "/no/such/file.yml")
-	if _, err := Load(); err == nil {
-		t.Fatal("指向不存在的配置文件应返回错误")
+// TestStoreUpdateRejectionIsAtomic 验证含数组字段的非法 patch 整体拒绝、不就地改写快照。
+// @Description: 守卫 applyPatch 的切片深拷贝——json 解码复用底层数组的坑,若回归则本用例
+// 会看到 ProcessWidths 被非法 patch 部分改写。
+func TestStoreUpdateRejectionIsAtomic(t *testing.T) {
+	conn, queries := testDB(t)
+	store := newStore(t, conn, queries, newMaster(t))
+	before := append([]int(nil), store.Current().ProcessWidths...)
+
+	// 同一 patch 里合法数组 + 非法枚举:必须整体拒绝,数组不得被改写。
+	if _, err := store.Update(context.Background(), map[string]json.RawMessage{
+		"process_widths": rawPatch(t, []int{50, 60}),
+		"access_mode":    rawPatch(t, "garbage"),
+	}); !errors.Is(err, ErrInvalidSetting) {
+		t.Fatalf("err = %v, 期望 ErrInvalidSetting", err)
+	}
+	if got := store.Current().ProcessWidths; !reflect.DeepEqual(got, before) {
+		t.Fatalf("被拒 patch 就地改写了快照数组: %v, 期望 %v", got, before)
+	}
+}
+
+// TestStoreConcurrentUpdateAndRead 以 -race 守卫:并发改 process_widths 与无锁读快照切片无竞争。
+func TestStoreConcurrentUpdateAndRead(t *testing.T) {
+	conn, queries := testDB(t)
+	store := newStore(t, conn, queries, newMaster(t))
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := store.Update(context.Background(), map[string]json.RawMessage{
+				"process_widths": rawPatch(t, []int{100 + i, 200 + i}),
+			}); err != nil {
+				t.Errorf("并发 Update: %v", err)
+			}
+		}()
+	}
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 50 {
+				total := 0
+				for _, w := range store.Current().ProcessWidths {
+					total += w
+				}
+				_ = total
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// TestStoreSecretRoundtrip 验证凭证键密文入库、装载解密、审计脱敏。
+func TestStoreSecretRoundtrip(t *testing.T) {
+	conn, queries := testDB(t)
+	master := newMaster(t)
+	store := newStore(t, conn, queries, master)
+
+	changes, err := store.Update(context.Background(),
+		map[string]json.RawMessage{cdnAPITokenKey: rawPatch(t, "cf-token-123")})
+	if err != nil {
+		t.Fatalf("Update 返回错误: %v", err)
+	}
+	if len(changes) != 1 || changes[0].New != maskedSet || changes[0].Old != maskedUnset {
+		t.Fatalf("changes = %+v, 期望凭证值脱敏为 %s/%s", changes, maskedUnset, maskedSet)
+	}
+
+	row, err := queries.GetSettings(context.Background())
+	if err != nil {
+		t.Fatalf("读取入库值: %v", err)
+	}
+	if row.CdnCloudflareApiToken == "" || strings.Contains(row.CdnCloudflareApiToken, "cf-token-123") {
+		t.Fatalf("入库值 %q 应为非空密文", row.CdnCloudflareApiToken)
+	}
+
+	if s := newStore(t, conn, queries, master).Current(); s.CDNCloudflareAPIToken != "cf-token-123" {
+		t.Fatalf("装载解密后 = %q, 期望明文 cf-token-123", s.CDNCloudflareAPIToken)
+	}
+
+	// Masked 抹掉凭证,供对外输出。
+	if newStore(t, conn, queries, master).Current().Masked().CDNCloudflareAPIToken != "" {
+		t.Fatal("Masked 未抹掉凭证明文")
 	}
 }

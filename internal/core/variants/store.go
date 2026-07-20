@@ -22,7 +22,7 @@ const evictBatch = 32
 // Config 缓存存储依赖。
 type Config struct {
 	Dir      string        // variant 文件根目录
-	Capacity int64         // 磁盘缓存上限(字节),超过按 last_access 淘汰
+	Capacity func() int64  // 磁盘缓存上限读取口(字节),逐轮淘汰取值热生效;超过按 last_access 淘汰
 	Queries  *sqlc.Queries // variants 表查询集
 	Logger   *slog.Logger  // 结构化日志
 }
@@ -148,7 +148,8 @@ func (s *Store) evict(ctx context.Context) {
 		s.cfg.Logger.Warn("统计缓存用量失败,跳过本次淘汰", "err", err)
 		return
 	}
-	for total > s.cfg.Capacity {
+	capacity := s.cfg.Capacity()
+	for total > capacity {
 		batch, lerr := s.cfg.Queries.ListVariantsLRU(ctx, evictBatch)
 		if lerr != nil {
 			s.cfg.Logger.Warn("列举待淘汰变体失败", "err", lerr)
@@ -171,7 +172,7 @@ func (s *Store) evict(ctx context.Context) {
 		}
 		if !progressed {
 			// 整批都删不掉(索引删除持续失败):再循环只会拿到同一批、无限空转,让位下次触发。
-			s.cfg.Logger.Warn("淘汰整批零进展,暂止本轮以防空转", "total", total, "capacity", s.cfg.Capacity)
+			s.cfg.Logger.Warn("淘汰整批零进展,暂止本轮以防空转", "total", total, "capacity", capacity)
 			return
 		}
 	}

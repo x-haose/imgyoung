@@ -138,7 +138,7 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	encrypted := h.cfg.EncryptNewChannels
+	encrypted := h.cfg.Settings.Current().EncryptNewChannels
 	if req.Encrypted != nil {
 		encrypted = *req.Encrypted
 	}

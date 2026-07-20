@@ -11,7 +11,6 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/referer"
-	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -111,7 +110,7 @@ func TestRefererWhitelistHotReload(t *testing.T) {
 	}
 
 	// "重启":以同一个库重建服务,规则从 DB 装载、依然生效。
-	restarted, err := referer.New(t.Context(), env.Queries, nil)
+	restarted, err := referer.New(t.Context(), env.Queries)
 	if err != nil {
 		t.Fatalf("重建防盗链服务: %v", err)
 	}
@@ -153,15 +152,14 @@ func TestRefererWhitelistHotReload(t *testing.T) {
 	}
 }
 
-// TestConfigFullAdminOnly 验证全量配置切面:管理员可读且分组齐全、无敏感键;
+// TestConfigFullAdminOnly 验证全量配置切面:管理员可读且分组齐全、凭证值脱敏;
 // 普通用户 403。
 func TestConfigFullAdminOnly(t *testing.T) {
 	var authSvc *auth.Service
 	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
 		authSvc = tc.Router.Auth
-		tc.Admin.Full = adminapi.FullConfigViewFrom(config.Config{
-			Listen:     ":8721",
-			AccessMode: "proxy",
+		applySettings(t, env.Store, func(s *config.Settings) {
+			s.CDNCloudflareAPIToken = "cf-secret-token"
 		})
 		if err := env.Queries.CreateUser(t.Context(), sqlc.CreateUserParams{
 			ID: "u-viewer", Name: "carol", Role: "user",
@@ -183,16 +181,31 @@ func TestConfigFullAdminOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取全量配置: %v", err)
 	}
-	var body map[string]json.RawMessage
+	var body struct {
+		Bootstrap struct {
+			Listen string `json:"listen"`
+		} `json:"bootstrap"`
+		Settings config.Settings `json:"settings"`
+		Derived  struct {
+			CDNAPITokenSet bool `json:"cdn_api_token_set"`
+		} `json:"derived"`
+	}
 	if err := json.Unmarshal(raw, &body); err != nil {
 		t.Fatalf("解析全量配置: %v", err)
 	}
-	for _, group := range []string{"server", "upload", "lifecycle", "processing", "security", "reliability"} {
-		if _, ok := body[group]; !ok {
-			t.Errorf("全量配置缺少分组 %q: %s", group, raw)
-		}
+	if body.Bootstrap.Listen == "" {
+		t.Errorf("bootstrap.listen 为空: %s", raw)
 	}
-	for _, sensitive := range []string{"master_key", "password", "token", "secret"} {
+	if body.Settings.MaxUploadMB != 1 || body.Settings.AccessMode != "proxy" {
+		t.Errorf("settings 组取值异常: %s", raw)
+	}
+	if !body.Derived.CDNAPITokenSet {
+		t.Errorf("cdn_api_token_set = false, 期望 true(已配置)")
+	}
+	if strings.Contains(string(raw), "cf-secret-token") {
+		t.Errorf("全量配置泄露凭证明文: %s", raw)
+	}
+	for _, sensitive := range []string{"master_key", "password", "secret"} {
 		if strings.Contains(strings.ToLower(string(raw)), sensitive) {
 			t.Errorf("全量配置疑似泄露敏感键 %q: %s", sensitive, raw)
 		}
@@ -203,5 +216,90 @@ func TestConfigFullAdminOnly(t *testing.T) {
 	defer closeBody(t, forbidden)
 	if forbidden.StatusCode != http.StatusForbidden {
 		t.Fatalf("普通用户读取状态码 = %d, 期望 403", forbidden.StatusCode)
+	}
+}
+
+// TestConfigUpdateHotReload 验证 PUT /config:修改即时生效于上传闸与后续读取,
+// 非法值 400 整体拒绝,未知键 400,普通用户 403,变更写入审计。
+func TestConfigUpdateHotReload(t *testing.T) {
+	var authSvc *auth.Service
+	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
+		authSvc = tc.Router.Auth
+		if err := env.Queries.CreateUser(t.Context(), sqlc.CreateUserParams{
+			ID: "u-plain", Name: "dave", Role: "user",
+		}); err != nil {
+			t.Fatalf("建普通用户: %v", err)
+		}
+	})
+	if err := authSvc.SetPassword(t.Context(), "u-plain", "dave-pass"); err != nil {
+		t.Fatalf("设置普通用户密码: %v", err)
+	}
+	client, csrf := adminSession(t, ts)
+
+	// 初始额度 1MB:2MB 载荷应 413。
+	big := make([]byte, 2<<20)
+	rejected := uploadReq(t, ts, testToken, "big.bin", append(pngBytes(t), big...), nil)
+	closeBody(t, rejected)
+	if rejected.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("扩容前上传状态码 = %d, 期望 413", rejected.StatusCode)
+	}
+
+	// 热改单图上限到 10MB:同一进程内立即生效,无需重启。
+	resp := adminReq(t, client, csrf, http.MethodPut, ts.URL+"/api/admin/config",
+		`{"max_upload_mb": 10}`)
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("配置修改状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	var updated struct {
+		Settings config.Settings `json:"settings"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&updated); err != nil {
+		t.Fatalf("解析修改响应: %v", err)
+	}
+	if updated.Settings.MaxUploadMB != 10 {
+		t.Fatalf("响应中 max_upload_mb = %d, 期望 10", updated.Settings.MaxUploadMB)
+	}
+	accepted := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	closeBody(t, accepted)
+	if accepted.StatusCode != http.StatusOK {
+		t.Fatalf("扩容后上传状态码 = %d, 期望 200", accepted.StatusCode)
+	}
+
+	// 非法取值与未知键整体拒绝。
+	bad := adminReq(t, client, csrf, http.MethodPut, ts.URL+"/api/admin/config",
+		`{"access_mode": "cdn"}`)
+	closeBody(t, bad)
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("非法取值状态码 = %d, 期望 400", bad.StatusCode)
+	}
+	unknown := adminReq(t, client, csrf, http.MethodPut, ts.URL+"/api/admin/config",
+		`{"listen": ":9999"}`)
+	closeBody(t, unknown)
+	if unknown.StatusCode != http.StatusBadRequest {
+		t.Fatalf("未知键状态码 = %d, 期望 400", unknown.StatusCode)
+	}
+
+	// 普通用户 403。
+	viewer, viewerCSRF := loginAs(t, ts, "dave", "dave-pass")
+	forbidden := adminReq(t, viewer, viewerCSRF, http.MethodPut, ts.URL+"/api/admin/config",
+		`{"max_upload_mb": 5}`)
+	closeBody(t, forbidden)
+	if forbidden.StatusCode != http.StatusForbidden {
+		t.Fatalf("普通用户修改状态码 = %d, 期望 403", forbidden.StatusCode)
+	}
+
+	// 变更写入审计。
+	auditResp := adminReq(t, client, csrf, http.MethodGet,
+		ts.URL+"/api/admin/audit?action=config.update", "")
+	defer closeBody(t, auditResp)
+	var ar struct {
+		Total int64 `json:"total"`
+	}
+	if err := json.NewDecoder(auditResp.Body).Decode(&ar); err != nil {
+		t.Fatalf("解析审计列表: %v", err)
+	}
+	if ar.Total != 1 {
+		t.Fatalf("config.update 审计条数 = %d, 期望 1", ar.Total)
 	}
 }

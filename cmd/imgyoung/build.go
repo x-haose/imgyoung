@@ -1,0 +1,375 @@
+// ImgYoung 组合根:按 基础设施 → 业务服务 → HTTP 三段显式装配对象图。
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/x-haose/imgyoung/internal/core/audit"
+	"github.com/x-haose/imgyoung/internal/core/auth"
+	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/dedup"
+	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/referer"
+	"github.com/x-haose/imgyoung/internal/core/reliability"
+	"github.com/x-haose/imgyoung/internal/core/replication"
+	"github.com/x-haose/imgyoung/internal/core/upload"
+	"github.com/x-haose/imgyoung/internal/core/usage"
+	"github.com/x-haose/imgyoung/internal/core/variants"
+	"github.com/x-haose/imgyoung/internal/http/adminapi"
+	"github.com/x-haose/imgyoung/internal/http/publicapi"
+	"github.com/x-haose/imgyoung/internal/http/router"
+	"github.com/x-haose/imgyoung/internal/infra/cdn"
+	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/observability"
+	"github.com/x-haose/imgyoung/internal/infra/secret"
+	"github.com/x-haose/imgyoung/web"
+)
+
+// readHeaderTimeout 读取请求头的上限,防慢速连接占用。
+const readHeaderTimeout = 10 * time.Second
+
+// idleTimeout keep-alive 空闲连接的回收上限;无它则慢速读客户端可长期占用 goroutine
+// (访问路径无并发闸兜底)。上传/下载本体不设 WriteTimeout,大图过慢链路由此放宽。
+const idleTimeout = 120 * time.Second
+
+// bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。
+const bytesPerGB = 1 << 30
+
+// app 承载运行期需要生命周期管理的组件;构造在 build,启停在 serve。
+type app struct {
+	boot     config.Bootstrap     // 引导配置(监听地址等)
+	logger   *slog.Logger         // 结构化日志
+	store    *config.Store        // 运营配置存储(各循环逐轮取间隔)
+	authSvc  *auth.Service        // 认证服务(Token 使用回写、会话回收)
+	manager  *channel.Manager     // 渠道管理器(健康探测)
+	runner   *replication.Runner  // 补齐子系统(River 客户端)
+	sweeper  *lifecycle.Sweeper   // 生命周期清理器
+	tracker  *lifecycle.Tracker   // 访问活跃度追踪器
+	reporter *usage.Reporter      // 渠道用量上报器
+	merger   *dedup.Merger        // 后台查重执行器
+	backup   *reliability.Service // 元数据库备份服务
+	httpSrv  *http.Server         // HTTP 服务器
+}
+
+// infra 聚合基础设施层构件,供业务服务与 HTTP 层取用;由 buildInfra 一次性装配。
+type infra struct {
+	boot    config.Bootstrap  // 引导配置,监听地址与数据目录等
+	conn    *sql.DB           // 元数据库连接,全局唯一
+	queries *sqlc.Queries     // 类型安全查询集
+	master  *secret.MasterKey // 主密钥,渠道配置与加密数据的根
+	store   *config.Store     // 运营配置存储,各处逐轮取快照
+}
+
+// services 聚合全部业务服务;部分需运行期生命周期管理(见 app),其余仅供 HTTP 装配取用。
+type services struct {
+	auth     *auth.Service          // 认证服务
+	manager  *channel.Manager       // 渠道管理器
+	runner   *replication.Runner    // 补齐子系统
+	referer  *referer.Service       // 防盗链白名单
+	metrics  *observability.Metrics // 指标集
+	audit    *audit.Recorder        // 审计记录器
+	variants *variants.Service      // 副本读写服务
+	upload   *upload.Service        // 上传服务
+	tracker  *lifecycle.Tracker     // 访问活跃度追踪器
+	sweeper  *lifecycle.Sweeper     // 生命周期清理器
+	merger   *dedup.Merger          // 后台查重执行器
+	reporter *usage.Reporter        // 渠道用量上报器
+	backup   *reliability.Service   // 元数据库备份服务
+}
+
+// newLogger 构造进程级结构化日志,并设为 slog 默认。
+// @return 结构化日志
+func newLogger() *slog.Logger {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(logger)
+	return logger
+}
+
+// build 组合根:分 基础设施 → 业务服务 → HTTP 三段显式装配,任一步失败即返回。
+// @Description: 成功返回可运行的 app 与关闭数据库的清理函数(供调用方 defer,覆盖装配
+// 失败与正常退出两条路径);基础设施装配成功后、后续任一步失败,由本函数的 built 闸触发 cleanup。
+// @param logger 结构化日志
+// @return 运行期组件
+// @return 数据库清理函数(非 nil 即须调用)
+// @return 装配失败时的错误
+func build(logger *slog.Logger) (*app, func(), error) {
+	in, cleanup, err := buildInfra(logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	// 基础设施已开库;业务服务装配任一步失败即关连接,不泄漏。
+	built := false
+	defer func() {
+		if !built {
+			cleanup()
+		}
+	}()
+
+	svcs, err := buildServices(in, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	built = true
+	return &app{
+		boot: in.boot, logger: logger, store: in.store,
+		authSvc: svcs.auth, manager: svcs.manager, runner: svcs.runner,
+		sweeper: svcs.sweeper, tracker: svcs.tracker, reporter: svcs.reporter,
+		merger: svcs.merger, backup: svcs.backup, httpSrv: buildHTTP(in, svcs, logger),
+	}, cleanup, nil
+}
+
+// buildInfra 装配基础设施:建数据目录 → 开库 → 迁移 → 主密钥 → 运营配置存储。
+// @Description: 内部自持 ok 闸,装配任一步失败即关闭已开的连接;成功则把清理函数返给
+// 调用方(供其覆盖后续装配失败与正常退出)。
+// @param logger 结构化日志
+// @return 基础设施构件
+// @return 数据库清理函数(仅成功时非 nil)
+// @return 装配失败时的错误
+func buildInfra(logger *slog.Logger) (infra, func(), error) {
+	boot := config.LoadBootstrap()
+	if err := os.MkdirAll(boot.DataDir, 0o750); err != nil {
+		return infra{}, nil, fmt.Errorf("创建数据目录 %q: %w", boot.DataDir, err)
+	}
+
+	conn, err := db.Open(filepath.Join(boot.DataDir, "imgyoung.db"))
+	if err != nil {
+		return infra{}, nil, err
+	}
+	cleanup := func() {
+		if cerr := conn.Close(); cerr != nil {
+			logger.Error("关闭数据库失败", "err", cerr)
+		}
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			cleanup()
+		}
+	}()
+
+	if err := db.Migrate(conn); err != nil {
+		return infra{}, nil, err
+	}
+
+	queries := sqlc.New(conn)
+	master, err := loadMasterKey(boot, logger)
+	if err != nil {
+		return infra{}, nil, err
+	}
+	store, err := loadSettings(conn, queries, master, logger)
+	if err != nil {
+		return infra{}, nil, err
+	}
+
+	ok = true
+	return infra{boot: boot, conn: conn, queries: queries, master: master, store: store}, cleanup, nil
+}
+
+// buildServices 装配全部业务服务:先建被复用/可失败的图内节点(认证/渠道/补齐/防盗链/
+// 指标/副本存储),再一次性拼出各叶子服务。
+// @Description: 首启在此播种管理员密码;metrics 挂在 manager 上、供 reporter 与 router 共用;
+// vstore 仅在此域内被 variants 服务与清理器复用,不外泄。
+// @param in 基础设施构件
+// @param logger 结构化日志
+// @return 业务服务集
+// @return 装配失败时的错误
+func buildServices(in infra, logger *slog.Logger) (services, error) {
+	authSvc := auth.New(auth.Config{Conn: in.conn, Queries: in.queries, Logger: logger})
+	if err := seedAdminPassword(in.boot, in.queries, authSvc, logger); err != nil {
+		return services{}, err
+	}
+
+	manager, err := channel.NewManager(context.Background(), channel.ManagerConfig{
+		Conn: in.conn, Queries: in.queries, Master: in.master, DataDir: in.boot.DataDir, Logger: logger,
+	})
+	if err != nil {
+		return services{}, err
+	}
+	runner, err := replication.NewRunner(replication.RunnerConfig{
+		Conn: in.conn, Queries: in.queries, Manager: manager,
+		Purger: settingsPurger{settings: in.store.Current}, Logger: logger,
+	})
+	if err != nil {
+		return services{}, err
+	}
+	refererSvc, err := referer.New(context.Background(), in.queries)
+	if err != nil {
+		return services{}, err
+	}
+
+	metrics := buildMetrics(manager)
+	vstore := variants.New(variants.Config{
+		Dir:      filepath.Join(in.boot.DataDir, "variants"),
+		Capacity: func() int64 { return in.store.Current().VariantsCacheMB << 20 },
+		Queries:  in.queries, Logger: logger,
+	})
+
+	return services{
+		auth:     authSvc,
+		manager:  manager,
+		runner:   runner,
+		referer:  refererSvc,
+		metrics:  metrics,
+		audit:    audit.New(in.queries),
+		variants: variants.NewService(variants.ServiceConfig{Store: vstore, Settings: in.store.Current, Logger: logger}),
+		upload: upload.New(upload.Config{
+			Conn: in.conn, Queries: in.queries, Channels: manager, Replicator: runner,
+			Settings: in.store.Current, Logger: logger,
+		}),
+		tracker: lifecycle.NewTracker(in.conn, in.queries, func() bool { return in.store.Current().TTLRenewOnAccess }, logger),
+		sweeper: lifecycle.New(lifecycle.Config{
+			Conn: in.conn, Queries: in.queries, Deleter: runner, Variants: vstore, Purger: runner,
+			Settings: in.store.Current, Logger: logger,
+		}),
+		merger: dedup.New(dedup.Config{Conn: in.conn, Queries: in.queries, Settings: in.store.Current, Logger: logger}),
+		reporter: usage.New(usage.Config{
+			Queries: in.queries, Gauge: metrics,
+			QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
+			Logger:     logger,
+		}),
+		backup: reliability.New(reliability.Config{
+			Conn: in.conn, Channels: manager, DataDir: in.boot.DataDir,
+			Keep: func() int { return in.store.Current().BackupKeep }, Logger: logger,
+		}),
+	}, nil
+}
+
+// buildHTTP 装配 HTTP 层:公有 API、后台 API、路由,组装成配好超时的 http.Server。
+// @param in 基础设施构件
+// @param s 业务服务集
+// @param logger 结构化日志
+// @return HTTP 服务器
+func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
+	pub := publicapi.New(publicapi.Config{
+		Queries: in.queries, Channels: s.manager, Upload: s.upload,
+		Settings: in.store.Current, Activity: s.tracker, Variants: s.variants, Logger: logger,
+	})
+	adm := adminapi.New(adminapi.Config{
+		Admin: s.manager, Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
+		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot, Logger: logger,
+	})
+	handler := router.New(router.Config{
+		Public: pub, Admin: adm, Auth: s.auth, Settings: in.store.Current,
+		RefererPatterns: s.referer.Patterns, Metrics: s.metrics, Web: web.Dist(), Logger: logger,
+	})
+	return &http.Server{
+		Addr:              in.boot.Listen,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       idleTimeout,
+	}
+}
+
+// loadMasterKey 解析主密钥:环境变量(hex)优先,否则数据目录文件(首启生成)。
+// @return 主密钥
+// @return 密钥非法或文件读写失败时的错误
+func loadMasterKey(boot config.Bootstrap, logger *slog.Logger) (*secret.MasterKey, error) {
+	if boot.MasterKey != "" {
+		key, err := secret.MasterKeyFromHex(boot.MasterKey)
+		if err != nil {
+			return nil, fmt.Errorf("master_key 配置非法: %w", err)
+		}
+		return key, nil
+	}
+	key, created, err := secret.LoadOrCreate(boot.DataDir)
+	if err != nil {
+		return nil, err
+	}
+	if created {
+		logger.Warn("已生成主密钥文件,请立即备份——丢失将导致渠道配置与加密渠道数据永久不可恢复",
+			"path", filepath.Join(boot.DataDir, "master.key"))
+	}
+	return key, nil
+}
+
+// loadSettings 装载运营配置存储,并打一行 CDN purge 启用状态便于自助排障。
+// @return 配置存储
+// @return 装载失败时的错误
+func loadSettings(conn *sql.DB, queries *sqlc.Queries, master *secret.MasterKey, logger *slog.Logger) (*config.Store, error) {
+	store, err := config.LoadStore(context.Background(), conn, queries, master)
+	if err != nil {
+		return nil, err
+	}
+	if set := store.Current(); set.CDNPurgeEnabled() {
+		logger.Info("CDN purge 已启用(Cloudflare)", "zone", set.CDNCloudflareZoneID)
+	} else {
+		logger.Info("CDN purge 未启用(需在设置页同时配置 zone、api_token 与 base_url)")
+	}
+	return store, nil
+}
+
+// seedAdminPassword 首启初始化管理员密码,幂等。
+// @Description: 仅首启(管理员尚未设密)才初始化——配置了 admin_password 用它,否则
+// 自动生成随机密码并经启动日志一次性告知,保证零配置也能登录后台。已设密后再改
+// admin_password 不生效,以后台修改为准。失败即启动失败,不以半初始化状态对外。
+// @param boot 引导配置
+// @param queries 查询集
+// @param authSvc 认证服务
+// @param logger 结构化日志
+// @return 播种失败时的错误
+func seedAdminPassword(boot config.Bootstrap, queries *sqlc.Queries, authSvc *auth.Service, logger *slog.Logger) error {
+	ctx := context.Background()
+	admin, err := queries.GetUser(ctx, sqlc.DefaultUserID)
+	if err != nil {
+		return fmt.Errorf("读取内置管理员: %w", err)
+	}
+	if admin.PasswordHash != "" {
+		return nil
+	}
+	password, generated := boot.AdminPassword, false
+	if password == "" {
+		if password, err = auth.NewRandomPassword(); err != nil {
+			return fmt.Errorf("生成初始管理员密码: %w", err)
+		}
+		generated = true
+	}
+	if err := authSvc.SetPassword(ctx, sqlc.DefaultUserID, password); err != nil {
+		return fmt.Errorf("初始化管理员密码: %w", err)
+	}
+	if generated {
+		logger.Warn("未配置 admin_password,已生成初始管理员密码——请登录后立即修改,此密码仅此一次打印",
+			"user", "admin", "password", password)
+	} else {
+		logger.Info("已按 admin_password 配置初始化管理员密码", "user", "admin")
+	}
+	return nil
+}
+
+// settingsPurger 按当前配置执行 CDN purge:逐次取快照判定启用与凭证,
+// 后台改配置即刻生效;未启用时空操作成功,遗留任务安静消化。
+type settingsPurger struct {
+	settings func() config.Settings // 运营配置快照读取口
+}
+
+// Purge 清理给定绝对 URL 的边缘缓存;purge 未启用时为空操作。
+// @param ctx 控制超时与取消
+// @param urls 待清理的绝对 URL 列表
+// @return Cloudflare API 错误
+func (p settingsPurger) Purge(ctx context.Context, urls []string) error {
+	set := p.settings()
+	if !set.CDNPurgeEnabled() {
+		return nil
+	}
+	return cdn.NewCloudflare(set.CDNCloudflareZoneID, set.CDNCloudflareAPIToken).Purge(ctx, urls)
+}
+
+// buildMetrics 构造指标集,并挂上读取渠道健康的量表(闭包依赖 core,留在装配根)。
+// @return 指标集
+func buildMetrics(manager *channel.Manager) *observability.Metrics {
+	m := observability.New()
+	m.RegisterGauge("channels_healthy_total", "当前健康渠道数。",
+		func() float64 { return float64(len(manager.Healthy())) })
+	m.RegisterGauge("channels_total", "已加载渠道总数(含不健康)。",
+		func() float64 { return float64(len(manager.All())) })
+	return m
+}

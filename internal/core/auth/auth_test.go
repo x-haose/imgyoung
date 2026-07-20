@@ -5,27 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/auth"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // newTestService 建一个迁移到最新 schema 的临时库,并注册一个已设密码的测试用户。
 func newTestService(t *testing.T) (*auth.Service, *sqlc.Queries, *sql.DB) {
 	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试库: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移: %v", err)
-	}
-	queries := sqlc.New(conn)
+	conn, queries := dbtest.New(t)
 	svc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: slog.New(slog.DiscardHandler)})
 	phc, err := auth.HashPassword("correct-horse")
 	if err != nil {
@@ -167,8 +158,11 @@ func TestTokenLifecycle(t *testing.T) {
 	}
 	svc.FlushTokenUsage(ctx)
 	row, err := queries.GetToken(ctx, issued.ID)
-	if err != nil || !row.LastUsedAt.Valid {
-		t.Fatalf("使用时刻应已回写: %+v err=%v", row.LastUsedAt, err)
+	if err != nil {
+		t.Fatalf("查询 Token: %v", err)
+	}
+	if !row.LastUsedAt.Valid {
+		t.Fatalf("使用时刻应已回写: %+v", row.LastUsedAt)
 	}
 
 	if err := svc.RevokeToken(ctx, "u1", issued.ID); err != nil {

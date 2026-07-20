@@ -102,6 +102,44 @@ type Session struct {
 	CreatedAt string
 }
 
+type Setting struct {
+	ID                    int64
+	MaxUploadMb           int64
+	MaxPixelsMp           int64
+	MaxConcurrentUploads  int64
+	UploadRatePerMin      int64
+	BaseUrl               string
+	CdnCloudflareZoneID   string
+	CdnCloudflareApiToken string
+	AllowEmptyReferer     int64
+	ExifPolicy            string
+	MinSuccess            int64
+	AccessMode            string
+	EncryptNewChannels    int64
+	HealthCheckSeconds    int64
+	BackupIntervalHours   int64
+	BackupKeep            int64
+	CleanupSweepSeconds   int64
+	DeleteGraceMinutes    int64
+	DefaultTtlHours       int64
+	TtlRenewOnAccess      int64
+	ActivityFlushSeconds  int64
+	ColdCleanupDays       int64
+	UsageReportSeconds    int64
+	ChannelQuotaGb        int64
+	DedupScanSeconds      int64
+	DedupPhashMaxDistance int64
+	ProcessWidths         string
+	ProcessFormats        string
+	ProcessQualityWebp    int64
+	ProcessQualityJpeg    int64
+	ProcessWebpMethod     int64
+	ProcessWorkers        int64
+	ProcessTimeoutMs      int64
+	VariantsCacheMb       int64
+	UpdatedAt             string
+}
+
 type Token struct {
 	ID         int64
 	UserID     string

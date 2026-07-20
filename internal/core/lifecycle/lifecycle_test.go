@@ -6,15 +6,35 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/variants"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
+
+// testSettings 构造运营配置读取口:内嵌默认值上按需覆写。
+func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
+	t.Helper()
+	set := config.Defaults()
+	if mod != nil {
+		mod(&set)
+	}
+	return func() config.Settings { return set }
+}
+
+// purgeSettings 构造启用 CDN purge 的配置读取口(zone / token / base_url 三者齐备)。
+func purgeSettings(t *testing.T) func() config.Settings {
+	t.Helper()
+	return testSettings(t, func(s *config.Settings) {
+		s.BaseURL = "https://img.example.com"
+		s.CDNCloudflareZoneID = "zone"
+		s.CDNCloudflareAPIToken = "token"
+	})
+}
 
 // fakeDeleter 记录级联删除的入队调用。
 type fakeDeleter struct {
@@ -48,19 +68,7 @@ func (f *fakePurger) EnqueuePurge(_ context.Context, urls []string) error {
 // setup 打开临时库并迁移,返回连接与查询句柄。
 func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
-	conn, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试数据库: %v", err)
-	}
-	t.Cleanup(func() {
-		if cerr := conn.Close(); cerr != nil {
-			t.Errorf("关闭测试数据库: %v", cerr)
-		}
-	})
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移测试数据库: %v", err)
-	}
-	return conn, sqlc.New(conn)
+	return dbtest.New(t)
 }
 
 // TestSweepExpiresAndCascades 验证到期引用被回收、引用归零的物理图被物理删,
@@ -92,7 +100,8 @@ func TestSweepExpiresAndCascades(t *testing.T) {
 
 	deleter := &fakeDeleter{}
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: deleter, Grace: 0, Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Deleter: deleter, Settings: testSettings(t, nil),
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
@@ -140,11 +149,12 @@ func TestSweepCascadesVariants(t *testing.T) {
 	}
 
 	store := variants.New(variants.Config{
-		Dir: t.TempDir(), Capacity: 1 << 30, Queries: q, Logger: slog.New(slog.DiscardHandler),
+		Dir: t.TempDir(), Capacity: func() int64 { return 1 << 30 }, Queries: q,
+		Logger: slog.New(slog.DiscardHandler),
 	})
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Variants: store, Grace: 0,
-		Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Variants: store,
+		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
@@ -193,7 +203,7 @@ func TestDeleteCascadesCDNPurge(t *testing.T) {
 	purger := &fakePurger{}
 	sw := lifecycle.New(lifecycle.Config{
 		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Purger: purger,
-		BaseURL: "https://img.example.com", Grace: 0, Logger: slog.New(slog.DiscardHandler),
+		Settings: purgeSettings(t), Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.DeleteImage(ctx, "purgeimg01"); err != nil {
 		t.Fatalf("DeleteImage: %v", err)
@@ -241,8 +251,8 @@ func TestDeleteToleratesPurgeEnqueueFailure(t *testing.T) {
 
 	sw := lifecycle.New(lifecycle.Config{
 		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
-		Purger:  &fakePurger{err: errors.New("队列不可用")},
-		BaseURL: "https://img.example.com", Grace: 0, Logger: slog.New(slog.DiscardHandler),
+		Purger:   &fakePurger{err: errors.New("队列不可用")},
+		Settings: purgeSettings(t), Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.DeleteImage(ctx, "purgefail01"); err != nil {
 		t.Fatalf("purge 入队失败不应阻塞删除: %v", err)
@@ -277,7 +287,7 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	}
 
 	deleter := &fakeDeleter{}
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: deleter, Grace: 0, Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: deleter, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
@@ -318,7 +328,7 @@ func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
 		t.Fatalf("建幸存 image: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Grace: 0, Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
 
 	// 首次删除:引用消失,ref_count 2→1。
 	if err := sw.DeleteImage(ctx, "victimimg1"); err != nil {
@@ -363,7 +373,7 @@ func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
 		t.Fatalf("抢先删引用: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Grace: 0, Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
 	// Sweeper 扫不到已删的到期引用,直接调 SweepOnce 应无副作用;ref_count 保持 1。
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce: %v", err)
@@ -396,7 +406,7 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 		t.Fatalf("预置标签: %v", err)
 	}
 
-	tr := lifecycle.NewTracker(conn, q, false, slog.New(slog.DiscardHandler))
+	tr := lifecycle.NewTracker(conn, q, func() bool { return false }, slog.New(slog.DiscardHandler))
 	// 同一 flush 周期内多次 Touch 只计一次(内存集合去重即计数口径)。
 	tr.Touch("img0000001")
 	tr.Touch("img0000001")
@@ -476,7 +486,7 @@ func TestTrackerFlushRenewsTTL(t *testing.T) {
 	renewImage(t, conn, q, "exemptimg1", "k2", soon, ttl, true)
 	renewImage(t, conn, q, "foreverimg", "k3", sql.NullString{}, sql.NullInt64{}, false)
 
-	tr := lifecycle.NewTracker(conn, q, true, slog.New(slog.DiscardHandler))
+	tr := lifecycle.NewTracker(conn, q, func() bool { return true }, slog.New(slog.DiscardHandler))
 	tr.Touch("hotimg0001")
 	tr.Touch("exemptimg1")
 	tr.Touch("foreverimg")
@@ -514,7 +524,7 @@ func TestTrackerFlushRenewsBeyondChunk(t *testing.T) {
 	const n = 501
 	soon := sql.NullString{String: sqlc.TimeText(time.Now().Add(time.Hour)), Valid: true}
 	ttl := sql.NullInt64{Int64: 7200, Valid: true}
-	tr := lifecycle.NewTracker(conn, q, true, slog.New(slog.DiscardHandler))
+	tr := lifecycle.NewTracker(conn, q, func() bool { return true }, slog.New(slog.DiscardHandler))
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("chunkimg%03d", i)
 		renewImage(t, conn, q, id, "ck"+id, soon, ttl, false)
@@ -541,7 +551,7 @@ func TestTrackerFlushNoRenewWhenDisabled(t *testing.T) {
 	soon := sql.NullString{String: sqlc.TimeText(time.Now().Add(time.Hour)), Valid: true}
 	renewImage(t, conn, q, "coldrenew1", "k1", soon, sql.NullInt64{Int64: 7200, Valid: true}, false)
 
-	tr := lifecycle.NewTracker(conn, q, false, slog.New(slog.DiscardHandler))
+	tr := lifecycle.NewTracker(conn, q, func() bool { return false }, slog.New(slog.DiscardHandler))
 	tr.Touch("coldrenew1")
 	if err := tr.Flush(t.Context()); err != nil {
 		t.Fatalf("Flush 返回错误: %v", err)
@@ -581,7 +591,7 @@ func TestLabelColdImages(t *testing.T) {
 		t.Fatalf("回拨创建时间: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, ColdThreshold: 90 * 24 * time.Hour, Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}

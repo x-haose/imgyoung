@@ -19,8 +19,9 @@ const rateLimiterEntryTTL = time.Hour
 
 // rateEntry 单个用户的令牌桶与最近活跃时刻。
 type rateEntry struct {
-	lim      *rate.Limiter // 该用户的令牌桶
-	lastSeen time.Time     // 最近一次请求时刻,闲置回收依据
+	lim       *rate.Limiter // 该用户的令牌桶
+	perMinute int           // 建桶时的每分钟额度;额度热调整后按当前值重建
+	lastSeen  time.Time     // 最近一次请求时刻,闲置回收依据
 }
 
 // uploadSubject 解析上传请求的认证主体用户 id:Token 主体或会话主体皆可。
@@ -38,19 +39,22 @@ func uploadSubject(r *http.Request) (string, bool) {
 
 // UploadRateLimit 按用户的上传频率限制中间件(进程内令牌桶)。
 // @Description: 须挂在认证中间件(TokenAuth 或 SessionAuth)之后,以认证主体的
-// 用户 id 为键——同一用户经 Token 与后台会话上传共享同一额度;
-// perMinute <= 0 表示不启用。突发额度等于每分钟额度,满则 429 + Retry-After。
-// @param perMinute 每用户每分钟允许的上传次数
+// 用户 id 为键——同一用户经 Token 与后台会话上传共享同一额度。
+// 额度逐请求取值,热生效:取值 <= 0 表示不启用,额度变更时该用户令牌桶按新额度重建。
+// 突发额度等于每分钟额度,满则 429 + Retry-After。
+// @param perMinute 每用户每分钟允许上传次数的读取口
 // @param l 结构化日志
 // @return 中间件
-func UploadRateLimit(perMinute int, l *slog.Logger) func(http.Handler) http.Handler {
-	if perMinute <= 0 {
-		return func(next http.Handler) http.Handler { return next }
-	}
+func UploadRateLimit(perMinute func() int, l *slog.Logger) func(http.Handler) http.Handler {
 	var mu sync.Mutex
 	entries := map[string]*rateEntry{}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			quota := perMinute()
+			if quota <= 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
 			userID, ok := uploadSubject(r)
 			if !ok {
 				httpx.WriteError(l, w, http.StatusUnauthorized, "未认证的上传请求")
@@ -59,15 +63,18 @@ func UploadRateLimit(perMinute int, l *slog.Logger) func(http.Handler) http.Hand
 			mu.Lock()
 			now := time.Now()
 			e, exists := entries[userID]
-			if !exists {
-				if len(entries) >= rateLimiterMaxEntries {
+			if !exists || e.perMinute != quota {
+				if !exists && len(entries) >= rateLimiterMaxEntries {
 					for k, v := range entries {
 						if now.Sub(v.lastSeen) > rateLimiterEntryTTL {
 							delete(entries, k)
 						}
 					}
 				}
-				e = &rateEntry{lim: rate.NewLimiter(rate.Every(time.Minute/time.Duration(perMinute)), perMinute)}
+				e = &rateEntry{
+					lim:       rate.NewLimiter(rate.Every(time.Minute/time.Duration(quota)), quota),
+					perMinute: quota,
+				}
 				entries[userID] = e
 			}
 			e.lastSeen = now
