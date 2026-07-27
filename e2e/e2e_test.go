@@ -29,9 +29,6 @@ import (
 	"time"
 )
 
-// testToken 全部实例共用的上传 Token(经 IMGYOUNG_TOKEN 首启植入 DB)。
-const testToken = "e2e-token"
-
 // testAdminPass 全部实例的管理员登录密码,即出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
 const testAdminPass = "imgyoung123" //nolint:gosec // 出厂默认密码,公开值非真实凭证
 
@@ -72,11 +69,43 @@ type instance struct {
 	dataDir string    // 数据目录
 	cmd     *exec.Cmd // 进程句柄
 	logPath string    // 服务日志文件路径
+	token   string    // 就绪后经管理 API 签发的管理员上传 Token 明文,数据面测试统一用它
 }
 
-// startInstance 以独立数据目录与端口启动一个服务进程,就绪后返回。
-// @param extraEnv 追加环境变量(覆盖默认)
-func startInstance(t *testing.T, extraEnv map[string]string) *instance {
+// seedToken 登录内置管理员并签发一枚上传 Token,写入实例供数据面测试使用。
+// @Description: 服务端不认任何环境变量托管的引导 Token——Token 一律后台签发,
+// 故实例就绪后必须走一遍真实签发链路才拿得到可上传的凭证。
+// @param inst 已就绪的实例
+func seedToken(t *testing.T, inst *instance) {
+	t.Helper()
+	client, csrf := adminSession(t, inst)
+	_, plaintext := issueToken(t, inst, client, csrf, "e2e")
+	inst.token = plaintext
+}
+
+// configure 经管理 API 改运营配置并断言热生效成功。
+// @Description: 运营配置的唯一真相是 settings 表、唯一写者是后台,不接受环境变量播种,
+// 故测试要调参只能走这条真实路径。
+// @param inst 已就绪的实例
+// @param settings 键→值补丁,键为 config.Settings 的 JSON 名
+func configure(t *testing.T, inst *instance, settings map[string]any) {
+	t.Helper()
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("序列化配置补丁: %v", err)
+	}
+	client, csrf := adminSession(t, inst)
+	resp := adminReq(t, client, csrf, http.MethodPut, inst.baseURL+"/api/admin/config", string(body))
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("改运营配置状态码 = %d, 期望 200; patch=%s body=%s", resp.StatusCode, body, raw)
+	}
+}
+
+// startInstance 以独立数据目录与端口启动一个服务进程,就绪后签发 Token 并应用运营配置。
+// @param settings 运营配置补丁(键为 config.Settings 的 JSON 名);渠道健康检查间隔已默认压到 1 秒
+func startInstance(t *testing.T, settings map[string]any) *instance {
 	t.Helper()
 	dataDir := t.TempDir()
 	port := freePort(t)
@@ -92,13 +121,8 @@ func startInstance(t *testing.T, extraEnv map[string]string) *instance {
 	}
 
 	env := map[string]string{
-		"IMGYOUNG_TOKEN":                testToken,
-		"IMGYOUNG_DATA_DIR":             dataDir,
-		"IMGYOUNG_LISTEN":               fmt.Sprintf("127.0.0.1:%d", port),
-		"IMGYOUNG_HEALTH_CHECK_SECONDS": "1",
-	}
-	for k, v := range extraEnv {
-		env[k] = v
+		"IMGYOUNG_DATA_DIR": dataDir,
+		"IMGYOUNG_LISTEN":   fmt.Sprintf("127.0.0.1:%d", port),
 	}
 	cmd := exec.Command(binPath)
 	cmd.Env = os.Environ()
@@ -133,6 +157,13 @@ func startInstance(t *testing.T, extraEnv map[string]string) *instance {
 		defer func() { _ = resp.Body.Close() }()
 		return resp.StatusCode == http.StatusOK
 	})
+	seedToken(t, inst)
+	// 健康检查间隔全实例压到 1 秒:用例等渠道状态翻转,出厂间隔太长会把每个用例拖成分钟级。
+	patch := map[string]any{"health_check_seconds": 1}
+	for k, v := range settings {
+		patch[k] = v
+	}
+	configure(t, inst, patch)
 	return inst
 }
 
@@ -234,7 +265,7 @@ func upload(t *testing.T, inst *instance, token, filename string, payload []byte
 // mustUpload 上传并断言 200,返回图片 URL 路径。
 func mustUpload(t *testing.T, inst *instance, payload []byte, fields, headers map[string]string) (id, path string) {
 	t.Helper()
-	resp := upload(t, inst, testToken, "e2e.bin", payload, fields, headers)
+	resp := upload(t, inst, inst.token, "e2e.bin", payload, fields, headers)
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -406,7 +437,7 @@ func TestUploadServeRoundTrip(t *testing.T) {
 
 // TestAuthAndValidation 鉴权与输入校验:401 / 415 / 413。
 func TestAuthAndValidation(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_MAX_UPLOAD_MB": "1"})
+	inst := startInstance(t, map[string]any{"max_upload_mb": 1})
 
 	noAuth := upload(t, inst, "", "a.png", pngBytes(t), nil, nil)
 	defer func() { _ = noAuth.Body.Close() }()
@@ -414,14 +445,14 @@ func TestAuthAndValidation(t *testing.T) {
 		t.Errorf("无 Token 状态码 = %d, 期望 401", noAuth.StatusCode)
 	}
 
-	notImage := upload(t, inst, testToken, "a.png", []byte("not an image"), nil, nil)
+	notImage := upload(t, inst, inst.token, "a.png", []byte("not an image"), nil, nil)
 	defer func() { _ = notImage.Body.Close() }()
 	if notImage.StatusCode != http.StatusUnsupportedMediaType {
 		t.Errorf("非图片状态码 = %d, 期望 415", notImage.StatusCode)
 	}
 
 	big := append(pngBytes(t), bytes.Repeat([]byte{0}, 2<<20)...)
-	tooBig := upload(t, inst, testToken, "big.png", big, nil, nil)
+	tooBig := upload(t, inst, inst.token, "big.png", big, nil, nil)
 	defer func() { _ = tooBig.Body.Close() }()
 	if tooBig.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("超限状态码 = %d, 期望 413", tooBig.StatusCode)
@@ -457,7 +488,16 @@ func TestIdempotency(t *testing.T) {
 
 // TestRefererProtection 防盗链:白名单命中放行、未命中 403、空 Referer 放行。
 func TestRefererProtection(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_REFERER_WHITELIST": "*.ok.com"})
+	inst := startInstance(t, nil)
+	// 白名单以 referer_whitelist 表为真相、增删即时生效,故经管理 API 加规则。
+	client, csrf := adminSession(t, inst)
+	added := adminReq(t, client, csrf, http.MethodPost, inst.baseURL+"/api/admin/referer-whitelist",
+		`{"pattern":"*.ok.com"}`)
+	addedCode := added.StatusCode
+	_ = added.Body.Close()
+	if addedCode != http.StatusCreated {
+		t.Fatalf("添加白名单规则状态码 = %d, 期望 201", addedCode)
+	}
 	_, url := mustUpload(t, inst, pngBytes(t), nil, nil)
 
 	cases := map[string]struct {
@@ -544,7 +584,7 @@ func TestEncryptedChannel(t *testing.T) {
 
 // TestRedirectMode 302 省流量模式:允许直链的渠道返回重定向。
 func TestRedirectMode(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_ACCESS_MODE": "redirect"})
+	inst := startInstance(t, map[string]any{"access_mode": "redirect"})
 	createChannel(t, inst, fmt.Sprintf(
 		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub"}}`,
 		t.TempDir()))
@@ -614,7 +654,7 @@ func TestRestartRecovery(t *testing.T) {
 		t.Fatalf("等待退出: %v", err)
 	}
 	listen := strings.TrimPrefix(inst.baseURL, "http://")
-	inst2 := startInstanceAt(t, inst.dataDir, listen)
+	inst2 := startInstanceAt(t, inst, listen)
 
 	if got := fetchBytes(t, inst2, url); !bytes.Equal(got, payload) {
 		t.Fatal("重启后既有图不可访问或字节不一致")
@@ -633,7 +673,7 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	stopInstance(t, inst)
 
 	// 重启触发一次启动备份,此时快照已含刚上传的图。
-	inst2 := startInstanceAt(t, inst.dataDir, listen)
+	inst2 := startInstanceAt(t, inst, listen)
 	backupDir := filepath.Join(inst.dataDir, "blobs", "_imgyoung", "backup")
 	waitUntil(t, 15*time.Second, "启动快照落到渠道", func() bool { return dirHasFiles(backupDir) })
 	snapshots, err := filepath.Glob(filepath.Join(backupDir, "imgyoung-*.db"))
@@ -660,7 +700,7 @@ func TestBackupSnapshotRestore(t *testing.T) {
 		t.Fatalf("以快照恢复数据库: %v", werr)
 	}
 
-	inst3 := startInstanceAt(t, inst.dataDir, listen)
+	inst3 := startInstanceAt(t, inst, listen)
 	if got := fetchBytes(t, inst3, url); !bytes.Equal(got, payload) {
 		t.Fatal("从渠道快照恢复元数据后,既有图不可访问或字节不一致")
 	}
@@ -668,9 +708,9 @@ func TestBackupSnapshotRestore(t *testing.T) {
 
 // TestTTLExpiryDeletes 验证迭代 4 验收:设短 TTL 的图到点消失、渠道副本随后被清。
 func TestTTLExpiryDeletes(t *testing.T) {
-	inst := startInstance(t, map[string]string{
-		"IMGYOUNG_CLEANUP_SWEEP_SECONDS": "1",
-		"IMGYOUNG_DELETE_GRACE_MINUTES":  "0",
+	inst := startInstance(t, map[string]any{
+		"cleanup_sweep_seconds": 1,
+		"delete_grace_minutes":  0,
 	})
 	payload := pngBytes(t)
 	_, url := mustUpload(t, inst, payload, map[string]string{"ttl": "1"}, nil)
@@ -704,13 +744,17 @@ func stopInstance(t *testing.T, inst *instance) {
 	}
 }
 
-// startInstanceAt 用既有数据目录与监听地址启动实例(重启场景)。
-func startInstanceAt(t *testing.T, dataDir, listen string) *instance {
+// startInstanceAt 在原数据目录上重启实例(重启场景)。
+// @Description: 沿用原实例的 Token 与运营配置——两者都在库里,重启不该重新签发或重配。
+// @param prev 已停止的原实例
+// @param listen 监听地址(与原实例一致才能复用其 URL)
+func startInstanceAt(t *testing.T, prev *instance, listen string) *instance {
 	t.Helper()
 	inst := &instance{
 		baseURL: "http://" + listen,
-		dataDir: dataDir,
-		logPath: filepath.Join(dataDir, "server-restart.log"),
+		dataDir: prev.dataDir,
+		logPath: filepath.Join(prev.dataDir, "server-restart.log"),
+		token:   prev.token,
 	}
 	logFile, err := os.Create(inst.logPath)
 	if err != nil {
@@ -718,10 +762,8 @@ func startInstanceAt(t *testing.T, dataDir, listen string) *instance {
 	}
 	cmd := exec.Command(binPath)
 	cmd.Env = append(os.Environ(),
-		"IMGYOUNG_TOKEN="+testToken,
-		"IMGYOUNG_DATA_DIR="+dataDir,
+		"IMGYOUNG_DATA_DIR="+prev.dataDir,
 		"IMGYOUNG_LISTEN="+listen,
-		"IMGYOUNG_HEALTH_CHECK_SECONDS=1",
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile

@@ -117,19 +117,11 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 
 // Run 周期查重(先精确合并,再相似扫描),直至 ctx 取消;启动即先跑一轮。
 // @Description: 精确合并先行,把字节相同的组收敛掉,相似扫描只对幸存 blob 工作。
-// @param interval 扫描间隔读取口,逐轮取值热生效
-func (m *Merger) Run(ctx context.Context, interval func() time.Duration) {
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func (m *Merger) Run(ctx context.Context, wait func(context.Context) bool) {
 	m.runOnce(ctx, "启动")
-	timer := time.NewTimer(interval())
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			m.runOnce(ctx, "定期")
-			timer.Reset(interval())
-		}
+	for wait(ctx) {
+		m.runOnce(ctx, "定期")
 	}
 }
 

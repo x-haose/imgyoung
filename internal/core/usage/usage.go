@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -56,22 +55,14 @@ func (r *Reporter) ReportOnce(ctx context.Context) error {
 }
 
 // Run 周期上报,直至 ctx 取消;启动即先报一次。
-// @param interval 上报间隔读取口,逐轮取值热生效
-func (r *Reporter) Run(ctx context.Context, interval func() time.Duration) {
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func (r *Reporter) Run(ctx context.Context, wait func(context.Context) bool) {
 	if err := r.ReportOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		r.cfg.Logger.Warn("启动用量上报未完成", "err", err)
 	}
-	timer := time.NewTimer(interval())
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			if err := r.ReportOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				r.cfg.Logger.Warn("定期用量上报未完成", "err", err)
-			}
-			timer.Reset(interval())
+	for wait(ctx) {
+		if err := r.ReportOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			r.cfg.Logger.Warn("定期用量上报未完成", "err", err)
 		}
 	}
 }

@@ -84,22 +84,14 @@ func (s *Service) RunOnce(ctx context.Context) error {
 }
 
 // Run 周期执行备份,直至 ctx 取消;启动即先备份一次。
-// @param interval 备份间隔读取口,逐轮取值热生效
-func (s *Service) Run(ctx context.Context, interval func() time.Duration) {
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func (s *Service) Run(ctx context.Context, wait func(context.Context) bool) {
 	if err := s.RunOnce(ctx); err != nil {
 		s.cfg.Logger.Warn("启动备份未完成", "err", err)
 	}
-	timer := time.NewTimer(interval())
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			if err := s.RunOnce(ctx); err != nil {
-				s.cfg.Logger.Warn("定时备份未完成", "err", err)
-			}
-			timer.Reset(interval())
+	for wait(ctx) {
+		if err := s.RunOnce(ctx); err != nil {
+			s.cfg.Logger.Warn("定时备份未完成", "err", err)
 		}
 	}
 }

@@ -40,10 +40,10 @@ func dirSizeBytes(dir string) int64 {
 // TestDedupMergeSharedBlob 精确查重:两张字节相同图各自落一份对象 → 合并后两引用仍可取回,
 // 冗余对象被物理回收(2→1),证明合并为同一物理副本。
 func TestDedupMergeSharedBlob(t *testing.T) {
-	inst := startInstance(t, map[string]string{
-		"IMGYOUNG_DEDUP_SCAN_SECONDS":    "2",
-		"IMGYOUNG_CLEANUP_SWEEP_SECONDS": "2",
-		"IMGYOUNG_DELETE_GRACE_MINUTES":  "0",
+	inst := startInstance(t, map[string]any{
+		"dedup_scan_seconds":    2,
+		"cleanup_sweep_seconds": 2,
+		"delete_grace_minutes":  0,
 	})
 	src := procJPEG(256, 256, 0)
 	id1, u1 := mustUpload(t, inst, src, nil, map[string]string{"Idempotency-Key": "dd-a"})
@@ -73,10 +73,10 @@ func TestDedupMergeSharedBlob(t *testing.T) {
 
 // TestMultiRefKeepsBlob 多引用共享 blob:合并后 refcount=2,删一个引用(ttl)另一个仍可取回、对象保留。
 func TestMultiRefKeepsBlob(t *testing.T) {
-	inst := startInstance(t, map[string]string{
-		"IMGYOUNG_DEDUP_SCAN_SECONDS":    "2",
-		"IMGYOUNG_CLEANUP_SWEEP_SECONDS": "2",
-		"IMGYOUNG_DELETE_GRACE_MINUTES":  "0",
+	inst := startInstance(t, map[string]any{
+		"dedup_scan_seconds":    2,
+		"cleanup_sweep_seconds": 2,
+		"delete_grace_minutes":  0,
 	})
 	src := procJPEG(200, 200, 0)
 	_, uKeep := mustUpload(t, inst, src, nil, map[string]string{"Idempotency-Key": "mr-keep"})
@@ -109,7 +109,7 @@ func TestMultiRefKeepsBlob(t *testing.T) {
 
 // TestHealthFlip 健康翻转:渠道后端不可达 → 标记不健康;恢复 → 标记健康。
 func TestHealthFlip(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_HEALTH_CHECK_SECONDS": "1"})
+	inst := startInstance(t, nil) // 健康检查间隔已由 startInstance 默认压到 1 秒
 	dir := filepath.Join(inst.dataDir, "flip")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
@@ -139,17 +139,18 @@ func TestHealthFlip(t *testing.T) {
 
 // TestVariantLRUEviction 变体缓存容量上限:生成远超上限的变体后,缓存目录总量被 LRU 压回上限附近。
 func TestVariantLRUEviction(t *testing.T) {
-	widths := "200,300,400,500,600,700,800,900,1000,1100,1200,1280"
-	inst := startInstance(t, map[string]string{
-		"IMGYOUNG_VARIANTS_CACHE_MB": "1", // 1MB 上限
-		"IMGYOUNG_PROCESS_WIDTHS":    widths,
-		"IMGYOUNG_PROCESS_FORMATS":   "webp,jpeg,png",
+	widths := []int{200, 300, 400, 500, 600, 700, 800, 900, 1000, 1100, 1200, 1280}
+	formats := []string{"webp", "jpeg", "png"}
+	inst := startInstance(t, map[string]any{
+		"variants_cache_mb": 1, // 1MB 上限
+		"process_widths":    widths,
+		"process_formats":   formats,
 	})
 	_, url := mustUpload(t, inst, procJPEG(1400, 1400, 0), nil, nil)
 	// 生成大量不同变体(12 宽 × 3 格式 = 36 个),总量远超 1MB。
-	for _, w := range []string{"200", "300", "400", "500", "600", "700", "800", "900", "1000", "1100", "1200", "1280"} {
-		for _, f := range []string{"webp", "jpeg", "png"} {
-			r := fetch(t, inst, url+"?w="+w+"&format="+f, "")
+	for _, w := range widths {
+		for _, f := range formats {
+			r := fetch(t, inst, fmt.Sprintf("%s?w=%d&format=%s", url, w, f), "")
 			_ = r.Body.Close()
 		}
 	}

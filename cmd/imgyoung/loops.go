@@ -8,6 +8,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 )
 
 // healthProbeTimeout 单轮健康探测的整体预算。
@@ -48,25 +49,50 @@ func authMaintenanceLoop(ctx context.Context, authSvc *auth.Service, logger *slo
 
 // healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记。
 // @param ctx 控制循环生命周期
-// @param interval 探测间隔读取口,逐轮取值热生效
-func healthLoop(ctx context.Context, interval func() time.Duration, manager *channel.Manager, logger *slog.Logger) {
-	timer := time.NewTimer(interval())
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			probeCtx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
-			changed, err := manager.CheckAll(probeCtx)
-			cancel()
-			if err != nil {
-				logger.Warn("健康检查未完成", "err", err)
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func healthLoop(ctx context.Context, wait waitFunc, manager *channel.Manager, logger *slog.Logger) {
+	for wait(ctx) {
+		probeCtx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
+		changed, err := manager.CheckAll(probeCtx)
+		cancel()
+		if err != nil {
+			logger.Warn("健康检查未完成", "err", err)
+		}
+		if len(changed) > 0 {
+			logger.Info("渠道健康状态变化", "channels", changed)
+		}
+	}
+}
+
+// waitFunc 周期任务的等待闸:睡到下一轮返回 true,ctx 取消返回 false。
+type waitFunc = func(context.Context) bool
+
+// waiter 造一个按配置间隔放行的周期闸。
+// @Description: 等待期间改了本轮间隔即刻按新值重排,不必等旧周期走完——否则把间隔从
+// 数小时改成数秒要等到旧周期到点才生效,与"保存即生效"不符。与本闸无关的配置变更不打扰计时。
+// @param pick 从配置快照取本闸的间隔
+// @return 等待闸
+func (a *app) waiter(pick func(config.Settings) time.Duration) waitFunc {
+	return func(ctx context.Context) bool {
+		d := pick(a.store.Current())
+		timer := time.NewTimer(d)
+		defer timer.Stop()
+		for {
+			changed := a.store.Changed()
+			select {
+			case <-ctx.Done():
+				return false
+			case <-timer.C:
+				return true
+			case <-changed:
+				next := pick(a.store.Current())
+				if next == d {
+					continue
+				}
+				d = next
+				timer.Stop()
+				timer.Reset(d)
 			}
-			if len(changed) > 0 {
-				logger.Info("渠道健康状态变化", "channels", changed)
-			}
-			timer.Reset(interval())
 		}
 	}
 }

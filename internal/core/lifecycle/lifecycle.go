@@ -62,22 +62,14 @@ type Sweeper struct {
 func New(cfg Config) *Sweeper { return &Sweeper{cfg: cfg} }
 
 // Run 周期清理,直至 ctx 取消;启动即先跑一轮。
-// @param interval 扫描间隔读取口,逐轮取值热生效
-func (s *Sweeper) Run(ctx context.Context, interval func() time.Duration) {
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func (s *Sweeper) Run(ctx context.Context, wait func(context.Context) bool) {
 	if err := s.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.cfg.Logger.Warn("启动清理未完成", "err", err)
 	}
-	timer := time.NewTimer(interval())
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-timer.C:
-			if err := s.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				s.cfg.Logger.Warn("定期清理未完成", "err", err)
-			}
-			timer.Reset(interval())
+	for wait(ctx) {
+		if err := s.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.cfg.Logger.Warn("定期清理未完成", "err", err)
 		}
 	}
 }

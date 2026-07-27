@@ -158,9 +158,9 @@ func TestLoginRateLimited(t *testing.T) {
 	}
 }
 
-// TestTokenIsSeededIntoDB 引导 Token 语义:环境变量值可上传,伪造值 401,
+// TestTokenAuthBoundary Token 鉴权边界:后台签发的 Token 可上传,伪造值 401,
 // 管理面拒绝 Token 凭证(Token 只授权数据 API)。
-func TestTokenIsSeededIntoDB(t *testing.T) {
+func TestTokenAuthBoundary(t *testing.T) {
 	inst := startInstance(t, nil)
 
 	forged := upload(t, inst, "forged-token", "e2e.png", pngBytes(t), nil, nil)
@@ -175,7 +175,7 @@ func TestTokenIsSeededIntoDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构造请求: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Authorization", "Bearer "+inst.token)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("发送请求: %v", err)

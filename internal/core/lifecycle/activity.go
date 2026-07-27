@@ -105,25 +105,17 @@ func (t *Tracker) Flush(ctx context.Context) error {
 }
 
 // Run 周期 flush,直至 ctx 取消;停机前做最后一次 flush 不丢累积。
-// @param interval flush 间隔读取口,逐轮取值热生效
-func (t *Tracker) Run(ctx context.Context, interval func() time.Duration) {
-	timer := time.NewTimer(interval())
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			flushCtx, cancel := context.WithTimeout(context.Background(), flushStopTimeout)
-			if err := t.Flush(flushCtx); err != nil {
-				t.logger.Warn("停机活跃度 flush 未完成", "err", err)
-			}
-			cancel()
-			return
-		case <-timer.C:
-			if err := t.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				t.logger.Warn("活跃度 flush 未完成", "err", err)
-			}
-			timer.Reset(interval())
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func (t *Tracker) Run(ctx context.Context, wait func(context.Context) bool) {
+	for wait(ctx) {
+		if err := t.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			t.logger.Warn("活跃度 flush 未完成", "err", err)
 		}
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), flushStopTimeout)
+	defer cancel()
+	if err := t.Flush(flushCtx); err != nil {
+		t.logger.Warn("停机活跃度 flush 未完成", "err", err)
 	}
 }
 

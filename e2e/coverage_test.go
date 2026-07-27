@@ -15,9 +15,9 @@ import (
 
 // TestMaxPixelsRejected 超像素预算 → 422。
 func TestMaxPixelsRejected(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_MAX_PIXELS_MP": "1"}) // 上限 100 万像素
+	inst := startInstance(t, map[string]any{"max_pixels_mp": 1}) // 上限 100 万像素
 	// 2000×2000 = 400 万像素,超限。
-	resp := upload(t, inst, testToken, "big.jpg", procJPEG(2000, 2000, 0), nil, nil)
+	resp := upload(t, inst, inst.token, "big.jpg", procJPEG(2000, 2000, 0), nil, nil)
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 422 {
 		t.Errorf("超像素上传期望 422,得 %d", resp.StatusCode)
@@ -26,7 +26,7 @@ func TestMaxPixelsRejected(t *testing.T) {
 
 // TestConcurrencyLimit 并发闸满 → 429(部分请求),同时应有成功者。
 func TestConcurrencyLimit(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_MAX_CONCURRENT_UPLOADS": "1"})
+	inst := startInstance(t, map[string]any{"max_concurrent_uploads": 1})
 	img := procJPEG(2600, 2000, 0) // 稍大,拉长单请求处理时间以制造重叠
 	const n = 12
 	var wg sync.WaitGroup
@@ -36,7 +36,7 @@ func TestConcurrencyLimit(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			// 每个请求独立幂等键,避免命中幂等短路。
-			resp := upload(t, inst, testToken, "c.jpg", img, nil,
+			resp := upload(t, inst, inst.token, "c.jpg", img, nil,
 				map[string]string{"Idempotency-Key": "conc-" + itoaLocal(idx)})
 			codes[idx] = resp.StatusCode
 			_ = resp.Body.Close()
@@ -62,7 +62,7 @@ func TestConcurrencyLimit(t *testing.T) {
 
 // TestVariantCacheHit 变体磁盘缓存:处理后缓存文件落盘,二次同参请求字节一致。
 func TestVariantCacheHit(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(800, 600, 0), nil, nil)
 	first := fetchBytes(t, inst, url+"?w=320")
 	// 缓存目录应出现变体文件。
@@ -78,7 +78,7 @@ func TestVariantCacheHit(t *testing.T) {
 
 // TestUsageMetrics 渠道用量周期上报到 /metrics。
 func TestUsageMetrics(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_USAGE_REPORT_SECONDS": "2"})
+	inst := startInstance(t, map[string]any{"usage_report_seconds": 2})
 	_, _ = mustUpload(t, inst, procJPEG(300, 300, 0), nil, nil)
 	got := poll5(func() bool {
 		return strings.Contains(string(fetchBytes(t, inst, "/metrics")), "imgyoung_channel_storage_bytes")

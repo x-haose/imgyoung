@@ -61,9 +61,9 @@ func TestRemoteR2RoundTrip(t *testing.T) {
 		t.Skip("未提供 R2 凭证环境变量,跳过真实远端渠道验证")
 	}
 
-	inst := startInstance(t, map[string]string{
-		"IMGYOUNG_CLEANUP_SWEEP_SECONDS": "2",
-		"IMGYOUNG_DELETE_GRACE_MINUTES":  "0",
+	inst := startInstance(t, map[string]any{
+		"cleanup_sweep_seconds": 2,
+		"delete_grace_minutes":  0,
 	})
 
 	// 建 s3 渠道,优先级高于内置 local(100),使其成为主渠道、上传同步写入 R2。

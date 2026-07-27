@@ -213,16 +213,16 @@ func TestQuotaEnforced(t *testing.T) {
 
 // TestUploadRateLimit 验收:每分钟频控生效,超出额度 429。
 func TestUploadRateLimit(t *testing.T) {
-	inst := startInstance(t, map[string]string{"IMGYOUNG_UPLOAD_RATE_PER_MIN": "2"})
+	inst := startInstance(t, map[string]any{"upload_rate_per_min": 2})
 	for i := range 2 {
-		resp := upload(t, inst, testToken, "a.png", pngBytes(t), nil, nil)
+		resp := upload(t, inst, inst.token, "a.png", pngBytes(t), nil, nil)
 		code := resp.StatusCode
 		_ = resp.Body.Close()
 		if code != http.StatusOK {
 			t.Fatalf("第 %d 次上传状态码 = %d, 期望 200", i+1, code)
 		}
 	}
-	third := upload(t, inst, testToken, "a.png", pngBytes(t), nil, nil)
+	third := upload(t, inst, inst.token, "a.png", pngBytes(t), nil, nil)
 	defer func() { _ = third.Body.Close() }()
 	if third.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("超频上传状态码 = %d, 期望 429", third.StatusCode)

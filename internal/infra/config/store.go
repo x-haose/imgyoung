@@ -47,6 +47,7 @@ type Store struct {
 	master  *secret.MasterKey        // 凭证类值的加解密密钥
 	mu      sync.Mutex               // 串行化写路径(落库+换快照全程),保证快照顺序与 DB 一致
 	snap    atomic.Pointer[Settings] // 当前生效配置快照
+	changed chan struct{}            // 变更广播:每次成功换快照即关闭并替换,mu 保护
 }
 
 // LoadStore 装载运营配置:确保默认行存在(列 DEFAULT 即出厂值),读入快照。
@@ -62,7 +63,7 @@ func LoadStore(ctx context.Context, conn *sql.DB, queries *sqlc.Queries, master 
 	if err := queries.EnsureSettingsRow(ctx); err != nil {
 		return nil, fmt.Errorf("初始化配置默认行: %w", err)
 	}
-	s := &Store{conn: conn, queries: queries, master: master}
+	s := &Store{conn: conn, queries: queries, master: master, changed: make(chan struct{})}
 	cur, err := s.load(ctx)
 	if err != nil {
 		return nil, err
@@ -78,6 +79,16 @@ func LoadStore(ctx context.Context, conn *sql.DB, queries *sqlc.Queries, master 
 // @Description: 切片字段与快照共享底层数组,调用方只读、不得修改。
 // @return 配置快照
 func (s *Store) Current() Settings { return *s.snap.Load() }
+
+// Changed 返回配置变更广播通道:任一次修改生效即关闭它。
+// @Description: 关闭即广播,监听方据此立刻按新快照重算自身参数——周期任务不必等旧周期
+// 走完才用上新间隔,兑现"保存即生效"。通道一次性,每轮监听都要重新取。
+// @return 只读通道,下次变更时被关闭
+func (s *Store) Changed() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.changed
+}
 
 // Update 应用一组按键的修改:合并当前快照 → 校验 → 落库 → 原子换入。
 // @Description: patch 里未出现的键不动;全部键落空(取值未变)时不写库不换快照。
@@ -109,6 +120,8 @@ func (s *Store) Update(ctx context.Context, patch map[string]json.RawMessage) ([
 		return nil, err
 	}
 	s.snap.Store(&next)
+	close(s.changed)
+	s.changed = make(chan struct{})
 	return changes, nil
 }
 

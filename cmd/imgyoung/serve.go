@@ -79,13 +79,15 @@ func (a *app) serve() error {
 
 // addLoops 把全部后台周期循环(用量/查重/清理/活跃度/健康/备份/认证维护)作为 actor 加入运行组。
 // @Description: 各循环共用 ctx,execute 跑到 ctx 取消即返回,interrupt 取消共享 ctx(幂等);
-// 间隔逐轮取自配置快照,后台改间隔热生效(当前轮走完、下一轮起生效)。均为兜底型循环。
+// 间隔取自配置快照,后台改间隔即刻重排当前等待。均为兜底型循环。
 // @param g 运行组
 // @param ctx 循环生命周期;取消即各自收敛退出
 // @param cancel 触发全组停机的取消函数
 func (a *app) addLoops(g *run.Group, ctx context.Context, cancel context.CancelFunc) {
-	seconds := func(pick func(config.Settings) int) func() time.Duration {
-		return func() time.Duration { return time.Duration(pick(a.store.Current())) * time.Second }
+	seconds := func(pick func(config.Settings) int) waitFunc {
+		return a.waiter(func(s config.Settings) time.Duration {
+			return time.Duration(pick(s)) * time.Second
+		})
 	}
 	add := func(fn func()) {
 		g.Add(func() error { fn(); return nil }, func(error) { cancel() })
@@ -100,8 +102,8 @@ func (a *app) addLoops(g *run.Group, ctx context.Context, cancel context.CancelF
 		healthLoop(ctx, seconds(func(s config.Settings) int { return s.HealthCheckSeconds }), a.manager, a.logger)
 	})
 	add(func() {
-		a.backup.Run(ctx, func() time.Duration {
-			return time.Duration(a.store.Current().BackupIntervalHours) * time.Hour
-		})
+		a.backup.Run(ctx, a.waiter(func(s config.Settings) time.Duration {
+			return time.Duration(s.BackupIntervalHours) * time.Hour
+		}))
 	})
 }

@@ -16,15 +16,15 @@ import (
 	"testing"
 )
 
-// procEnv 钉死处理档位与格式,使处理测试不依赖内嵌默认配置。
-var procEnv = map[string]string{
-	"IMGYOUNG_PROCESS_WIDTHS":  "320,640,1280",
-	"IMGYOUNG_PROCESS_FORMATS": "webp,jpeg,png",
+// procSettings 钉死处理档位与格式,使处理测试不依赖出厂默认配置。
+var procSettings = map[string]any{
+	"process_widths":  []int{320, 640, 1280},
+	"process_formats": []string{"webp", "jpeg", "png"},
 }
 
 // TestProcessResize 缩放:jpeg 上传后 ?w=320 应返回宽 320 的图。
 func TestProcessResize(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(800, 600, 0), nil, nil)
 	_, body := procGet(t, inst, url+"?w=320", nil)
 	if info := procInspect(body); info.width != 320 {
@@ -34,7 +34,7 @@ func TestProcessResize(t *testing.T) {
 
 // TestProcessFormatConvert 转格式:?format=webp 应返回 webp。
 func TestProcessFormatConvert(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	resp, body := procGet(t, inst, url+"?format=webp", nil)
 	if ct := resp.Header.Get("Content-Type"); ct != "image/webp" {
@@ -47,7 +47,7 @@ func TestProcessFormatConvert(t *testing.T) {
 
 // TestProcessNegotiationVary Accept 协商 + Vary:带 Accept image/webp 且无 format 应协商为 webp,响应带 Vary: Accept。
 func TestProcessNegotiationVary(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	resp, body := procGet(t, inst, url+"?w=320", map[string]string{"Accept": "image/webp"})
 	if procSniff(body) != "webp" {
@@ -60,7 +60,7 @@ func TestProcessNegotiationVary(t *testing.T) {
 
 // TestProcessETag304 变体 ETag/304:带处理参数取回得 ETag,再带 If-None-Match 应 304。
 func TestProcessETag304(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	resp, _ := procGet(t, inst, url+"?w=320", nil)
 	etag := resp.Header.Get("ETag")
@@ -76,7 +76,7 @@ func TestProcessETag304(t *testing.T) {
 // TestProcessOrientation EXIF orientation 校正(L5):800×600 左红右蓝 + orient=6 →
 // ?w=320 应得 320×426 竖图,且顶部像素偏红(顺时针 90 后原左半红转到顶部)。
 func TestProcessOrientation(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(800, 600, 6), nil, nil)
 	_, body := procGet(t, inst, url+"?w=320", nil)
 	info := procInspect(body)
@@ -95,7 +95,7 @@ func TestProcessOrientation(t *testing.T) {
 
 // TestProcessGifAnimationProtected 动图保护:gif 带处理参数仍应回原动图(不可重编码、不拍成静图)。
 func TestProcessGifAnimationProtected(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	src := procGIF(100, 100, 4)
 	_, url := mustUpload(t, inst, src, nil, nil)
 	// 原样取回应仍是 gif 且字节一致。
@@ -112,7 +112,7 @@ func TestProcessGifAnimationProtected(t *testing.T) {
 
 // TestProcessBadParams 档外参数应 400。
 func TestProcessBadParams(t *testing.T) {
-	inst := startInstance(t, procEnv)
+	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	if resp, _ := procGet(t, inst, url+"?w=999", nil); resp.StatusCode != 400 {
 		t.Errorf("档外宽度期望 400,得 %d", resp.StatusCode)
