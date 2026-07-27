@@ -32,8 +32,8 @@ import (
 // testToken 全部实例共用的上传 Token(经 IMGYOUNG_TOKEN 首启植入 DB)。
 const testToken = "e2e-token"
 
-// testAdminPass 全部实例共用的管理员密码(经 IMGYOUNG_ADMIN_PASSWORD 首启初始化)。
-const testAdminPass = "e2e-admin-pass" //nolint:gosec // 测试专用常量,非真实凭证
+// testAdminPass 全部实例的管理员登录密码,即出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
+const testAdminPass = "imgyoung123" //nolint:gosec // 出厂默认密码,公开值非真实凭证
 
 // bootDeadline 等待实例就绪的上限。
 const bootDeadline = 10 * time.Second
@@ -93,7 +93,6 @@ func startInstance(t *testing.T, extraEnv map[string]string) *instance {
 
 	env := map[string]string{
 		"IMGYOUNG_TOKEN":                testToken,
-		"IMGYOUNG_ADMIN_PASSWORD":       testAdminPass,
 		"IMGYOUNG_DATA_DIR":             dataDir,
 		"IMGYOUNG_LISTEN":               fmt.Sprintf("127.0.0.1:%d", port),
 		"IMGYOUNG_HEALTH_CHECK_SECONDS": "1",
@@ -720,7 +719,6 @@ func startInstanceAt(t *testing.T, dataDir, listen string) *instance {
 	cmd := exec.Command(binPath)
 	cmd.Env = append(os.Environ(),
 		"IMGYOUNG_TOKEN="+testToken,
-		"IMGYOUNG_ADMIN_PASSWORD="+testAdminPass,
 		"IMGYOUNG_DATA_DIR="+dataDir,
 		"IMGYOUNG_LISTEN="+listen,
 		"IMGYOUNG_HEALTH_CHECK_SECONDS=1",

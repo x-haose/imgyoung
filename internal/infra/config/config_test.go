@@ -69,8 +69,8 @@ func TestLoadBootstrapDefaults(t *testing.T) {
 	if b.Listen != ":8721" || b.DataDir != "data" {
 		t.Errorf("引导默认值异常: %+v", b)
 	}
-	if b.MasterKey != "" || b.AdminPassword != "" {
-		t.Errorf("密钥/密码期望默认为空: %+v", b)
+	if b.MasterKey != "" {
+		t.Errorf("主密钥期望默认为空: %+v", b)
 	}
 }
 
@@ -80,10 +80,9 @@ func TestLoadBootstrapEnv(t *testing.T) {
 	t.Setenv("IMGYOUNG_LISTEN", "127.0.0.1:9000")
 	t.Setenv("IMGYOUNG_DATA_DIR", "/var/lib/imgyoung")
 	t.Setenv("IMGYOUNG_MASTER_KEY", "deadbeef")
-	t.Setenv("IMGYOUNG_ADMIN_PASSWORD", "s3cret")
 	b := LoadBootstrap()
 	if b.Listen != "127.0.0.1:9000" || b.DataDir != "/var/lib/imgyoung" ||
-		b.MasterKey != "deadbeef" || b.AdminPassword != "s3cret" {
+		b.MasterKey != "deadbeef" {
 		t.Fatalf("引导配置未按环境变量覆盖: %+v", b)
 	}
 }

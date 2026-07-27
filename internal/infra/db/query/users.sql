@@ -24,8 +24,13 @@ ORDER BY u.created_at;
 
 -- name: UpdateUserPassword :exec
 UPDATE users
-SET password_hash = ?
+SET password_hash = ?, must_change_password = 0
 WHERE id = ?;
+
+-- name: SeedAdminPassword :execrows
+UPDATE users
+SET password_hash = ?, must_change_password = 1
+WHERE id = ? AND password_hash = '';
 
 -- name: UpdateUser :exec
 UPDATE users

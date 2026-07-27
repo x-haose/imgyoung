@@ -10,10 +10,9 @@ const envPrefix = "IMGYOUNG_"
 
 // 引导配置的环境变量名。
 const (
-	envListen        = envPrefix + "LISTEN"         // HTTP 监听地址
-	envDataDir       = envPrefix + "DATA_DIR"       // 数据目录
-	envMasterKey     = envPrefix + "MASTER_KEY"     // 主密钥(64 位 hex)
-	envAdminPassword = envPrefix + "ADMIN_PASSWORD" // 管理员初始密码
+	envListen    = envPrefix + "LISTEN"     // HTTP 监听地址
+	envDataDir   = envPrefix + "DATA_DIR"   // 数据目录
+	envMasterKey = envPrefix + "MASTER_KEY" // 主密钥(64 位 hex)
 )
 
 // 引导配置默认值。
@@ -22,13 +21,12 @@ const (
 	defaultDataDir = "data"  // 默认数据目录(相对工作目录)
 )
 
-// Bootstrap 引导配置:进程活起来之前就得知道、或仅作一次性种子的配置,只认环境变量。
+// Bootstrap 引导配置:进程活起来之前就得知道的配置,只认环境变量。
 // 改动它们需要重启;其余运营配置一律走 settings 表(见 Store),后台修改热生效。
 type Bootstrap struct {
-	Listen        string // HTTP 监听地址
-	DataDir       string // 数据目录(SQLite、本地渠道与主密钥文件)
-	MasterKey     string // 主密钥(64 位 hex);空则用数据目录下的 master.key 文件
-	AdminPassword string // 管理员初始密码;仅在管理员尚未设密时首启生效
+	Listen    string // HTTP 监听地址
+	DataDir   string // 数据目录(SQLite、本地渠道与主密钥文件)
+	MasterKey string // 主密钥(64 位 hex);空则用数据目录下的 master.key 文件
 }
 
 // LoadBootstrap 从环境变量装配引导配置;空值取默认。
@@ -37,10 +35,9 @@ type Bootstrap struct {
 // @return 引导配置
 func LoadBootstrap() Bootstrap {
 	return Bootstrap{
-		Listen:        envOrDefault(envListen, defaultListen),
-		DataDir:       envOrDefault(envDataDir, defaultDataDir),
-		MasterKey:     os.Getenv(envMasterKey),
-		AdminPassword: os.Getenv(envAdminPassword),
+		Listen:    envOrDefault(envListen, defaultListen),
+		DataDir:   envOrDefault(envDataDir, defaultDataDir),
+		MasterKey: os.Getenv(envMasterKey),
 	}
 }
 

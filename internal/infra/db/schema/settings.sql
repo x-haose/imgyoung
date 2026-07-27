@@ -1,6 +1,6 @@
 -- 运营配置:单行宽表(id 恒为 1),本表是运行中配置的唯一真相,后台修改、热生效。
 -- 每列 DEFAULT 即出厂默认值,首启插入默认行、升级加配置用 ADD COLUMN 自动补默认。
--- 引导配置(listen / data_dir / master_key / admin_password)只认环境变量,不入本表。
+-- 引导配置(listen / data_dir / master_key)只认环境变量,不入本表。
 CREATE TABLE settings (
     id INTEGER PRIMARY KEY CHECK (id = 1), -- 单行守卫:只允许 id=1,永远至多一行
     max_upload_mb INTEGER NOT NULL DEFAULT 50, -- 单图上限(MB)

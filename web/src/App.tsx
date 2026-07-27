@@ -15,8 +15,8 @@ import { Authenticated, Refine, type I18nProvider } from "@refinedev/core";
 import routerProvider, { CatchAllNavigate, NavigateToResource } from "@refinedev/react-router";
 import { App as AntdApp, ConfigProvider } from "antd";
 import zhCNLocale from "antd/locale/zh_CN";
-import { useMemo, useState } from "react";
-import { BrowserRouter, Outlet, Route, Routes } from "react-router";
+import { type ReactNode, useMemo, useState } from "react";
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router";
 
 import { interpolate, zhCN } from "./i18n/zhCN";
 import { AppLayout } from "./layout/AppLayout";
@@ -25,6 +25,7 @@ import { ChannelsPage } from "./pages/channels";
 import { CleanupPage } from "./pages/cleanup";
 import { DashboardPage } from "./pages/dashboard";
 import { DedupPage } from "./pages/dedup";
+import { FirstRunPasswordPage } from "./pages/first-run-password";
 import { GuidePage } from "./pages/guide";
 import { ImagesPage } from "./pages/images";
 import { LoginPage } from "./pages/login";
@@ -32,7 +33,7 @@ import { NotFoundPage } from "./pages/not-found";
 import { SettingsPage } from "./pages/settings";
 import { TokensPage } from "./pages/tokens";
 import { UsersPage } from "./pages/users";
-import { authProvider } from "./providers/authProvider";
+import { authProvider, FIRST_RUN_PATH, sessionUser } from "./providers/authProvider";
 import { dataProvider } from "./providers/dataProvider";
 import { darkTheme, lightTheme, storedThemeMode, themeStorageKey } from "./theme/theme";
 
@@ -48,6 +49,14 @@ const i18nProvider: I18nProvider = {
   changeLocale: async () => undefined,
   getLocale: () => "zh-CN",
 };
+
+/** PasswordGate 首次改密守卫:仍用出厂默认密码时,把业务页一律重定向到首次改密页。 */
+function PasswordGate({ children }: { children: ReactNode }) {
+  if (sessionUser()?.must_change_password) {
+    return <Navigate to={FIRST_RUN_PATH} replace />;
+  }
+  return <>{children}</>;
+}
 
 /** App 根:主题上下文 + Refine 装配 + 路由。 */
 export function App() {
@@ -126,23 +135,33 @@ export function App() {
               <Route
                 element={
                   <Authenticated key="app" fallback={<CatchAllNavigate to="/login" />}>
-                    <AppLayout mode={mode} onModeChange={changeMode}>
-                      <Outlet />
-                    </AppLayout>
+                    <Outlet />
                   </Authenticated>
                 }
               >
-                <Route index element={<DashboardPage />} />
-                <Route path="/images" element={<ImagesPage />} />
-                <Route path="/tokens" element={<TokensPage />} />
-                <Route path="/channels" element={<ChannelsPage />} />
-                <Route path="/users" element={<UsersPage />} />
-                <Route path="/dedup" element={<DedupPage />} />
-                <Route path="/cleanup" element={<CleanupPage />} />
-                <Route path="/audit" element={<AuditPage />} />
-                <Route path="/guide" element={<GuidePage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="*" element={<NotFoundPage />} />
+                {/* 首次改密页:已登录即可访问,不套后台框架、不过改密守卫,避免重定向自循环 */}
+                <Route path={FIRST_RUN_PATH} element={<FirstRunPasswordPage />} />
+                <Route
+                  element={
+                    <PasswordGate>
+                      <AppLayout mode={mode} onModeChange={changeMode}>
+                        <Outlet />
+                      </AppLayout>
+                    </PasswordGate>
+                  }
+                >
+                  <Route index element={<DashboardPage />} />
+                  <Route path="/images" element={<ImagesPage />} />
+                  <Route path="/tokens" element={<TokensPage />} />
+                  <Route path="/channels" element={<ChannelsPage />} />
+                  <Route path="/users" element={<UsersPage />} />
+                  <Route path="/dedup" element={<DedupPage />} />
+                  <Route path="/cleanup" element={<CleanupPage />} />
+                  <Route path="/audit" element={<AuditPage />} />
+                  <Route path="/guide" element={<GuidePage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                  <Route path="*" element={<NotFoundPage />} />
+                </Route>
               </Route>
               <Route
                 element={

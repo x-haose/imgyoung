@@ -7,7 +7,12 @@ export interface SessionUser {
   id: string;
   name: string;
   role: "admin" | "user";
+  /** 仍为出厂默认密码;为真时前端强制跳首次改密页,改前不放行其余页面。 */
+  must_change_password: boolean;
 }
+
+/** 首次强制改密页路由;仍用默认密码时所有已认证页都重定向到此。 */
+export const FIRST_RUN_PATH = "/first-run-password";
 
 interface SessionResponse {
   user: SessionUser;
@@ -31,7 +36,7 @@ export const authProvider: AuthProvider = {
       });
       setCsrfToken(res.csrf_token, res.user.id);
       currentUser = res.user;
-      return { success: true, redirectTo: "/" };
+      return { success: true, redirectTo: res.user.must_change_password ? FIRST_RUN_PATH : "/" };
     } catch (err) {
       const message = err instanceof ApiError ? err.message : "网络错误,请稍后重试";
       return {

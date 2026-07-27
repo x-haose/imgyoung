@@ -55,9 +55,10 @@ type Service struct {
 
 // Principal 认证通过后的请求主体,由中间件解析并显式传参进业务层。
 type Principal struct {
-	UserID string // 用户 id
-	Name   string // 登录名
-	Role   string // 角色:admin / user
+	UserID             string // 用户 id
+	Name               string // 登录名
+	Role               string // 角色:admin / user
+	MustChangePassword bool   // 当前仍为出厂默认密码,前端据此强制跳改密页
 }
 
 // IsAdmin 判定主体是否具备管理员角色。
@@ -151,7 +152,10 @@ func (s *Service) Login(ctx context.Context, name, password, clientIP string) (L
 	return LoginResult{
 		SessionID: sessionID,
 		CSRFToken: csrf,
-		Principal: Principal{UserID: user.ID, Name: user.Name, Role: user.Role},
+		Principal: Principal{
+			UserID: user.ID, Name: user.Name, Role: user.Role,
+			MustChangePassword: user.MustChangePassword != 0,
+		},
 	}, nil
 }
 
@@ -179,7 +183,10 @@ func (s *Service) ValidateSession(ctx context.Context, sessionID string) (Sessio
 		return SessionInfo{}, ErrSessionInvalid
 	}
 	return SessionInfo{
-		Principal: Principal{UserID: row.UserID, Name: row.UserName, Role: row.UserRole},
+		Principal: Principal{
+			UserID: row.UserID, Name: row.UserName, Role: row.UserRole,
+			MustChangePassword: row.UserMustChangePassword != 0,
+		},
 		CSRFToken: row.CsrfToken,
 	}, nil
 }

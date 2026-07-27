@@ -59,7 +59,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id string) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, password_hash, role, quota_bytes, default_ttl_hours, disabled, created_at
+SELECT id, name, password_hash, must_change_password, role, quota_bytes, default_ttl_hours, disabled, created_at
 FROM users
 WHERE id = ?
 `
@@ -71,6 +71,7 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 		&i.ID,
 		&i.Name,
 		&i.PasswordHash,
+		&i.MustChangePassword,
 		&i.Role,
 		&i.QuotaBytes,
 		&i.DefaultTtlHours,
@@ -81,7 +82,7 @@ func (q *Queries) GetUser(ctx context.Context, id string) (User, error) {
 }
 
 const getUserByName = `-- name: GetUserByName :one
-SELECT id, name, password_hash, role, quota_bytes, default_ttl_hours, disabled, created_at
+SELECT id, name, password_hash, must_change_password, role, quota_bytes, default_ttl_hours, disabled, created_at
 FROM users
 WHERE name = ?
 `
@@ -93,6 +94,7 @@ func (q *Queries) GetUserByName(ctx context.Context, name string) (User, error) 
 		&i.ID,
 		&i.Name,
 		&i.PasswordHash,
+		&i.MustChangePassword,
 		&i.Role,
 		&i.QuotaBytes,
 		&i.DefaultTtlHours,
@@ -103,7 +105,7 @@ func (q *Queries) GetUserByName(ctx context.Context, name string) (User, error) 
 }
 
 const listUsersWithUsage = `-- name: ListUsersWithUsage :many
-SELECT u.id, u.name, u.password_hash, u.role, u.quota_bytes, u.default_ttl_hours, u.disabled, u.created_at,
+SELECT u.id, u.name, u.password_hash, u.must_change_password, u.role, u.quota_bytes, u.default_ttl_hours, u.disabled, u.created_at,
        CAST(COALESCE(SUM(b.size), 0) AS INTEGER) AS used_bytes,
        CAST(COUNT(i.id) AS INTEGER) AS image_count
 FROM users u
@@ -114,16 +116,17 @@ ORDER BY u.created_at
 `
 
 type ListUsersWithUsageRow struct {
-	ID              string
-	Name            string
-	PasswordHash    string
-	Role            string
-	QuotaBytes      sql.NullInt64
-	DefaultTtlHours sql.NullInt64
-	Disabled        int64
-	CreatedAt       string
-	UsedBytes       int64
-	ImageCount      int64
+	ID                 string
+	Name               string
+	PasswordHash       string
+	MustChangePassword int64
+	Role               string
+	QuotaBytes         sql.NullInt64
+	DefaultTtlHours    sql.NullInt64
+	Disabled           int64
+	CreatedAt          string
+	UsedBytes          int64
+	ImageCount         int64
 }
 
 func (q *Queries) ListUsersWithUsage(ctx context.Context) ([]ListUsersWithUsageRow, error) {
@@ -139,6 +142,7 @@ func (q *Queries) ListUsersWithUsage(ctx context.Context) ([]ListUsersWithUsageR
 			&i.ID,
 			&i.Name,
 			&i.PasswordHash,
+			&i.MustChangePassword,
 			&i.Role,
 			&i.QuotaBytes,
 			&i.DefaultTtlHours,
@@ -158,6 +162,25 @@ func (q *Queries) ListUsersWithUsage(ctx context.Context) ([]ListUsersWithUsageR
 		return nil, err
 	}
 	return items, nil
+}
+
+const seedAdminPassword = `-- name: SeedAdminPassword :execrows
+UPDATE users
+SET password_hash = ?, must_change_password = 1
+WHERE id = ? AND password_hash = ''
+`
+
+type SeedAdminPasswordParams struct {
+	PasswordHash string
+	ID           string
+}
+
+func (q *Queries) SeedAdminPassword(ctx context.Context, arg SeedAdminPasswordParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, seedAdminPassword, arg.PasswordHash, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateUser = `-- name: UpdateUser :exec
@@ -189,7 +212,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 UPDATE users
-SET password_hash = ?
+SET password_hash = ?, must_change_password = 0
 WHERE id = ?
 `
 

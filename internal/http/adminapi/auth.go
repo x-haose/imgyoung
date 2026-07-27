@@ -29,9 +29,17 @@ type sessionResponse struct {
 
 // userInfo 面向前端的用户概要。
 type userInfo struct {
-	ID   string `json:"id"`   // 用户 id
-	Name string `json:"name"` // 登录名
-	Role string `json:"role"` // 角色:admin / user
+	ID                 string `json:"id"`                   // 用户 id
+	Name               string `json:"name"`                 // 登录名
+	Role               string `json:"role"`                 // 角色:admin / user
+	MustChangePassword bool   `json:"must_change_password"` // 仍为出厂默认密码,前端据此强制跳改密页
+}
+
+// toUserInfo 把认证主体投影成前端概要,登录与 /me 共用一处避免字段漏填。
+// @param p 认证主体
+// @return 前端用户概要
+func toUserInfo(p auth.Principal) userInfo {
+	return userInfo{ID: p.UserID, Name: p.Name, Role: p.Role, MustChangePassword: p.MustChangePassword}
 }
 
 // HandleLogin 登录:校验凭证、创建会话并下发 cookie。
@@ -63,7 +71,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, sessionCookie(res.SessionID, r, sessionCookieMaxAge))
 	h.cfg.Logger.Info("用户登录", "user", res.Principal.Name)
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, sessionResponse{
-		User:      userInfo{ID: res.Principal.UserID, Name: res.Principal.Name, Role: res.Principal.Role},
+		User:      toUserInfo(res.Principal),
 		CSRFToken: res.CSRFToken,
 	})
 }
@@ -89,7 +97,7 @@ func (h *Handlers) HandleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, sessionResponse{
-		User:      userInfo{ID: info.Principal.UserID, Name: info.Principal.Name, Role: info.Principal.Role},
+		User:      toUserInfo(info.Principal),
 		CSRFToken: info.CSRFToken,
 	})
 }

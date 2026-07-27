@@ -19,13 +19,7 @@ docker build -t imgyoung .
 docker run -p 8721:8721 -v imgyoung-data:/data imgyoung
 ```
 
-首启日志形如:
-
-```text
-level=WARN msg="未配置 admin_password,已生成初始管理员密码——请登录后立即修改,此密码仅此一次打印" user=admin password=xxxxxxxxxxxxxxxxxxxx
-```
-
-浏览器打开 `http://localhost:8721/`,用 `admin` + 日志里的密码登录,进后台「上传 Token」页签发一个 Token,即可用它上传:
+浏览器打开 `http://localhost:8721/`,用 `admin` + 默认密码 `imgyoung123` 登录(首次登录会要求你立即改密),进后台「上传 Token」页签发一个 Token,即可用它上传:
 
 ```bash
 # 上传(可选:-H "Idempotency-Key: xx" 幂等重试;-F exif_policy=strip 剥离 EXIF)
@@ -36,24 +30,22 @@ curl -H "Authorization: Bearer <后台签发的Token>" -F "file=@a.png" http://l
 open http://localhost:8721/i/R0RjUyP1UW
 ```
 
-需要完全无人值守初始化时,用 `IMGYOUNG_ADMIN_PASSWORD` 指定管理员初始密码;上传 Token 登录后台后签发。
-
 ## 管理后台
 
 浏览器打开 `http://localhost:8721/`,以 `admin` + 初始密码登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
 
-认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员初始密码首启时确定:配了 `IMGYOUNG_ADMIN_PASSWORD` 用它,否则自动生成并打印到日志;真相入库,之后一律在后台改。上传 Token 一律在后台签发,不设环境变量托管的引导 Token。
+认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员首启播种为出厂默认密码 `imgyoung123`(公开值,仅为开箱可登录,登录后强制改密);真相入库,改后一律以库为准。上传 Token 一律在后台签发,不设环境变量托管的引导 Token。
 
 ### 忘记密码
 
-密码在库里是 argon2id 哈希、无法手写,但首启播种逻辑是「管理员尚未设密时才播种」——所以清空该用户的 `password_hash` 再重启,进程会当作首启重新生成随机密码并打印到日志:
+密码在库里是 argon2id 哈希、无法手写,但首启播种逻辑是「管理员尚未设密时才播种」——所以清空该用户的 `password_hash` 再重启,进程会当作首启重新播种出厂默认密码 `imgyoung123`:
 
 ```bash
 # 停服后,对数据目录下的 imgyoung.db 执行(需要 sqlite3 或任意 SQLite 工具):
 sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 ```
 
-重启服务,翻启动日志拿新随机密码(或先设 `IMGYOUNG_ADMIN_PASSWORD` 再重启,用它作新密码),登录后到「设置 → 修改密码」改成自己的。
+重启服务,用 `admin` + `imgyoung123` 登录,系统会要求你立即改成新密码。
 
 ## 配置
 
@@ -66,7 +58,6 @@ sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 | `IMGYOUNG_LISTEN` | `:8721` | HTTP 监听地址 |
 | `IMGYOUNG_DATA_DIR` | `data` | 数据目录(SQLite 与本地存储) |
 | `IMGYOUNG_MASTER_KEY` | (自动生成 `data/master.key`) | 主密钥(64 位 hex),加密渠道凭证与派生渠道加密密码;**丢失则渠道配置与密文数据不可恢复** |
-| `IMGYOUNG_ADMIN_PASSWORD` | (空) | 管理员初始密码,仅在尚未设密时生效;之后以后台修改为准 |
 
 **运营配置**(真相在数据库 `settings` 单行宽表,后台「设置 → 运行配置」修改、保存即热生效):**不接受环境变量**——新实例登录后台配置一次即可,DB 随数据卷持久。下表列出各键与出厂默认(默认值即表列 `DEFAULT`,防盗链白名单在设置页单独管理):
 

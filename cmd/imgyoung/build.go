@@ -185,7 +185,7 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 // @return 装配失败时的错误
 func buildServices(in infra, logger *slog.Logger) (services, error) {
 	authSvc := auth.New(auth.Config{Conn: in.conn, Queries: in.queries, Logger: logger})
-	if err := seedAdminPassword(in.boot, in.queries, authSvc, logger); err != nil {
+	if err := seedAdminPassword(in.queries, logger); err != nil {
 		return services{}, err
 	}
 
@@ -308,16 +308,13 @@ func loadSettings(conn *sql.DB, queries *sqlc.Queries, master *secret.MasterKey,
 	return store, nil
 }
 
-// seedAdminPassword 首启初始化管理员密码,幂等。
-// @Description: 仅首启(管理员尚未设密)才初始化——配置了 admin_password 用它,否则
-// 自动生成随机密码并经启动日志一次性告知,保证零配置也能登录后台。已设密后再改
-// admin_password 不生效,以后台修改为准。失败即启动失败,不以半初始化状态对外。
-// @param boot 引导配置
+// seedAdminPassword 首启把内置管理员播种为出厂默认密码,幂等。
+// @Description: 仅当管理员尚未设密时播种 auth.DefaultAdminPassword 并置强制改密标记,
+// 保证零配置开箱可登录;已设密的库不触碰。失败即启动失败,不以半初始化状态对外。
 // @param queries 查询集
-// @param authSvc 认证服务
 // @param logger 结构化日志
 // @return 播种失败时的错误
-func seedAdminPassword(boot config.Bootstrap, queries *sqlc.Queries, authSvc *auth.Service, logger *slog.Logger) error {
+func seedAdminPassword(queries *sqlc.Queries, logger *slog.Logger) error {
 	ctx := context.Background()
 	admin, err := queries.GetUser(ctx, sqlc.DefaultUserID)
 	if err != nil {
@@ -326,22 +323,17 @@ func seedAdminPassword(boot config.Bootstrap, queries *sqlc.Queries, authSvc *au
 	if admin.PasswordHash != "" {
 		return nil
 	}
-	password, generated := boot.AdminPassword, false
-	if password == "" {
-		if password, err = auth.NewRandomPassword(); err != nil {
-			return fmt.Errorf("生成初始管理员密码: %w", err)
-		}
-		generated = true
+	phc, err := auth.HashPassword(auth.DefaultAdminPassword)
+	if err != nil {
+		return fmt.Errorf("哈希默认管理员密码: %w", err)
 	}
-	if err := authSvc.SetPassword(ctx, sqlc.DefaultUserID, password); err != nil {
-		return fmt.Errorf("初始化管理员密码: %w", err)
+	if _, err := queries.SeedAdminPassword(ctx, sqlc.SeedAdminPasswordParams{
+		PasswordHash: phc, ID: sqlc.DefaultUserID,
+	}); err != nil {
+		return fmt.Errorf("播种默认管理员密码: %w", err)
 	}
-	if generated {
-		logger.Warn("未配置 admin_password,已生成初始管理员密码——请登录后立即修改,此密码仅此一次打印",
-			"user", "admin", "password", password)
-	} else {
-		logger.Info("已按 admin_password 配置初始化管理员密码", "user", "admin")
-	}
+	logger.Warn("已初始化默认管理员密码,请登录后立即在后台修改",
+		"user", "admin", "password", auth.DefaultAdminPassword)
 	return nil
 }
 

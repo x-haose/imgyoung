@@ -66,20 +66,22 @@ func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID string) error
 
 const getSession = `-- name: GetSession :one
 SELECT s.token_hash, s.user_id, s.csrf_token, s.expires_at,
-       u.name AS user_name, u.role AS user_role, u.disabled AS user_disabled
+       u.name AS user_name, u.role AS user_role, u.disabled AS user_disabled,
+       u.must_change_password AS user_must_change_password
 FROM sessions s
 JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = ?
 `
 
 type GetSessionRow struct {
-	TokenHash    string
-	UserID       string
-	CsrfToken    string
-	ExpiresAt    string
-	UserName     string
-	UserRole     string
-	UserDisabled int64
+	TokenHash              string
+	UserID                 string
+	CsrfToken              string
+	ExpiresAt              string
+	UserName               string
+	UserRole               string
+	UserDisabled           int64
+	UserMustChangePassword int64
 }
 
 func (q *Queries) GetSession(ctx context.Context, tokenHash string) (GetSessionRow, error) {
@@ -93,6 +95,7 @@ func (q *Queries) GetSession(ctx context.Context, tokenHash string) (GetSessionR
 		&i.UserName,
 		&i.UserRole,
 		&i.UserDisabled,
+		&i.UserMustChangePassword,
 	)
 	return i, err
 }
