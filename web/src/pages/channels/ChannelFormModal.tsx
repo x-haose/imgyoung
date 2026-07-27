@@ -1,4 +1,4 @@
-import { MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
+import { ArrowLeftOutlined, MinusCircleOutlined, PlusOutlined } from "@ant-design/icons";
 import { useList } from "@refinedev/core";
 import {
   Alert,
@@ -100,6 +100,47 @@ const CUSTOM = "custom";
 /** 敏感配置值的回读哨兵:原样回传表示保留原凭证,与后端 channel.SecretPlaceholder 一致。 */
 const SECRET_PLACEHOLDER = "__imgyoung_secret_keep__";
 
+/** 各存储类型的辨识徽标:短标 + 品牌色;纯 CSS 方块渲染,不引外部图(守 CSP 与体积预算)。 */
+const TYPE_BADGES: Record<string, { text: string; color: string }> = {
+  "aws-s3": { text: "S3", color: "#FF9900" },
+  r2: { text: "R2", color: "#5B6EF5" },
+  cos: { text: "COS", color: "#00A4FF" },
+  oss: { text: "OSS", color: "#FF6A00" },
+  b2: { text: "B2", color: "#E21E29" },
+  minio: { text: "M", color: "#C7264B" },
+  "s3-compatible": { text: "S3", color: "#8C8C8C" },
+  [CUSTOM]: { text: "⚙", color: "#8C8C8C" },
+};
+
+/** 兜底徽标:未登记的模板 id 用中性灰 S3 标。 */
+const FALLBACK_BADGE = { text: "S3", color: "#8C8C8C" };
+
+/** TypeBadge 存储类型的品牌徽标方块;size 控制边长,三字符短标自动缩字号保持居中。 */
+function TypeBadge({ id, size }: { id: string; size: number }) {
+  const badge = TYPE_BADGES[id] ?? FALLBACK_BADGE;
+  const dense = badge.text.length >= 3;
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        flex: "0 0 auto",
+        borderRadius: size * 0.28,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: badge.color,
+        background: `${badge.color}1F`,
+        fontWeight: 700,
+        fontSize: dense ? size * 0.32 : size * 0.44,
+        letterSpacing: dense ? 0 : 0.5,
+      }}
+    >
+      {badge.text}
+    </div>
+  );
+}
+
 /** 创建模式的表单初值;编辑模式的预填在 Form 挂载后以 setFieldsValue 覆盖。 */
 const CREATE_DEFAULTS: FormValues = {
   name: "",
@@ -117,6 +158,7 @@ const CREATE_DEFAULTS: FormValues = {
 export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFormModalProps) {
   const isEdit = channel !== null;
   const [tplId, setTplId] = useState("");
+  const [hoverId, setHoverId] = useState(""); // 选类型网格的 hover 高亮项;仅驱动描边过渡
   const [prefill, setPrefill] = useState<FormValues | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -196,8 +238,15 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
   const reset = () => {
     form.resetFields();
     setTplId("");
+    setHoverId("");
     setPrefill(null);
     setLoadingConfig(false); // 配置加载中关闭弹窗时,落定回调被 cancelled 拦截,这里兜底复位
+    setTestResult(null);
+  };
+
+  // 返回选类型网格。重选类型时 switchTpl 会按新模板重置表单,故此处无需清理。
+  const goBack = () => {
+    setTplId("");
     setTestResult(null);
   };
 
@@ -327,58 +376,100 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
       onCancel={close}
       width={640}
       footer={
-        <Flex justify="space-between" align="center">
-          <Button onClick={test} loading={testing} disabled={tplId === ""}>
-            测试连接
-          </Button>
-          <Space>
-            <Button onClick={close}>取消</Button>
-            <Button type="primary" loading={saving} disabled={tplId === ""} onClick={() => form.submit()}>
-              {isEdit ? "保存" : "创建"}
+        tplId === "" ? (
+          // 选类型步:未定类型,测试/提交无意义,只留取消
+          <Button onClick={close}>取消</Button>
+        ) : (
+          <Flex justify="space-between" align="center">
+            <Button onClick={test} loading={testing}>
+              测试连接
             </Button>
-          </Space>
-        </Flex>
+            <Space>
+              <Button onClick={close}>取消</Button>
+              <Button type="primary" loading={saving} onClick={() => form.submit()}>
+                {isEdit ? "保存" : "创建"}
+              </Button>
+            </Space>
+          </Flex>
+        )
       }
     >
       {loadingConfig ? (
         <Skeleton active paragraph={{ rows: 5 }} />
-      ) : (
-        <>
-          <Typography.Text type="secondary">选择存储类型</Typography.Text>
-          <Flex wrap gap={8} style={{ margin: "10px 0 4px" }}>
+      ) : tplId === "" ? (
+        // 选类型步:品牌徽标网格,点选后整屏切到配置步
+        <div style={{ paddingTop: 4 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            选择存储类型
+          </Typography.Text>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 10,
+              marginTop: 12,
+            }}
+          >
             {[...tpls, { id: CUSTOM, name: "自定义", description: "手动填 rclone 参数" } as ChannelTemplate].map(
               (t) => {
-                const active = tplId === t.id;
+                const hovered = hoverId === t.id;
                 return (
                   <Card
                     key={t.id}
                     size="small"
                     hoverable
                     onClick={() => switchTpl(t.id)}
-                    styles={{ body: { padding: "8px 12px" } }}
+                    onMouseEnter={() => setHoverId(t.id)}
+                    onMouseLeave={() => setHoverId((cur) => (cur === t.id ? "" : cur))}
+                    styles={{ body: { padding: 12 } }}
                     style={{
-                      width: 140,
                       cursor: "pointer",
-                      borderColor: active ? token.colorPrimary : token.colorBorderSecondary,
-                      background: active ? token.colorPrimaryBg : undefined,
+                      transition: "border-color .2s",
+                      borderColor: hovered ? token.colorPrimary : token.colorBorderSecondary,
                     }}
                   >
-                    <Typography.Text strong style={{ display: "block", fontSize: 13 }}>
-                      {t.name}
-                    </Typography.Text>
-                    <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                      {t.description}
-                    </Typography.Text>
+                    <Flex gap={10} align="center">
+                      <TypeBadge id={t.id} size={36} />
+                      <div style={{ minWidth: 0 }}>
+                        <Typography.Text strong style={{ display: "block", fontSize: 13 }}>
+                          {t.name}
+                        </Typography.Text>
+                        <Typography.Text
+                          type="secondary"
+                          ellipsis={{ tooltip: t.description }}
+                          style={{ fontSize: 11, display: "block" }}
+                        >
+                          {t.description}
+                        </Typography.Text>
+                      </div>
+                    </Flex>
                   </Card>
                 );
               },
             )}
+          </div>
+        </div>
+      ) : (
+        // 配置步:返回头(徽标 + 类型名)+ 专属表单
+        <>
+          <Flex align="center" gap={12} style={{ marginBottom: 4 }}>
+            <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={goBack}>
+              返回
+            </Button>
+            <Divider type="vertical" style={{ margin: 0, height: 24 }} />
+            <TypeBadge id={tplId} size={32} />
+            <div style={{ minWidth: 0 }}>
+              <Typography.Text strong style={{ display: "block", fontSize: 14 }}>
+                {selected?.name ?? "自定义"}
+              </Typography.Text>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {selected?.description ?? "手动填 rclone 参数"}
+              </Typography.Text>
+            </div>
           </Flex>
-
-          {tplId !== "" && (
-            <>
-              <Divider style={{ margin: "12px 0" }} />
-              <Form
+          <Divider style={{ margin: "12px 0" }} />
+          <>
+            <Form
                 form={form}
                 layout="vertical"
                 onFinish={submit}
@@ -479,9 +570,8 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
                 />
               )}
             </>
-          )}
-        </>
-      )}
+          </>
+        )}
     </Modal>
   );
 }
