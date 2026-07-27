@@ -48,6 +48,8 @@ func New(cfg Config) http.Handler {
 		g.Use(uploadRate)
 		g.Use(uploadGate)
 		g.Post("/api/upload", cfg.Public.HandleUpload)
+		// URL 转存与直传共用同一管道与防护闸,只是字节来自远端抓取。
+		g.Post("/api/upload/url", cfg.Public.HandleUploadURL)
 	})
 	r.Route("/api/admin", func(a chi.Router) {
 		// 登录不在会话门内;其自身防护是凭证校验 + 登录限速。
@@ -58,6 +60,7 @@ func New(cfg Config) http.Handler {
 			g.Post("/auth/logout", cfg.Admin.HandleLogout)
 			// 后台上传:所有登录用户可用,与数据面同一上传管道与防护闸。
 			g.With(uploadRate, uploadGate).Post("/upload", cfg.Public.HandleSessionUpload)
+			g.With(uploadRate, uploadGate).Post("/upload/url", cfg.Public.HandleSessionUploadURL)
 			g.Get("/me", cfg.Admin.HandleMe)
 			g.Put("/me/password", cfg.Admin.HandleChangePassword)
 			g.Get("/dashboard", cfg.Admin.HandleDashboard)
@@ -109,7 +112,7 @@ func New(cfg Config) http.Handler {
 		})
 	})
 	r.Group(func(g chi.Router) {
-		// 防盗链只作用于对外公开图片入口。
+		// 防盗链只作用于对外公开图片入口;S3 对象键别名与短 ID 是同一张图的两个门,同守一道闸。
 		g.Use(middleware.RefererCheck(cfg.RefererPatterns, func() bool { return cfg.Settings().AllowEmptyReferer }))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
 	})

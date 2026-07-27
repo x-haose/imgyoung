@@ -19,6 +19,14 @@ type BlobChannels interface {
 	CandidatesForBlob(ctx context.Context, blobID int64) ([]channel.Handle, error)
 }
 
+// URLFetcher 按地址抓取远端内容(由 urlfetch.Fetcher 实现)。
+// @Description: 抽成接口是为了让 URL 转存的成功路径可测——真实抓取器按设计拒绝一切
+// 内网地址,而测试服务器只能监听环回,不换实现就永远只能覆盖到拒绝分支。
+type URLFetcher interface {
+	// Fetch 抓取指定地址的内容,返回字节与远端声明的 Content-Type。
+	Fetch(ctx context.Context, rawURL string) ([]byte, string, error)
+}
+
 // AccessTracker 记录公开访问活跃度(由 lifecycle.Tracker 实现);仅内存,极轻量。
 type AccessTracker interface {
 	// Touch 记录一次对该引用的公开访问。
@@ -30,6 +38,7 @@ type Config struct {
 	Queries  *sqlc.Queries          // sqlc 生成的类型安全查询集(访问路径用)
 	Channels BlobChannels           // 访问路径的渠道候选来源(容灾切换依据)
 	Upload   *upload.Service        // 上传编排服务
+	Fetch    URLFetcher             // URL 转存的抓取器(带 SSRF 约束)
 	Settings func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);上传上限/像素预算/访问模式/base_url/EXIF 默认档/处理档位均出自它
 	Activity AccessTracker          // 公开访问活跃度追踪器
 	Variants *variants.Service      // 按需处理服务;为 nil 表示不启用(仅代理原图)

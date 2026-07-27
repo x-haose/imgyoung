@@ -31,11 +31,15 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
+	"github.com/x-haose/imgyoung/internal/infra/urlfetch"
 	"github.com/x-haose/imgyoung/web"
 )
 
 // readHeaderTimeout 读取请求头的上限,防慢速连接占用。
 const readHeaderTimeout = 10 * time.Second
+
+// urlFetchTimeout URL 转存单次抓取的总时长上限;抓取期间占着上传并发闸,不能由远端拖住。
+const urlFetchTimeout = 30 * time.Second
 
 // idleTimeout keep-alive 空闲连接的回收上限;无它则慢速读客户端可长期占用 goroutine
 // (访问路径无并发闸兜底)。上传/下载本体不设 WriteTimeout,大图过慢链路由此放宽。
@@ -250,8 +254,10 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 // @param logger 结构化日志
 // @return HTTP 服务器
 func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
+	// URL 转存的大小上限与单图上限同源(逐次取快照,后台改即生效)。
+	fetcher := urlfetch.New(func() int64 { return in.store.Current().MaxUploadBytes() }, urlFetchTimeout)
 	pub := publicapi.New(publicapi.Config{
-		Queries: in.queries, Channels: s.manager, Upload: s.upload,
+		Queries: in.queries, Channels: s.manager, Upload: s.upload, Fetch: fetcher,
 		Settings: in.store.Current, Activity: s.tracker, Variants: s.variants, Logger: logger,
 	})
 	adm := adminapi.New(adminapi.Config{

@@ -2,9 +2,22 @@ import {
   CheckCircleFilled,
   CloseCircleFilled,
   InboxOutlined,
+  LinkOutlined,
   LoadingOutlined,
 } from "@ant-design/icons";
-import { App as AntdApp, Flex, InputNumber, Modal, Segmented, Typography, Upload, theme } from "antd";
+import {
+  App as AntdApp,
+  Button,
+  Divider,
+  Flex,
+  Input,
+  InputNumber,
+  Modal,
+  Segmented,
+  Typography,
+  Upload,
+  theme,
+} from "antd";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { apiFetch } from "../../api/http";
@@ -49,6 +62,8 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
   const [entries, setEntries] = useState<UploadEntry[]>([]);
   const [ttlMode, setTtlMode] = useState<TtlMode>("default");
   const [ttlHours, setTtlHours] = useState<number | null>(24);
+  const [sourceURL, setSourceURL] = useState("");
+  const [fetching, setFetching] = useState(false);
   const { token } = theme.useToken();
   const { message } = AntdApp.useApp();
 
@@ -95,6 +110,32 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
     },
     [patch],
   );
+
+  /** fetchFromURL 让服务端去抓取远端图片并落库(转存);抓取受 SSRF 约束,失败原因原样展示。 */
+  const fetchFromURL = useCallback(async () => {
+    const target = sourceURL.trim();
+    if (target === "") {
+      return;
+    }
+    const uid = nextUid.current;
+    nextUid.current += 1;
+    setEntries((prev) => [...prev, { uid, name: target, status: "uploading" }]);
+    setFetching(true);
+    const ttl = resolveTtl();
+    try {
+      const res = await apiFetch<UploadResult>("/api/admin/upload/url", {
+        method: "POST",
+        body: JSON.stringify(ttl == null ? { url: target } : { url: target, ttl }),
+      });
+      patch(uid, { status: "done", url: res.url });
+      setSourceURL("");
+      onUploaded();
+    } catch (err) {
+      patch(uid, { status: "error", error: err instanceof Error ? err.message : "转存失败" });
+    } finally {
+      setFetching(false);
+    }
+  }, [sourceURL, resolveTtl, patch, onUploaded]);
 
   /** pump 从待传队列取任务直到并发额度用满;队列清空且有成功时通知父级。 */
   const pump = useCallback(() => {
@@ -184,6 +225,34 @@ export function UploadModal({ open, onClose, onUploaded }: UploadModalProps) {
             支持多选与 Ctrl / ⌘ + V 粘贴剪贴板图片;jpeg · png · gif · webp
           </Typography.Text>
         </Upload.Dragger>
+
+        <Flex align="center" gap={8}>
+          <Divider style={{ margin: 0, flex: 1, minWidth: 0 }} />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            或从图片地址转存
+          </Typography.Text>
+          <Divider style={{ margin: 0, flex: 1, minWidth: 0 }} />
+        </Flex>
+
+        <Flex gap={8}>
+          <Input
+            prefix={<LinkOutlined style={{ color: token.colorTextTertiary }} />}
+            placeholder="https://example.com/photo.png"
+            value={sourceURL}
+            onChange={(e) => setSourceURL(e.target.value)}
+            onPressEnter={() => void fetchFromURL()}
+            disabled={fetching}
+          />
+          <Button
+            type="primary"
+            ghost
+            loading={fetching}
+            disabled={sourceURL.trim() === ""}
+            onClick={() => void fetchFromURL()}
+          >
+            转存
+          </Button>
+        </Flex>
 
         <Flex align="center" gap={10} wrap>
           <Typography.Text style={{ fontSize: 13 }}>有效期</Typography.Text>

@@ -1,19 +1,15 @@
 package publicapi
 
 import (
-	"net/http/httptest"
-	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
 
-// TestResolveTTL 验证 ttl 字段解析:never/0 显式永久、空值视为未显式指定
+// TestParseTTL 验证 ttl 取值解析:never/0 显式永久、空值视为未显式指定
 // (回退交上传服务按用户/全局默认解析),非整数、负数与超上限
 // (含会导致 time.Duration 溢出的巨值)一律判非法。
-func TestResolveTTL(t *testing.T) {
-	h := New(Config{})
+func TestParseTTL(t *testing.T) {
 	cases := []struct {
 		name     string
 		raw      string
@@ -33,15 +29,9 @@ func TestResolveTTL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			form := url.Values{}
-			if tc.raw != "" {
-				form.Set("ttl", tc.raw)
-			}
-			req := httptest.NewRequest("POST", "/api/upload", strings.NewReader(form.Encode()))
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			got, explicit, ok := h.resolveTTL(req)
+			got, explicit, ok := parseTTL(tc.raw)
 			if got != tc.want || explicit != tc.explicit || ok != tc.ok {
-				t.Errorf("resolveTTL(%q) = (%v, %t, %t), 期望 (%v, %t, %t)",
+				t.Errorf("parseTTL(%q) = (%v, %t, %t), 期望 (%v, %t, %t)",
 					tc.raw, got, explicit, ok, tc.want, tc.explicit, tc.ok)
 			}
 		})

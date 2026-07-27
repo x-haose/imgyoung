@@ -37,15 +37,15 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, _ *http.Request) {
 	}
 }
 
-// resolveTTL 解析请求的 ttl 字段;未显式指定时的"用户默认 > 全局默认"回退
+// parseTTL 解析 ttl 取值;未显式指定时的"用户默认 > 全局默认"回退
 // 由上传服务按用户行解析,本层只翻译请求。
 // @Description: ttl 单位秒;"never" 或 0 表示显式永久;空表示未显式指定。
-// @param r 上传请求
+// @param raw ttl 原始取值
 // @return 显式指定的有效时长(0 表示显式永久)
 // @return 是否显式指定了 ttl
 // @return ttl 取值合法为 true;非法(非整数、负数或超上限)为 false
-func (h *Handlers) resolveTTL(r *http.Request) (ttl time.Duration, explicit, ok bool) {
-	switch raw := r.FormValue("ttl"); raw {
+func parseTTL(raw string) (ttl time.Duration, explicit, ok bool) {
+	switch raw {
 	case "never":
 		return 0, true, true
 	case "":
@@ -115,14 +115,14 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		policy = set.EXIFPolicy
 	}
 
-	ttl, ttlSet, ok := h.resolveTTL(r)
+	ttl, ttlSet, ok := parseTTL(r.FormValue("ttl"))
 	if !ok {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
 			fmt.Sprintf("ttl 取值非法(需要 0 到 %d 的整数秒,或 never 表示永久)", maxTTLSeconds))
 		return
 	}
 
-	res, err := h.cfg.Upload.Process(r.Context(), data, upload.Options{
+	h.runUpload(w, r, set, data, upload.Options{
 		UserID:         userID,
 		TokenID:        tokenID,
 		FileName:       header.Filename,
@@ -131,21 +131,38 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		TTL:            ttl,
 		TTLSet:         ttlSet,
 	})
+}
+
+// runUpload 上传链路的公共尾段:调用上传服务、映射错误、写成功响应。
+// @Description: multipart 上传、URL 转存与 S3 协议入口只在"字节从哪来"上不同,
+// 拿到字节之后的编排、错误映射与响应形态必须一致,故收敛于此。
+// @param set 本次请求生效的配置快照
+// @param data 待上传的图片字节
+// @param opts 上传选项,调用方按各自入口解析后填好
+func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.Settings, data []byte, opts upload.Options) {
+	res, err := h.cfg.Upload.Process(r.Context(), data, opts)
 	if err != nil {
 		h.writeUploadError(w, set, err)
 		return
 	}
+	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", opts.FileName, "size", len(data))
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
+		ID:  res.ImageID,
+		URL: h.imageURL(r, set, res.ImageID),
+	})
+}
 
-	// 站点地址:配置了 base_url 一律用配置;未配置则按请求推导绝对地址。
+// imageURL 拼图片的对外绝对地址。
+// @Description: 配置了 base_url 一律用配置;未配置则按当前请求推导,保证响应里的 url 恒为绝对地址。
+// @param set 配置快照
+// @param imageID 对外短 ID
+// @return 绝对访问地址
+func (h *Handlers) imageURL(r *http.Request, set config.Settings, imageID string) string {
 	base := set.BaseURL
 	if base == "" {
 		base = httpx.RequestBaseURL(r)
 	}
-	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", header.Filename, "size", len(data))
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
-		ID:  res.ImageID,
-		URL: base + "/i/" + res.ImageID,
-	})
+	return base + "/i/" + imageID
 }
 
 // writeUploadError 把上传服务的业务错误映射为 HTTP 状态码与用户可读消息。

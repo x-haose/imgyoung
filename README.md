@@ -26,6 +26,10 @@ docker run -p 8721:8721 -v imgyoung-data:/data imgyoung
 curl -H "Authorization: Bearer <后台签发的Token>" -F "file=@a.png" http://localhost:8721/api/upload
 # => {"id":"R0RjUyP1UW","url":"/i/R0RjUyP1UW"}
 
+# 从别的图床转存一张(服务端替你抓,仅限公网地址)
+curl -H "Authorization: Bearer <后台签发的Token>" -H "Content-Type: application/json" \
+  -d '{"url":"https://example.com/photo.png"}' http://localhost:8721/api/upload/url
+
 # 访问(?w=400 档位缩放,浏览器支持时自动 WebP)
 open http://localhost:8721/i/R0RjUyP1UW
 ```
