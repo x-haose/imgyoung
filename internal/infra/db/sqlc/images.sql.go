@@ -30,6 +30,25 @@ func (q *Queries) AccessTotals(ctx context.Context) (AccessTotalsRow, error) {
 	return i, err
 }
 
+const clearObjectKey = `-- name: ClearObjectKey :execrows
+UPDATE images
+SET object_key = NULL
+WHERE user_id = ?1 AND object_key = ?2
+`
+
+type ClearObjectKeyParams struct {
+	UserID    string
+	ObjectKey sql.NullString
+}
+
+func (q *Queries) ClearObjectKey(ctx context.Context, arg ClearObjectKeyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, clearObjectKey, arg.UserID, arg.ObjectKey)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const countImages = `-- name: CountImages :one
 SELECT COUNT(*)
 FROM images
@@ -103,8 +122,8 @@ func (q *Queries) CountPendingCleanupImages(ctx context.Context) (int64, error) 
 }
 
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateImageParams struct {
@@ -113,6 +132,7 @@ type CreateImageParams struct {
 	UserID     string
 	TokenID    sql.NullInt64
 	FileName   string
+	ObjectKey  sql.NullString
 	ExpireAt   sql.NullString
 	TtlSeconds sql.NullInt64
 }
@@ -124,6 +144,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 		arg.UserID,
 		arg.TokenID,
 		arg.FileName,
+		arg.ObjectKey,
 		arg.ExpireAt,
 		arg.TtlSeconds,
 	)
@@ -231,6 +252,24 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 		&i.Sha256,
 	)
 	return i, err
+}
+
+const getImageIDByObjectKey = `-- name: GetImageIDByObjectKey :one
+SELECT id
+FROM images
+WHERE user_id = ?1 AND object_key = ?2
+`
+
+type GetImageIDByObjectKeyParams struct {
+	UserID    string
+	ObjectKey sql.NullString
+}
+
+func (q *Queries) GetImageIDByObjectKey(ctx context.Context, arg GetImageIDByObjectKeyParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getImageIDByObjectKey, arg.UserID, arg.ObjectKey)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const getImageOwner = `-- name: GetImageOwner :one
@@ -405,7 +444,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 }
 
 const listImagesExport = `-- name: ListImagesExport :many
-SELECT id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds,
+SELECT id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds,
        last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at
@@ -426,6 +465,7 @@ func (q *Queries) ListImagesExport(ctx context.Context) ([]Image, error) {
 			&i.UserID,
 			&i.TokenID,
 			&i.FileName,
+			&i.ObjectKey,
 			&i.ExpireAt,
 			&i.TtlSeconds,
 			&i.LastPublicAccessAt,

@@ -79,6 +79,7 @@ type Image struct {
 	UserID             string
 	TokenID            sql.NullInt64
 	FileName           string
+	ObjectKey          sql.NullString
 	ExpireAt           sql.NullString
 	TtlSeconds         sql.NullInt64
 	LastPublicAccessAt sql.NullString

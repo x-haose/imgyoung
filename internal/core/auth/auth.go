@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
 // sessionTTL 会话绝对有效期,到期须重新登录,不做滑动续期。
@@ -40,9 +41,10 @@ var dummyPHC = func() string {
 
 // Config Service 的全部依赖。
 type Config struct {
-	Conn    *sql.DB       // 数据库连接(事务用)
-	Queries *sqlc.Queries // sqlc 查询集
-	Logger  *slog.Logger  // 结构化日志
+	Conn    *sql.DB           // 数据库连接(事务用)
+	Queries *sqlc.Queries     // sqlc 查询集
+	Master  *secret.MasterKey // 主密钥;S3 协议凭证的密钥由它按 Token 哈希派生,不落库
+	Logger  *slog.Logger      // 结构化日志
 }
 
 // Service 认证服务;除 Token 使用追踪外无可变状态,并发安全。

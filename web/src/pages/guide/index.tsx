@@ -1,9 +1,11 @@
 import {
   ApiOutlined,
   CameraOutlined,
+  CloudServerOutlined,
   CloudUploadOutlined,
   ClusterOutlined,
   KeyOutlined,
+  LinkOutlined,
   PictureOutlined,
 } from "@ant-design/icons";
 import { Alert, Card, Col, Descriptions, Flex, Row, Table, Tag, Typography, theme } from "antd";
@@ -148,6 +150,13 @@ export function GuidePage() {
     `  ${origin}/api/upload`,
   ].join("\n");
 
+  const urlFetchExample = [
+    `curl -H "Authorization: Bearer <你的 Token>" \\`,
+    `  -H "Content-Type: application/json" \\`,
+    `  -d '{"url":"https://example.com/photo.png"}' \\`,
+    `  ${origin}/api/upload/url`,
+  ].join("\n");
+
   const responseExample = [
     `{`,
     `  "id": "R0RjUyP1UW",`,
@@ -269,7 +278,56 @@ export function GuidePage() {
         />
       </Card>
 
-      <Card title={sectionTitle("05", <PictureOutlined />, "后台直接上传")}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={12}>
+          <Card title={sectionTitle("05", <CloudServerOutlined />, "S3 协议客户端")} style={{ height: "100%" }}>
+            <Flex vertical gap={12}>
+              <Typography.Text type="secondary" style={{ fontSize: 13, lineHeight: 1.8 }}>
+                PicGo / PicList / Typora / iOS 快捷指令普遍内置「Amazon S3」上传选项,
+                本站同时以 S3 协议收图,选它即可、无需装插件。到
+                <Link to="/tokens">上传 Token</Link>页点某枚 Token 的「S3 配置」,
+                照着弹窗逐项填写。
+              </Typography.Text>
+              <Descriptions
+                column={1}
+                size="small"
+                bordered
+                items={[
+                  { label: "凭证", children: "access key 是 Token 前缀,secret 由主密钥派生;可随时回后台重看" },
+                  { label: "桶名 / 区域", children: "本站无桶概念也不分区域,按弹窗给的默认值填即可" },
+                  { label: "寻址风格", children: "路径风格(path-style);客户端若有该开关请勾上" },
+                  { label: "图片地址", children: "按弹窗给的「自定义域名」拼,形如 /o/<用户 id>/<对象键>" },
+                ]}
+              />
+              <Alert
+                type="info"
+                showIcon
+                message="同一对象键重复上传按 S3 语义覆盖:该键指向新图,旧图的短链仍然有效。"
+              />
+            </Flex>
+          </Card>
+        </Col>
+
+        <Col xs={24} xl={12}>
+          <Card title={sectionTitle("06", <LinkOutlined />, "从图片地址转存")} style={{ height: "100%" }}>
+            <Flex vertical gap={12}>
+              <Typography.Text type="secondary" style={{ fontSize: 13, lineHeight: 1.8 }}>
+                给一个图片网址,服务端替你抓回来存进图床——用于把散在别人图床上的图收归自有。
+                后台在<Link to="/images">图片</Link>页的上传弹窗里也有同样的入口。
+              </Typography.Text>
+              <CodeBlock code={urlFetchExample} />
+              <Alert
+                type="warning"
+                showIcon
+                message="仅支持 http / https 的公网地址"
+                description="指向内网、环回或云元数据地址的请求一律拒绝(含重定向的每一跳),这是防止有人借本服务探测你的内网。"
+              />
+            </Flex>
+          </Card>
+        </Col>
+      </Row>
+
+      <Card title={sectionTitle("07", <PictureOutlined />, "后台直接上传")}>
         <Typography.Text type="secondary" style={{ fontSize: 13, lineHeight: 1.8 }}>
           不想配客户端?在<Link to="/images">图片</Link>页点「上传图片」,
           支持拖拽、点选与 Ctrl / ⌘ + V 粘贴截图,走当前登录身份、无需 Token。

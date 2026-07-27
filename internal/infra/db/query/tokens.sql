@@ -16,6 +16,14 @@ WHERE t.token_hash = @token_hash
   AND t.revoked_at IS NULL
   AND (t.expires_at IS NULL OR t.expires_at > @now);
 
+-- name: GetActiveTokenByPrefix :one
+SELECT t.id, t.user_id, t.token_hash, t.scopes, u.disabled AS user_disabled
+FROM tokens t
+JOIN users u ON u.id = t.user_id
+WHERE t.prefix = @prefix
+  AND t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > @now);
+
 -- name: ListTokensByUser :many
 SELECT *
 FROM tokens

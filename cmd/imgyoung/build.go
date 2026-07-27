@@ -25,6 +25,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
 	"github.com/x-haose/imgyoung/internal/http/router"
+	"github.com/x-haose/imgyoung/internal/http/s3api"
 	"github.com/x-haose/imgyoung/internal/infra/cdn"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db"
@@ -188,7 +189,7 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 // @return 业务服务集
 // @return 装配失败时的错误
 func buildServices(in infra, logger *slog.Logger) (services, error) {
-	authSvc := auth.New(auth.Config{Conn: in.conn, Queries: in.queries, Logger: logger})
+	authSvc := auth.New(auth.Config{Conn: in.conn, Queries: in.queries, Master: in.master, Logger: logger})
 	if err := seedAdminPassword(in.queries, logger); err != nil {
 		return services{}, err
 	}
@@ -264,8 +265,11 @@ func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
 		Admin: s.manager, Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot, Logger: logger,
 	})
+	s3 := s3api.New(s3api.Config{
+		Auth: s.auth, Upload: s.upload, Settings: in.store.Current, Logger: logger,
+	})
 	handler := router.New(router.Config{
-		Public: pub, Admin: adm, Auth: s.auth, Settings: in.store.Current,
+		Public: pub, Admin: adm, S3: s3, Auth: s.auth, Settings: in.store.Current,
 		RefererPatterns: s.referer.Patterns, Metrics: s.metrics, Web: web.Dist(), Logger: logger,
 	})
 	return &http.Server{

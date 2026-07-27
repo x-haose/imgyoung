@@ -115,6 +115,41 @@ func (q *Queries) GetActiveTokenByHash(ctx context.Context, arg GetActiveTokenBy
 	return i, err
 }
 
+const getActiveTokenByPrefix = `-- name: GetActiveTokenByPrefix :one
+SELECT t.id, t.user_id, t.token_hash, t.scopes, u.disabled AS user_disabled
+FROM tokens t
+JOIN users u ON u.id = t.user_id
+WHERE t.prefix = ?1
+  AND t.revoked_at IS NULL
+  AND (t.expires_at IS NULL OR t.expires_at > ?2)
+`
+
+type GetActiveTokenByPrefixParams struct {
+	Prefix string
+	Now    sql.NullString
+}
+
+type GetActiveTokenByPrefixRow struct {
+	ID           int64
+	UserID       string
+	TokenHash    string
+	Scopes       string
+	UserDisabled int64
+}
+
+func (q *Queries) GetActiveTokenByPrefix(ctx context.Context, arg GetActiveTokenByPrefixParams) (GetActiveTokenByPrefixRow, error) {
+	row := q.db.QueryRowContext(ctx, getActiveTokenByPrefix, arg.Prefix, arg.Now)
+	var i GetActiveTokenByPrefixRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.Scopes,
+		&i.UserDisabled,
+	)
+	return i, err
+}
+
 const getToken = `-- name: GetToken :one
 SELECT id, user_id, name, token_hash, prefix, scopes, expires_at, last_used_at, revoked_at, created_at
 FROM tokens

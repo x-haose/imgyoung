@@ -34,11 +34,20 @@ curl -H "Authorization: Bearer <后台签发的Token>" -H "Content-Type: applica
 open http://localhost:8721/i/R0RjUyP1UW
 ```
 
+### 用 PicGo / Typora 等客户端
+
+这些客户端大多内置「Amazon S3」选项,本站同时以 S3 协议收图,选它即可、不必装插件:到后台
+「上传 Token」页点某枚 Token 的 **「S3 配置」**,把弹窗里的 access key / secret / 端点 / 自定义域名
+照填进客户端(勾上「路径风格」)。凭证就是这枚 Token——吊销它,S3 那条路同时失效。
+
+客户端自取的对象键会成为访问别名,`/o/<用户 id>/<对象键>` 与短链 `/i/<短ID>` 指向同一张图,
+所以客户端贴出来的 Markdown 链接直接可用。同键重传按 S3 语义覆盖:别名指向新图,旧图短链仍有效。
+
 ## 管理后台
 
 浏览器打开 `http://localhost:8721/`,以 `admin` + 初始密码登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
 
-认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销)。管理员首启播种为出厂默认密码 `imgyoung123`(公开值,仅为开箱可登录,登录后强制改密);真相入库,改后一律以库为准。上传 Token 一律在后台签发,不设环境变量托管的引导 Token。
+认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销;S3 协议面的 SigV4 签名用的也是这批 Token,不是第三套凭证)。管理员首启播种为出厂默认密码 `imgyoung123`(公开值,仅为开箱可登录,登录后强制改密);真相入库,改后一律以库为准。上传 Token 一律在后台签发,不设环境变量托管的引导 Token。
 
 ### 忘记密码
 

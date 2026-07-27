@@ -124,6 +124,7 @@ type Options struct {
 	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入,本包不做隐式回退;strip 按格式分发(JPEG/PNG/WebP 剥离,GIF 直通)
 	TTL            time.Duration      // 请求显式指定的有效时长,仅 TTLSet 为 true 时生效;0 表示显式永久
 	TTLSet         bool               // 请求是否显式指定 ttl;false 时按"用户默认 > 全局默认"解析,到期时刻由落库时刻推算
+	ObjectKey      string             // S3 协议上传时客户端指定的对象键,可为空;同用户同键按 S3 语义覆盖(旧图让出别名,短 ID 仍可访问)
 }
 
 // Service 上传编排服务,无可变状态、并发安全。
@@ -250,21 +251,22 @@ func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Resul
 
 	// Put 成功而落库失败会产生孤儿对象,由对账任务回收,此处不回滚渠道写入。
 	blobID, err := s.persist(ctx, persistParams{
-		shortID:  shortID,
-		userID:   opts.UserID,
-		tokenID:  opts.TokenID,
-		fileName: fileName,
-		idemKey:  idemKey,
-		doneIDs:  doneIDs,
-		channels: all,
-		sha256:   hex.EncodeToString(sum[:]),
-		phash:    int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
-		key:      key,
-		mime:     mime,
-		size:     int64(len(data)),
-		width:    int64(meta.Width),
-		height:   int64(meta.Height),
-		ttl:      resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()),
+		shortID:   shortID,
+		userID:    opts.UserID,
+		tokenID:   opts.TokenID,
+		fileName:  fileName,
+		idemKey:   idemKey,
+		doneIDs:   doneIDs,
+		channels:  all,
+		sha256:    hex.EncodeToString(sum[:]),
+		phash:     int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
+		key:       key,
+		mime:      mime,
+		size:      int64(len(data)),
+		width:     int64(meta.Width),
+		height:    int64(meta.Height),
+		ttl:       resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()),
+		objectKey: opts.ObjectKey,
 	})
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
@@ -397,6 +399,7 @@ type persistParams struct {
 	size          int64            // 存储字节大小
 	width, height int64            // 像素尺寸
 	ttl           time.Duration    // 有效时长,<=0 表示永不过期;到期时刻与 ttl_seconds 均由此推算
+	objectKey     string           // S3 对象键别名,空表示非 S3 途径
 }
 
 // persist 在单事务内写入 blob、引用、副本状态与幂等键。
@@ -428,12 +431,22 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 		expireAt = sql.NullString{String: sqlc.TimeText(time.Now().Add(p.ttl)), Valid: true}
 		ttlSeconds = sql.NullInt64{Int64: int64(p.ttl / time.Second), Valid: true}
 	}
+	// S3 语义是同键覆盖:先摘掉旧图的别名再插新图,否则唯一索引会挡下二次上传。
+	// 旧图本身不删——它可能已被分享出去,短 ID 必须继续可用。
+	if p.objectKey != "" {
+		if _, err = q.ClearObjectKey(ctx, sqlc.ClearObjectKeyParams{
+			UserID: p.userID, ObjectKey: sql.NullString{String: p.objectKey, Valid: true},
+		}); err != nil {
+			return 0, fmt.Errorf("清理同名对象键: %w", err)
+		}
+	}
 	if err = q.CreateImage(ctx, sqlc.CreateImageParams{
 		ID:         p.shortID,
 		BlobID:     blobID,
 		UserID:     p.userID,
 		TokenID:    sql.NullInt64{Int64: p.tokenID, Valid: p.tokenID != 0},
 		FileName:   p.fileName,
+		ObjectKey:  sql.NullString{String: p.objectKey, Valid: p.objectKey != ""},
 		ExpireAt:   expireAt,
 		TtlSeconds: ttlSeconds,
 	}); err != nil {

@@ -14,4 +14,7 @@ CREATE TABLE tokens (
 
 CREATE UNIQUE INDEX idx_tokens_hash ON tokens (token_hash);
 
+-- 前缀即 S3 协议面的 access key,须唯一定位一枚 Token;无此约束则撞前缀时按前缀查会静默取到任意一行。
+CREATE UNIQUE INDEX idx_tokens_prefix ON tokens (prefix);
+
 CREATE UNIQUE INDEX idx_tokens_user_name ON tokens (user_id, name) WHERE revoked_at IS NULL;

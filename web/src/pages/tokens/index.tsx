@@ -1,4 +1,4 @@
-import { BookOutlined, KeyOutlined, PlusOutlined, SyncOutlined } from "@ant-design/icons";
+import { BookOutlined, CloudServerOutlined, KeyOutlined, PlusOutlined, SyncOutlined } from "@ant-design/icons";
 import { useInvalidate, useList, usePermissions } from "@refinedev/core";
 import {
   App as AntdApp,
@@ -25,6 +25,7 @@ import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatTime } from "../../lib/format";
 import { sessionUser } from "../../providers/authProvider";
+import { S3CredentialModal, type S3Credential } from "./S3CredentialModal";
 
 /** Token 列表项(对应 /api/admin/tokens 响应)。 */
 interface TokenItem {
@@ -96,6 +97,8 @@ export function TokensPage() {
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [issued, setIssued] = useState<IssuedToken | null>(null);
+  const [s3Credential, setS3Credential] = useState<S3Credential | null>(null);
+  const [s3TokenName, setS3TokenName] = useState("");
   const [creating, setCreating] = useState(false);
   const [userFilter, setUserFilter] = useState<string | undefined>(undefined);
   const invalidate = useInvalidate();
@@ -150,6 +153,18 @@ export function TokensPage() {
       refresh();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "轮转失败");
+    }
+  };
+
+  const showS3Credential = async (row: TokenItem) => {
+    try {
+      const res = await apiFetch<S3Credential>(`/api/admin/tokens/${row.id}/s3-credential`, {
+        method: "POST",
+      });
+      setS3TokenName(row.name);
+      setS3Credential(res);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : "获取 S3 凭证失败");
     }
   };
 
@@ -284,11 +299,21 @@ export function TokensPage() {
               {
                 title: "操作",
                 key: "actions",
-                width: 150,
+                width: 220,
                 render: (_, row) => {
                   if (tokenStatus(row) === "active") {
                     return (
                       <Space size={0}>
+                        {viewingSelf && (
+                          <Button
+                            size="small"
+                            type="text"
+                            icon={<CloudServerOutlined />}
+                            onClick={() => showS3Credential(row)}
+                          >
+                            S3 配置
+                          </Button>
+                        )}
                         {viewingSelf && (
                           <Popconfirm
                             title="轮转该 Token?"
@@ -403,6 +428,12 @@ export function TokensPage() {
           用法:请求头 Authorization: Bearer &lt;token&gt;
         </Typography.Text>
       </Modal>
+
+      <S3CredentialModal
+        credential={s3Credential}
+        tokenName={s3TokenName}
+        onClose={() => setS3Credential(null)}
+      />
     </Flex>
   );
 }

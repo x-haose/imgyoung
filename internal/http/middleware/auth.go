@@ -34,6 +34,16 @@ func TokenPrincipalFrom(ctx context.Context) (auth.TokenPrincipal, bool) {
 	return tp, ok
 }
 
+// WithTokenPrincipal 把 Token 主体写入上下文。
+// @Description: 供在中间件外完成鉴权的协议面(如 S3 的 SigV4)接入同一套主体传递,
+// 使其后的频控等中间件与 Bearer 路径取到的是同一个主体。
+// @param ctx 请求上下文
+// @param tp Token 主体
+// @return 携带主体的上下文
+func WithTokenPrincipal(ctx context.Context, tp auth.TokenPrincipal) context.Context {
+	return context.WithValue(ctx, ctxKeyTokenPrincipal, tp)
+}
+
 // SessionFrom 取出会话信息。
 // @param ctx 请求上下文
 // @return 会话信息与是否存在

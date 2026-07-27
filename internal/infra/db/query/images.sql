@@ -1,6 +1,16 @@
 -- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetImageIDByObjectKey :one
+SELECT id
+FROM images
+WHERE user_id = @user_id AND object_key = @object_key;
+
+-- name: ClearObjectKey :execrows
+UPDATE images
+SET object_key = NULL
+WHERE user_id = @user_id AND object_key = @object_key;
 
 -- name: GetImageBlob :one
 SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size, b.sha256
@@ -138,7 +148,7 @@ FROM images i
 JOIN blobs b ON b.id = i.blob_id;
 
 -- name: ListImagesExport :many
-SELECT id, blob_id, user_id, token_id, file_name, expire_at, ttl_seconds,
+SELECT id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds,
        last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at;

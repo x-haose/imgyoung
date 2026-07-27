@@ -12,6 +12,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
+	"github.com/x-haose/imgyoung/internal/http/s3api"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 )
@@ -20,6 +21,7 @@ import (
 type Config struct {
 	Public          *publicapi.Handlers    // 数据面处理器集
 	Admin           *adminapi.Handlers     // 管理面处理器集
+	S3              *s3api.Handlers        // S3 协议面处理器集;nil 表示不开放该入口
 	Auth            *auth.Service          // 认证服务(Token 与会话校验)
 	Settings        func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);上传频率/并发上限/空 Referer 策略出自它
 	RefererPatterns func() []string        // 防盗链白名单快照读取口(热生效);nil 或返回空表示不启用
@@ -71,6 +73,8 @@ func New(cfg Config) http.Handler {
 			g.Post("/tokens", cfg.Admin.HandleTokenCreate)
 			g.Post("/tokens/{id}/revoke", cfg.Admin.HandleTokenRevoke)
 			g.Post("/tokens/{id}/rotate", cfg.Admin.HandleTokenRotate)
+			// 取长期密钥用 POST:CSRF 中间件放行全部 GET,凭证下发不该走在防护之外。
+			g.Post("/tokens/{id}/s3-credential", cfg.Admin.HandleTokenS3Credential)
 			g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
 			g.Get("/images", cfg.Admin.HandleImageList)
 			// 后台缩略图/预览走会话鉴权的不计数通道,避免管理员浏览污染
@@ -115,7 +119,20 @@ func New(cfg Config) http.Handler {
 		// 防盗链只作用于对外公开图片入口;S3 对象键别名与短 ID 是同一张图的两个门,同守一道闸。
 		g.Use(middleware.RefererCheck(cfg.RefererPatterns, func() bool { return cfg.Settings().AllowEmptyReferer }))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
+		g.Get("/o/*", cfg.Public.HandleServeObjectKey)
 	})
+	if cfg.S3 != nil {
+		// S3 协议面收在 /s3 前缀下:S3 的桶路径本是顶层单段,直接挂根会吃掉 /login 这类
+		// SPA 路由(命中却方法不符 → 405,再不回落到前端)。客户端把端点配成 <站点>/s3 即可。
+		// 自带 SigV4 签名鉴权(凭证仍是同一批上传 Token),故不套 TokenAuth;上传防护闸共享。
+		r.Route("/s3", func(s3 chi.Router) {
+			// 闸门顺序:并发闸挡在验签之前(未验签请求也不该无界并发地打数据库),
+			// 验签产生主体后才轮到按用户计的频控。
+			s3.Use(uploadGate, cfg.S3.Authenticate)
+			s3.With(uploadRate).Put("/{bucket}/*", cfg.S3.HandlePutObject)
+			s3.Head("/{bucket}", cfg.S3.HandleHeadBucket)
+		})
+	}
 	if cfg.Web != nil {
 		// 其余路径交给内嵌 SPA(静态文件 + history 路由回落)。
 		r.NotFound(spaHandler(cfg.Web, cfg.Logger))

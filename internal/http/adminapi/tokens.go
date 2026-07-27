@@ -137,6 +137,49 @@ func (h *Handlers) HandleTokenRotate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, issuedTokenResponse(issued))
 }
 
+// s3CredentialResponse 一枚 Token 的 S3 协议凭证与端点信息。
+type s3CredentialResponse struct {
+	AccessKeyID     string `json:"access_key_id"`     // 即 Token 明文前缀
+	SecretAccessKey string `json:"secret_access_key"` // 由主密钥派生,可随时重看,不落库
+	Endpoint        string `json:"endpoint"`          // 客户端填的 S3 端点,末尾 /s3 是协议面前缀
+	Region          string `json:"region"`            // 本服务不区分区域,给一个客户端普遍接受的值
+	Bucket          string `json:"bucket"`            // 无桶概念,给个占位名供客户端填
+	URLPrefix       string `json:"url_prefix"`        // 客户端据此拼最终访问地址,含用户 id 段
+}
+
+// s3Region S3 客户端必填的区域;本服务不按区域分流,给一个通用值避免客户端校验失败。
+const s3Region = "us-east-1"
+
+// s3PlaceholderBucket 客户端必填的桶名占位;本服务无桶概念,填什么都收。
+const s3PlaceholderBucket = "images"
+
+// HandleTokenS3Credential 返回一枚 Token 对应的 S3 协议凭证与端点配置。
+// @Description: 密钥由主密钥按 Token 哈希派生而非另存一份,故可随时重看——这点与
+// Token 明文"仅签发时展示一次"不同,不必为丢失密钥而轮转 Token。仅限本人的 Token:
+// 凭证等同上传权限,跨用户查看即凭证接管。
+func (h *Handlers) HandleTokenS3Credential(w http.ResponseWriter, r *http.Request) {
+	p, tokenID, ok := h.tokenRequest(w, r)
+	if !ok {
+		return
+	}
+	cred, err := h.cfg.Auth.S3CredentialForToken(r.Context(), p.UserID, tokenID)
+	if !h.writeTokenActionError(w, err, "查看 S3 凭证") {
+		return
+	}
+	base := h.cfg.Settings.Current().BaseURL
+	if base == "" {
+		base = httpx.RequestBaseURL(r)
+	}
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, s3CredentialResponse{
+		AccessKeyID:     cred.AccessKeyID,
+		SecretAccessKey: cred.SecretKey,
+		Endpoint:        base + "/s3",
+		Region:          s3Region,
+		Bucket:          s3PlaceholderBucket,
+		URLPrefix:       base + "/o/" + p.UserID,
+	})
+}
+
 // HandleTokenDelete 删除已失效(已吊销或已过期)的 Token 记录:
 // 本人可删自己的,管理员可删任何人的;有效 Token 返回 409。
 func (h *Handlers) HandleTokenDelete(w http.ResponseWriter, r *http.Request) {

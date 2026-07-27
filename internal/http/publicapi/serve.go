@@ -30,8 +30,15 @@ func (h *Handlers) HandleAdminServe(w http.ResponseWriter, r *http.Request) {
 // @param r 请求
 // @param touch 是否记公开访问活跃度(仅对外公开入口计,后台入口不计)
 func (h *Handlers) serveImage(w http.ResponseWriter, r *http.Request, touch bool) {
-	imageID := chi.URLParam(r, "id")
+	h.serveImageID(w, r, chi.URLParam(r, "id"), touch)
+}
 
+// serveImageID 按已解析出的短 ID 输出图片。
+// @Description: 短 ID 入口与 S3 对象键入口只在"怎么定位这张图"上不同,定位之后的
+// 活跃度、变体协商与容灾读取必须一致,故收敛于此。
+// @param imageID 对外短 ID
+// @param touch 是否记公开访问活跃度
+func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID string, touch bool) {
 	row, err := h.cfg.Queries.GetImageBlob(r.Context(), imageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		http.NotFound(w, r)
