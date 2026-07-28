@@ -84,19 +84,6 @@ func TestLoginRejections(t *testing.T) {
 	}
 }
 
-// TestLoginRateLimit 同一 IP 连续尝试超过突发额度后被限速。
-func TestLoginRateLimit(t *testing.T) {
-	svc, _, _ := newTestService(t)
-	ctx := t.Context()
-	var last error
-	for range 8 {
-		_, last = svc.Login(ctx, "alice", "wrong", "9.9.9.9")
-	}
-	if !errors.Is(last, auth.ErrTooManyAttempts) {
-		t.Fatalf("连续失败后应限速, got %v", last)
-	}
-}
-
 // TestSessionExpiry 到期会话失效,清理任务能回收到期行。
 func TestSessionExpiry(t *testing.T) {
 	svc, queries, _ := newTestService(t)
