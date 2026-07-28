@@ -3,6 +3,8 @@ package channel
 import (
 	"errors"
 	"testing"
+
+	"github.com/rclone/rclone/fs/config/obscure"
 )
 
 // TestBuildTemplateConfigMerge 各模板的预设合并、字段落位与 endpoint 拼接正确。
@@ -161,5 +163,88 @@ func TestTemplatesDownloadShape(t *testing.T) {
 				t.Errorf("模板 %q 的下拉字段 %q 无选项", tpl.ID, f.Key)
 			}
 		}
+	}
+}
+
+// TestWebDAVTemplateObscuresPassword 验证 WebDAV 密码按 rclone 要求编码后入库。
+// @Description: 漏编码时后端会把明文当作已编码值解出乱码,表现为凭证正确却认证失败。
+func TestWebDAVTemplateObscuresPassword(t *testing.T) {
+	// nolint:gosec // G101:测试桩值,非真实凭证。
+	const plain = "明文密码"
+	drv, cfg, err := BuildTemplateConfig("webdav", map[string]string{
+		"url": "https://dav.jianguoyun.com/dav/", "vendor": "other",
+		"user": "u@example.com", "pass": plain, "path": "imgyoung",
+	})
+	if err != nil {
+		t.Fatalf("BuildTemplateConfig 报错: %v", err)
+	}
+	if drv != "webdav" {
+		t.Errorf("driver = %q, 期望 webdav", drv)
+	}
+	if cfg["pass"] == "明文密码" {
+		t.Fatal("密码未编码即入库")
+	}
+	got, err := obscure.Reveal(cfg["pass"])
+	if err != nil {
+		t.Fatalf("编码结果无法还原: %v", err)
+	}
+	if got != "明文密码" {
+		t.Errorf("还原得 %q, 期望原密码", got)
+	}
+	// 非密码字段不应被编码。
+	if cfg["user"] != "u@example.com" {
+		t.Errorf("user 被误编码: %q", cfg["user"])
+	}
+}
+
+// TestDriveTemplatesDeclareOAuth 验证各网盘模板的授权标记与后端实际要求一致。
+func TestDriveTemplatesDeclareOAuth(t *testing.T) {
+	for _, tpl := range Templates() {
+		t.Run(tpl.ID, func(t *testing.T) {
+			if want := NeedsOAuth(tpl.Driver); tpl.RequiresOAuth != want {
+				t.Errorf("模板 %q 标记 RequiresOAuth=%v, 后端 %q 实际 %v",
+					tpl.ID, tpl.RequiresOAuth, tpl.Driver, want)
+			}
+		})
+	}
+}
+
+// TestOAuthTemplatesCarryTokenField 验证需授权的模板都留有令牌落位字段。
+func TestOAuthTemplatesCarryTokenField(t *testing.T) {
+	for _, tpl := range Templates() {
+		if !tpl.RequiresOAuth {
+			continue
+		}
+		var found bool
+		for _, f := range tpl.Fields {
+			if f.Type == FieldOAuth && f.configKey == ConfigKeyToken {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("模板 %q 需授权却无令牌字段,授权结果无处落位", tpl.ID)
+		}
+	}
+}
+
+// TestOAuthTokenNeverLeavesInPlaintext 验证编辑回读时授权令牌以哨兵掩码,不回传明文。
+// @Description: 令牌等同凭证,明文下发前端会经浏览器历史、截图、日志外泄。
+func TestOAuthTokenNeverLeavesInPlaintext(t *testing.T) {
+	const secretToken = `{"access_token":"AT","refresh_token":"RT"}`
+	inputs, ok := TemplateInputsFromConfig("googledrive", map[string]string{
+		ConfigKeyToken: secretToken, "path": "imgyoung",
+	})
+	if !ok {
+		t.Fatal("模板不存在")
+	}
+	if inputs[ConfigKeyToken] == secretToken {
+		t.Fatal("授权令牌明文回传")
+	}
+	if inputs[ConfigKeyToken] != SecretPlaceholder {
+		t.Errorf("令牌字段 = %q, 期望哨兵掩码", inputs[ConfigKeyToken])
+	}
+	// 非凭证字段仍应原样回读,否则编辑表单预填不出来。
+	if inputs["path"] != "imgyoung" {
+		t.Errorf("path = %q, 期望原样回读", inputs["path"])
 	}
 }

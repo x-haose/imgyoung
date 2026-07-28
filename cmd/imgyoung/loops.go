@@ -47,7 +47,8 @@ func authMaintenanceLoop(ctx context.Context, authSvc *auth.Service, logger *slo
 	}
 }
 
-// healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记。
+// healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记;
+// 同轮顺带续期网盘渠道临期的授权令牌。
 // @param ctx 控制循环生命周期
 // @param wait 周期闸,到点放行、ctx 取消即收敛
 func healthLoop(ctx context.Context, wait waitFunc, manager *channel.Manager, logger *slog.Logger) {
@@ -60,6 +61,16 @@ func healthLoop(ctx context.Context, wait waitFunc, manager *channel.Manager, lo
 		}
 		if len(changed) > 0 {
 			logger.Info("渠道健康状态变化", "channels", changed)
+		}
+
+		refreshCtx, cancelRefresh := context.WithTimeout(ctx, healthProbeTimeout)
+		refreshed, err := manager.RefreshOAuthTokens(refreshCtx)
+		cancelRefresh()
+		if err != nil {
+			logger.Warn("授权令牌续期未完成", "err", err)
+		}
+		if len(refreshed) > 0 {
+			logger.Info("网盘授权令牌已续期", "channels", refreshed)
 		}
 	}
 }

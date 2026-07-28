@@ -1,0 +1,175 @@
+package channel
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"testing"
+
+	"golang.org/x/oauth2"
+)
+
+// TestNeedsOAuth 验证需授权后端与免授权后端被正确区分。
+func TestNeedsOAuth(t *testing.T) {
+	tests := []struct {
+		driver string
+		want   bool
+	}{
+		{"onedrive", true},
+		{"drive", true},
+		{"dropbox", true},
+		{"s3", false},
+		{"webdav", false},
+		{"local", false},
+		{"没有这个后端", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.driver, func(t *testing.T) {
+			if got := NeedsOAuth(tt.driver); got != tt.want {
+				t.Errorf("NeedsOAuth(%q) = %v, 期望 %v", tt.driver, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestParsePastedTokenAcceptsBothFormats 验证 rclone authorize 的两种输出都被接受。
+func TestParsePastedTokenAcceptsBothFormats(t *testing.T) {
+	rawToken := `{"access_token":"AT","token_type":"bearer","refresh_token":"RT","expiry":"2030-01-02T15:04:05Z"}`
+	encoded := base64.RawStdEncoding.EncodeToString([]byte(`{"token":` + strconvQuote(rawToken) + `}`))
+
+	for name, pasted := range map[string]string{
+		"裸令牌 JSON":  rawToken,
+		"参数映射编码":    encoded,
+		"两侧带空白的裸令牌": "  \n" + rawToken + "\t ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ParsePastedToken(pasted)
+			if err != nil {
+				t.Fatalf("ParsePastedToken 报错: %v", err)
+			}
+			var tok oauth2.Token
+			if err := json.Unmarshal([]byte(got), &tok); err != nil {
+				t.Fatalf("结果不是合法令牌 JSON: %v", err)
+			}
+			if tok.AccessToken != "AT" || tok.RefreshToken != "RT" {
+				t.Errorf("令牌内容错位: access=%q refresh=%q", tok.AccessToken, tok.RefreshToken)
+			}
+		})
+	}
+}
+
+// TestParsePastedTokenRejects 验证非法令牌被拒。
+// @Description: 缺刷新令牌必须拒——访问令牌过期后该渠道会静默失效,建时不拦到运行期才炸。
+func TestParsePastedTokenRejects(t *testing.T) {
+	tests := []struct {
+		name   string
+		pasted string
+	}{
+		{"空串", "   "},
+		{"非 JSON", "这不是令牌"},
+		{"缺访问令牌", `{"refresh_token":"RT"}`},
+		{"缺刷新令牌", `{"access_token":"AT","token_type":"bearer"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParsePastedToken(tt.pasted); err == nil {
+				t.Fatal("期望报错,实得 nil")
+			} else if !errors.Is(err, ErrInvalidChannel) {
+				t.Errorf("错误未归入 ErrInvalidChannel: %v", err)
+			}
+		})
+	}
+}
+
+// TestOAuthFlowAuthCodeURL 验证授权地址带齐离线授权、自建凭证与回调地址。
+func TestOAuthFlowAuthCodeURL(t *testing.T) {
+	flow, err := NewOAuthFlow(t.Context(), "drive", map[string]string{
+		ConfigKeyClientID:     "my-client",
+		ConfigKeyClientSecret: "my-secret",
+	}, "https://img.example.com/api/admin/channels/oauth/callback")
+	if err != nil {
+		t.Fatalf("NewOAuthFlow 报错: %v", err)
+	}
+
+	raw := flow.AuthCodeURL("state-123")
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("授权地址不是合法 URL: %v", err)
+	}
+	q := u.Query()
+	// 缺离线授权则拿不到刷新令牌,是重启后掉线的根因,必须守住。
+	if got := q.Get("access_type"); got != "offline" {
+		t.Errorf("access_type = %q, 期望 offline", got)
+	}
+	if got := q.Get("client_id"); got != "my-client" {
+		t.Errorf("client_id = %q, 期望自建值覆盖内置值", got)
+	}
+	if got := q.Get("redirect_uri"); got != "https://img.example.com/api/admin/channels/oauth/callback" {
+		t.Errorf("redirect_uri = %q", got)
+	}
+	if got := q.Get("state"); got != "state-123" {
+		t.Errorf("state = %q", got)
+	}
+}
+
+// TestOAuthFlowExchange 验证授权码换取令牌并归一化为 rclone 存储格式。
+func TestOAuthFlowExchange(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("解析表单失败: %v", err)
+		}
+		if got := r.Form.Get("code"); got != "the-code" {
+			t.Errorf("授权码 = %q, 期望 the-code", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"新AT","token_type":"bearer",` +
+			`"refresh_token":"新RT","expires_in":3600}`))
+	}))
+	defer srv.Close()
+
+	// token_url 覆盖是 rclone 既有语义,借它把端点指向测试服务器。
+	flow, err := NewOAuthFlow(t.Context(), "drive", map[string]string{
+		ConfigKeyClientID: "my-client",
+		"token_url":       srv.URL,
+	}, "https://img.example.com/cb")
+	if err != nil {
+		t.Fatalf("NewOAuthFlow 报错: %v", err)
+	}
+
+	got, err := flow.Exchange(t.Context(), "the-code")
+	if err != nil {
+		t.Fatalf("Exchange 报错: %v", err)
+	}
+	var tok oauth2.Token
+	if err := json.Unmarshal([]byte(got), &tok); err != nil {
+		t.Fatalf("结果不是合法令牌 JSON: %v", err)
+	}
+	if tok.AccessToken != "新AT" || tok.RefreshToken != "新RT" {
+		t.Errorf("令牌内容错位: access=%q refresh=%q", tok.AccessToken, tok.RefreshToken)
+	}
+	if tok.Expiry.IsZero() {
+		t.Error("到期时刻为零值,刷新判定会失准")
+	}
+}
+
+// TestNewOAuthFlowRejectsNonOAuthDriver 验证免授权后端不会误入授权流。
+func TestNewOAuthFlowRejectsNonOAuthDriver(t *testing.T) {
+	if _, err := NewOAuthFlow(t.Context(), "s3", nil, "https://img.example.com/cb"); err == nil {
+		t.Fatal("期望报错,实得 nil")
+	} else if !errors.Is(err, ErrNotOAuthDriver) {
+		t.Errorf("错误未归入 ErrNotOAuthDriver: %v", err)
+	}
+}
+
+// strconvQuote 以 JSON 语义给字符串加引号转义。
+func strconvQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}

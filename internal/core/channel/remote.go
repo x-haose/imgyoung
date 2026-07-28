@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/obscure"
 )
 
@@ -50,6 +51,31 @@ func applyDriverDefaults(driver string, params map[string]string) {
 			params["no_check_bucket"] = "true"
 		}
 	}
+}
+
+// obscureSecrets 对后端声明为密码类的配置值做 rclone 要求的编码(原地修改 config)。
+// @Description: 判定依据取自后端自身的选项元数据,新增模板无需逐个标注;漏编码的密码
+// 会被后端当作已编码值解出乱码,表现为凭证正确却认证失败。
+// @param driver rclone 后端名
+// @param config 渠道配置
+// @return 后端不存在或编码失败时的错误
+func obscureSecrets(driver string, config map[string]string) error {
+	ri, err := fs.Find(driver)
+	if err != nil {
+		return fmt.Errorf("%w: 未知的后端 %q", ErrInvalidChannel, driver)
+	}
+	for k, v := range config {
+		opt := ri.Options.Get(k)
+		if opt == nil || !opt.IsPassword || v == "" {
+			continue
+		}
+		enc, err := obscure.Obscure(v)
+		if err != nil {
+			return fmt.Errorf("编码 %q: %w", k, err)
+		}
+		config[k] = enc
+	}
+	return nil
 }
 
 // quoteValue 按 fspath 语法为参数值加引号:含分隔符或引号时用单引号包裹,

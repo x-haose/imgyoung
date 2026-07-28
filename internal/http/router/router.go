@@ -88,6 +88,10 @@ func New(cfg Config) http.Handler {
 			g.Group(func(ad chi.Router) {
 				ad.Use(middleware.RequireAdmin(cfg.Logger))
 				ad.Get("/channel-templates", cfg.Admin.HandleChannelTemplates)
+				// 授权回调由第三方顶层跳转打回,GET 不过 CSRF 闸,SameSite=Lax 下会话仍随行。
+				ad.Post("/channel-oauth/start", cfg.Admin.HandleChannelOAuthStart)
+				ad.Get("/channel-oauth/callback", cfg.Admin.HandleChannelOAuthCallback)
+				ad.Get("/channel-oauth/result", cfg.Admin.HandleChannelOAuthResult)
 				ad.Post("/channels", cfg.Admin.HandleChannelCreate)
 				ad.Get("/channels", cfg.Admin.HandleChannelList)
 				ad.Post("/channels/test", cfg.Admin.HandleChannelTest)

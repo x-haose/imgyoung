@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestChannelTemplatesDownload 模板清单 API 下发 7 个 S3 系模板,且不泄露 provider 预设。
+// TestChannelTemplatesDownload 模板清单 API 下发全部内置模板,且不泄露 provider 预设。
 func TestChannelTemplatesDownload(t *testing.T) {
 	inst := startInstance(t, nil)
 	client, csrf := adminSession(t, inst)
@@ -40,8 +40,9 @@ func TestChannelTemplatesDownload(t *testing.T) {
 	if err := json.Unmarshal(raw, &lr); err != nil {
 		t.Fatalf("解析模板清单: %v; body=%s", err, raw)
 	}
-	if lr.Total != 7 || len(lr.Items) != 7 {
-		t.Fatalf("模板数 = %d, 期望 7", lr.Total)
+	if lr.Total != int64(len(lr.Items)) || len(lr.Items) < 8 {
+		t.Fatalf("模板数 = %d(items %d), 期望 total 与 items 一致且涵盖 S3 系与网盘系",
+			lr.Total, len(lr.Items))
 	}
 	// 预设(provider 等)不应下发到前端。
 	if bytes.Contains(raw, []byte("provider")) || bytes.Contains(raw, []byte("endpointPattern")) {

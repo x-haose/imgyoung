@@ -23,6 +23,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { OAuthField } from "./OAuthField";
 import type { ChannelItem } from "./types";
 
 /** select 字段的一个选项。 */
@@ -35,7 +36,7 @@ interface FieldOption {
 interface TemplateField {
   key: string;
   label: string;
-  type: "text" | "password" | "select";
+  type: "text" | "password" | "select" | "oauth";
   required: boolean;
   placeholder?: string;
   help?: string;
@@ -48,6 +49,7 @@ interface ChannelTemplate {
   name: string;
   description: string;
   driver: string;
+  requires_oauth: boolean;
   fields: TemplateField[];
 }
 
@@ -109,6 +111,13 @@ const TYPE_BADGES: Record<string, { text: string; color: string }> = {
   b2: { text: "B2", color: "#E21E29" },
   minio: { text: "M", color: "#C7264B" },
   "s3-compatible": { text: "S3", color: "#8C8C8C" },
+  webdav: { text: "DAV", color: "#0082C9" },
+  onedrive: { text: "OD", color: "#0078D4" },
+  googledrive: { text: "GD", color: "#1A73E8" },
+  dropbox: { text: "DB", color: "#0061FF" },
+  pcloud: { text: "PC", color: "#00A3E0" },
+  box: { text: "BOX", color: "#0061D5" },
+  yandex: { text: "YA", color: "#FC3F1D" },
   [CUSTOM]: { text: "⚙", color: "#8C8C8C" },
 };
 
@@ -171,6 +180,9 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
   const allowDirectLink = Form.useWatch("allow_direct_link", form);
   const templateBaseURL = Form.useWatch(["inputs", "public_base_url"], form) as string | undefined;
   const customConfig = Form.useWatch("config", form) as ConfigEntry[] | undefined;
+  // 授权端点随已填字段变化(如 onedrive 的 region),须订阅而非渲染时快照,
+  // 否则先填区域再点授权会拿旧值,授权打到错误的区域端点。
+  const templateInputs = Form.useWatch("inputs", form) as Record<string, string> | undefined;
 
   const templates = useList<ChannelTemplate>({
     resource: "channel-templates",
@@ -488,7 +500,13 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
                     extra={fieldExtra(f)}
                     rules={f.required ? [{ required: true, message: `请填写${f.label}` }] : undefined}
                   >
-                    {f.type === "password" ? (
+                    {f.type === "oauth" ? (
+                      <OAuthField
+                        templateId={selected.id}
+                        templateName={selected.name}
+                        inputs={templateInputs ?? {}}
+                      />
+                    ) : f.type === "password" ? (
                       <Input.Password placeholder={f.placeholder} autoComplete="off" />
                     ) : f.type === "select" ? (
                       <Select

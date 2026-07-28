@@ -3,6 +3,7 @@ package channel
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 )
 
@@ -11,6 +12,7 @@ const (
 	FieldText     = "text"     // 单行文本
 	FieldPassword = "password" // 密文,输入框掩码、列表不回显
 	FieldSelect   = "select"   // 下拉,取 Options 之一
+	FieldOAuth    = "oauth"    // 授权令牌,由授权流写入而非手工录入
 )
 
 // FieldOption select 字段的一个选项。
@@ -33,11 +35,12 @@ type TemplateField struct {
 
 // Template 一个渠道模板:预填 rclone 后端与固定参数,只暴露必要字段给用户填。
 type Template struct {
-	ID          string          `json:"id"`          // 模板标识
-	Name        string          `json:"name"`        // 展示名
-	Description string          `json:"description"` // 一句话说明
-	Driver      string          `json:"driver"`      // rclone 后端名
-	Fields      []TemplateField `json:"fields"`      // 用户输入字段
+	ID            string          `json:"id"`             // 模板标识
+	Name          string          `json:"name"`           // 展示名
+	Description   string          `json:"description"`    // 一句话说明
+	Driver        string          `json:"driver"`         // rclone 后端名
+	RequiresOAuth bool            `json:"requires_oauth"` // 是否须先完成授权才能保存
+	Fields        []TemplateField `json:"fields"`         // 用户输入字段
 	// 以下为后端合并逻辑所需,不下发前端。
 	preset          map[string]string // 对用户隐藏的固定参数(provider 等)
 	endpointPattern string            // endpoint 拼接模板,{fieldKey} 占位;空表示无需拼接
@@ -46,10 +49,13 @@ type Template struct {
 // ErrUnknownTemplate 指定的模板不存在。
 var ErrUnknownTemplate = fmt.Errorf("%w: 未知的渠道模板", ErrInvalidChannel)
 
-// templates 内置渠道模板清单,当前覆盖 S3 系对象存储 7 类。
-// 底层都是 rclone s3 后端,差异仅在 provider / endpoint / region,预设值经 workflow
-// 查证 rclone 官方 s3 文档校准。凭据统一 access_key_id / secret_access_key。
-var templates = []Template{
+// templates 内置渠道模板清单。
+var templates = slices.Concat(s3Templates, driveTemplates)
+
+// s3Templates S3 系对象存储模板。
+// 底层都是 rclone s3 后端,差异仅在 provider / endpoint / region。
+// 凭据统一 access_key_id / secret_access_key。
+var s3Templates = []Template{
 	{
 		ID: "aws-s3", Name: "Amazon S3", Description: "AWS 官方对象存储",
 		Driver: "s3", preset: map[string]string{"provider": "AWS"},
@@ -155,6 +161,18 @@ func publicBaseURLField() TemplateField {
 // @return 模板切片
 func Templates() []Template { return templates }
 
+// TemplateByID 按标识查内置模板。
+// @param templateID 模板标识
+// @return 模板副本
+// @return 模板是否存在
+func TemplateByID(templateID string) (Template, bool) {
+	tpl := templateByID(templateID)
+	if tpl == nil {
+		return Template{}, false
+	}
+	return *tpl, true
+}
+
 // BuildTemplateConfig 按模板与用户输入合并出渠道 config,并做必填校验。
 // @Description: 合并顺序为固定预设 → 字段值(按 configKey 落位)→ endpoint 拼接;
 // 参与拼接的中间字段(region/account_id)若 configKey 为空则不直接进 config。
@@ -188,6 +206,9 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 		}
 		config["endpoint"] = ep
 	}
+	if err := obscureSecrets(tpl.Driver, config); err != nil {
+		return "", nil, err
+	}
 	return tpl.Driver, config, nil
 }
 
@@ -219,7 +240,8 @@ func TemplateInputsFromConfig(templateID string, config map[string]string) (map[
 	inputs := make(map[string]string, len(tpl.Fields))
 	for _, f := range tpl.Fields {
 		switch {
-		case f.Type == FieldPassword:
+		// 授权令牌与密码同属凭证,明文一律不回传;前端据哨兵显示「已授权」。
+		case f.Type == FieldPassword, f.Type == FieldOAuth:
 			if config[f.configKey] != "" {
 				inputs[f.Key] = SecretPlaceholder
 			}

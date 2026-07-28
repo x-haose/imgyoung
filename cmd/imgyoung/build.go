@@ -262,7 +262,8 @@ func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
 		Settings: in.store.Current, Activity: s.tracker, Variants: s.variants, Logger: logger,
 	})
 	adm := adminapi.New(adminapi.Config{
-		Admin: s.manager, Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
+		Admin: s.manager, OAuth: channel.NewOAuthSessions(),
+		Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{

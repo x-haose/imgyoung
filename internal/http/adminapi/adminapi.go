@@ -60,17 +60,18 @@ type SettingsStore interface {
 
 // Config Handlers 的全部依赖与参数。
 type Config struct {
-	Admin      ChannelAdmin      // 渠道管理操作
-	Replicator ReplicationKicker // 补齐管道唤醒口;nil 表示无补齐子系统(如部分测试装配)
-	Auth       *auth.Service     // 认证服务(登录/会话/用户/Token 管理)
-	Images     ImageAdmin        // 图片删除入口
-	Dedup      DedupAdmin        // 相似候选裁决执行口
-	Queries    *sqlc.Queries     // 列表与统计查询
-	Audit      *audit.Recorder   // 管理操作审计记录器
-	Referer    *referer.Service  // 防盗链白名单管理(增删热生效)
-	Settings   SettingsStore     // 运营配置存储:读取快照供各请求取值,PUT /config 经它落库热生效
-	Boot       config.Bootstrap  // 引导配置(只读展示用;密钥与密码不进任何响应)
-	Logger     *slog.Logger      // 结构化日志
+	Admin      ChannelAdmin           // 渠道管理操作
+	OAuth      *channel.OAuthSessions // 网盘渠道进行中的授权会话
+	Replicator ReplicationKicker      // 补齐管道唤醒口;nil 表示无补齐子系统(如部分测试装配)
+	Auth       *auth.Service          // 认证服务(登录/会话/用户/Token 管理)
+	Images     ImageAdmin             // 图片删除入口
+	Dedup      DedupAdmin             // 相似候选裁决执行口
+	Queries    *sqlc.Queries          // 列表与统计查询
+	Audit      *audit.Recorder        // 管理操作审计记录器
+	Referer    *referer.Service       // 防盗链白名单管理(增删热生效)
+	Settings   SettingsStore          // 运营配置存储:读取快照供各请求取值,PUT /config 经它落库热生效
+	Boot       config.Bootstrap       // 引导配置(只读展示用;密钥与密码不进任何响应)
+	Logger     *slog.Logger           // 结构化日志
 }
 
 // Handlers 管理面处理器集,自身无可变状态、并发安全。

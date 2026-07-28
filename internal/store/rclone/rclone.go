@@ -15,13 +15,8 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/store/driver"
 
-	// 按需注册 rclone 后端:
-	// local 为内置渠道;crypt 供渠道存储加密包裹任意后端;
-	// s3(覆盖 AWS/R2/MinIO 等兼容服务)与 webdav 为最常用的远端类型。
-	_ "github.com/rclone/rclone/backend/crypt"
-	_ "github.com/rclone/rclone/backend/local"
-	_ "github.com/rclone/rclone/backend/s3"
-	_ "github.com/rclone/rclone/backend/webdav"
+	// 注册 rclone 全部后端。
+	_ "github.com/rclone/rclone/backend/all"
 )
 
 // Driver 基于 rclone 路线一(直接 import fs 包)的 Driver 实现。
