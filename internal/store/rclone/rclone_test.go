@@ -4,20 +4,40 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/rclone/rclone/fs/cache"
+	"github.com/rclone/rclone/fs/config/obscure"
+	"github.com/rclone/rclone/fs/fspath"
+
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
+
+// openLocal 在临时目录上打开一个 local 后端驱动,测试结束自动关闭。
+// @param dir 后端根目录
+// @return 就绪的驱动
+func openLocal(t *testing.T, dir string) *Driver {
+	t.Helper()
+	d, err := Open(t.Context(), Options{Backend: "local", Path: dir})
+	if err != nil {
+		t.Fatalf("Open 返回错误: %v", err)
+	}
+	t.Cleanup(func() {
+		if cerr := d.Close(t.Context()); cerr != nil {
+			t.Errorf("Close 返回错误: %v", cerr)
+		}
+	})
+	return d
+}
 
 // TestRcloneDriverRoundTrip 验证 Put → Stat → Open → Delete 全链路行为正确。
 // @Description: 使用 rclone local backend + 临时目录,零外部依赖。
 func TestRcloneDriverRoundTrip(t *testing.T) {
 	ctx := t.Context()
-	d, err := New(ctx, t.TempDir())
-	if err != nil {
-		t.Fatalf("New 返回错误: %v", err)
-	}
+	d := openLocal(t, t.TempDir())
 
 	const key = "ab/test.bin"
 	payload := []byte("hello imgyoung")
@@ -60,10 +80,7 @@ func TestRcloneDriverRoundTrip(t *testing.T) {
 // TestRcloneDriverList 验证递归列举:返回全部对象的键/大小/修改时间,空目录返回空。
 func TestRcloneDriverList(t *testing.T) {
 	ctx := t.Context()
-	d, err := New(ctx, t.TempDir())
-	if err != nil {
-		t.Fatalf("New 返回错误: %v", err)
-	}
+	d := openLocal(t, t.TempDir())
 
 	empty, err := d.List(ctx, "")
 	if err != nil {
@@ -112,11 +129,179 @@ func TestRcloneDriverList(t *testing.T) {
 // TestRcloneDriverOpenMissing 验证读取不存在的对象返回 driver.ErrNotFound 哨兵错误。
 func TestRcloneDriverOpenMissing(t *testing.T) {
 	ctx := t.Context()
-	d, err := New(ctx, t.TempDir())
-	if err != nil {
-		t.Fatalf("New 返回错误: %v", err)
-	}
+	d := openLocal(t, t.TempDir())
 	if _, err := d.Open(ctx, "no/such/object"); !errors.Is(err, driver.ErrNotFound) {
 		t.Fatalf("Open 缺失对象错误 = %v, 期望 driver.ErrNotFound", err)
+	}
+}
+
+// TestOpenRejectsUnknownBackend 验证未知后端名明确报错。
+func TestOpenRejectsUnknownBackend(t *testing.T) {
+	if _, err := Open(t.Context(), Options{Backend: "没有这个后端"}); err == nil {
+		t.Fatal("未知后端应报错")
+	}
+}
+
+// TestOpenCryptRoundTrip 验证加密层:落盘为密文与加密文件名,经驱动读回为明文;
+// Close 后内层实例从 rclone fs 缓存移除。
+func TestOpenCryptRoundTrip(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	before := cache.Entries()
+	d, err := Open(ctx, Options{
+		Backend: "local", Path: dir,
+		Crypt: &CryptOptions{Password: "content-pass", Salt: "name-salt"},
+	})
+	if err != nil {
+		t.Fatalf("Open 返回错误: %v", err)
+	}
+	if cache.Entries() != before+1 {
+		t.Fatalf("fs 缓存项数 = %d, 期望内层登记后为 %d", cache.Entries(), before+1)
+	}
+
+	plain := []byte("plaintext-image-bytes-0123456789")
+	if err := d.Put(ctx, "img.bin", bytes.NewReader(plain), int64(len(plain))); err != nil {
+		t.Fatalf("写入加密驱动: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("加密目录为空或不可读: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() == "img.bin" {
+			t.Fatal("文件名未被加密")
+		}
+		raw, rerr := os.ReadFile(filepath.Join(dir, e.Name()))
+		if rerr != nil {
+			t.Fatalf("读密文文件: %v", rerr)
+		}
+		if bytes.Contains(raw, plain) {
+			t.Fatal("磁盘文件含明文内容")
+		}
+	}
+	rc, err := d.Open(ctx, "img.bin")
+	if err != nil {
+		t.Fatalf("读回对象: %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	if cerr := rc.Close(); cerr != nil {
+		t.Fatalf("关闭对象流: %v", cerr)
+	}
+	if err != nil || !bytes.Equal(got, plain) {
+		t.Fatalf("读回明文不一致: err=%v", err)
+	}
+
+	if err := d.Close(ctx); err != nil {
+		t.Fatalf("Close 返回错误: %v", err)
+	}
+	if cache.Entries() != before {
+		t.Fatalf("Close 后 fs 缓存项数 = %d, 期望回到 %d", cache.Entries(), before)
+	}
+}
+
+// TestParamStoreWriteBack 验证后端写回经 Set 更新映射并触发持久化回调;空值视为未设置。
+func TestParamStoreWriteBack(t *testing.T) {
+	var gotKey, gotValue string
+	store := &paramStore{
+		values:   map[string]string{"token": "old", "empty": ""},
+		onChange: func(key, value string) { gotKey, gotValue = key, value },
+	}
+	if v, ok := store.Get("token"); !ok || v != "old" {
+		t.Fatalf("Get(token) = %q/%v, 期望 old/true", v, ok)
+	}
+	if _, ok := store.Get("empty"); ok {
+		t.Fatal("空值应视为未设置,交给后端默认值")
+	}
+	store.Set("token", "new")
+	if gotKey != "token" || gotValue != "new" {
+		t.Fatalf("持久化回调收到 %q=%q, 期望 token=new", gotKey, gotValue)
+	}
+	if v, _ := store.Get("token"); v != "new" {
+		t.Fatalf("写回后 Get(token) = %q, 期望 new", v)
+	}
+}
+
+// TestWithDefaults 验证 s3 默认跳过桶检查,且不覆盖显式值、不波及其他后端、不修改入参。
+func TestWithDefaults(t *testing.T) {
+	in := map[string]string{"access_key_id": "AK"}
+	out := withDefaults("s3", in)
+	if out["no_check_bucket"] != "true" {
+		t.Errorf("s3 默认 no_check_bucket = %q, 期望 true", out["no_check_bucket"])
+	}
+	if _, ok := in["no_check_bucket"]; ok {
+		t.Error("入参被原地修改")
+	}
+	if got := withDefaults("s3", map[string]string{"no_check_bucket": "false"}); got["no_check_bucket"] != "false" {
+		t.Errorf("显式值被覆盖 = %q, 期望保留 false", got["no_check_bucket"])
+	}
+	if got := withDefaults("local", nil); len(got) != 0 {
+		t.Errorf("非 s3 后端被注入参数: %v", got)
+	}
+}
+
+// TestCryptParamsRevealable 验证 crypt 层参数:内层按登记名引用、密码经编码可还原。
+func TestCryptParamsRevealable(t *testing.T) {
+	params, err := cryptParams("imgyoung-test", &CryptOptions{Password: "file-pass", Salt: "salt-pass"})
+	if err != nil {
+		t.Fatalf("cryptParams 返回错误: %v", err)
+	}
+	if params["remote"] != "imgyoung-test:" {
+		t.Errorf("remote = %q, 期望 imgyoung-test:", params["remote"])
+	}
+	for key, want := range map[string]string{"password": "file-pass", "password2": "salt-pass"} {
+		if got, err := obscure.Reveal(params[key]); err != nil || got != want {
+			t.Errorf("%s 还原 = %q(err=%v), 期望 %q", key, got, err, want)
+		}
+	}
+	if params["filename_encryption"] != "standard" {
+		t.Errorf("filename_encryption = %q, 期望 standard", params["filename_encryption"])
+	}
+}
+
+// TestNewNameIsValidConfigName 验证生成的远端名符合 rclone 对配置名的字符要求。
+func TestNewNameIsValidConfigName(t *testing.T) {
+	a, b := newName(), newName()
+	if err := fspath.CheckConfigName(a); err != nil {
+		t.Fatalf("远端名 %q 不合法: %v", a, err)
+	}
+	if a == b {
+		t.Fatalf("两次生成的远端名相同: %q", a)
+	}
+}
+
+// TestObscureSecrets 验证密码类参数的编码:明文编码、非密码参数不动、已编码值在宽松模式下保留。
+func TestObscureSecrets(t *testing.T) {
+	// nolint:gosec // G101:测试桩值,非真实凭证。
+	const plain = "明文密码"
+	params := map[string]string{"user": "u@example.com", "pass": plain, "url": "https://dav.example.com/"}
+	if err := ObscureSecrets("webdav", params); err != nil {
+		t.Fatalf("ObscureSecrets 返回错误: %v", err)
+	}
+	if params["user"] != "u@example.com" || params["url"] != "https://dav.example.com/" {
+		t.Errorf("非密码参数被改动: %v", params)
+	}
+	encoded := params["pass"]
+	if got, err := obscure.Reveal(encoded); err != nil || got != plain {
+		t.Fatalf("编码结果无法还原: %q(err=%v)", got, err)
+	}
+
+	// 宽松模式:已编码的值原样保留,明文照常编码。
+	again := map[string]string{"pass": encoded}
+	if err := ObscurePlainSecrets("webdav", again); err != nil {
+		t.Fatalf("ObscurePlainSecrets 返回错误: %v", err)
+	}
+	if again["pass"] != encoded {
+		t.Error("已编码的值被二次编码")
+	}
+	raw := map[string]string{"pass": "short"}
+	if err := ObscurePlainSecrets("webdav", raw); err != nil {
+		t.Fatalf("ObscurePlainSecrets 返回错误: %v", err)
+	}
+	if got, err := obscure.Reveal(raw["pass"]); err != nil || got != "short" {
+		t.Errorf("明文未被编码: %q(err=%v)", got, err)
+	}
+
+	if err := ObscureSecrets("没有这个后端", map[string]string{}); err == nil {
+		t.Error("未知后端应报错")
 	}
 }

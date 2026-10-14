@@ -24,6 +24,8 @@ const POLL_TIMEOUT_MS = 11 * 60 * 1000;
 interface OAuthFieldProps {
   templateId: string;
   templateName: string;
+  /** rclone 后端名,粘贴令牌路径里 rclone authorize 要的是它而非模板 id。 */
+  driver: string;
   /** 已填的其他字段值,提供区域等影响授权端点的参数。 */
   inputs: Record<string, string>;
   /** 当前令牌值;非空表示已授权。 */
@@ -36,7 +38,7 @@ interface OAuthFieldProps {
  * 一键授权要求实例已配置对外站点地址并自建应用;粘贴路径不依赖公网可达性,
  * 是无域名部署的唯一可行方式,故并列提供而非二选一。
  */
-export function OAuthField({ templateId, templateName, inputs, value, onChange }: OAuthFieldProps) {
+export function OAuthField({ templateId, templateName, driver, inputs, value, onChange }: OAuthFieldProps) {
   const [mode, setMode] = useState<"oneclick" | "paste">("oneclick");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
@@ -158,7 +160,7 @@ export function OAuthField({ templateId, templateName, inputs, value, onChange }
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             在任意有浏览器的机器上执行
             <Typography.Text code copyable style={{ fontSize: 12 }}>
-              rclone authorize &quot;{templateId}&quot;
+              rclone authorize &quot;{driver}&quot;
             </Typography.Text>
             ,完成授权后把整段输出粘贴到此处。此方式不要求本站有公网域名。
           </Typography.Text>

@@ -35,6 +35,11 @@ SET name              = ?,
     template          = ?
 WHERE id = ?;
 
+-- name: UpdateChannelConfigSealed :exec
+UPDATE channels
+SET config_sealed = ?
+WHERE id = ?;
+
 -- name: DeleteChannel :exec
 DELETE FROM channels
 WHERE id = ?;

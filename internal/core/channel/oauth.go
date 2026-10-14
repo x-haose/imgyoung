@@ -97,20 +97,6 @@ func (f *OAuthFlow) Exchange(ctx context.Context, code string) (string, error) {
 	return marshalToken(tok)
 }
 
-// Refresh 用刷新令牌换取新的访问令牌。
-// @Description: 服务商判定旧令牌仍有效时会原样返回,调用方据此决定是否落库。
-// @param ctx 控制刷新请求的超时与取消
-// @param tok 已存令牌
-// @return 新令牌
-// @return 刷新失败(多为授权被撤销或刷新令牌过期)时的错误
-func (f *OAuthFlow) Refresh(ctx context.Context, tok *oauth2.Token) (*oauth2.Token, error) {
-	fresh, err := f.conf.TokenSource(ctx, tok).Token()
-	if err != nil {
-		return nil, fmt.Errorf("刷新令牌: %w", err)
-	}
-	return fresh, nil
-}
-
 // ParsePastedToken 归一化用户粘贴的 rclone 授权结果。
 // @Description: 兼容 rclone authorize 的两种输出——参数映射编码与裸令牌 JSON;
 // 校验刷新令牌存在,缺失则该渠道在访问令牌过期后无法续期。

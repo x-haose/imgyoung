@@ -99,14 +99,15 @@ func newLogger() *slog.Logger {
 }
 
 // build 组合根:分 基础设施 → 业务服务 → HTTP 三段显式装配,任一步失败即返回。
-// @Description: 成功返回可运行的 app 与关闭数据库的清理函数(供调用方 defer,覆盖装配
-// 失败与正常退出两条路径);基础设施装配成功后、后续任一步失败,由本函数的 built 闸触发 cleanup。
+// @Description: 成功返回可运行的 app 与清理函数(先关渠道驱动、再关数据库;供调用方 defer,
+// 覆盖装配失败与正常退出两条路径);基础设施装配成功后、后续任一步失败,由本函数的 built 闸
+// 触发基础设施清理。
 // @param logger 结构化日志
 // @return 运行期组件
-// @return 数据库清理函数(非 nil 即须调用)
+// @return 清理函数(非 nil 即须调用)
 // @return 装配失败时的错误
 func build(logger *slog.Logger) (*app, func(), error) {
-	in, cleanup, err := buildInfra(logger)
+	in, closeInfra, err := buildInfra(logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -114,7 +115,7 @@ func build(logger *slog.Logger) (*app, func(), error) {
 	built := false
 	defer func() {
 		if !built {
-			cleanup()
+			closeInfra()
 		}
 	}()
 
@@ -124,6 +125,12 @@ func build(logger *slog.Logger) (*app, func(), error) {
 	}
 
 	built = true
+	cleanup := func() {
+		if cerr := svcs.manager.Close(context.Background()); cerr != nil {
+			logger.Error("关闭渠道驱动失败", "err", cerr)
+		}
+		closeInfra()
+	}
 	return &app{
 		boot: in.boot, logger: logger, store: in.store,
 		authSvc: svcs.auth, manager: svcs.manager, runner: svcs.runner,

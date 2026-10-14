@@ -2,7 +2,7 @@ package channel_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -42,38 +42,25 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatalf("NewManager 返回错误: %v", err)
 	}
+	t.Cleanup(func() {
+		if cerr := mgr.Close(context.Background()); cerr != nil {
+			t.Errorf("关闭管理器: %v", cerr)
+		}
+	})
 	return &testEnv{mgr: mgr, queries: queries, dataDir: dir}
 }
 
-// addChannel 创建一条渠道记录(local 后端指向独立临时目录)并重载管理器。
+// addChannel 经管理器创建一条 local 渠道(指向独立临时目录)。
 // @return 渠道 ID 与其存储目录
 func addChannel(t *testing.T, env *testEnv, name string, priority int64, encrypted bool) (int64, string) {
 	t.Helper()
 	dir := t.TempDir()
-	cfg, err := json.Marshal(map[string]string{"path": dir})
-	if err != nil {
-		t.Fatalf("编码渠道配置: %v", err)
-	}
-	sealed, err := env.mgr.SealConfig(string(cfg))
-	if err != nil {
-		t.Fatalf("加密渠道配置: %v", err)
-	}
-	enc := int64(0)
-	if encrypted {
-		enc = 1
-	}
-	id, err := env.queries.CreateChannel(t.Context(), sqlc.CreateChannelParams{
-		Name:         name,
-		Driver:       "local",
-		ConfigSealed: sealed,
-		Priority:     priority,
-		Encrypted:    enc,
+	id, err := env.mgr.Create(t.Context(), channel.CreateParams{
+		Name: name, Driver: "local", Config: map[string]string{"path": dir},
+		Priority: priority, Encrypted: encrypted,
 	})
 	if err != nil {
-		t.Fatalf("创建渠道记录: %v", err)
-	}
-	if err := env.mgr.Reload(t.Context()); err != nil {
-		t.Fatalf("重载管理器: %v", err)
+		t.Fatalf("创建渠道: %v", err)
 	}
 	return id, dir
 }
@@ -304,5 +291,60 @@ func TestManagerNoHealthyChannel(t *testing.T) {
 	}
 	if _, err := env.mgr.Primary(); !errors.Is(err, channel.ErrNoHealthyChannel) {
 		t.Fatalf("错误 = %v, 期望 ErrNoHealthyChannel", err)
+	}
+}
+
+// TestReloadReusesUnchangedDriver 验证 Reload 只重建配置有变的渠道:无变化时驱动实例沿用,
+// 编辑配置后该渠道换新实例、其他渠道不动。
+func TestReloadReusesUnchangedDriver(t *testing.T) {
+	env := newTestEnv(t)
+	id, _ := addChannel(t, env, "stable", 200, false)
+	before, _ := env.mgr.Get(id)
+	local, _ := env.mgr.Primary()
+	for _, h := range env.mgr.All() {
+		if h.Name == "local" {
+			local = h
+		}
+	}
+
+	if err := env.mgr.Reload(t.Context()); err != nil {
+		t.Fatalf("重载: %v", err)
+	}
+	if after, _ := env.mgr.Get(id); after.Driver != before.Driver {
+		t.Fatal("配置未变的渠道被重建了驱动实例")
+	}
+
+	if err := env.mgr.Update(t.Context(), id, channel.UpdateParams{
+		Name: "stable", Driver: "local", Config: map[string]string{"path": t.TempDir()}, Priority: 200,
+	}); err != nil {
+		t.Fatalf("编辑渠道: %v", err)
+	}
+	if after, _ := env.mgr.Get(id); after.Driver == before.Driver {
+		t.Fatal("配置已变的渠道仍沿用旧驱动实例")
+	}
+	if l, _ := env.mgr.Get(local.ID); l.Driver != local.Driver {
+		t.Fatal("编辑一个渠道波及了另一个渠道的驱动实例")
+	}
+}
+
+// TestCheckAllAbandonsOnCancel 验证 ctx 取消时整轮探测作废:不返回翻转、不落库——
+// 停机瞬间的探测失败是取消造成的,不能把渠道记成不健康。
+func TestCheckAllAbandonsOnCancel(t *testing.T) {
+	env := newTestEnv(t)
+	id, _ := addChannel(t, env, "steady", 200, false)
+	before := mustGetChannel(t, env, id)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	changed, err := env.mgr.CheckAll(ctx)
+	if !errors.Is(err, context.Canceled) || len(changed) != 0 {
+		t.Fatalf("取消后 CheckAll = %v/%v, 期望仅返回取消错误", changed, err)
+	}
+	after := mustGetChannel(t, env, id)
+	if after.Healthy != before.Healthy || after.LastCheckedAt != before.LastCheckedAt {
+		t.Fatalf("取消的探测仍落库: %+v → %+v", before, after)
+	}
+	if primary, perr := env.mgr.Primary(); perr != nil || primary.ID != id {
+		t.Fatalf("取消的探测改动了内存健康标记: %+v/%v", primary, perr)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/x-haose/imgyoung/internal/store/rclone"
 )
 
 // 字段输入类型,前端据此渲染控件。
@@ -202,6 +204,14 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 		if f.Required && v == "" {
 			return "", nil, fmt.Errorf("%w: 字段「%s」必填", ErrInvalidChannel, f.Label)
 		}
+		// 授权令牌可能是一键授权的产物,也可能是用户粘贴的 rclone authorize 输出:统一归一化并校验。
+		if f.Type == FieldOAuth && v != "" && v != SecretPlaceholder {
+			token, err := ParsePastedToken(v)
+			if err != nil {
+				return "", nil, fmt.Errorf("字段「%s」: %w", f.Label, err)
+			}
+			v = token
+		}
 		if f.configKey != "" && v != "" {
 			config[f.configKey] = v
 		}
@@ -213,8 +223,9 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 		}
 		config["endpoint"] = ep
 	}
-	if err := obscureSecrets(tpl.Driver, config); err != nil {
-		return "", nil, err
+	// 表单字段的密码一律按明文编码;漏编码会被后端当作已编码值解出乱码,凭证正确却认证失败。
+	if err := rclone.ObscureSecrets(tpl.Driver, config); err != nil {
+		return "", nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 	return tpl.Driver, config, nil
 }

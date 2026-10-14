@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -10,9 +11,6 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 )
-
-// healthProbeTimeout 单轮健康探测的整体预算。
-const healthProbeTimeout = 30 * time.Second
 
 // tokenUsageFlushInterval Token 使用时刻批量回写间隔。
 const tokenUsageFlushInterval = time.Minute
@@ -47,30 +45,19 @@ func authMaintenanceLoop(ctx context.Context, authSvc *auth.Service, logger *slo
 	}
 }
 
-// healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记;
-// 同轮顺带续期网盘渠道临期的授权令牌。
+// healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记。
+// @Description: 各渠道并行且各自计时(见 Manager.CheckAll),本循环不再套整轮超时——
+// 整轮共享预算会让排在后面的渠道因前面渠道慢而被误判不健康。
 // @param ctx 控制循环生命周期
 // @param wait 周期闸,到点放行、ctx 取消即收敛
 func healthLoop(ctx context.Context, wait waitFunc, manager *channel.Manager, logger *slog.Logger) {
 	for wait(ctx) {
-		probeCtx, cancel := context.WithTimeout(ctx, healthProbeTimeout)
-		changed, err := manager.CheckAll(probeCtx)
-		cancel()
-		if err != nil {
+		changed, err := manager.CheckAll(ctx)
+		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Warn("健康检查未完成", "err", err)
 		}
 		if len(changed) > 0 {
 			logger.Info("渠道健康状态变化", "channels", changed)
-		}
-
-		refreshCtx, cancelRefresh := context.WithTimeout(ctx, healthProbeTimeout)
-		refreshed, err := manager.RefreshOAuthTokens(refreshCtx)
-		cancelRefresh()
-		if err != nil {
-			logger.Warn("授权令牌续期未完成", "err", err)
-		}
-		if len(refreshed) > 0 {
-			logger.Info("网盘授权令牌已续期", "channels", refreshed)
 		}
 	}
 }

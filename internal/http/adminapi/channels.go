@@ -293,6 +293,7 @@ func (h *Handlers) HandleChannelConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleChannelCheck 手动重检:对已有渠道执行深探测并返回探测后的完整描述。
+// @Description: 探测可能持续数十秒;客户端中途断开时探测结论不落库,此处也无人可答,直接返回。
 func (h *Handlers) HandleChannelCheck(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := h.channelIDParam(w, r)
 	if !ok {
@@ -302,6 +303,8 @@ func (h *Handlers) HandleChannelCheck(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, channel.ErrChannelNotFound):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		return
+	case r.Context().Err() != nil:
 		return
 	case err != nil:
 		h.cfg.Logger.Error("手动重检失败", "id", channelID, "err", err)

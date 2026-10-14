@@ -3,11 +3,12 @@ package channel
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -33,7 +34,7 @@ var ErrEncryptedImmutable = errors.New("channel: 加密属性创建后不可变"
 type CreateParams struct {
 	Name             string            // 渠道名(唯一)
 	Driver           string            // rclone 后端名
-	Config           map[string]string // 后端参数(含约定键 path / public_base_url),可为 nil
+	Config           map[string]string // 后端参数(含约定键 path / public_base_url),可为 nil;密码类值明文或 rclone 编码产物皆可
 	Template         string            // 配置所用模板 id,空 = 自定义;仅供编辑表单还原,不参与驱动构造
 	Priority         int64             // 优先级,越大越优先
 	Encrypted        bool              // 是否为加密渠道;创建时固化,建后不可变
@@ -44,7 +45,7 @@ type CreateParams struct {
 // nameMaxLen 渠道名长度上限。
 const nameMaxLen = 64
 
-// configKeyPattern 渠道配置键的合法字符集(与 rclone 连接字符串参数名一致)。
+// configKeyPattern 渠道配置键的合法字符集(与 rclone 参数名一致)。
 var configKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // validateCreateParams 校验创建参数:必填项、渠道名长度、配置键字符集、
@@ -62,8 +63,7 @@ func validateCreateParams(p CreateParams) error {
 		return fmt.Errorf("%w: 加密渠道不允许直链(密文无法直出)", ErrInvalidChannel)
 	}
 	for k := range p.Config {
-		// 约定键不进连接字符串,豁免字符集限制。
-		if k == "path" || k == "public_base_url" {
+		if k == configKeyPath || k == configKeyPublicBaseURL {
 			continue
 		}
 		if !configKeyPattern.MatchString(k) {
@@ -71,6 +71,22 @@ func validateCreateParams(p CreateParams) error {
 		}
 	}
 	return nil
+}
+
+// prepareConfig 把提交的配置整理成可入库形态:复制一份(不改入参),密码类值按 rclone 要求编码。
+// @param driverName rclone 后端名
+// @param config 提交的配置,可为 nil
+// @return 整理后的新配置
+// @return 后端不存在时的 ErrInvalidChannel
+func prepareConfig(driverName string, config map[string]string) (map[string]string, error) {
+	out := maps.Clone(config)
+	if out == nil {
+		out = map[string]string{}
+	}
+	if err := rclone.ObscurePlainSecrets(driverName, out); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+	}
+	return out, nil
 }
 
 // Info 渠道的对外描述(不含任何配置与凭证)。
@@ -102,22 +118,6 @@ func boolToInt(b bool) int64 {
 	return 0
 }
 
-// sealConfigMap 把渠道配置编码为 JSON 并用主密钥加密成可入库密文。
-// @param config 明文配置,可为 nil
-// @return 可入库的密文
-// @return 编码或加密失败时的错误
-func (m *Manager) sealConfigMap(config map[string]string) (string, error) {
-	cfgJSON, err := json.Marshal(config)
-	if err != nil {
-		return "", fmt.Errorf("编码渠道配置: %w", err)
-	}
-	sealed, err := m.cfg.Master.EncryptString(string(cfgJSON))
-	if err != nil {
-		return "", fmt.Errorf("加密渠道配置: %w", err)
-	}
-	return sealed, nil
-}
-
 // Create 创建渠道:试构造验证配置 → 落库并播种存量副本 → 重载 → 立即深探测。
 // @Description: 深探测失败不回滚创建——渠道保留,healthy=false 且 last_error
 // 可见,管理员据此修配置或重检。
@@ -128,24 +128,28 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if err := validateCreateParams(p); err != nil {
 		return 0, err
 	}
-	sealed, err := m.sealConfigMap(p.Config)
+	config, err := prepareConfig(p.Driver, p.Config)
 	if err != nil {
 		return 0, err
 	}
 	// 试构造:落库前验证后端名与参数能初始化(crypt 派生依赖渠道 ID,
 	// 加密渠道以明文形态试构造,包裹层在 Reload 时再生效)。
-	trial := sqlc.Channel{Name: p.Name, Driver: p.Driver, ConfigSealed: sealed}
-	if _, _, err := m.buildDriver(ctx, trial); err != nil {
+	trial, err := m.openTrial(ctx, p.Driver, config)
+	if err != nil {
 		return 0, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
+	m.closeTrial(ctx, trial, "创建试构造")
 
 	// 可选自动建桶:在落库前主动建,失败即中止(不留"渠道已建但桶不存在"的坑)。
 	if p.AutoCreateBucket {
-		if err := m.ensureBucket(ctx, p.Driver, p.Config); err != nil {
+		if err := m.ensureBucket(ctx, p.Driver, config); err != nil {
 			return 0, fmt.Errorf("%w: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): %w", ErrInvalidChannel, err)
 		}
 	}
-
+	sealed, err := m.sealConfigMap(config)
+	if err != nil {
+		return 0, err
+	}
 	channelID, seeded, err := m.insertChannelTx(ctx, p, sealed)
 	if err != nil {
 		return 0, err
@@ -221,13 +225,32 @@ type UpdateParams struct {
 // Update 编辑渠道:校验后整体替换配置,重建驱动实例并立即深探测。
 // @Description: encrypted 不可变(翻转会造成密文/明文混存)。配置中的
 // SecretPlaceholder 值先还原为该渠道已存配置的同键原值(编辑表单不必重录凭证)。
-// 成功后 Reload 全量重建驱动(等价主动失效 fs 缓存),再对该渠道深探测落库。
-// 编辑不改变副本集合语义,不触发存量回填。
+// 成功后 Reload 重建本渠道驱动,再对该渠道深探测落库。编辑不改变副本集合语义,不触发存量回填。
 // @param channelID 渠道主键
 // @param p 编辑参数
 // @return ErrChannelNotFound / ErrEncryptedImmutable / ErrChannelNameExists /
 // ErrInvalidChannel 或落库、重载失败时的错误
 func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) error {
+	if err := m.updateRecord(ctx, channelID, p); err != nil {
+		return err
+	}
+	if err := m.Reload(ctx); err != nil {
+		return fmt.Errorf("渠道已更新但重载失败: %w", err)
+	}
+	if err := m.ProbeChannel(ctx, channelID); err != nil {
+		m.cfg.Logger.Warn("编辑后探测未完成", "channel", p.Name, "err", err)
+	}
+	return nil
+}
+
+// updateRecord 校验编辑参数并写回渠道记录;配置密文的读改写全程持锁,与后端写回互斥。
+// @param channelID 渠道主键
+// @param p 编辑参数
+// @return ErrChannelNotFound / ErrEncryptedImmutable / ErrChannelNameExists /
+// ErrInvalidChannel 或落库失败时的错误
+func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdateParams) error {
+	m.cfgMu.Lock()
+	defer m.cfgMu.Unlock()
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrChannelNotFound
@@ -243,24 +266,29 @@ func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) e
 	if err != nil {
 		return err
 	}
-	config, err := restoreSecrets(p.Config, old)
+	restored, err := restoreSecrets(p.Config, old)
 	if err != nil {
 		return err
 	}
 	if err := validateCreateParams(CreateParams{
-		Name: p.Name, Driver: p.Driver, Config: config,
+		Name: p.Name, Driver: p.Driver, Config: restored,
 		Encrypted: encrypted, AllowDirectLink: p.AllowDirectLink,
 	}); err != nil {
 		return err
 	}
-	sealed, err := m.sealConfigMap(config)
+	config, err := prepareConfig(p.Driver, restored)
 	if err != nil {
 		return err
 	}
 	// 试构造:与 Create 同规则,加密渠道以明文形态验证后端可初始化。
-	trial := sqlc.Channel{Name: p.Name, Driver: p.Driver, ConfigSealed: sealed}
-	if _, _, err := m.buildDriver(ctx, trial); err != nil {
+	trial, err := m.openTrial(ctx, p.Driver, config)
+	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+	}
+	m.closeTrial(ctx, trial, "编辑试构造")
+	sealed, err := m.sealConfigMap(config)
+	if err != nil {
+		return err
 	}
 	if err := m.cfg.Queries.UpdateChannelConfig(ctx, sqlc.UpdateChannelConfigParams{
 		Name: p.Name, Driver: p.Driver, ConfigSealed: sealed, Priority: p.Priority,
@@ -271,35 +299,24 @@ func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) e
 		}
 		return fmt.Errorf("更新渠道记录: %w", err)
 	}
-	if err := m.Reload(ctx); err != nil {
-		return fmt.Errorf("渠道已更新但重载失败: %w", err)
-	}
-	if err := m.ProbeChannel(ctx, channelID); err != nil {
-		m.cfg.Logger.Warn("编辑后探测未完成", "channel", p.Name, "err", err)
-	}
 	return nil
 }
 
 // ensureBucket 对 s3 类渠道主动建桶。
-// @Description: 用渠道 config 构造一个显式 no_check_bucket=false 的裸驱动(不套 crypt——
+// @Description: 用渠道配置构造一个显式 no_check_bucket=false 的裸驱动(不套 crypt——
 // 建桶是桶级操作,只需内层 s3),再调 EnsureBucket。渠道自身仍用默认 no_check_bucket=true,
-// 建好一次后续不必每次探测。config 为明文(尚未加密),直接可用。
+// 建好一次后续不必每次探测。
 // @param drv rclone 后端名
-// @param config 渠道配置(含约定键 path)
+// @param config 已整理的渠道配置(含约定键 path)
 // @return 建桶失败时的错误
 func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[string]string) error {
-	params := make(map[string]string, len(config))
-	for k, v := range config {
-		if k == "path" || k == "public_base_url" {
-			continue
-		}
-		params[k] = v
-	}
+	params := maps.Clone(config)
 	params["no_check_bucket"] = "false"
-	d, err := rclone.New(ctx, BuildRemote(drv, params, config["path"]))
+	d, err := m.openTrial(ctx, drv, params)
 	if err != nil {
 		return fmt.Errorf("初始化建桶驱动: %w", err)
 	}
+	defer m.closeTrial(ctx, d, "建桶")
 	return d.EnsureBucket(ctx)
 }
 
@@ -373,44 +390,69 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 	return out, nil
 }
 
-// probeTimeout 单渠道健康探测超时;各渠道独立计时,慢渠道不拖累其他渠道。
+// probeTimeout 单渠道轻探测超时;各渠道独立计时,慢渠道不拖累其他渠道。
 const probeTimeout = 10 * time.Second
 
 // HealthProbeKey 健康探测使用的约定对象键(从不真正写入;对账 GC 应豁免)。
 const HealthProbeKey = ".imgyoung-health-probe"
 
-// CheckAll 对全部渠道做一次轻量健康探测,结果逐渠道落库并更新内存标记。
+// CheckAll 对全部渠道并行做一次健康探测,结果逐渠道落库并更新内存标记。
 // @Description: 轻探测 = 只读 Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
-// 健康(后端可达),其余错误视为不健康。每渠道每轮都更新 last_checked_at,
-// 失败原因人话化后存 last_error、成功清空。轻探测只能降级健康渠道,不能独自
-// 恢复不健康渠道——失败结论可能来自暴露写路径问题的深探测(如只读凭证),
-// 只读成功不构成推翻依据,翻回健康须经深探测确认写读删全通;健康渠道每轮
-// 维持零写删成本(周期性写删对按量付费渠道是无谓账单)。
-// 健康翻转只改标记、不重建驱动;单渠道异常(含记录已被删)跳过不中断整轮。
+// 健康(后端可达),其余错误视为不健康。轻探测只能降级健康渠道,不能独自恢复不健康
+// 渠道——失败结论可能来自暴露写路径问题的深探测(如只读凭证),只读成功不构成推翻依据,
+// 翻回健康须经深探测确认写读删全通;健康渠道每轮维持零写删成本(周期性写删对按量
+// 付费渠道是无谓账单)。各渠道并行、各自计时,整轮耗时等于最慢的一个;ctx 取消
+// (停机)时整轮作废不落库——取消造成的探测失败不是渠道的结论。
+// 健康翻转只改标记、不重建驱动;每渠道每轮都更新 last_checked_at,失败原因人话化
+// 后存 last_error、成功清空。
 // @return 本次健康状态翻转的渠道名列表
-// @return 探测本身无法进行时的错误
+// @return ctx 已取消或落库失败时的错误
 func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
+	channels := m.snapshot()
+	results := make([]error, len(channels))
+	var wg sync.WaitGroup
+	for i, c := range channels {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = probeForHealth(ctx, c.handle.Driver, c.healthy)
+		}()
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	changed := []string{}
-	for _, c := range m.All() {
-		perr := probe(ctx, c.Driver)
-		row, err := m.cfg.Queries.GetChannel(ctx, c.ID)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
+	for i, c := range channels {
+		if err := m.recordProbe(ctx, c.handle.ID, results[i]); err != nil {
+			return changed, fmt.Errorf("渠道 %q: %w", c.handle.Name, err)
 		}
-		if err != nil {
-			return changed, fmt.Errorf("读取渠道 %q: %w", c.Name, err)
-		}
-		if perr == nil && row.Healthy == 0 {
-			perr = DeepProbe(ctx, c.Driver)
-		}
-		if err := m.recordProbe(ctx, c.ID, perr); err != nil {
-			return changed, fmt.Errorf("渠道 %q: %w", c.Name, err)
-		}
-		if (row.Healthy != 0) != (perr == nil) {
-			changed = append(changed, c.Name)
+		if c.healthy != (results[i] == nil) {
+			changed = append(changed, c.handle.Name)
 		}
 	}
 	return changed, nil
+}
+
+// snapshot 返回当前已加载渠道的副本(句柄与健康标记),供一轮探测使用。
+// @return 渠道运行态切片
+func (m *Manager) snapshot() []managed {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]managed, len(m.channels))
+	copy(out, m.channels)
+	return out
+}
+
+// probeForHealth 对单个渠道做一轮健康判定:轻探测;不健康渠道轻探测通过后再经深探测确认才算恢复。
+// @param d 渠道驱动
+// @param healthy 渠道当前的健康标记
+// @return 渠道不可用时的原因错误;nil 表示健康
+func probeForHealth(ctx context.Context, d driver.Driver, healthy bool) error {
+	if err := probe(ctx, d); err != nil || healthy {
+		return err
+	}
+	return DeepProbe(ctx, d)
 }
 
 // probe 轻量探测单个渠道可达性(独立超时,只读不写)。

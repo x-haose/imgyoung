@@ -190,6 +190,22 @@ func (q *Queries) UpdateChannelConfig(ctx context.Context, arg UpdateChannelConf
 	return err
 }
 
+const updateChannelConfigSealed = `-- name: UpdateChannelConfigSealed :exec
+UPDATE channels
+SET config_sealed = ?
+WHERE id = ?
+`
+
+type UpdateChannelConfigSealedParams struct {
+	ConfigSealed string
+	ID           int64
+}
+
+func (q *Queries) UpdateChannelConfigSealed(ctx context.Context, arg UpdateChannelConfigSealedParams) error {
+	_, err := q.db.ExecContext(ctx, updateChannelConfigSealed, arg.ConfigSealed, arg.ID)
+	return err
+}
+
 const updateChannelHealth = `-- name: UpdateChannelHealth :exec
 UPDATE channels
 SET healthy = ?

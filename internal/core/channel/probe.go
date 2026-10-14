@@ -84,9 +84,10 @@ func readBackProbe(ctx context.Context, d driver.Driver, key string) error {
 // ProbeChannel 对指定渠道执行深探测并把结果落库。
 // @Description: 渠道在库但驱动未装载(配置坏死被 Reload 跳过)时,以构造失败
 // 作为探测结果落库,坏死原因在渠道列表可见。探测失败不算方法失败——结果体现
-// 在 healthy / last_error 里。
+// 在 healthy / last_error 里。ctx 取消(请求断开、停机)时不落库并返回取消错误:
+// 取消造成的探测失败不是渠道的结论。
 // @param channelID 渠道主键
-// @return ErrChannelNotFound 或查询、落库失败时的错误
+// @return ErrChannelNotFound、ctx 取消或查询、落库失败时的错误
 func (m *Manager) ProbeChannel(ctx context.Context, channelID int64) error {
 	var probeErr error
 	if h, ok := m.Get(channelID); ok {
@@ -99,19 +100,34 @@ func (m *Manager) ProbeChannel(ctx context.Context, channelID int64) error {
 		if err != nil {
 			return fmt.Errorf("读取渠道 %d: %w", channelID, err)
 		}
-		if d, _, derr := m.buildDriver(ctx, row); derr != nil {
-			probeErr = fmt.Errorf("驱动构造失败: %w", derr)
-		} else {
-			probeErr = DeepProbe(ctx, d)
-		}
+		probeErr = m.probeUnloaded(ctx, row)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	return m.recordProbe(ctx, channelID, probeErr)
+}
+
+// probeUnloaded 对未装载的渠道记录做一次性构造并深探测。
+// @param row 渠道记录
+// @return 构造失败或探测失败的原因;nil 表示健康
+func (m *Manager) probeUnloaded(ctx context.Context, row sqlc.Channel) error {
+	params, err := m.unsealConfigMap(row.ConfigSealed)
+	if err != nil {
+		return fmt.Errorf("驱动构造失败: %w", err)
+	}
+	d, err := m.openTrial(ctx, row.Driver, params)
+	if err != nil {
+		return fmt.Errorf("驱动构造失败: %w", err)
+	}
+	defer m.closeTrial(ctx, d, "探测未装载渠道")
+	return DeepProbe(ctx, d)
 }
 
 // TestConfig 用一份未落库的渠道配置执行深探测(测试连接)。
 // @Description: 不创建渠道、不写任何库表;加密属性不参与——crypt 密钥派生
 // 依赖渠道 ID,本方法验证的是后端连通性与写读删权限。返回的错误文案已
-// 人话化并抹除凭证,可直接展示给用户。
+// 人话化并抹除凭证(用户提交的明文与其编码产物都抹),可直接展示给用户。
 // @param driverName rclone 后端名
 // @param config 渠道配置(含约定键 path / public_base_url),可为 nil
 // @return ErrInvalidChannel(参数非法)或人话化的探测失败错误;nil 表示连接可用
@@ -121,29 +137,32 @@ func (m *Manager) TestConfig(ctx context.Context, driverName string, config map[
 	}); err != nil {
 		return err
 	}
-	sealed, err := m.sealConfigMap(config)
+	prepared, err := prepareConfig(driverName, config)
 	if err != nil {
 		return err
 	}
-	trial := sqlc.Channel{Name: "connectivity-test", Driver: driverName, ConfigSealed: sealed}
-	d, _, err := m.buildDriver(ctx, trial)
+	redact := func(msg string) string { return redactSecrets(redactSecrets(msg, config), prepared) }
+	d, err := m.openTrial(ctx, driverName, prepared)
 	if err != nil {
-		return errors.New(redactSecrets(humanizeProbeError(err), config))
+		return errors.New(redact(humanizeProbeError(err)))
 	}
+	defer m.closeTrial(ctx, d, "测试连接")
 	if perr := DeepProbe(ctx, d); perr != nil {
-		return errors.New(redactSecrets(humanizeProbeError(perr), config))
+		return errors.New(redact(humanizeProbeError(perr)))
 	}
 	return nil
 }
 
 // recordProbe 把一次探测结果写入渠道行(healthy / last_checked_at / last_error)
 // 并同步内存健康标记。
+// @Description: 探测已经完成,结果不该因调用方此刻取消(请求断开、停机)而丢失,
+// 落库脱离取消、只沿用上下文的值。
 // @param channelID 渠道主键
 // @param perr 探测错误,nil 表示健康
 // @return 落库失败时的错误
 func (m *Manager) recordProbe(ctx context.Context, channelID int64, perr error) error {
 	msg := humanizeProbeError(perr)
-	if err := m.cfg.Queries.UpdateChannelProbeResult(ctx, sqlc.UpdateChannelProbeResultParams{
+	if err := m.cfg.Queries.UpdateChannelProbeResult(context.WithoutCancel(ctx), sqlc.UpdateChannelProbeResultParams{
 		Healthy:   boolToInt(perr == nil),
 		LastError: sql.NullString{String: msg, Valid: msg != ""},
 		ID:        channelID,

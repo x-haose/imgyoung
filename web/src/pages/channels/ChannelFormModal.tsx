@@ -373,6 +373,7 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
                       <OAuthField
                         templateId={selected.id}
                         templateName={selected.name}
+                        driver={selected.driver}
                         inputs={templateInputs ?? {}}
                       />
                     ) : f.type === "password" ? (
@@ -467,7 +468,8 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
 
 /** CustomFields 自定义模式:rclone 后端名 + 键值对配置;编辑模式说明哨兵语义。 */
 function CustomFields({ isEdit }: { isEdit: boolean }) {
-  const base = "rclone 后端参数;local 用 path,S3 类用 access_key_id 等,公开访问地址用 public_base_url";
+  const base =
+    "rclone 后端参数;local 用 path,S3 类用 access_key_id 等,公开访问地址用 public_base_url;密码类参数填明文或 rclone obscure 的输出均可";
   return (
     <>
       <Form.Item name="driver" label="rclone 驱动" rules={[{ required: true, message: "请输入驱动名" }]}>

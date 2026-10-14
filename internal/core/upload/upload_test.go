@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"image"
 	"image/jpeg"
@@ -243,22 +242,11 @@ func TestProcessRejectsUnknownPolicy(t *testing.T) {
 // TestProcessMarksReplicaStates 验证多渠道写入语义:主渠道副本 done,其余渠道 pending。
 func TestProcessMarksReplicaStates(t *testing.T) {
 	env := newTestEnv(t, 50)
-	cfgJSON, err := json.Marshal(map[string]string{"path": t.TempDir()})
-	if err != nil {
-		t.Fatalf("编码渠道配置: %v", err)
-	}
-	sealed, err := env.mgr.SealConfig(string(cfgJSON))
-	if err != nil {
-		t.Fatalf("加密渠道配置: %v", err)
-	}
-	primaryID, err := env.queries.CreateChannel(t.Context(), sqlc.CreateChannelParams{
-		Name: "fast", Driver: "local", ConfigSealed: sealed, Priority: 200,
+	primaryID, err := env.mgr.Create(t.Context(), channel.CreateParams{
+		Name: "fast", Driver: "local", Config: map[string]string{"path": t.TempDir()}, Priority: 200,
 	})
 	if err != nil {
 		t.Fatalf("创建渠道: %v", err)
-	}
-	if err := env.mgr.Reload(t.Context()); err != nil {
-		t.Fatalf("重载管理器: %v", err)
 	}
 
 	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
@@ -298,22 +286,11 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
 	env := newTestEnv(t, 50)
 	brokenDir := t.TempDir()
-	cfgJSON, err := json.Marshal(map[string]string{"path": brokenDir})
-	if err != nil {
-		t.Fatalf("编码渠道配置: %v", err)
-	}
-	sealed, err := env.mgr.SealConfig(string(cfgJSON))
-	if err != nil {
-		t.Fatalf("加密渠道配置: %v", err)
-	}
-	brokenID, err := env.queries.CreateChannel(t.Context(), sqlc.CreateChannelParams{
-		Name: "broken-primary", Driver: "local", ConfigSealed: sealed, Priority: 300,
+	brokenID, err := env.mgr.Create(t.Context(), channel.CreateParams{
+		Name: "broken-primary", Driver: "local", Config: map[string]string{"path": brokenDir}, Priority: 300,
 	})
 	if err != nil {
 		t.Fatalf("创建渠道: %v", err)
-	}
-	if err := env.mgr.Reload(t.Context()); err != nil {
-		t.Fatalf("重载管理器: %v", err)
 	}
 	// 主渠道目录不可写,写入必失败。
 	if err := os.Chmod(brokenDir, 0o000); err != nil {
