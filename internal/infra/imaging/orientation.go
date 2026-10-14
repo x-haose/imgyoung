@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"image"
+	"image/draw"
 )
 
 // JPEG APP1 段标记(EXIF 承载段;jpegstrip 的白名单剥离刻意保留 APP0/2/14,APP1 属被剥离范围)。
@@ -99,7 +100,8 @@ func readOrientation(tiff []byte) int {
 
 // applyOrientation 按 EXIF 方向把图像旋转/翻转到视觉正确姿态;正常方向原样返回。
 // @Description: 处理链路在缩放前调用,使目标宽度作用于视觉呈现方向;方向 5–8 交换宽高。
-// 逐像素映射,输入受像素预算闸约束,开销可控。
+// 先把源图统一成 RGBA(draw 对 YCbCr 等解码器输出格式有快速路径),再按字节搬运像素;
+// 逐像素 At/Set 要经接口与 color 转换,慢一个数量级。输入受像素预算闸约束,开销可控。
 // @param src 源图像
 // @param o EXIF 方向值[1,8]
 // @return 姿态校正后的 RGBA 图像;o 为正常方向时返回原图
@@ -109,15 +111,22 @@ func applyOrientation(src image.Image, o int) image.Image {
 	}
 	b := src.Bounds()
 	w, h := b.Dx(), b.Dy()
+	rgba, ok := src.(*image.RGBA)
+	if !ok {
+		rgba = image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(rgba, rgba.Rect, src, b.Min, draw.Src)
+	}
 	dw, dh := w, h
 	if o >= 5 { // 5–8 为含转置的方向,输出宽高互换
 		dw, dh = h, w
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
 	for dy := range dh {
+		row := dst.Pix[dy*dst.Stride : dy*dst.Stride+dw*4]
 		for dx := range dw {
 			sx, sy := srcCoord(o, dx, dy, w, h)
-			dst.Set(dx, dy, src.At(b.Min.X+sx, b.Min.Y+sy))
+			si := rgba.PixOffset(rgba.Rect.Min.X+sx, rgba.Rect.Min.Y+sy)
+			copy(row[dx*4:dx*4+4], rgba.Pix[si:si+4])
 		}
 	}
 	return dst
