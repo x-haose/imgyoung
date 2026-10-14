@@ -1,124 +1,301 @@
 package lifecycle_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/replication"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/core/variants"
+	"github.com/x-haose/imgyoung/internal/infra/cdn"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
-// testSettings 构造运营配置读取口:内嵌默认值上按需覆写。
-func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
-	t.Helper()
-	set := config.Defaults()
-	if mod != nil {
-		mod(&set)
-	}
-	return func() config.Settings { return set }
-}
+// cascadeDeadline 等待补齐子系统的 worker 消化一个删除任务的上限;River 的 SQLite 驱动按秒级轮询认领任务。
+const cascadeDeadline = 15 * time.Second
 
 // purgeSettings 构造启用 CDN purge 的配置读取口(zone / token / base_url 三者齐备)。
-func purgeSettings(t *testing.T) func() config.Settings {
-	t.Helper()
-	return testSettings(t, func(s *config.Settings) {
+func purgeSettings() func() config.Settings {
+	return testenv.Settings(func(s *config.Settings) {
 		s.BaseURL = "https://img.example.com"
 		s.CDNCloudflareZoneID = "zone"
 		s.CDNCloudflareAPIToken = "token"
 	})
 }
 
-// fakeDeleter 记录级联删除的入队调用。
-type fakeDeleter struct {
-	calls []deleteCall
+// sweeperEnv 清理器测试装配:临时库、内置 local 渠道与真实的补齐子系统。
+// @Description: 级联入队的断言落在真实结果上——启动 worker 后 local 渠道上的对象文件被删,
+// 或 River 任务表里出现对应任务行;不记录调用的替身。
+type sweeperEnv struct {
+	*testenv.Env
+	runner *replication.Runner // 补齐子系统;调用 start 之后 worker 才消费任务
+	local  channel.Handle      // 内置 local 渠道,对象落 DataDir/blobs
 }
 
-// deleteCall 一次删除入队的参数。
-type deleteCall struct {
-	channelID  int64
-	storageKey string
+// newSweeperEnv 装配清理器测试环境。
+// @param purger CDN 缓存清理执行器;nil 表示 purge 未启用,EnqueuePurge 为空操作
+func newSweeperEnv(t *testing.T, purger replication.ObjectPurger) *sweeperEnv {
+	t.Helper()
+	env := testenv.New(t)
+	runner, err := replication.NewRunner(replication.RunnerConfig{
+		Conn: env.Conn, Queries: env.Queries, Manager: env.Manager, Purger: purger, Logger: env.Logger,
+	})
+	if err != nil {
+		t.Fatalf("创建补齐子系统: %v", err)
+	}
+	local, err := env.Manager.Primary()
+	if err != nil {
+		t.Fatalf("取内置 local 渠道: %v", err)
+	}
+	return &sweeperEnv{Env: env, runner: runner, local: local}
 }
 
-// EnqueueDelete 记录调用。
-func (f *fakeDeleter) EnqueueDelete(_ context.Context, channelID int64, storageKey string) error {
-	f.calls = append(f.calls, deleteCall{channelID: channelID, storageKey: storageKey})
-	return nil
+// start 启动补齐子系统的 worker,随测试结束停止。
+// @Description: 须在造数据之前调用:启动时的恢复扫描会为缺副本行的 blob 补种 pending 行并入队补齐。
+func (e *sweeperEnv) start(t *testing.T) {
+	t.Helper()
+	if err := e.runner.Start(t.Context()); err != nil {
+		t.Fatalf("启动补齐子系统: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := e.runner.Stop(context.Background()); err != nil {
+			t.Errorf("停止补齐子系统: %v", err)
+		}
+	})
 }
 
-// fakePurger 记录 CDN purge 入队调用,可注入失败。
-type fakePurger struct {
-	batches [][]string // 每次入队的 URL 列表
-	err     error      // 非 nil 时入队返回该错误
+// sweeper 以装配的库与补齐子系统构造清理器。
+// @param settings 运营配置读取口
+func (e *sweeperEnv) sweeper(settings func() config.Settings) *lifecycle.Sweeper {
+	return lifecycle.New(lifecycle.Config{
+		Conn: e.Conn, Queries: e.Queries, Deleter: e.runner, Purger: e.runner,
+		Settings: settings, Logger: e.Logger,
+	})
 }
 
-// EnqueuePurge 记录调用。
-func (f *fakePurger) EnqueuePurge(_ context.Context, urls []string) error {
-	f.batches = append(f.batches, urls)
-	return f.err
+// putObject 把一个小对象写入 local 渠道。
+// @param key 对象键
+func (e *sweeperEnv) putObject(t *testing.T, key string) {
+	t.Helper()
+	payload := []byte("object-bytes")
+	if err := e.local.Driver.Put(t.Context(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+		t.Fatalf("写入渠道对象 %q: %v", key, err)
+	}
 }
 
-// setup 打开临时库并迁移,返回连接与查询句柄。
+// objectExists 报告 local 渠道上是否还有该对象的文件。
+// @param key 对象键
+func (e *sweeperEnv) objectExists(t *testing.T, key string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(e.DataDir, "blobs", key))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("检查渠道对象 %q: %v", key, err)
+	}
+	return err == nil
+}
+
+// jobCount 返回 River 任务表里指定类型的任务数。
+// @param kind 任务类型标识
+func (e *sweeperEnv) jobCount(t *testing.T, kind string) int {
+	t.Helper()
+	var n int
+	if err := e.Conn.QueryRowContext(t.Context(),
+		"SELECT COUNT(*) FROM river_job WHERE kind = ?", kind).Scan(&n); err != nil {
+		t.Fatalf("统计 %s 任务: %v", kind, err)
+	}
+	return n
+}
+
+// purgeJobURLs 读出 River 任务表里全部 CDN purge 任务的 URL 列表,按入队顺序。
+func (e *sweeperEnv) purgeJobURLs(t *testing.T) [][]string {
+	t.Helper()
+	rows, err := e.Conn.QueryContext(t.Context(),
+		"SELECT args FROM river_job WHERE kind = ? ORDER BY id", replication.CDNPurgeArgs{}.Kind())
+	if err != nil {
+		t.Fatalf("查询 purge 任务: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var batches [][]string
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatalf("读取 purge 任务参数: %v", err)
+		}
+		var args replication.CDNPurgeArgs
+		if err := json.Unmarshal(raw, &args); err != nil {
+			t.Fatalf("解析 purge 任务参数: %v", err)
+		}
+		batches = append(batches, args.URLs)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("遍历 purge 任务: %v", err)
+	}
+	return batches
+}
+
+// setup 打开临时库并迁移,供只需要数据库的用例使用。
 func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
 	t.Helper()
 	return dbtest.New(t)
 }
 
-// TestSweepExpiresAndCascades 验证到期引用被回收、引用归零的物理图被物理删,
-// 且渠道副本级联入队删除(内置 local 渠道 id=1 由迁移播种)。
-func TestSweepExpiresAndCascades(t *testing.T) {
-	conn, q := setup(t)
-	ctx := t.Context()
-
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "obj_key", Mime: "image/png", Size: 3, Width: 1, Height: 1,
+// createBlob 造一个指向指定对象键的物理图。
+// @return 物理图主键
+func createBlob(t *testing.T, q *sqlc.Queries, key string) int64 {
+	t.Helper()
+	blobID, err := q.CreateBlob(t.Context(), sqlc.CreateBlobParams{
+		Sha256: "h-" + key, Phash: 1, StorageKey: key, Mime: "image/png", Size: 3, Width: 1, Height: 1,
 	})
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
-	// 已到期的引用(expire_at 在过去)。
-	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "img0000001", BlobID: blobID,
-		UserID: sqlc.DefaultUserID, ExpireAt: past,
+	return blobID
+}
+
+// createImage 造一条引用;expireAt 为零值表示永不过期。
+func createImage(t *testing.T, q *sqlc.Queries, id string, blobID int64, expireAt sql.NullString) {
+	t.Helper()
+	if err := q.CreateImage(t.Context(), sqlc.CreateImageParams{
+		ID: id, BlobID: blobID, UserID: sqlc.DefaultUserID, ExpireAt: expireAt,
 	}); err != nil {
-		t.Fatalf("建 image: %v", err)
+		t.Fatalf("建 image %s: %v", id, err)
 	}
-	// 一条副本记录(渠道 1 = 内置 local),供级联删除。
-	if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
-		BlobID: blobID, ChannelID: 1, State: "done",
+}
+
+// markReplicaDone 把物理图在渠道上的副本记为就绪。
+func markReplicaDone(t *testing.T, q *sqlc.Queries, blobID, channelID int64) {
+	t.Helper()
+	if err := q.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
+		BlobID: blobID, ChannelID: channelID, State: channel.StateDone,
 	}); err != nil {
 		t.Fatalf("建副本记录: %v", err)
 	}
+}
 
-	deleter := &fakeDeleter{}
-	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: deleter, Settings: testSettings(t, nil),
-		Logger: slog.New(slog.DiscardHandler),
-	})
-	if err := sw.SweepOnce(ctx); err != nil {
+// pastExpiry 返回一个已过去的到期时刻。
+func pastExpiry() sql.NullString {
+	return sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
+}
+
+// blobRow 物理图行上与删除流程相关的列。
+type blobRow struct {
+	refCount      int            // 引用计数
+	pendingDelete int            // 待物理删标记
+	deleteAfter   sql.NullString // 物理删执行时刻
+}
+
+// readBlob 读物理图行的删除相关列;行不存在时 exists 为 false。
+func readBlob(t *testing.T, conn *sql.DB, blobID int64) (row blobRow, exists bool) {
+	t.Helper()
+	err := conn.QueryRowContext(t.Context(),
+		"SELECT ref_count, pending_delete, delete_after FROM blobs WHERE id = ?", blobID,
+	).Scan(&row.refCount, &row.pendingDelete, &row.deleteAfter)
+	if errors.Is(err, sql.ErrNoRows) {
+		return blobRow{}, false
+	}
+	if err != nil {
+		t.Fatalf("查 blob: %v", err)
+	}
+	return row, true
+}
+
+// waitUntil 轮询直到条件满足,超时即失败。
+func waitUntil(t *testing.T, timeout time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("等待%s超时(%s)", what, timeout)
+}
+
+// TestSweepExpiresAndCascades 验证到期引用被回收、引用归零的物理图被物理删,
+// 且渠道副本经补齐子系统级联删除:local 渠道上的对象文件随之消失。
+func TestSweepExpiresAndCascades(t *testing.T) {
+	env := newSweeperEnv(t, nil)
+	env.start(t)
+	env.putObject(t, "obj_key")
+	blobID := createBlob(t, env.Queries, "obj_key")
+	createImage(t, env.Queries, "img0000001", blobID, pastExpiry())
+	markReplicaDone(t, env.Queries, blobID, env.local.ID)
+
+	if err := env.sweeper(testenv.Settings(nil)).SweepOnce(t.Context()); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
 
-	// 引用应已删除。
-	if _, err := q.GetImageBlob(ctx, "img0000001"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := env.Queries.GetImageBlob(t.Context(), "img0000001"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("到期引用未删除: err=%v", err)
 	}
-	// 物理图应已物理删(grace=0,同轮内标记+物理删)。
-	if _, err := q.GetBlob(ctx, blobID); !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("引用归零的物理图未物理删: err=%v", err)
+	// 宽限为 0:同一轮内标记并物理删。
+	if _, exists := readBlob(t, env.Conn, blobID); exists {
+		t.Error("引用归零的物理图未物理删")
 	}
-	// 渠道副本应级联入队删除。
-	if len(deleter.calls) != 1 || deleter.calls[0].channelID != 1 || deleter.calls[0].storageKey != "obj_key" {
-		t.Errorf("级联删除入队异常: %+v", deleter.calls)
+	waitUntil(t, cascadeDeadline, "渠道对象被级联删除", func() bool { return !env.objectExists(t, "obj_key") })
+}
+
+// TestSweepGracePeriodDefersPhysicalDelete 验证宽限期:引用归零只打待删标记、物理删时刻落在宽限之后,
+// 对象与副本记录原样保留;宽限到期后的下一轮才物理删并级联删对象。
+func TestSweepGracePeriodDefersPhysicalDelete(t *testing.T) {
+	env := newSweeperEnv(t, nil)
+	env.start(t)
+	env.putObject(t, "graced_key")
+	blobID := createBlob(t, env.Queries, "graced_key")
+	createImage(t, env.Queries, "graceimg01", blobID, pastExpiry())
+	markReplicaDone(t, env.Queries, blobID, env.local.ID)
+
+	sw := env.sweeper(testenv.Settings(func(s *config.Settings) { s.DeleteGraceMinutes = 60 }))
+	before := time.Now()
+	if err := sw.SweepOnce(t.Context()); err != nil {
+		t.Fatalf("首轮 SweepOnce 返回错误: %v", err)
 	}
+	row, exists := readBlob(t, env.Conn, blobID)
+	if !exists {
+		t.Fatal("宽限期内物理图被物理删")
+	}
+	if row.refCount != 0 || row.pendingDelete != 1 || !row.deleteAfter.Valid {
+		t.Fatalf("归零后物理图状态 = %+v, 期望 ref=0 且已打待删标记", row)
+	}
+	deleteAfter, err := sqlc.ParseTimeText(row.deleteAfter.String)
+	if err != nil {
+		t.Fatalf("解析物理删时刻: %v", err)
+	}
+	if got := deleteAfter.Sub(before); got < 59*time.Minute || got > 61*time.Minute {
+		t.Fatalf("物理删时刻距回收 %v, 期望约 60 分钟宽限", got)
+	}
+	if env.jobCount(t, replication.DeleteObjectArgs{}.Kind()) != 0 || !env.objectExists(t, "graced_key") {
+		t.Fatal("宽限期内不应入队删除渠道对象")
+	}
+
+	// 宽限到期:把物理删时刻拨到过去,下一轮物理删并级联删对象。
+	past := sqlc.TimeText(time.Now().Add(-time.Minute))
+	if _, err := env.Conn.ExecContext(t.Context(),
+		"UPDATE blobs SET delete_after = ? WHERE id = ?", past, blobID); err != nil {
+		t.Fatalf("回拨物理删时刻: %v", err)
+	}
+	if err := sw.SweepOnce(t.Context()); err != nil {
+		t.Fatalf("次轮 SweepOnce 返回错误: %v", err)
+	}
+	if _, exists := readBlob(t, env.Conn, blobID); exists {
+		t.Fatal("宽限到期后物理图未物理删")
+	}
+	waitUntil(t, cascadeDeadline, "渠道对象被级联删除", func() bool { return !env.objectExists(t, "graced_key") })
 }
 
 // TestSweepCascadesVariants 验证物理删 blob 时级联清理其衍生图缓存;
@@ -127,19 +304,8 @@ func TestSweepCascadesVariants(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
 
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "obj_key", Mime: "image/png", Size: 3, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
-	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "img0000002", BlobID: blobID,
-		UserID: sqlc.DefaultUserID, ExpireAt: past,
-	}); err != nil {
-		t.Fatalf("建 image: %v", err)
-	}
+	blobID := createBlob(t, q, "obj_key")
+	createImage(t, q, "img0000002", blobID, pastExpiry())
 	// 造一条衍生图缓存索引(外键指向该 blob)。
 	key := variants.Key(blobID, 200, "webp", 80, 4)
 	if err := q.UpsertVariant(ctx, sqlc.UpsertVariantParams{
@@ -153,16 +319,16 @@ func TestSweepCascadesVariants(t *testing.T) {
 		Logger: slog.New(slog.DiscardHandler),
 	})
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Variants: store,
-		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Variants: store,
+		Settings: testenv.Settings(nil), Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
 
 	// blob 应已物理删(变体行先删,外键未拦)。
-	if _, err := q.GetBlob(ctx, blobID); !errors.Is(err, sql.ErrNoRows) {
-		t.Errorf("blob 未物理删(疑被外键拦下): err=%v", err)
+	if _, exists := readBlob(t, conn, blobID); exists {
+		t.Error("blob 未物理删(疑被外键拦下)")
 	}
 	// 变体索引应级联删除。
 	if _, err := q.GetVariant(ctx,
@@ -171,29 +337,21 @@ func TestSweepCascadesVariants(t *testing.T) {
 	}
 }
 
-// TestDeleteCascadesCDNPurge 验证引用删除级联收集并入队 CDN purge URL:
-// 原图 /i/{id} + 该 blob 实际存在过的变体参数组合(显式与协商两种形态,去重)。
+// TestDeleteCascadesCDNPurge 验证引用删除级联收集并入队 CDN purge:任务参数里是原图 /i/{id}
+// 加该 blob 实际存在过的变体参数组合(显式与协商两种形态,去重)。
+// @Description: 补齐子系统不启动,任务停在 River 任务表里供直接核对参数——执行器指向真实的
+// Cloudflare 地址,启动 worker 就会真的外呼。
 func TestDeleteCascadesCDNPurge(t *testing.T) {
-	conn, q := setup(t)
+	env := newSweeperEnv(t, cdn.NewCloudflare("zone", "token"))
 	ctx := t.Context()
-
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 3, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "purgeimg01", BlobID: blobID, UserID: sqlc.DefaultUserID,
-	}); err != nil {
-		t.Fatalf("建 image: %v", err)
-	}
+	blobID := createBlob(t, env.Queries, "k")
+	createImage(t, env.Queries, "purgeimg01", blobID, sql.NullString{})
 	// 两个变体:缩放+转格式、仅转格式。
 	for _, v := range []struct {
 		width  int64
 		format string
 	}{{200, "webp"}, {0, "webp"}} {
-		if err := q.UpsertVariant(ctx, sqlc.UpsertVariantParams{
+		if err := env.Queries.UpsertVariant(ctx, sqlc.UpsertVariantParams{
 			BlobID: blobID, ParamsHash: fmt.Sprintf("ph-%d-%s", v.width, v.format),
 			Width: v.width, Format: v.format, Size: 1,
 		}); err != nil {
@@ -201,20 +359,16 @@ func TestDeleteCascadesCDNPurge(t *testing.T) {
 		}
 	}
 
-	purger := &fakePurger{}
-	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Purger: purger,
-		Settings: purgeSettings(t), Logger: slog.New(slog.DiscardHandler),
-	})
-	if err := sw.DeleteImage(ctx, "purgeimg01"); err != nil {
+	if err := env.sweeper(purgeSettings()).DeleteImage(ctx, "purgeimg01"); err != nil {
 		t.Fatalf("DeleteImage: %v", err)
 	}
 
-	if len(purger.batches) != 1 {
-		t.Fatalf("purge 入队次数 = %d, 期望 1", len(purger.batches))
+	batches := env.purgeJobURLs(t)
+	if len(batches) != 1 {
+		t.Fatalf("purge 入队次数 = %d, 期望 1", len(batches))
 	}
 	got := map[string]bool{}
-	for _, u := range purger.batches[0] {
+	for _, u := range batches[0] {
 		got[u] = true
 	}
 	want := []string{
@@ -224,7 +378,7 @@ func TestDeleteCascadesCDNPurge(t *testing.T) {
 		"https://img.example.com/i/purgeimg01?format=webp",
 	}
 	if len(got) != len(want) {
-		t.Errorf("purge URL 集大小 = %d, 期望 %d: %v", len(got), len(want), purger.batches[0])
+		t.Errorf("purge URL 集大小 = %d, 期望 %d: %v", len(got), len(want), batches[0])
 	}
 	for _, u := range want {
 		if !got[u] {
@@ -233,80 +387,62 @@ func TestDeleteCascadesCDNPurge(t *testing.T) {
 	}
 }
 
-// TestDeleteToleratesPurgeEnqueueFailure 验证 purge 入队失败只告警,不阻塞删除。
+// TestDeleteToleratesPurgeEnqueueFailure 验证 purge 入队失败只告警,不阻塞删除:
+// 任务表缺失让入队真实报错,告警落日志,引用仍被删除。
 func TestDeleteToleratesPurgeEnqueueFailure(t *testing.T) {
-	conn, q := setup(t)
+	env := newSweeperEnv(t, cdn.NewCloudflare("zone", "token"))
 	ctx := t.Context()
-
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 3, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "purgefail01", BlobID: blobID, UserID: sqlc.DefaultUserID,
-	}); err != nil {
-		t.Fatalf("建 image: %v", err)
+	blobID := createBlob(t, env.Queries, "k")
+	createImage(t, env.Queries, "purgefail01", blobID, sql.NullString{})
+	if _, err := env.Conn.ExecContext(ctx, "DROP TABLE river_job"); err != nil {
+		t.Fatalf("删任务表: %v", err)
 	}
 
+	var logBuf bytes.Buffer
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
-		Purger:   &fakePurger{err: errors.New("队列不可用")},
-		Settings: purgeSettings(t), Logger: slog.New(slog.DiscardHandler),
+		Conn: env.Conn, Queries: env.Queries, Deleter: env.runner, Purger: env.runner,
+		Settings: purgeSettings(), Logger: slog.New(slog.NewTextHandler(&logBuf, nil)),
 	})
 	if err := sw.DeleteImage(ctx, "purgefail01"); err != nil {
 		t.Fatalf("purge 入队失败不应阻塞删除: %v", err)
 	}
-	if _, err := q.GetImageBlob(ctx, "purgefail01"); !errors.Is(err, sql.ErrNoRows) {
+	if !strings.Contains(logBuf.String(), "CDN purge 入队失败") {
+		t.Fatalf("入队失败未告警,日志:\n%s", logBuf.String())
+	}
+	if _, err := env.Queries.GetImageBlob(ctx, "purgefail01"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("引用未删除: err=%v", err)
 	}
 }
 
-// TestSweepKeepsReferencedBlob 验证 blob 仍被其他引用持有时不物理删(引用计数把关)。
+// TestSweepKeepsReferencedBlob 验证 blob 仍被其他引用持有时不物理删(引用计数把关),
+// 渠道对象不入队删除。
 func TestSweepKeepsReferencedBlob(t *testing.T) {
-	conn, q := setup(t)
-	ctx := t.Context()
-
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "shared_key", Mime: "image/png", Size: 3, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
+	env := newSweeperEnv(t, nil)
+	env.start(t)
+	env.putObject(t, "shared_key")
+	blobID := createBlob(t, env.Queries, "shared_key")
+	markReplicaDone(t, env.Queries, blobID, env.local.ID)
 	// 两条引用共享同一 blob:一条已到期,一条永不过期。ref_count 需为 2。
-	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET ref_count = 2 WHERE id = ?", blobID); err != nil {
+	if _, err := env.Conn.ExecContext(t.Context(), "UPDATE blobs SET ref_count = 2 WHERE id = ?", blobID); err != nil {
 		t.Fatalf("提升引用计数: %v", err)
 	}
-	uid := sqlc.DefaultUserID
-	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "expiring01", BlobID: blobID, UserID: uid, ExpireAt: past,
-	}); err != nil {
-		t.Fatalf("建到期 image: %v", err)
-	}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "permanent1", BlobID: blobID, UserID: uid}); err != nil {
-		t.Fatalf("建永久 image: %v", err)
-	}
+	createImage(t, env.Queries, "expiring01", blobID, pastExpiry())
+	createImage(t, env.Queries, "permanent1", blobID, sql.NullString{})
 
-	deleter := &fakeDeleter{}
-	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: deleter,
-		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
-	})
-	if err := sw.SweepOnce(ctx); err != nil {
+	if err := env.sweeper(testenv.Settings(nil)).SweepOnce(t.Context()); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
 
 	// 到期引用删除,但 blob 仍被永久引用持有,不得物理删。
-	if _, err := q.GetImageBlob(ctx, "permanent1"); err != nil {
+	if _, err := env.Queries.GetImageBlob(t.Context(), "permanent1"); err != nil {
 		t.Errorf("永久引用被误删: %v", err)
 	}
-	if _, err := q.GetBlob(ctx, blobID); err != nil {
-		t.Errorf("仍被引用的物理图被误删: %v", err)
+	row, exists := readBlob(t, env.Conn, blobID)
+	if !exists || row.refCount != 1 || row.pendingDelete != 0 {
+		t.Errorf("仍被引用的物理图状态 = %+v(存在 %v), 期望 ref=1 且未标待删", row, exists)
 	}
-	if len(deleter.calls) != 0 {
-		t.Errorf("仍被引用的物理图不应级联删除: %+v", deleter.calls)
+	if env.jobCount(t, replication.DeleteObjectArgs{}.Kind()) != 0 || !env.objectExists(t, "shared_key") {
+		t.Error("仍被引用的物理图不应级联删除渠道对象")
 	}
 }
 
@@ -317,26 +453,15 @@ func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
 
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "shared", Mime: "image/png", Size: 3, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
+	blobID := createBlob(t, q, "shared")
 	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET ref_count = 2 WHERE id = ?", blobID); err != nil {
 		t.Fatalf("提升引用计数: %v", err)
 	}
-	uid := sqlc.DefaultUserID
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "victimimg1", BlobID: blobID, UserID: uid}); err != nil {
-		t.Fatalf("建被删 image: %v", err)
-	}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "survivor01", BlobID: blobID, UserID: uid}); err != nil {
-		t.Fatalf("建幸存 image: %v", err)
-	}
+	createImage(t, q, "victimimg1", blobID, sql.NullString{})
+	createImage(t, q, "survivor01", blobID, sql.NullString{})
 
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
-		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Settings: testenv.Settings(nil), Logger: slog.New(slog.DiscardHandler),
 	})
 
 	// 首次删除:引用消失,ref_count 2→1。
@@ -348,60 +473,12 @@ func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
 		t.Fatalf("重复删除应报不存在, got %v", err)
 	}
 
-	var refCount, pendingDelete int
-	if err := conn.QueryRowContext(ctx,
-		"SELECT ref_count, pending_delete FROM blobs WHERE id = ?", blobID,
-	).Scan(&refCount, &pendingDelete); err != nil {
-		t.Fatalf("查 blob: %v", err)
-	}
-	if refCount != 1 || pendingDelete != 0 {
-		t.Fatalf("重复删除后 ref=%d pending=%d, 期望 1/0(未多减未误删)", refCount, pendingDelete)
+	row, exists := readBlob(t, conn, blobID)
+	if !exists || row.refCount != 1 || row.pendingDelete != 0 {
+		t.Fatalf("重复删除后 blob = %+v(存在 %v), 期望 ref=1 且未标待删(未多减未误删)", row, exists)
 	}
 	if _, err := q.GetImageBlob(ctx, "survivor01"); err != nil {
 		t.Errorf("幸存引用被牵连: %v", err)
-	}
-}
-
-// TestExpireOneSkipsCountWhenRowGone 直接验证 expireOne 的原子性:当引用行已被
-// 并发删除(DeleteImage 影响 0 行),不得递减 ref_count。
-func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
-	conn, q := setup(t)
-	ctx := t.Context()
-
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 3, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
-	uid := sqlc.DefaultUserID
-	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "ghostimg01", BlobID: blobID, UserID: uid, ExpireAt: past,
-	}); err != nil {
-		t.Fatalf("建 image: %v", err)
-	}
-	// 抢先删掉引用行(但故意不减计数),模拟并发路径已删行、本轮扫描仍持旧快照。
-	if _, err := conn.ExecContext(ctx, "DELETE FROM images WHERE id = 'ghostimg01'"); err != nil {
-		t.Fatalf("抢先删引用: %v", err)
-	}
-
-	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
-		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
-	})
-	// Sweeper 扫不到已删的到期引用,直接调 SweepOnce 应无副作用;ref_count 保持 1。
-	if err := sw.SweepOnce(ctx); err != nil {
-		t.Fatalf("SweepOnce: %v", err)
-	}
-	var refCount int
-	if err := conn.QueryRowContext(ctx,
-		"SELECT ref_count FROM blobs WHERE id = ?", blobID,
-	).Scan(&refCount); err != nil {
-		t.Fatalf("查 ref_count: %v", err)
-	}
-	if refCount != 1 {
-		t.Fatalf("ref_count = %d, 期望 1(引用行已消失不应减计数)", refCount)
 	}
 }
 
@@ -411,16 +488,8 @@ func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
 func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
-	uid := sqlc.DefaultUserID
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "img0000001", BlobID: blobID, UserID: uid}); err != nil {
-		t.Fatalf("建 image: %v", err)
-	}
+	blobID := createBlob(t, q, "k")
+	createImage(t, q, "img0000001", blobID, sql.NullString{})
 	// 预置为待清理,验证访问后摘标签。
 	if _, err := conn.ExecContext(ctx, "UPDATE images SET pending_cleanup = 1 WHERE id = ?", "img0000001"); err != nil {
 		t.Fatalf("预置标签: %v", err)
@@ -470,12 +539,7 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 func renewImage(t *testing.T, conn *sql.DB, q *sqlc.Queries, id, key string,
 	expireAt sql.NullString, ttlSeconds sql.NullInt64, exempt bool) {
 	t.Helper()
-	blobID, err := q.CreateBlob(t.Context(), sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
+	blobID := createBlob(t, q, key)
 	if err := q.CreateImage(t.Context(), sqlc.CreateImageParams{
 		ID: id, BlobID: blobID, UserID: sqlc.DefaultUserID, ExpireAt: expireAt, TtlSeconds: ttlSeconds,
 	}); err != nil {
@@ -600,20 +664,8 @@ func TestTrackerFlushNoRenewWhenDisabled(t *testing.T) {
 func TestLabelColdImages(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	uid := sqlc.DefaultUserID
-	mk := func(id, key string) {
-		blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-			Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1,
-		})
-		if err != nil {
-			t.Fatalf("建 blob: %v", err)
-		}
-		if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: id, BlobID: blobID, UserID: uid}); err != nil {
-			t.Fatalf("建 image: %v", err)
-		}
-	}
-	mk("coldimg001", "k1")
-	mk("freshimg01", "k2")
+	createImage(t, q, "coldimg001", createBlob(t, q, "k1"), sql.NullString{})
+	createImage(t, q, "freshimg01", createBlob(t, q, "k2"), sql.NullString{})
 	// 把冷图的 created_at 拨到 100 天前(它从未被访问,冷判据取 created_at)。
 	old := sqlc.TimeText(time.Now().Add(-100 * 24 * time.Hour))
 	if _, err := conn.ExecContext(ctx, "UPDATE images SET created_at = ? WHERE id = ?", old, "coldimg001"); err != nil {
@@ -621,7 +673,7 @@ func TestLabelColdImages(t *testing.T) {
 	}
 
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Settings: testenv.Settings(nil), Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
@@ -648,17 +700,7 @@ func TestLabelColdImages(t *testing.T) {
 func TestSweepExpiresIdempotencyKeys(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
-		ID: "idemimg001", BlobID: blobID, UserID: sqlc.DefaultUserID,
-	}); err != nil {
-		t.Fatalf("建 image: %v", err)
-	}
+	createImage(t, q, "idemimg001", createBlob(t, q, "k"), sql.NullString{})
 	for _, key := range []string{"stale", "fresh"} {
 		if err := q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
 			UserID: sqlc.DefaultUserID, Key: key, ImageID: "idemimg001",
@@ -673,7 +715,7 @@ func TestSweepExpiresIdempotencyKeys(t *testing.T) {
 	}
 
 	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Settings: testenv.Settings(nil), Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
@@ -690,43 +732,32 @@ func TestSweepExpiresIdempotencyKeys(t *testing.T) {
 }
 
 // TestPhysicalDeleteRefusesReferencedBlob 验证物理删在事务内复查引用计数:
-// 扫描到的待删 blob 若又有了引用,删除放弃、副本记录保留。
+// 扫描到的待删 blob 若又有了引用,删除放弃、副本记录保留、渠道对象不入队删除。
 func TestPhysicalDeleteRefusesReferencedBlob(t *testing.T) {
-	conn, q := setup(t)
+	env := newSweeperEnv(t, nil)
+	env.start(t)
+	env.putObject(t, "revived")
 	ctx := t.Context()
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
-		Sha256: "h", Phash: 1, StorageKey: "revived", Mime: "image/png", Size: 1, Width: 1, Height: 1,
-	})
-	if err != nil {
-		t.Fatalf("建 blob: %v", err)
-	}
+	blobID := createBlob(t, env.Queries, "revived")
 	// 待删标记在、宽限已过,但 ref_count 仍为 1(被重新引用)。
 	past := sqlc.TimeText(time.Now().Add(-time.Hour))
-	if _, err := conn.ExecContext(ctx,
+	if _, err := env.Conn.ExecContext(ctx,
 		"UPDATE blobs SET pending_delete = 1, delete_after = ? WHERE id = ?", past, blobID); err != nil {
 		t.Fatalf("置待删标记: %v", err)
 	}
-	if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
-		BlobID: blobID, ChannelID: 1, State: "done",
-	}); err != nil {
-		t.Fatalf("建副本记录: %v", err)
-	}
+	markReplicaDone(t, env.Queries, blobID, env.local.ID)
 
-	deleter := &fakeDeleter{}
-	sw := lifecycle.New(lifecycle.Config{
-		Conn: conn, Queries: q, Deleter: deleter,
-		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
-	})
-	if err := sw.SweepOnce(ctx); err != nil {
+	if err := env.sweeper(testenv.Settings(nil)).SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
-	if _, err := q.GetBlob(ctx, blobID); err != nil {
-		t.Fatalf("仍被引用的物理图被物理删: %v", err)
+	if _, exists := readBlob(t, env.Conn, blobID); !exists {
+		t.Fatal("仍被引用的物理图被物理删")
 	}
-	if _, err := q.GetBlobChannel(ctx, sqlc.GetBlobChannelParams{BlobID: blobID, ChannelID: 1}); err != nil {
+	replica := sqlc.GetBlobChannelParams{BlobID: blobID, ChannelID: env.local.ID}
+	if _, err := env.Queries.GetBlobChannel(ctx, replica); err != nil {
 		t.Fatalf("放弃物理删后副本记录应随事务回滚保留: %v", err)
 	}
-	if len(deleter.calls) != 0 {
-		t.Fatalf("放弃物理删不应入队渠道对象删除: %+v", deleter.calls)
+	if env.jobCount(t, replication.DeleteObjectArgs{}.Kind()) != 0 || !env.objectExists(t, "revived") {
+		t.Fatal("放弃物理删不应入队渠道对象删除")
 	}
 }

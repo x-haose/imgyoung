@@ -7,22 +7,10 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/dedup"
-	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
-
-// testSettings 构造运营配置读取口:内嵌默认值上按需覆写(mod 为 nil 即取默认)。
-// @param mod 覆写钩子,按需改动默认配置副本
-// @return 逐轮取值的配置读取口
-func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
-	t.Helper()
-	set := config.Defaults()
-	if mod != nil {
-		mod(&set)
-	}
-	return func() config.Settings { return set }
-}
 
 // setup 打开临时库并迁移。
 func setup(t *testing.T) (*sql.DB, *sqlc.Queries) {
@@ -59,7 +47,7 @@ func TestMergeExactCollapsesDuplicates(t *testing.T) {
 	redundantID := mkBlobWithImage(t, ctx, q, "samehash", "img_b_key", "imagebbbb1")
 
 	m := dedup.New(dedup.Config{
-		Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+		Conn: conn, Queries: q, Settings: testenv.Settings(nil), Logger: slog.New(slog.DiscardHandler),
 	})
 	n, err := m.MergeExactOnce(ctx)
 	if err != nil {

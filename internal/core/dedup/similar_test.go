@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/dedup"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -35,7 +36,7 @@ func newSimilarMerger(t *testing.T, conn *sql.DB, q *sqlc.Queries) *dedup.Merger
 	t.Helper()
 	return dedup.New(dedup.Config{
 		Conn: conn, Queries: q,
-		Settings: testSettings(t, func(s *config.Settings) { s.DedupPhashMaxDistance = 4 }),
+		Settings: testenv.Settings(func(s *config.Settings) { s.DedupPhashMaxDistance = 4 }),
 		Logger:   slog.New(slog.DiscardHandler),
 	})
 }
@@ -275,7 +276,7 @@ func TestScanSimilarDisabled(t *testing.T) {
 
 	m := dedup.New(dedup.Config{
 		Conn: conn, Queries: q,
-		Settings: testSettings(t, func(s *config.Settings) { s.DedupPhashMaxDistance = 0 }),
+		Settings: testenv.Settings(func(s *config.Settings) { s.DedupPhashMaxDistance = 0 }),
 		Logger:   slog.New(slog.DiscardHandler),
 	})
 	if n, err := m.ScanSimilarOnce(ctx); err != nil || n != 0 {

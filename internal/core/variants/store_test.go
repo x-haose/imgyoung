@@ -38,6 +38,7 @@ func newStore(t *testing.T, capacity int64) storeEnv {
 	return storeEnv{store: s, blobID: blobID, dir: dir, conn: conn, q: q}
 }
 
+// TestStorePutGetRoundtrip 验证写入后按键取回字节与格式一致。
 func TestStorePutGetRoundtrip(t *testing.T) {
 	env := newStore(t, 1<<30)
 	s, blobID := env.store, env.blobID
@@ -94,6 +95,7 @@ func TestStoreFlushTouchesLastAccess(t *testing.T) {
 	}
 }
 
+// TestStoreGetMiss 验证未写入与索引在而文件丢失两种情况都视为未命中、不报错。
 func TestStoreGetMiss(t *testing.T) {
 	env := newStore(t, 1<<30)
 	s, blobID, dir := env.store, env.blobID, env.dir
@@ -115,6 +117,7 @@ func TestStoreGetMiss(t *testing.T) {
 	}
 }
 
+// TestStoreLRUEvicts 验证总量超容量后按访问时间淘汰,命中数不超过容量能容纳的条数。
 func TestStoreLRUEvicts(t *testing.T) {
 	const each = 1000
 	// 容量仅容 3 个,写 5 个后总量必须回落到容量以下。
@@ -143,6 +146,7 @@ func TestStoreLRUEvicts(t *testing.T) {
 	}
 }
 
+// TestStoreDeleteByBlob 验证按物理图级联删除缓存:索引与文件一并消失。
 func TestStoreDeleteByBlob(t *testing.T) {
 	env := newStore(t, 1<<30)
 	s, blobID, dir := env.store, env.blobID, env.dir

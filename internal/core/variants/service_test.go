@@ -13,22 +13,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/core/variants"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
-
-// testSettings 构造运营配置读取口:内嵌默认值上按需覆写(mod 为 nil 即取默认)。
-// @param mod 覆写钩子,按需改动默认配置副本
-// @return 逐请求取值的配置读取口
-func testSettings(t *testing.T, mod func(*config.Settings)) func() config.Settings {
-	t.Helper()
-	set := config.Defaults()
-	if mod != nil {
-		mod(&set)
-	}
-	return func() config.Settings { return set }
-}
 
 // pngBytes 合成一张小 PNG 作源图。
 func pngBytes(t *testing.T) []byte {
@@ -50,7 +39,7 @@ func pngBytes(t *testing.T) []byte {
 func newService(t *testing.T, workers int, timeout time.Duration) (*variants.Service, int64) {
 	t.Helper()
 	env := newStore(t, 1<<30)
-	settings := testSettings(t, func(s *config.Settings) {
+	settings := testenv.Settings(func(s *config.Settings) {
 		s.ProcessWorkers = workers
 		s.ProcessTimeoutMS = int(timeout / time.Millisecond)
 	})
@@ -60,6 +49,7 @@ func newService(t *testing.T, workers int, timeout time.Duration) (*variants.Ser
 	return svc, env.blobID
 }
 
+// TestServiceProcessesThenCaches 验证首次访问处理并落缓存,二次同参访问命中缓存、不再拉源图。
 func TestServiceProcessesThenCaches(t *testing.T) {
 	svc, blobID := newService(t, 4, 3*time.Second)
 	ctx := t.Context()
@@ -85,6 +75,8 @@ func TestServiceProcessesThenCaches(t *testing.T) {
 	}
 }
 
+// TestServiceSingleFlightMergesConcurrent 验证同键并发首请求合并为一次处理:
+// 首个处理卡在拉源图上,其余调用方全部发起后才放行,源图只被拉取一次。
 func TestServiceSingleFlightMergesConcurrent(t *testing.T) {
 	svc, blobID := newService(t, 4, 3*time.Second)
 	ctx := t.Context()
@@ -95,27 +87,30 @@ func TestServiceSingleFlightMergesConcurrent(t *testing.T) {
 	//nolint:unparam // 须匹配 srcFn 回调签名 func(ctx)([]byte,error);测试替身不产生错误
 	srcFn := func(context.Context) ([]byte, error) {
 		calls.Add(1)
-		<-release // 卡住首个处理,给并发调用汇聚的时间窗
+		<-release // 卡住首个处理,直到全部并发调用方都已发起
 		return src, nil
 	}
 	params := imaging.ProcessParams{Width: 32, Format: imaging.FormatWebP}
 
 	const n = 8
-	var wg sync.WaitGroup
+	var started, done sync.WaitGroup
+	started.Add(n)
 	for range n {
-		wg.Go(func() {
+		done.Go(func() {
+			started.Done()
 			_, _, _ = svc.GetOrProcess(ctx, blobID, params, srcFn)
 		})
 	}
-	time.Sleep(50 * time.Millisecond) // 让并发调用都进入 singleflight
+	started.Wait()
 	close(release)
-	wg.Wait()
+	done.Wait()
 
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("srcFn 调用 %d 次,期望 1(singleflight 合并同键并发)", got)
 	}
 }
 
+// TestServiceBusyReturnsErrBusy 验证处理槽占满且等待超时时返回 ErrBusy,供上层回退原图。
 func TestServiceBusyReturnsErrBusy(t *testing.T) {
 	// 单槽 + 极短超时:一个处理占住槽,另一个不同键请求抢不到即 ErrBusy。
 	svc, blobID := newService(t, 1, 80*time.Millisecond)

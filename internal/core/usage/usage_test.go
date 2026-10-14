@@ -2,24 +2,18 @@ package usage_test
 
 import (
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/usage"
 	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/observability"
 )
 
-// fakeGauge 记录各渠道被设置的用量值。
-type fakeGauge struct {
-	vals map[string]float64
-}
-
-// SetChannelStorage 记录设置值。
-func (f *fakeGauge) SetChannelStorage(channel string, bytes float64) {
-	f.vals[channel] = bytes
-}
-
-// TestReportOnceSumsDoneReplicas 验证用量上报按已就绪副本的图片大小求和,写入量表。
+// TestReportOnceSumsDoneReplicas 验证用量上报按已就绪副本的图片大小求和,写入指标集并经 /metrics 暴露。
 func TestReportOnceSumsDoneReplicas(t *testing.T) {
 	_, q := dbtest.New(t)
 	ctx := t.Context()
@@ -39,15 +33,18 @@ func TestReportOnceSumsDoneReplicas(t *testing.T) {
 		}
 	}
 
-	g := &fakeGauge{vals: map[string]float64{}}
+	metrics := observability.New()
 	r := usage.New(usage.Config{
-		Queries: q, Gauge: g, QuotaBytes: func() int64 { return 0 }, Logger: slog.New(slog.DiscardHandler),
+		Queries: q, Gauge: metrics, QuotaBytes: func() int64 { return 0 }, Logger: slog.New(slog.DiscardHandler),
 	})
 	if err := r.ReportOnce(ctx); err != nil {
 		t.Fatalf("ReportOnce 返回错误: %v", err)
 	}
 
-	if got := g.vals["local"]; got != 350 {
-		t.Fatalf("local 渠道用量 = %v, 期望 350(100+250)", got)
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	const want = `imgyoung_channel_storage_bytes{channel="local"} 350`
+	if body := rec.Body.String(); !strings.Contains(body, want) {
+		t.Fatalf("/metrics 未见 %s:\n%s", want, body)
 	}
 }
