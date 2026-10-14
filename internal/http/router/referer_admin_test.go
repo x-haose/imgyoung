@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/referer"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
@@ -155,21 +155,16 @@ func TestRefererWhitelistHotReload(t *testing.T) {
 // TestConfigFullAdminOnly 验证全量配置切面:管理员可读且分组齐全、凭证值脱敏;
 // 普通用户 403。
 func TestConfigFullAdminOnly(t *testing.T) {
-	var authSvc *auth.Service
-	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
-		authSvc = tc.Router.Auth
+	ts := newTestServer(t, func(_ *testConfig, env testEnv) {
 		applySettings(t, env.Store, func(s *config.Settings) {
 			s.CDNCloudflareAPIToken = "cf-secret-token"
 		})
 		if err := env.Queries.CreateUser(t.Context(), sqlc.CreateUserParams{
-			ID: "u-viewer", Name: "carol", Role: "user",
+			ID: "u-viewer", Name: "carol", Role: "user", PasswordHash: testenv.PasswordHash(t, "carol-pass"),
 		}); err != nil {
 			t.Fatalf("建普通用户: %v", err)
 		}
 	})
-	if err := authSvc.SetPassword(t.Context(), "u-viewer", "carol-pass"); err != nil {
-		t.Fatalf("设置普通用户密码: %v", err)
-	}
 
 	client, csrf := adminSession(t, ts)
 	resp := adminReq(t, client, csrf, http.MethodGet, ts.URL+"/api/admin/config/full", "")
@@ -222,18 +217,13 @@ func TestConfigFullAdminOnly(t *testing.T) {
 // TestConfigUpdateHotReload 验证 PUT /config:修改即时生效于上传闸与后续读取,
 // 非法值 400 整体拒绝,未知键 400,普通用户 403,变更写入审计。
 func TestConfigUpdateHotReload(t *testing.T) {
-	var authSvc *auth.Service
-	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
-		authSvc = tc.Router.Auth
+	ts := newTestServer(t, func(_ *testConfig, env testEnv) {
 		if err := env.Queries.CreateUser(t.Context(), sqlc.CreateUserParams{
-			ID: "u-plain", Name: "dave", Role: "user",
+			ID: "u-plain", Name: "dave", Role: "user", PasswordHash: testenv.PasswordHash(t, "dave-pass"),
 		}); err != nil {
 			t.Fatalf("建普通用户: %v", err)
 		}
 	})
-	if err := authSvc.SetPassword(t.Context(), "u-plain", "dave-pass"); err != nil {
-		t.Fatalf("设置普通用户密码: %v", err)
-	}
 	client, csrf := adminSession(t, ts)
 
 	// 初始额度 1MB:2MB 载荷应 413。

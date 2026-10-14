@@ -28,19 +28,28 @@ const defaultAPIBase = "https://api.cloudflare.com/client/v4"
 type CloudflarePurger struct {
 	zoneID  string       // Cloudflare Zone ID
 	token   string       // API Token,须具备 Zone.Cache Purge 权限;绝不写入日志与错误消息
-	apiBase string       // API 根地址,测试注入假服务用
+	apiBase string       // API 根地址;生产为 Cloudflare 官方地址,集成测试指向本地 HTTP 服务
 	client  *http.Client // 带超时的 HTTP 客户端
 }
 
-// NewCloudflare 构造 Cloudflare purge 执行器。
+// NewCloudflare 构造指向 Cloudflare 官方 API 的 purge 执行器。
 // @param zoneID Cloudflare Zone ID
 // @param token API Token(敏感,仅存内存)
 // @return 就绪的执行器
 func NewCloudflare(zoneID, token string) *CloudflarePurger {
+	return NewCloudflareAt(defaultAPIBase, zoneID, token)
+}
+
+// NewCloudflareAt 构造指向指定 API 根地址的 purge 执行器,集成测试据此把外呼指向本地 HTTP 服务。
+// @param apiBase API 根地址,不含尾斜杠
+// @param zoneID Cloudflare Zone ID
+// @param token API Token(敏感,仅存内存)
+// @return 就绪的执行器
+func NewCloudflareAt(apiBase, zoneID, token string) *CloudflarePurger {
 	return &CloudflarePurger{
 		zoneID:  zoneID,
 		token:   token,
-		apiBase: defaultAPIBase,
+		apiBase: apiBase,
 		client:  &http.Client{Timeout: requestTimeout},
 	}
 }

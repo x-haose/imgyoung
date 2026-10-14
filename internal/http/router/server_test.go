@@ -120,7 +120,9 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 	}); err != nil {
 		t.Fatalf("植入测试 Token: %v", err)
 	}
-	if err := authSvc.SetPassword(t.Context(), sqlc.DefaultUserID, testAdminPass); err != nil {
+	if err := env.Queries.UpdateUserPassword(t.Context(), sqlc.UpdateUserPasswordParams{
+		PasswordHash: testenv.PasswordHash(t, testAdminPass), ID: sqlc.DefaultUserID,
+	}); err != nil {
 		t.Fatalf("设置管理员密码: %v", err)
 	}
 	refererSvc, err := referer.New(t.Context(), env.Queries)

@@ -44,9 +44,7 @@ func (f *fakeCF) handler(t *testing.T) http.HandlerFunc {
 
 // newPurger 构造指向假 API 的执行器。
 func newPurger(srvURL string) *CloudflarePurger {
-	p := NewCloudflare("zone123", "tok456")
-	p.apiBase = srvURL
-	return p
+	return NewCloudflareAt(srvURL, "zone123", "tok456")
 }
 
 // TestPurgeBatching 验证 URL 收集与分批:65 个 URL 按 30/30/5 三批顺序发出,内容与顺序完整。

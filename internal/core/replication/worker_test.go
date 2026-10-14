@@ -3,8 +3,10 @@ package replication
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/riverqueue/river"
@@ -13,12 +15,14 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // workerEnv 直接驱动补齐 worker 的装配:内置 local 作源渠道,backup 作目标渠道;不启动 River,
 // 任务行由用例构造,尝试次数与上限由用例指定。
 type workerEnv struct {
 	env       *testenv.Env
+	cfg       RunnerConfig // 各 worker 共用的依赖
 	worker    *replicateWorker
 	local     channel.Handle
 	backup    channel.Handle
@@ -31,9 +35,8 @@ func newWorkerEnv(t *testing.T) *workerEnv {
 	env := testenv.New(t)
 	_, backupDir := env.AddLocalChannel(t, "backup", 200, false)
 	we := &workerEnv{env: env, backupDir: backupDir}
-	we.worker = &replicateWorker{cfg: RunnerConfig{
-		Conn: env.Conn, Queries: env.Queries, Manager: env.Manager, Logger: env.Logger,
-	}}
+	we.cfg = RunnerConfig{Conn: env.Conn, Queries: env.Queries, Manager: env.Manager, Logger: env.Logger}
+	we.worker = &replicateWorker{cfg: we.cfg}
 	for _, h := range env.Manager.All() {
 		if h.Name == "local" {
 			we.local = h
@@ -233,5 +236,192 @@ func TestReplicateWorkerCancelsWhenTargetDraining(t *testing.T) {
 	row := we.replica(t, args)
 	if row.State != channel.StatePending || row.Attempts != 0 {
 		t.Fatalf("清理中渠道的副本行 = %+v, 期望原样 pending、不计尝试", row)
+	}
+}
+
+// readOnly 把目录去掉写位,随测试结束恢复;删对象、写对象都会因此失败。
+// @param dir 目标目录
+func readOnly(t *testing.T, dir string) {
+	t.Helper()
+	testenv.SkipIfRoot(t)
+	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // 需保留读与执行位,只去掉写位才能构造可读不可写
+		t.Fatalf("置目录只读: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+			t.Errorf("恢复目录权限: %v", err)
+		}
+	})
+}
+
+// putBackupObject 在备份渠道写一个对象。
+// @param key 对象键
+func (we *workerEnv) putBackupObject(t *testing.T, key string) {
+	t.Helper()
+	payload := []byte("to-be-deleted")
+	if err := we.backup.Driver.Put(t.Context(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+		t.Fatalf("写备份渠道对象: %v", err)
+	}
+}
+
+// deleteJob 构造一个删对象任务,首次尝试、上限 25 次。
+func deleteJob(channelID int64, key string) *river.Job[DeleteObjectArgs] {
+	return &river.Job[DeleteObjectArgs]{
+		JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 25},
+		Args:   DeleteObjectArgs{ChannelID: channelID, StorageKey: key},
+	}
+}
+
+// TestDeleteObjectWorkerDeletesAndToleratesMissing 验证删对象 worker:对象删除后渠道上不复存在;
+// 再删一次因对象已不存在视为成功,任务幂等。
+func TestDeleteObjectWorkerDeletesAndToleratesMissing(t *testing.T) {
+	we := newWorkerEnv(t)
+	we.putBackupObject(t, "gone_00000000")
+	worker := &deleteObjectWorker{cfg: we.cfg}
+
+	if err := worker.Work(t.Context(), deleteJob(we.backup.ID, "gone_00000000")); err != nil {
+		t.Fatalf("删除对象: %v", err)
+	}
+	if _, err := we.backup.Driver.Stat(t.Context(), "gone_00000000"); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("删除后对象仍可 Stat: err=%v", err)
+	}
+	if err := worker.Work(t.Context(), deleteJob(we.backup.ID, "gone_00000000")); err != nil {
+		t.Fatalf("对象已不存在应视为成功, 得 %v", err)
+	}
+}
+
+// TestDeleteObjectWorkerCancelsWhenChannelMissing 验证目标渠道不存在时任务取消,不重试。
+func TestDeleteObjectWorkerCancelsWhenChannelMissing(t *testing.T) {
+	we := newWorkerEnv(t)
+	worker := &deleteObjectWorker{cfg: we.cfg}
+	if err := worker.Work(t.Context(), deleteJob(99999, "any_key")); !isCancel(err) {
+		t.Fatalf("渠道不存在应取消任务, 得 %v", err)
+	}
+}
+
+// TestDeleteObjectWorkerRetriesOnDeleteFailure 验证删除失败(目录只读)返回可重试错误,对象原样保留。
+func TestDeleteObjectWorkerRetriesOnDeleteFailure(t *testing.T) {
+	we := newWorkerEnv(t)
+	we.putBackupObject(t, "stuck_00000000")
+	readOnly(t, we.backupDir)
+	worker := &deleteObjectWorker{cfg: we.cfg}
+
+	if err := worker.Work(t.Context(), deleteJob(we.backup.ID, "stuck_00000000")); err == nil || isCancel(err) {
+		t.Fatalf("目录只读时删除应返回可重试错误, 得 %v", err)
+	}
+	if _, err := we.backup.Driver.Stat(t.Context(), "stuck_00000000"); err != nil {
+		t.Fatalf("删除失败后对象应仍在: %v", err)
+	}
+}
+
+// drainJob 构造一个排空任务。
+// @param attempt 当前尝试次数
+// @param maxAttempts 尝试上限
+func drainJob(channelID int64, attempt, maxAttempts int) *river.Job[DrainChannelArgs] {
+	return &river.Job[DrainChannelArgs]{
+		JobRow: &rivertype.JobRow{Attempt: attempt, MaxAttempts: maxAttempts},
+		Args:   DrainChannelArgs{ChannelID: channelID},
+	}
+}
+
+// seedDrainable 在两个渠道都写入同一个对象并记两行就绪副本,再把备份渠道标为清理中。
+// @Description: local 也持有副本,备份渠道才不会因"持有唯一副本"被拒绝删除。
+// @return 对象键
+func (we *workerEnv) seedDrainable(t *testing.T) string {
+	t.Helper()
+	const key = "drain_00000000"
+	payload := []byte("drain-me")
+	for _, h := range []channel.Handle{we.local, we.backup} {
+		if err := h.Driver.Put(t.Context(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+			t.Fatalf("写渠道 %q 对象: %v", h.Name, err)
+		}
+	}
+	blobID, err := we.env.Queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
+		Sha256: "drainhash", Phash: 1, StorageKey: key, Mime: "image/png",
+		Size: int64(len(payload)), Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("创建 blob 记录: %v", err)
+	}
+	for _, h := range []channel.Handle{we.local, we.backup} {
+		if err := we.env.Queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
+			BlobID: blobID, ChannelID: h.ID, State: channel.StateDone,
+		}); err != nil {
+			t.Fatalf("写副本状态: %v", err)
+		}
+	}
+	if err := we.env.Manager.Delete(t.Context(), we.backup.ID, true); err != nil {
+		t.Fatalf("标记备份渠道清理中: %v", err)
+	}
+	return key
+}
+
+// TestDrainChannelWorkerCancelsUnlessDraining 验证渠道不在清理中(未打标记或已不存在)时任务取消。
+func TestDrainChannelWorkerCancelsUnlessDraining(t *testing.T) {
+	we := newWorkerEnv(t)
+	worker := &drainChannelWorker{cfg: we.cfg}
+	if err := worker.Work(t.Context(), drainJob(we.backup.ID, 1, 25)); !isCancel(err) {
+		t.Fatalf("未标记清理中应取消任务, 得 %v", err)
+	}
+	if err := worker.Work(t.Context(), drainJob(99999, 1, 25)); !isCancel(err) {
+		t.Fatalf("渠道不存在应取消任务, 得 %v", err)
+	}
+}
+
+// TestDrainChannelWorkerDeletesObjectsAndRemovesChannel 验证排空:渠道上的对象与副本行删光后渠道记录消失,
+// 另一渠道的同名对象与副本行不受影响。
+func TestDrainChannelWorkerDeletesObjectsAndRemovesChannel(t *testing.T) {
+	we := newWorkerEnv(t)
+	key := we.seedDrainable(t)
+	worker := &drainChannelWorker{cfg: we.cfg}
+
+	if err := worker.Work(t.Context(), drainJob(we.backup.ID, 1, 25)); err != nil {
+		t.Fatalf("排空: %v", err)
+	}
+	if _, err := we.backup.Driver.Stat(t.Context(), key); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("排空后备份渠道对象仍在: err=%v", err)
+	}
+	if _, ok := we.env.Manager.Get(we.backup.ID); ok {
+		t.Fatal("排空后渠道仍被管理器持有")
+	}
+	if _, err := we.env.Queries.GetChannel(t.Context(), we.backup.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("排空后渠道记录仍在: err=%v", err)
+	}
+	if _, err := we.local.Driver.Stat(t.Context(), key); err != nil {
+		t.Fatalf("另一渠道的对象被殃及: %v", err)
+	}
+	rows, err := we.env.Queries.ListBlobChannels(t.Context(), 1)
+	if err != nil || len(rows) != 1 || rows[0].ChannelID != we.local.ID {
+		t.Fatalf("排空后副本行 = %+v (err=%v), 期望只剩 local 一行", rows, err)
+	}
+}
+
+// TestDrainChannelWorkerRecordsFailureOnLastAttempt 验证排空失败:非末次尝试只报错重试,末次尝试把原因
+// 写进渠道的探测结果栏,渠道停在清理中。
+func TestDrainChannelWorkerRecordsFailureOnLastAttempt(t *testing.T) {
+	we := newWorkerEnv(t)
+	we.seedDrainable(t)
+	readOnly(t, we.backupDir)
+	worker := &drainChannelWorker{cfg: we.cfg}
+
+	if err := worker.Work(t.Context(), drainJob(we.backup.ID, 1, 3)); err == nil || isCancel(err) {
+		t.Fatalf("删对象失败应返回可重试错误, 得 %v", err)
+	}
+	row, err := we.env.Queries.GetChannel(t.Context(), we.backup.ID)
+	if err != nil {
+		t.Fatalf("读渠道记录: %v", err)
+	}
+	if row.LastError.Valid && row.LastError.String != "" {
+		t.Fatalf("非末次失败不应写回原因: %q", row.LastError.String)
+	}
+	if err := worker.Work(t.Context(), drainJob(we.backup.ID, 3, 3)); err == nil || isCancel(err) {
+		t.Fatalf("末次失败应返回普通错误, 得 %v", err)
+	}
+	row, err = we.env.Queries.GetChannel(t.Context(), we.backup.ID)
+	if err != nil {
+		t.Fatalf("读渠道记录: %v", err)
+	}
+	if !row.LastError.Valid || !strings.Contains(row.LastError.String, "清理渠道对象失败") || row.PendingDelete == 0 {
+		t.Fatalf("末次失败后渠道记录 = %+v, 期望原因写回且仍在清理中", row)
 	}
 }

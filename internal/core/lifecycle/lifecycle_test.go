@@ -8,9 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,31 +123,32 @@ func (e *sweeperEnv) jobCount(t *testing.T, kind string) int {
 	return n
 }
 
-// purgeJobURLs 读出 River 任务表里全部 CDN purge 任务的 URL 列表,按入队顺序。
-func (e *sweeperEnv) purgeJobURLs(t *testing.T) [][]string {
-	t.Helper()
-	rows, err := e.Conn.QueryContext(t.Context(),
-		"SELECT args FROM river_job WHERE kind = ? ORDER BY id", replication.CDNPurgeArgs{}.Kind())
-	if err != nil {
-		t.Fatalf("查询 purge 任务: %v", err)
+// purgeStub 收集 purge 调用的本地 Cloudflare API。
+type purgeStub struct {
+	mu      sync.Mutex
+	batches [][]string // 每次调用收到的 files 列表
+}
+
+// ServeHTTP 记录一批 URL 并回成功信封。
+func (s *purgeStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Files []string `json:"files"`
 	}
-	defer func() { _ = rows.Close() }()
-	var batches [][]string
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			t.Fatalf("读取 purge 任务参数: %v", err)
-		}
-		var args replication.CDNPurgeArgs
-		if err := json.Unmarshal(raw, &args); err != nil {
-			t.Fatalf("解析 purge 任务参数: %v", err)
-		}
-		batches = append(batches, args.URLs)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("遍历 purge 任务: %v", err)
-	}
-	return batches
+	s.mu.Lock()
+	s.batches = append(s.batches, req.Files)
+	s.mu.Unlock()
+	_, _ = w.Write([]byte(`{"success":true}`))
+}
+
+// received 返回已收到的批次副本。
+func (s *purgeStub) received() [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]string(nil), s.batches...)
 }
 
 // setup 打开临时库并迁移,供只需要数据库的用例使用。
@@ -337,12 +341,14 @@ func TestSweepCascadesVariants(t *testing.T) {
 	}
 }
 
-// TestDeleteCascadesCDNPurge 验证引用删除级联收集并入队 CDN purge:任务参数里是原图 /i/{id}
-// 加该 blob 实际存在过的变体参数组合(显式与协商两种形态,去重)。
-// @Description: 补齐子系统不启动,任务停在 River 任务表里供直接核对参数——执行器指向真实的
-// Cloudflare 地址,启动 worker 就会真的外呼。
+// TestDeleteCascadesCDNPurge 验证引用删除级联清理 CDN 缓存:purge 请求里是原图 /i/{id}
+// 加该 blob 实际存在过的变体参数组合(显式与协商两种形态,去重),由补齐子系统的 worker 真实外呼。
 func TestDeleteCascadesCDNPurge(t *testing.T) {
-	env := newSweeperEnv(t, cdn.NewCloudflare("zone", "token"))
+	stub := &purgeStub{}
+	api := httptest.NewServer(stub)
+	t.Cleanup(api.Close)
+	env := newSweeperEnv(t, cdn.NewCloudflareAt(api.URL, "zone", "token"))
+	env.start(t)
 	ctx := t.Context()
 	blobID := createBlob(t, env.Queries, "k")
 	createImage(t, env.Queries, "purgeimg01", blobID, sql.NullString{})
@@ -363,9 +369,10 @@ func TestDeleteCascadesCDNPurge(t *testing.T) {
 		t.Fatalf("DeleteImage: %v", err)
 	}
 
-	batches := env.purgeJobURLs(t)
+	waitUntil(t, cascadeDeadline, "purge 外呼到达", func() bool { return len(stub.received()) > 0 })
+	batches := stub.received()
 	if len(batches) != 1 {
-		t.Fatalf("purge 入队次数 = %d, 期望 1", len(batches))
+		t.Fatalf("purge 调用次数 = %d, 期望 1", len(batches))
 	}
 	got := map[string]bool{}
 	for _, u := range batches[0] {

@@ -4,7 +4,10 @@ package testenv
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -14,6 +17,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
+	"golang.org/x/crypto/argon2"
 )
 
 // Env 一套测试装配;库、管理器随测试结束关闭。
@@ -101,4 +105,22 @@ func SkipIfRoot(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root 不受文件权限约束,无法用权限位模拟故障")
 	}
+}
+
+// PasswordHash 以最低开销的 argon2id 参数生成口令哈希,供测试直接写入用户表。
+// @Description: PHC 串自带参数,auth.VerifyPassword 按串内参数校验;出厂强度的哈希让每次登录用例
+// 都要付几十毫秒,用例只关心鉴权逻辑。
+// @param t 测试上下文,随机盐生成失败即 Fatal
+// @param password 明文口令
+// @return PHC 格式哈希串
+func PasswordHash(t *testing.T, password string) string {
+	t.Helper()
+	const memoryKiB, iterations, lanes, keyLen = 256, 1, 1, 32
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		t.Fatalf("生成口令盐: %v", err)
+	}
+	key := argon2.IDKey([]byte(password), salt, iterations, memoryKiB, lanes, keyLen)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, memoryKiB, iterations, lanes,
+		base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
 }
