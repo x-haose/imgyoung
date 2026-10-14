@@ -1,0 +1,3443 @@
+openapi: 3.1.0
+info:
+  title: ImgYoung API
+  version: "1"
+  summary: 自部署多渠道容灾图床的 HTTP 接口
+  description: |
+    ImgYoung 的全部 JSON 接口:数据面(上传、URL 转存)、图片访问入口与管理后台。
+    S3 协议面(`/s3/…`,PutObject / HeadBucket / HeadObject / GetObject / DeleteObject 五个操作,XML 错误体)按 AWS S3 规范实现,不在本文档内。
+
+    认证面只有两个:数据面用具名上传 Token(`Authorization: Bearer <token>`,在后台签发);
+    管理后台用会话 cookie,状态变更请求须以 `X-CSRF-Token` 头回传登录或 `GET /api/admin/me` 下发的 CSRF 令牌。
+    错误响应一律为 `{"error": "<面向用户的描述>"}` 信封;图片访问入口的 403 / 404 / 503 例外,为纯文本。
+    时刻字段除特别说明外均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`。
+
+    本文档随二进制内嵌,运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本。
+  license:
+    name: MIT
+    url: https://github.com/x-haose/imgyoung/blob/main/LICENSE
+servers:
+  - url: /
+    description: 与站点同源
+tags:
+  - name: 数据面
+    description: 上传 Token 认证的上传与 URL 转存
+  - name: 图片访问
+    description: 公开的图片输出入口,受防盗链约束
+  - name: 后台·会话
+    description: 登录、登出、当前用户与改密
+  - name: 后台·总览与配置
+    description: 仪表盘与运行配置
+  - name: 后台·上传
+    description: 会话认证的后台上传,与数据面同一管道
+  - name: 后台·图片
+    description: 图片列表、详情、修改与删除
+  - name: 后台·上传 Token
+    description: 具名 Token 的签发、轮转、吊销与 S3 凭证
+  - name: 后台·存储渠道
+    description: 渠道模板、创建、编辑、探测、删除与网盘授权
+  - name: 后台·用户
+    description: 多用户建号、配额与密码重置(仅管理员)
+  - name: 后台·防盗链
+    description: Referer 白名单(仅管理员)
+  - name: 后台·裁决
+    description: 相似重复与冷图待清理的裁决(仅管理员)
+  - name: 后台·运维
+    description: 审计日志、告警、备份快照与元数据导出(仅管理员)
+  - name: 系统
+    description: 健康检查与接口文档
+
+paths:
+  /healthz:
+    get:
+      operationId: health
+      security: []
+      tags: [系统]
+      summary: 健康检查
+      description: 进程存活即返回 200,不检查数据库与渠道。
+      responses:
+        '200':
+          description: 存活
+          content:
+            text/plain:
+              schema:
+                type: string
+                const: ok
+  /api/openapi.yaml:
+    get:
+      operationId: openapiDocument
+      security: []
+      tags: [系统]
+      summary: 接口文档
+      description: 返回与运行中二进制一致的本文档。
+      responses:
+        '200':
+          description: OpenAPI 文档
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /api/upload:
+    post:
+      operationId: upload
+      tags: [数据面]
+      summary: 上传图片
+      description: |
+        multipart 表单上传。格式以 magic bytes 判定(jpeg / png / gif / webp),超过单图上限或像素预算即拒绝。
+        带 `Idempotency-Key` 头时,保留期内同一键重试返回同一张图。
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/UploadForm'
+      responses:
+        '200':
+          $ref: '#/components/responses/Uploaded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Token 无上传权限,或用户存储配额已满
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedType'
+        '422':
+          $ref: '#/components/responses/TooManyPixels'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ChannelsUnavailable'
+  /api/upload/url:
+    post:
+      operationId: uploadFromURL
+      tags: [数据面]
+      summary: URL 转存
+      description: 服务端抓取远端图片后走与直传相同的管道;仅允许公网 http/https 地址,远端声明的类型不参与判定。
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/UploadURL'
+      responses:
+        '200':
+          $ref: '#/components/responses/Uploaded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Token 无上传权限,或用户存储配额已满
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedType'
+        '422':
+          $ref: '#/components/responses/TooManyPixels'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '502':
+          description: 远端返回错误、重定向过多或无法取回
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/ChannelsUnavailable'
+
+  /i/{id}:
+    get:
+      operationId: serveImage
+      security: []
+      tags: [图片访问]
+      summary: 按短 ID 输出图片
+      description: |
+        计公开访问活跃度。带 `w` / `format` 参数时按需处理(宽度与格式须在后台允许的档位内);
+        `format` 缺省或为 `auto` 时按 `Accept` 协商,浏览器支持且档位允许则输出 WebP。
+        访问模式为 `redirect` 且有允许直链的渠道时 302 到渠道公开地址;处理失败降级输出原图并 `Cache-Control: no-store`。
+      parameters:
+        - $ref: '#/components/parameters/imageID'
+        - $ref: '#/components/parameters/variantWidth'
+        - $ref: '#/components/parameters/variantFormat'
+        - $ref: '#/components/parameters/ifNoneMatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageBytes'
+        '302':
+          $ref: '#/components/responses/DirectLink'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/RefererRejected'
+        '404':
+          $ref: '#/components/responses/ImageNotFound'
+        '503':
+          $ref: '#/components/responses/ImageUnavailable'
+  /o/{user_id}/{object_key}:
+    get:
+      operationId: serveImageByObjectKey
+      security: []
+      tags: [图片访问]
+      summary: 按 S3 对象键输出图片
+      description: S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          description: 归属用户 id;对象键只在用户内唯一
+          schema:
+            type: string
+        - name: object_key
+          in: path
+          required: true
+          description: 客户端自取的对象键
+          schema:
+            type: string
+        - $ref: '#/components/parameters/variantWidth'
+        - $ref: '#/components/parameters/variantFormat'
+        - $ref: '#/components/parameters/ifNoneMatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageBytes'
+        '302':
+          $ref: '#/components/responses/DirectLink'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/RefererRejected'
+        '404':
+          $ref: '#/components/responses/ImageNotFound'
+        '503':
+          $ref: '#/components/responses/ImageUnavailable'
+
+  /api/admin/auth/login:
+    post:
+      operationId: login
+      tags: [后台·会话]
+      summary: 登录
+      description: 校验凭证并下发会话 cookie(`imgyoung_session`,HttpOnly,SameSite=Lax,HTTPS 时带 Secure);响应体携带后续写请求要回传的 CSRF 令牌。按客户端地址与用户名限速。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: 用户名或密码错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: 用户已被禁用
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /api/admin/auth/logout:
+    post:
+      operationId: logout
+      tags: [后台·会话]
+      summary: 登出
+      description: 删除服务端会话并清除 cookie,幂等。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已登出
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/me:
+    get:
+      operationId: me
+      tags: [后台·会话]
+      summary: 当前会话
+      description: 返回会话主体与 CSRF 令牌,前端刷新后据此恢复登录态。
+      security:
+        - session: []
+      responses:
+        '200':
+          $ref: '#/components/responses/SessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/admin/me/password:
+    put:
+      operationId: changePassword
+      tags: [后台·会话]
+      summary: 修改当前用户密码
+      description: 校验旧密码;成功后该用户全部会话失效,须重新登录。新密码至少 8 个字符。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: 已修改,会话已失效
+        '400':
+          description: 请求体非法、旧密码不正确或新密码过短
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/admin/dashboard:
+    get:
+      operationId: dashboard
+      tags: [后台·总览与配置]
+      summary: 仪表盘
+      description: 管理员得到全站概览,普通用户得到本人用量;以响应里是否有 `channels` 区分。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 概览
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/admin/config:
+    get:
+      operationId: runtimeConfig
+      tags: [后台·总览与配置]
+      summary: 运行配置只读切面
+      description: 全部登录用户可读:界面呈现阈值文案与档位所需的键,以及服务端构建信息;不含任何凭证。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 运行配置切面
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      operationId: updateConfig
+      tags: [后台·总览与配置]
+      summary: 修改运营配置
+      description: |
+        请求体为「配置键 → 新值」对象,只动出现的键,保存即热生效;未知键或任一取值非法整体拒绝,不做部分生效。
+        `cdn_cloudflare_api_token` 传空串表示清除、不传表示不动。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsPatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/FullConfigResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/config/full:
+    get:
+      operationId: fullConfig
+      tags: [后台·总览与配置]
+      summary: 全量生效配置
+      description: 引导配置只读展示、运营配置当前值(凭证字段抹空)与派生状态;仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FullConfigResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/admin/upload:
+    post:
+      operationId: sessionUpload
+      tags: [后台·上传]
+      summary: 后台上传图片
+      description: 与 `POST /api/upload` 同一管道与防护闸,归属为会话用户,来源 Token 记空。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/UploadForm'
+      responses:
+        '200':
+          $ref: '#/components/responses/Uploaded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: CSRF 校验失败,或用户存储配额已满
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedType'
+        '422':
+          $ref: '#/components/responses/TooManyPixels'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ChannelsUnavailable'
+  /api/admin/upload/url:
+    post:
+      operationId: sessionUploadFromURL
+      tags: [后台·上传]
+      summary: 后台 URL 转存
+      description: 与 `POST /api/upload/url` 同一管道,归属为会话用户。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        $ref: '#/components/requestBodies/UploadURL'
+      responses:
+        '200':
+          $ref: '#/components/responses/Uploaded'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: CSRF 校验失败,或用户存储配额已满
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedType'
+        '422':
+          $ref: '#/components/responses/TooManyPixels'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '502':
+          description: 远端返回错误、重定向过多或无法取回
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          $ref: '#/components/responses/ChannelsUnavailable'
+
+  /api/admin/images:
+    get:
+      operationId: listImages
+      tags: [后台·图片]
+      summary: 图片列表
+      description: 分页;普通用户只见自己的,管理员可按用户、Token、时间与关键词过滤。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+        - name: search
+          in: query
+          description: 文件名关键词
+          schema:
+            type: string
+        - name: user_id
+          in: query
+          description: 只看指定用户的图;仅管理员生效
+          schema:
+            type: string
+        - name: token_id
+          in: query
+          description: 只看来自指定 Token 的图
+          schema:
+            type: integer
+            format: int64
+        - $ref: '#/components/parameters/since'
+        - $ref: '#/components/parameters/until'
+        - name: exempt
+          in: query
+          description: 为 `1` 时只看已清理豁免的图
+          schema:
+            type: integer
+            enum: [1]
+      responses:
+        '200':
+          description: 图片分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/admin/images/batch-delete:
+    post:
+      operationId: batchDeleteImages
+      tags: [后台·图片]
+      summary: 批量删除图片
+      description: 逐张按单删的权限与级联语义处理,单张失败不中断其余;他人图按不存在处理。单次至多 100 个 ID。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchDeleteRequest'
+      responses:
+        '200':
+          description: 逐张结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchDeleteResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/images/{id}:
+    parameters:
+      - $ref: '#/components/parameters/imageID'
+    get:
+      operationId: getImage
+      tags: [后台·图片]
+      summary: 图片详情
+      description: 列表项字段之外附带各渠道的副本状态;普通用户查他人图一律 404,不泄露存在性。
+      security:
+        - session: []
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patchImage
+      tags: [后台·图片]
+      summary: 修改有效期或清理豁免
+      description: 至少携带一个修改项。`ttl_hours` 对属主开放;`cleanup_exempt` 是冷图裁决的「保留」语义,仅管理员,普通用户携带即 403。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImagePatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageDetailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteImage
+      tags: [后台·图片]
+      summary: 删除图片
+      description: 立即删除引用,渠道副本、衍生图与 CDN 缓存由清理任务级联;他人图一律 404。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已删除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/images/{id}/thumb:
+    get:
+      operationId: adminImageBytes
+      tags: [后台·图片]
+      summary: 后台预览图
+      description: 与 `/i/{id}` 同一处理管线,但走会话鉴权、不计公开访问活跃度、不受防盗链约束。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/imageID'
+        - $ref: '#/components/parameters/variantWidth'
+        - $ref: '#/components/parameters/variantFormat'
+        - $ref: '#/components/parameters/ifNoneMatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageBytes'
+        '302':
+          $ref: '#/components/responses/DirectLink'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/ImageNotFound'
+        '503':
+          $ref: '#/components/responses/ImageUnavailable'
+
+  /api/admin/tokens:
+    get:
+      operationId: listTokens
+      tags: [后台·上传 Token]
+      summary: Token 列表
+      description: 分页,缺省列本人的;管理员可带 `user_id` 查看指定用户的。只含识别前缀,无哈希无明文。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+        - name: user_id
+          in: query
+          description: 查看指定用户的 Token;仅管理员生效
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token 分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: issueToken
+      tags: [后台·上传 Token]
+      summary: 签发 Token
+      description: 为当前用户签发具名 Token;明文仅在本响应返回一次。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenCreateRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/IssuedTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 同名 Token 已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/tokens/{id}:
+    delete:
+      operationId: deleteToken
+      tags: [后台·上传 Token]
+      summary: 删除已失效的 Token 记录
+      description: 本人可删自己的,管理员可删任何人的;仍有效的 Token 返回 409,须先吊销。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/tokenID'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已删除
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Token 仍有效
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/tokens/{id}/revoke:
+    post:
+      operationId: revokeToken
+      tags: [后台·上传 Token]
+      summary: 吊销 Token
+      description: 本人可吊销自己的,管理员可吊销任何人的;S3 协议面的同一凭证随之失效。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/tokenID'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已吊销
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/tokens/{id}/rotate:
+    post:
+      operationId: rotateToken
+      tags: [后台·上传 Token]
+      summary: 轮转 Token
+      description: 同名新 Token 原子替换旧 Token,新明文仅此一次返回;仅限本人的有效 Token。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/tokenID'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/IssuedTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/tokens/{id}/s3-credential:
+    post:
+      operationId: tokenS3Credential
+      tags: [后台·上传 Token]
+      summary: Token 的 S3 协议凭证
+      description: 密钥由主密钥按 Token 派生、不落库,可随时重看;仅限本人的 Token。用 POST 是为了让凭证下发也过 CSRF 闸。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/tokenID'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          description: S3 凭证与端点
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/S3Credential'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/channel-templates:
+    get:
+      operationId: channelTemplates
+      tags: [后台·存储渠道]
+      summary: 渠道模板清单
+      description: 内置厂商模板:预填 rclone 后端与固定参数,只暴露必要字段;前端据此渲染表单。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 模板清单
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelTemplateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/channels:
+    get:
+      operationId: listChannels
+      tags: [后台·存储渠道]
+      summary: 渠道列表
+      description: 按优先级降序,含探测结果与副本水位,不含配置与凭证。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 渠道列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createChannel
+      tags: [后台·存储渠道]
+      summary: 创建渠道
+      description: 模板模式给 `template` + `inputs`,自定义模式给 `driver` + `config`。创建即深探测并落库,随后唤醒补齐管道回填存量;`encrypted` 创建时固化。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelCreateRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/ChannelResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 渠道名已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/channels/test:
+    post:
+      operationId: testChannel
+      tags: [后台·存储渠道]
+      summary: 测试连接
+      description: 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelTestRequest'
+      responses:
+        '200':
+          description: 探测结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelTestResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/channels/{id}:
+    put:
+      operationId: updateChannel
+      tags: [后台·存储渠道]
+      summary: 编辑渠道
+      description: 配置整体替换;配置里原样回传的哨兵值表示保留原凭证。`encrypted` 不可变,试图变更返回 409。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/channelID'
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChannelUpdateRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChannelResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 渠道名已存在,或试图变更加密属性
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: deleteChannel
+      tags: [后台·存储渠道]
+      summary: 删除渠道
+      description: 持有任何图唯一副本的渠道拒绝删除(409)。`purge` 缺省为 true:只打清理中标记并入队排空任务,对象删完后渠道才消失(202);`purge=false` 立即删行,远端对象保留(204)。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/channelID'
+        - $ref: '#/components/parameters/csrfToken'
+        - name: purge
+          in: query
+          description: 是否清理渠道上的对象;缺省 true
+          schema:
+            type: boolean
+      responses:
+        '202':
+          description: 已标记清理中,对象删完后移除
+        '204':
+          description: 已删除,远端对象保留
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 渠道持有部分图片的唯一副本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/channels/{id}/config:
+    get:
+      operationId: channelConfig
+      tags: [后台·存储渠道]
+      summary: 渠道配置的编辑视图
+      description: 敏感值以哨兵 `__imgyoung_secret_keep__` 掩码,凭证明文永不下发;模板渠道附带还原出的表单字段值。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/channelID'
+      responses:
+        '200':
+          description: 编辑视图
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelEditConfig'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/channels/{id}/check:
+    post:
+      operationId: checkChannel
+      tags: [后台·存储渠道]
+      summary: 手动重检
+      description: 对已有渠道执行深探测并返回探测后的完整描述;探测可能持续数十秒。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/channelID'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '200':
+          $ref: '#/components/responses/ChannelResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/channel-oauth/start:
+    post:
+      operationId: startChannelOAuth
+      tags: [后台·存储渠道]
+      summary: 发起网盘授权
+      description: 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OAuthStartRequest'
+      responses:
+        '200':
+          description: 授权地址
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/channel-oauth/callback:
+    get:
+      operationId: channelOAuthCallback
+      tags: [后台·存储渠道]
+      summary: 授权回调
+      description: 由授权服务器把浏览器顶层跳转打回,换取令牌后交前端凭 `state` 领取;本端点返回提示页而非 JSON,令牌不写进页面。仅管理员会话。
+      security:
+        - session: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: 发起授权时得到的一次性标识
+          schema:
+            type: string
+        - name: code
+          in: query
+          description: 授权码;用户拒绝时缺省
+          schema:
+            type: string
+        - name: error
+          in: query
+          description: 授权服务器报告的拒绝原因
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 提示页;授权成功与失败都在此页提示,结果由领取接口给出
+          content:
+            text/html:
+              schema:
+                type: string
+        '400':
+          description: 授权会话已失效的提示页
+          content:
+            text/html:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/channel-oauth/result:
+    get:
+      operationId: channelOAuthResult
+      tags: [后台·存储渠道]
+      summary: 领取授权结果
+      description: 结果只可领取一次;用户尚未完成授权时 `pending` 为 true。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: 发起授权时得到的一次性标识
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 授权结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthResult'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 授权会话不存在或已过期
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/admin/users:
+    get:
+      operationId: listUsers
+      tags: [后台·用户]
+      summary: 用户列表
+      description: 全部用户及其用量,不分页。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 用户列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createUser
+      tags: [后台·用户]
+      summary: 创建用户
+      description: 密码至少 8 个字符;`role` 缺省为 user。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserWriteRequest'
+      responses:
+        '201':
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 登录名已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/userID'
+    put:
+      operationId: updateUser
+      tags: [后台·用户]
+      summary: 更新用户
+      description: 全量语义;内置管理员不可禁用或降级(403)。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserWriteRequest'
+      responses:
+        '204':
+          description: 已更新
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 登录名已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      operationId: deleteUser
+      tags: [后台·用户]
+      summary: 删除用户
+      description: 名下仍有图片(409)、内置管理员(403)或当前登录用户(400)拒绝删除。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已删除
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 用户名下仍有图片
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/users/{id}/password:
+    post:
+      operationId: resetUserPassword
+      tags: [后台·用户]
+      summary: 重置用户密码
+      description: 该用户全部会话失效;新密码至少 8 个字符。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/userID'
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '204':
+          description: 已重置
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/referer-whitelist:
+    get:
+      operationId: listRefererRules
+      tags: [后台·防盗链]
+      summary: 防盗链规则
+      description: 白名单为空即不启用防盗链。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 规则列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefererRuleList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: addRefererRule
+      tags: [后台·防盗链]
+      summary: 添加规则
+      description: 裸域(`example.com`,精确匹配)或子域通配(`*.example.com`,只匹配子域);添加即时生效。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefererRuleRequest'
+      responses:
+        '201':
+          description: 已添加
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefererRule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 规则已存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/referer-whitelist/{id}:
+    delete:
+      operationId: deleteRefererRule
+      tags: [后台·防盗链]
+      summary: 删除规则
+      description: 删除即时生效。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 规则行 id
+          schema:
+            type: integer
+            format: int64
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已删除
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/admin/dedup:
+    get:
+      operationId: listDedupCandidates
+      tags: [后台·裁决]
+      summary: 疑似重复候选
+      description: 后台相似扫描(pHash 汉明距离)发现的待裁决候选对,分页。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: 候选分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DedupCandidateList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/dedup/{id}/merge:
+    post:
+      operationId: mergeDedupCandidate
+      tags: [后台·裁决]
+      summary: 合并候选
+      description: 保留指定的一方,另一方的引用并入;保留方必须是候选对中的一方。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/candidateID'
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DedupMergeRequest'
+      responses:
+        '204':
+          description: 已合并
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 候选涉及的图片已被删除
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /api/admin/dedup/{id}/dismiss:
+    post:
+      operationId: dismissDedupCandidate
+      tags: [后台·裁决]
+      summary: 忽略候选
+      description: 该候选对不再提示。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/candidateID'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '204':
+          description: 已忽略
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/cleanup:
+    get:
+      operationId: listCleanup
+      tags: [后台·裁决]
+      summary: 冷图待清理列表
+      description: 超过冷图阈值未被公开访问的引用,分页。裁决走图片接口:保留为 `PATCH /api/admin/images/{id}` 置清理豁免,删除为 `DELETE /api/admin/images/{id}`。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: 待清理分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/admin/audit:
+    get:
+      operationId: listAudit
+      tags: [后台·运维]
+      summary: 审计日志
+      description: 分页,可按操作者、动作、目标与时间范围过滤;`target` 精确匹配。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+        - name: actor
+          in: query
+          description: 操作者用户 id
+          schema:
+            type: string
+        - name: action
+          in: query
+          description: 动作标识,形如 `channel.create`
+          schema:
+            type: string
+        - name: target
+          in: query
+          description: 操作目标标识(图片短 ID、渠道 id、Token id 等),精确匹配
+          schema:
+            type: string
+        - $ref: '#/components/parameters/since'
+        - $ref: '#/components/parameters/until'
+      responses:
+        '200':
+          description: 审计分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/alerts:
+    get:
+      operationId: listAlerts
+      tags: [后台·运维]
+      summary: 告警
+      description: 缺省返回全部未恢复的告警(不分页);`status=all` 时分页返回全部历史,最新在前。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - name: status
+          in: query
+          description: 为 `all` 时含已恢复的历史
+          schema:
+            type: string
+            enum: [all]
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: 告警列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/backups:
+    get:
+      operationId: listBackups
+      tags: [后台·运维]
+      summary: 备份快照列表
+      description: 备份渠道(最高优先级的健康渠道)上的元数据库快照,最新在前。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 快照列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createBackup
+      tags: [后台·运维]
+      summary: 立即备份
+      description: 立即做一次元数据库快照并上传到备份渠道。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '201':
+          description: 新快照
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Snapshot'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /api/admin/backups/{name}:
+    get:
+      operationId: downloadBackup
+      tags: [后台·运维]
+      summary: 下载快照
+      description: 以附件形式输出 SQLite 快照文件。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/snapshotName'
+      responses:
+        '200':
+          description: 快照文件
+          headers:
+            Content-Disposition:
+              description: 附件文件名即快照名
+              schema:
+                type: string
+          content:
+            application/vnd.sqlite3:
+              schema:
+                type: string
+                contentMediaType: application/vnd.sqlite3
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/backups/{name}/restore:
+    post:
+      operationId: restoreBackup
+      tags: [后台·运维]
+      summary: 从快照恢复
+      description: 把快照暂存到数据目录后触发优雅停机,进程被拉起时换入,原库改名保留;没有进程管理器拉起时,暂存文件等到下次启动再换入。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/snapshotName'
+        - $ref: '#/components/parameters/csrfToken'
+      responses:
+        '202':
+          description: 已暂存,服务即将停机
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/admin/export:
+    get:
+      operationId: exportMetadata
+      tags: [后台·运维]
+      summary: 导出全部元数据
+      description: 图在哪些渠道、对象键与哈希全部在内,渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 元数据全量
+          headers:
+            Content-Disposition:
+              description: 附件文件名 imgyoung-export.json
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Export'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: 后台签发的具名上传 Token,仅授权数据面;管理后台不接受它。
+    session:
+      type: apiKey
+      in: cookie
+      name: imgyoung_session
+      description: 登录下发的会话 cookie;状态变更请求须另以 `X-CSRF-Token` 头回传会话绑定的 CSRF 令牌。
+
+  parameters:
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图
+      schema:
+        type: string
+    csrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403
+      schema:
+        type: string
+    page:
+      name: page
+      in: query
+      description: 页码,从 1 起;缺省 1
+      schema:
+        type: integer
+        minimum: 1
+    pageSize:
+      name: page_size
+      in: query
+      description: 每页条数;缺省 20,上限 100
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    since:
+      name: since
+      in: query
+      description: 时间范围下界(闭),UTC 文本 `YYYY-MM-DD HH:MM:SS`
+      schema:
+        type: string
+    until:
+      name: until
+      in: query
+      description: 时间范围上界(开),UTC 文本 `YYYY-MM-DD HH:MM:SS`
+      schema:
+        type: string
+    imageID:
+      name: id
+      in: path
+      required: true
+      description: 图片短 ID
+      schema:
+        type: string
+    tokenID:
+      name: id
+      in: path
+      required: true
+      description: Token 记录 id
+      schema:
+        type: integer
+        format: int64
+    channelID:
+      name: id
+      in: path
+      required: true
+      description: 渠道 id
+      schema:
+        type: integer
+        format: int64
+    userID:
+      name: id
+      in: path
+      required: true
+      description: 用户 id
+      schema:
+        type: string
+    candidateID:
+      name: id
+      in: path
+      required: true
+      description: 候选行 id
+      schema:
+        type: integer
+        format: int64
+    snapshotName:
+      name: name
+      in: path
+      required: true
+      description: 快照名,形如 `imgyoung-20060102-150405.000.db`
+      schema:
+        type: string
+    variantWidth:
+      name: w
+      in: query
+      description: 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放
+      schema:
+        type: integer
+    variantFormat:
+      name: format
+      in: query
+      description: 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商
+      schema:
+        type: string
+    ifNoneMatch:
+      name: If-None-Match
+      in: header
+      description: 与上次响应的 ETag 一致时返回 304
+      schema:
+        type: string
+
+  requestBodies:
+    UploadForm:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file:
+                type: string
+                contentMediaType: image/*
+                description: 图片文件;文件名作元数据展示
+              exif_policy:
+                type: string
+                enum: [strip, passthrough]
+                description: 本次 EXIF 档位;缺省用运营配置的全局默认
+              ttl:
+                type: string
+                description: 有效期秒数(0 到 3153600000 的整数)或 `never` 表示永久;缺省按「用户默认 > 全局默认」回退
+    UploadURL:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UploadURLRequest'
+
+  responses:
+    Uploaded:
+      description: 已入库
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UploadResult'
+    BadRequest:
+      description: 请求体或参数非法
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: 未认证:Token 无效,或未登录 / 会话已过期
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: 无权限:CSRF 校验失败、需要管理员,或该操作不对当前角色开放
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: 目标不存在,或对当前用户不可见
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: 超过单图大小上限(运营配置 `max_upload_mb`)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnsupportedType:
+      description: 不是支持的图片格式(按 magic bytes 判定)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyPixels:
+      description: 分辨率超出像素预算(运营配置 `max_pixels_mp`)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: 上传并发已满或该用户上传过于频繁;登录接口为尝试过于频繁
+      headers:
+        Retry-After:
+          description: 建议等待的秒数
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ChannelsUnavailable:
+      description: 没有健康渠道可写,或同步副本数不足
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    SessionResponse:
+      description: 会话主体与 CSRF 令牌
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Session'
+    FullConfigResponse:
+      description: 全量生效配置
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FullConfig'
+    ImageDetailResponse:
+      description: 图片详情
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ImageDetail'
+    IssuedTokenResponse:
+      description: 新 Token;`token` 为明文,仅此一次下发
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IssuedToken'
+    ChannelResponse:
+      description: 渠道的完整描述(含探测结果与副本水位)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Channel'
+    ImageBytes:
+      description: >-
+        图片字节;内容不可变,缓存一年并带强 ETag。协商得到的格式随 `Accept` 变化时带 `Vary: Accept`;
+        处理失败降级输出原图时为 `Cache-Control: no-store`
+      headers:
+        ETag:
+          description: 强 ETag;原图为内容哈希,衍生图为哈希加处理参数
+          schema:
+            type: string
+        Cache-Control:
+          schema:
+            type: string
+        Vary:
+          schema:
+            type: string
+      content:
+        image/*: {}
+    DirectLink:
+      description: 访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址
+      headers:
+        Location:
+          required: true
+          schema:
+            type: string
+            format: uri
+    NotModified:
+      description: ETag 命中,内容未变
+      headers:
+        ETag:
+          schema:
+            type: string
+    RefererRejected:
+      description: Referer 未命中防盗链白名单;纯文本
+      content:
+        text/plain:
+          schema:
+            type: string
+    ImageNotFound:
+      description: 图片不存在、已过期或已删除;纯文本
+      content:
+        text/plain:
+          schema:
+            type: string
+    ImageUnavailable:
+      description: 引用存在但当前没有健康渠道能读出对象;纯文本
+      content:
+        text/plain:
+          schema:
+            type: string
+
+  schemas:
+    Error:
+      type: object
+      description: 错误信封
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: 面向用户的错误描述,不含内部细节与凭证
+    UploadResult:
+      type: object
+      required: [id, url]
+      properties:
+        id:
+          type: string
+          description: 图片短 ID
+        url:
+          type: string
+          format: uri
+          description: 图片绝对访问地址;配置了 `base_url` 用配置,否则按请求推导
+    UploadURLRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: 待转存的图片地址,仅 http / https 的公网地址
+        file_name:
+          type: string
+          description: 覆盖由地址末段推断的文件名
+        exif_policy:
+          type: string
+          enum: [strip, passthrough]
+          description: 本次 EXIF 档位;缺省用全局默认
+        ttl:
+          description: 有效期秒数(数字或数字字符串)或 `never`;缺省按「用户默认 > 全局默认」回退
+          oneOf:
+            - type: integer
+            - type: string
+    LoginRequest:
+      type: object
+      required: [name, password]
+      properties:
+        name:
+          type: string
+          description: 登录名
+        password:
+          type: string
+          format: password
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          description: 至少 8 个字符
+    SessionUser:
+      type: object
+      required: [id, name, role, must_change_password]
+      properties:
+        id:
+          type: string
+          description: 用户 id
+        name:
+          type: string
+          description: 登录名
+        role:
+          $ref: '#/components/schemas/Role'
+        must_change_password:
+          type: boolean
+          description: 仍为出厂默认密码;为 true 时前端强制先改密
+    Role:
+      type: string
+      enum: [admin, user]
+      description: 角色
+    Session:
+      type: object
+      required: [user, csrf_token]
+      properties:
+        user:
+          $ref: '#/components/schemas/SessionUser'
+        csrf_token:
+          type: string
+          description: 状态变更请求须以 `X-CSRF-Token` 头回传的令牌
+    BuildInfo:
+      type: object
+      description: 服务端二进制的构建信息
+      required: [version, commit, built_at]
+      properties:
+        version:
+          type: string
+          description: 版本号:发布版为 git 标签;源码构建为 Go 推导的模块版本;无从得知时为 `devel`
+        commit:
+          type: string
+          description: 构建所在提交的哈希,工作区有未提交改动时带 `-dirty` 后缀;未知为空串
+        built_at:
+          type: string
+          description: 构建时刻,RFC 3339;只有发布流水线注入,源码构建为空串
+    RuntimeConfig:
+      type: object
+      description: 运营配置的只读切面,全部登录用户可读;不含凭证
+      required:
+        - cold_cleanup_days
+        - delete_grace_minutes
+        - process_widths
+        - default_ttl_hours
+        - ttl_renew_on_access
+        - max_upload_mb
+        - base_url
+        - access_mode
+        - exif_policy
+        - build
+      properties:
+        cold_cleanup_days:
+          type: integer
+          description: 冷图待清理阈值(天);0 表示未启用
+        delete_grace_minutes:
+          type: integer
+          description: 引用归零到物理删的宽限(分钟);0 表示立即
+        process_widths:
+          type: [array, 'null']
+          items:
+            type: integer
+          description: 按需处理允许的宽度档(像素);空或 null 表示不允许缩放
+        default_ttl_hours:
+          type: integer
+          description: 全局默认有效期(小时);0 表示永不过期
+        ttl_renew_on_access:
+          type: boolean
+          description: 公开访问是否顺延带有效期图片的到期时刻
+        max_upload_mb:
+          type: integer
+          format: int64
+          description: 单图上限(MB)
+        base_url:
+          type: string
+          description: 对外站点地址;空则按请求域名推导
+        access_mode:
+          type: string
+          enum: [proxy, redirect]
+          description: 访问模式
+        exif_policy:
+          type: string
+          enum: [passthrough, strip]
+          description: 全局默认 EXIF 档位
+        build:
+          $ref: '#/components/schemas/BuildInfo'
+    Settings:
+      type: object
+      description: 运营配置;属性名即配置键,真相在 settings 表,后台修改即热生效
+      required:
+        - max_upload_mb
+        - max_pixels_mp
+        - max_concurrent_uploads
+        - upload_rate_per_min
+        - base_url
+        - cdn_cloudflare_zone_id
+        - cdn_cloudflare_api_token
+        - allow_empty_referer
+        - exif_policy
+        - min_success
+        - access_mode
+        - encrypt_new_channels
+        - health_check_seconds
+        - backup_interval_hours
+        - backup_keep
+        - cleanup_sweep_seconds
+        - delete_grace_minutes
+        - default_ttl_hours
+        - ttl_renew_on_access
+        - activity_flush_seconds
+        - cold_cleanup_days
+        - usage_report_seconds
+        - channel_quota_gb
+        - dedup_scan_seconds
+        - dedup_phash_max_distance
+        - process_widths
+        - process_formats
+        - process_quality_webp
+        - process_quality_jpeg
+        - process_webp_method
+        - process_workers
+        - process_timeout_ms
+        - variants_cache_mb
+        - idempotency_key_ttl_hours
+        - alert_webhook_url
+        - audit_retention_days
+      properties:
+        max_upload_mb:
+          type: integer
+          format: int64
+          description: 单图上限(MB)
+        max_pixels_mp:
+          type: integer
+          format: int64
+          description: 像素预算(百万像素)
+        max_concurrent_uploads:
+          type: integer
+          description: 上传并发上限,满载返回 429
+        upload_rate_per_min:
+          type: integer
+          description: 每用户每分钟上传次数上限;0 表示不启用
+        base_url:
+          type: string
+          description: 对外站点地址;留空按请求域名推导
+        cdn_cloudflare_zone_id:
+          type: string
+          description: Cloudflare Zone ID
+        cdn_cloudflare_api_token:
+          type: string
+          description: Cloudflare API Token;响应里恒为空串(脱敏),是否已配置看 `derived.cdn_api_token_set`
+        allow_empty_referer:
+          type: boolean
+          description: 空 Referer 是否放行
+        exif_policy:
+          type: string
+          enum: [passthrough, strip]
+          description: 全局默认 EXIF 档位,单次上传可覆盖
+        min_success:
+          type: integer
+          description: 上传返回成功所需的最少同步副本数
+        access_mode:
+          type: string
+          enum: [proxy, redirect]
+          description: proxy 经服务代理回源;redirect 对允许直链的渠道 302
+        encrypt_new_channels:
+          type: boolean
+          description: 新建渠道未显式指定时的加密默认值
+        health_check_seconds:
+          type: integer
+          description: 渠道健康检查间隔(秒)
+        backup_interval_hours:
+          type: integer
+          description: 元数据库自动备份间隔(小时)
+        backup_keep:
+          type: integer
+          description: 备份保留份数
+        cleanup_sweep_seconds:
+          type: integer
+          description: 生命周期清理扫描间隔(秒)
+        delete_grace_minutes:
+          type: integer
+          description: 引用归零到物理删的宽限(分钟);0 表示立即
+        default_ttl_hours:
+          type: integer
+          description: 全局默认有效期(小时);0 表示永不过期
+        ttl_renew_on_access:
+          type: boolean
+          description: 公开访问是否顺延带有效期图片的到期时刻
+        activity_flush_seconds:
+          type: integer
+          description: 访问活跃度批量落库间隔(秒)
+        cold_cleanup_days:
+          type: integer
+          description: 冷图待清理阈值(天);0 表示不启用
+        usage_report_seconds:
+          type: integer
+          description: 渠道用量上报间隔(秒)
+        channel_quota_gb:
+          type: integer
+          description: 单渠道用量告警阈值(GB);0 表示只上报不告警
+        dedup_scan_seconds:
+          type: integer
+          description: 后台查重扫描间隔(秒)
+        dedup_phash_max_distance:
+          type: integer
+          description: pHash 相似判定的汉明距离上限;0 表示不做相似扫描
+        process_widths:
+          type: [array, 'null']
+          items:
+            type: integer
+          description: 按需处理允许的宽度档(像素);空或 null 表示不允许缩放
+        process_formats:
+          type: array
+          items:
+            type: string
+          description: 按需处理允许的目标格式,至少一项
+        process_quality_webp:
+          type: integer
+          description: WebP 质量档 [0,100]
+        process_quality_jpeg:
+          type: integer
+          description: JPEG 质量档 [1,100]
+        process_webp_method:
+          type: integer
+          description: WebP 质量 / 速度权衡 [0,6]
+        process_workers:
+          type: integer
+          description: 处理并发上限
+        process_timeout_ms:
+          type: integer
+          description: 单请求处理超时(毫秒),超时回退原图
+        variants_cache_mb:
+          type: integer
+          format: int64
+          description: 衍生图磁盘缓存上限(MB)
+        idempotency_key_ttl_hours:
+          type: integer
+          description: 上传幂等键保留期(小时)
+        alert_webhook_url:
+          type: string
+          description: 告警 Webhook 地址(http / https);空表示不外发
+        audit_retention_days:
+          type: integer
+          description: 审计日志保留天数;0 表示永久保留
+    SettingsPatch:
+      type: object
+      description: 「配置键 → 新值」对象;键与值类型同 Settings,只需给出要改的键
+      additionalProperties: true
+    BootstrapConfig:
+      type: object
+      description: 引导配置的只读展示;密钥类引导项不出现
+      required: [listen, data_dir, trusted_proxies, metrics_allow]
+      properties:
+        listen:
+          type: string
+          description: HTTP 监听地址
+        data_dir:
+          type: string
+          description: 数据目录
+        trusted_proxies:
+          type: string
+          description: 信任其转发头的反向代理网段,逗号分隔
+        metrics_allow:
+          type: string
+          description: 允许抓取 /metrics 的网段,逗号分隔
+    DerivedConfig:
+      type: object
+      description: 派生状态与内置策略
+      required:
+        - cdn_purge_enabled
+        - cdn_api_token_set
+        - login_burst
+        - login_refill_seconds
+        - reconcile_interval_seconds
+      properties:
+        cdn_purge_enabled:
+          type: boolean
+          description: 删除级联的 CDN purge 是否生效(zone、token 与 base_url 三者齐备)
+        cdn_api_token_set:
+          type: boolean
+          description: Cloudflare API Token 是否已配置
+        login_burst:
+          type: integer
+          description: 每个 IP / 用户名允许的突发登录尝试次数
+        login_refill_seconds:
+          type: integer
+          description: 突发额度用尽后每恢复一次尝试的间隔(秒)
+        reconcile_interval_seconds:
+          type: integer
+          description: 副本对账间隔(秒)
+    FullConfig:
+      type: object
+      required: [bootstrap, settings, derived]
+      properties:
+        bootstrap:
+          $ref: '#/components/schemas/BootstrapConfig'
+        settings:
+          $ref: '#/components/schemas/Settings'
+        derived:
+          $ref: '#/components/schemas/DerivedConfig'
+    ChannelStat:
+      type: object
+      description: 仪表盘的渠道概览项
+      required: [id, name, driver, healthy, bytes]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        driver:
+          type: string
+          description: rclone 后端名
+        healthy:
+          type: boolean
+        bytes:
+          type: integer
+          format: int64
+          description: 已存字节,副本口径
+    TopImage:
+      type: object
+      description: 热门图,按累计访问次数降序
+      required: [id, url, file_name, access_count, size]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          description: 公开访问路径,相对站点根
+        file_name:
+          type: string
+        access_count:
+          type: integer
+          format: int64
+          description: 累计访问次数,活跃度落库周期粒度
+        size:
+          type: integer
+          format: int64
+          description: 存储字节
+    AdminDashboard:
+      type: object
+      description: 管理员视图:全站计数、待办、访问与流量估算、热门图与渠道水位
+      required:
+        - backup_colocated
+        - images
+        - storage_bytes
+        - users
+        - pending_cleanup
+        - pending_dedup
+        - total_accesses
+        - traffic_estimate_bytes
+        - top_images
+        - channels
+      properties:
+        backup_colocated:
+          type: boolean
+          description: 元数据库快照与图片数据同盘(主渠道是 local 且没有其它在役渠道)
+        images:
+          type: integer
+          format: int64
+        storage_bytes:
+          type: integer
+          format: int64
+        users:
+          type: integer
+          format: int64
+        pending_cleanup:
+          type: integer
+          format: int64
+          description: 待清理裁决数
+        pending_dedup:
+          type: integer
+          format: int64
+          description: 待裁决相似候选数
+        total_accesses:
+          type: integer
+          format: int64
+        traffic_estimate_bytes:
+          type: integer
+          format: int64
+          description: 访问数 × 原图字节的粗略估算
+        top_images:
+          type: array
+          items:
+            $ref: '#/components/schemas/TopImage'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChannelStat'
+    UserDashboard:
+      type: object
+      description: 普通用户视图:本人用量
+      required: [images, used_bytes, quota_bytes]
+      properties:
+        images:
+          type: integer
+          format: int64
+        used_bytes:
+          type: integer
+          format: int64
+        quota_bytes:
+          type: [integer, 'null']
+          format: int64
+          description: 配额上限;null 表示不限
+    Dashboard:
+      oneOf:
+        - $ref: '#/components/schemas/AdminDashboard'
+        - $ref: '#/components/schemas/UserDashboard'
+    Token:
+      type: object
+      description: Token 列表项;只有识别前缀,无哈希无明文
+      required: [id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+          description: 用途名
+        prefix:
+          type: string
+          description: 明文前缀,识别用
+        scopes:
+          type: string
+          description: 授权范围,逗号分隔
+        expires_at:
+          type: [string, 'null']
+          description: 到期时刻;null 表示永久
+        last_used_at:
+          type: [string, 'null']
+          description: 最近使用时刻;null 表示从未使用
+        revoked_at:
+          type: [string, 'null']
+          description: 吊销时刻;null 表示未吊销
+        created_at:
+          type: string
+          description: 签发时刻
+    TokenList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Token'
+        total:
+          type: integer
+          format: int64
+          description: 过滤后的总条数
+    TokenCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+          description: 用途名,同一用户内唯一
+        expires_in_hours:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 876000
+          description: 有效期小时数;缺省或 0 表示永久
+    IssuedToken:
+      type: object
+      required: [id, name, prefix, token]
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        prefix:
+          type: string
+        token:
+          type: string
+          description: Token 明文,仅此一次下发
+    S3Credential:
+      type: object
+      description: 一枚 Token 的 S3 协议凭证与端点配置
+      required: [access_key_id, secret_access_key, endpoint, region, bucket, url_prefix]
+      properties:
+        access_key_id:
+          type: string
+          description: 即 Token 明文前缀
+        secret_access_key:
+          type: string
+          description: 由主密钥派生,可随时重看
+        endpoint:
+          type: string
+          format: uri
+          description: 客户端填的 S3 端点,末尾 /s3 是协议面前缀
+        region:
+          type: string
+          description: 本服务不区分区域,给一个客户端普遍接受的值
+        bucket:
+          type: string
+          description: 无桶概念,占位名供客户端填
+        url_prefix:
+          type: string
+          format: uri
+          description: 客户端据此拼最终访问地址,含用户 id 段
+    Image:
+      type: object
+      description: 图片列表项
+      required:
+        - id
+        - url
+        - user_id
+        - token_id
+        - token_name
+        - file_name
+        - mime
+        - size
+        - width
+        - height
+        - sha256
+        - expire_at
+        - ttl_seconds
+        - last_access_at
+        - access_count
+        - pending_cleanup
+        - cleanup_exempt
+        - created_at
+        - ref_count
+      properties:
+        id:
+          type: string
+          description: 短 ID
+        url:
+          type: string
+          description: 公开访问路径,相对站点根
+        user_id:
+          type: string
+          description: 归属用户
+        token_id:
+          type: [integer, 'null']
+          format: int64
+          description: 上传来源 Token;null 表示后台上传或来源 Token 记录已删除
+        token_name:
+          type: [string, 'null']
+          description: 来源 Token 用途名;null 同 token_id
+        file_name:
+          type: string
+          description: 原始文件名
+        mime:
+          type: string
+          description: 真实 MIME
+        size:
+          type: integer
+          format: int64
+          description: 存储字节
+        width:
+          type: integer
+          format: int64
+        height:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+          description: 内容哈希
+        expire_at:
+          type: [string, 'null']
+          description: 到期时刻;null 表示永久
+        ttl_seconds:
+          type: [integer, 'null']
+          format: int64
+          description: 有效时长(秒),访问续期按此顺延;null 表示永久
+        last_access_at:
+          type: [string, 'null']
+          description: 最近公开访问;null 表示从未
+        access_count:
+          type: integer
+          format: int64
+          description: 累计公开访问次数,活跃度落库周期粒度
+        pending_cleanup:
+          type: boolean
+          description: 是否在待清理列表
+        cleanup_exempt:
+          type: boolean
+          description: 是否清理豁免
+        created_at:
+          type: string
+          description: 上传时刻
+        ref_count:
+          type: integer
+          format: int64
+          description: 物理图引用计数(同图去重共享)
+    Replica:
+      type: object
+      description: 单图在一个渠道上的副本状态
+      required: [channel_id, channel_name, state, attempts, last_error, updated_at]
+      properties:
+        channel_id:
+          type: integer
+          format: int64
+        channel_name:
+          type: string
+        state:
+          $ref: '#/components/schemas/ReplicaState'
+        attempts:
+          type: integer
+          format: int64
+          description: 累计补齐尝试次数
+        last_error:
+          type: string
+          description: 最近一次失败原因;空表示无
+        updated_at:
+          type: string
+          description: 状态最近更新时刻
+    ReplicaState:
+      type: string
+      enum: [pending, uploading, done, failed]
+      description: 副本状态
+    ImageDetail:
+      allOf:
+        - $ref: '#/components/schemas/Image'
+        - type: object
+          required: [replicas]
+          properties:
+            replicas:
+              type: array
+              description: 物理图在各渠道的副本状态,按渠道优先级降序
+              items:
+                $ref: '#/components/schemas/Replica'
+    ImageList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Image'
+        total:
+          type: integer
+          format: int64
+          description: 过滤后的总条数
+    ImagePatch:
+      type: object
+      description: 修改项;缺省的项不动,至少携带一项
+      properties:
+        ttl_hours:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 876000
+          description: 大于 0 从现在起算新的到期时刻并更新时长;0 改为永久
+        cleanup_exempt:
+          type: boolean
+          description: 预设或取消清理豁免;仅管理员。取消时顺带摘掉待清理标记,由下轮扫描重判
+    BatchDeleteRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+          description: 待删除的短 ID
+    BatchDeleteResult:
+      type: object
+      required: [deleted, failed]
+      properties:
+        deleted:
+          type: integer
+          description: 成功删除张数
+        failed:
+          type: array
+          description: 失败明细;全部成功时为空数组
+          items:
+            type: object
+            required: [id, error]
+            properties:
+              id:
+                type: string
+              error:
+                type: string
+                description: 用户可读的失败原因
+    FieldOption:
+      type: object
+      required: [label, value]
+      properties:
+        label:
+          type: string
+          description: 展示名
+        value:
+          type: string
+          description: 实际值
+    TemplateField:
+      type: object
+      description: 模板的一个用户输入字段;标签与提示由服务端下发
+      required: [key, label, type, required]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        type:
+          type: string
+          enum: [text, password, select, oauth]
+        required:
+          type: boolean
+        placeholder:
+          type: string
+        help:
+          type: string
+        options:
+          type: array
+          description: select 字段的选项
+          items:
+            $ref: '#/components/schemas/FieldOption'
+    ChannelTemplate:
+      type: object
+      description: 渠道模板;不含 provider 等预设参数
+      required: [id, name, description, driver, category, requires_oauth, fields]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        driver:
+          type: string
+          description: rclone 后端名
+        category:
+          type: string
+          enum: [object_storage, drive]
+        requires_oauth:
+          type: boolean
+          description: 须先完成授权才能保存
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/TemplateField'
+    ChannelTemplateList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChannelTemplate'
+        total:
+          type: integer
+          format: int64
+    ReplicaStats:
+      type: object
+      description: 渠道的副本补齐水位
+      required: [done, pending, failed]
+      properties:
+        done:
+          type: integer
+          format: int64
+          description: 已就绪副本数
+        pending:
+          type: integer
+          format: int64
+          description: 待补齐副本数(含进行中)
+        failed:
+          type: integer
+          format: int64
+          description: 补齐失败副本数
+    Channel:
+      type: object
+      description: 渠道的对外描述,不含配置与凭证
+      required:
+        - id
+        - name
+        - driver
+        - priority
+        - healthy
+        - encrypted
+        - allow_direct_link
+        - last_checked_at
+        - last_error
+        - deleting
+        - replicas
+      properties:
+        id:
+          type: integer
+          format: int64
+        name:
+          type: string
+        driver:
+          type: string
+          description: rclone 后端名
+        priority:
+          type: integer
+          format: int64
+          description: 越大越优先
+        healthy:
+          type: boolean
+        encrypted:
+          type: boolean
+        allow_direct_link:
+          type: boolean
+        last_checked_at:
+          type: string
+          description: 最近探测时刻;空表示尚未探测
+        last_error:
+          type: string
+          description: 最近探测失败原因;空表示最近一次探测成功
+        deleting:
+          type: boolean
+          description: 清理中:排空任务正在删除渠道上的对象,清完即消失
+        replicas:
+          $ref: '#/components/schemas/ReplicaStats'
+    ChannelList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        total:
+          type: integer
+          format: int64
+    ChannelCreateRequest:
+      type: object
+      description: 配置来源二选一:模板模式给 `template` + `inputs`;自定义模式 `template` 为空或 `custom`,给 `driver` + `config`。未知字段整体拒绝
+      required: [name, priority, allow_direct_link, auto_create_bucket]
+      properties:
+        template:
+          type: string
+          description: 模板 id;空或 `custom` 走自定义
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+          description: 模板字段值
+        driver:
+          type: string
+          description: 自定义模式的 rclone 后端名
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: 自定义模式的后端参数,含约定键 `path`(后端内路径)与 `public_base_url`(302 直链前缀)
+        name:
+          type: string
+          description: 渠道名,唯一
+        priority:
+          type: integer
+          format: int64
+          description: 越大越优先
+        encrypted:
+          type: boolean
+          description: 是否加密渠道;缺省用全局默认,创建时固化
+        allow_direct_link:
+          type: boolean
+          description: 是否允许 302 直链
+        auto_create_bucket:
+          type: boolean
+          description: 创建时主动建桶,需凭证有建桶权限
+    ChannelUpdateRequest:
+      type: object
+      description: 与创建同构,整体替换;配置里原样回传的哨兵值表示保留原凭证
+      required: [name, priority, allow_direct_link]
+      properties:
+        template:
+          type: string
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+        driver:
+          type: string
+        config:
+          type: object
+          additionalProperties:
+            type: string
+        name:
+          type: string
+        priority:
+          type: integer
+          format: int64
+        encrypted:
+          type: boolean
+          description: 可回传但必须与现状一致
+        allow_direct_link:
+          type: boolean
+    ChannelTestRequest:
+      allOf:
+        - $ref: '#/components/schemas/ChannelCreateRequest'
+        - type: object
+          properties:
+            channel_id:
+              type: integer
+              format: int64
+              description: 编辑场景传渠道 id,配置中的哨兵值还原为原凭证后再探测;0 或缺省为创建场景
+    ChannelTestResult:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          description: 探测是否通过
+        error:
+          type: string
+          description: 失败原因,不含凭证
+    ChannelEditConfig:
+      type: object
+      description: 渠道配置的编辑视图,敏感值以哨兵掩码
+      required: [template, driver, config]
+      properties:
+        template:
+          type: string
+          description: 配置所用模板 id;空表示自定义
+        driver:
+          type: string
+        config:
+          type: object
+          additionalProperties:
+            type: string
+          description: 掩码后的后端参数
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+          description: 模板表单字段值;仅模板渠道
+    OAuthStartRequest:
+      type: object
+      required: [template]
+      properties:
+        template:
+          type: string
+          description: 模板 id,须为需要授权的模板
+        inputs:
+          type: object
+          additionalProperties:
+            type: string
+          description: 已填字段值,提供区域等影响端点的参数
+        client_id:
+          type: string
+          description: 自建应用标识;留空用模板内置应用
+        client_secret:
+          type: string
+          description: 自建应用密钥
+    OAuthStartResponse:
+      type: object
+      required: [auth_url, state]
+      properties:
+        auth_url:
+          type: string
+          format: uri
+          description: 引导用户前往的授权地址
+        state:
+          type: string
+          description: 领取结果用的一次性标识
+    OAuthResult:
+      type: object
+      required: [pending]
+      properties:
+        pending:
+          type: boolean
+          description: 用户尚未完成授权
+        token:
+          type: string
+          description: 授权令牌,填入渠道表单后随渠道提交
+        error:
+          type: string
+          description: 授权失败原因
+    User:
+      type: object
+      description: 用户列表项,不含任何凭证材料
+      required:
+        - id
+        - name
+        - role
+        - quota_bytes
+        - default_ttl_hours
+        - disabled
+        - created_at
+        - used_bytes
+        - image_count
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: 登录名
+        role:
+          $ref: '#/components/schemas/Role'
+        quota_bytes:
+          type: [integer, 'null']
+          format: int64
+          description: 配额上限;null 表示不限
+        default_ttl_hours:
+          type: [integer, 'null']
+          format: int64
+          description: 上传默认有效期(小时);null 随全局,0 永久
+        disabled:
+          type: boolean
+        created_at:
+          type: string
+        used_bytes:
+          type: integer
+          format: int64
+          description: 已用字节,按引用计全额
+        image_count:
+          type: integer
+          format: int64
+    UserList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        total:
+          type: integer
+          format: int64
+    UserWriteRequest:
+      type: object
+      description: 创建与更新共用;未知字段整体拒绝
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: 登录名
+        password:
+          type: string
+          format: password
+          description: 初始密码,仅创建时使用;至少 8 个字符
+        role:
+          $ref: '#/components/schemas/Role'
+        quota_bytes:
+          type: integer
+          format: int64
+          description: 配额上限;不大于 0 表示不限
+        default_ttl_hours:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          maximum: 876000
+          description: 上传默认有效期(小时);null 随全局,0 永久
+        disabled:
+          type: boolean
+          description: 是否禁用,仅更新时使用
+    PasswordResetRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+          description: 新密码,至少 8 个字符
+    RefererRule:
+      type: object
+      required: [id, pattern, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        pattern:
+          type: string
+          description: 裸域或子域通配
+        created_at:
+          type: string
+    RefererRuleList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RefererRule'
+        total:
+          type: integer
+          format: int64
+    RefererRuleRequest:
+      type: object
+      required: [pattern]
+      properties:
+        pattern:
+          type: string
+          description: 裸域(`example.com`)或子域通配(`*.example.com`)
+    CandidateSide:
+      type: object
+      description: 候选对中一方的展示信息
+      required: [blob_id, image_id, mime, size, width, height, refs]
+      properties:
+        blob_id:
+          type: integer
+          format: int64
+          description: 物理图 id,裁决保留方的标识
+        image_id:
+          type: string
+          description: 该物理图任一引用的短 ID,预览用;空串表示暂无引用
+        mime:
+          type: string
+        size:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          format: int64
+        height:
+          type: integer
+          format: int64
+        refs:
+          type: integer
+          format: int64
+          description: 引用数,合并后并入保留方
+    DedupCandidate:
+      type: object
+      required: [id, distance, created_at, a, b]
+      properties:
+        id:
+          type: integer
+          format: int64
+        distance:
+          type: integer
+          format: int64
+          description: pHash 汉明距离
+        created_at:
+          type: string
+          description: 发现时刻
+        a:
+          $ref: '#/components/schemas/CandidateSide'
+        b:
+          $ref: '#/components/schemas/CandidateSide'
+    DedupCandidateList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DedupCandidate'
+        total:
+          type: integer
+          format: int64
+    DedupMergeRequest:
+      type: object
+      required: [keep_blob_id]
+      properties:
+        keep_blob_id:
+          type: integer
+          format: int64
+          description: 保留的物理图 id,须是候选对中的一方
+    CleanupItem:
+      type: object
+      description: 冷图待清理引用
+      required: [id, url, user_id, file_name, mime, size, width, height, last_access_at, created_at]
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          description: 公开访问路径
+        user_id:
+          type: string
+        file_name:
+          type: string
+        mime:
+          type: string
+        size:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          format: int64
+        height:
+          type: integer
+          format: int64
+        last_access_at:
+          type: [string, 'null']
+          description: 最近公开访问;null 表示从未
+        created_at:
+          type: string
+    CleanupList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CleanupItem'
+        total:
+          type: integer
+          format: int64
+    AuditEntry:
+      type: object
+      required: [id, actor, actor_name, action, target, detail, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        actor:
+          type: string
+          description: 操作者用户 id
+        actor_name:
+          type: string
+          description: 操作者用户名;账号已删除时回退为原始 id
+        action:
+          type: string
+          description: 动作标识,形如 `channel.create`
+        target:
+          type: string
+          description: 操作目标标识
+        detail:
+          type: string
+          description: 附加说明
+        created_at:
+          type: string
+    AuditList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEntry'
+        total:
+          type: integer
+          format: int64
+    Alert:
+      type: object
+      required: [id, kind, target, message, opened_at, resolved_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [channel_unhealthy, replication_failed, channel_quota_exceeded, drain_failed, backup_failed]
+          description: 告警类型
+        target:
+          type: string
+          description: 告警对象,渠道名等;无对象为空串
+        message:
+          type: string
+          description: 人话描述
+        opened_at:
+          type: string
+        resolved_at:
+          type: [string, 'null']
+          description: 恢复时刻;null 表示仍未恢复
+    AlertList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Alert'
+        total:
+          type: integer
+          format: int64
+    Snapshot:
+      type: object
+      description: 备份渠道上的一份元数据库快照
+      required: [name, size, taken_at]
+      properties:
+        name:
+          type: string
+          description: 对象文件名,形如 `imgyoung-20060102-150405.000.db`
+        size:
+          type: integer
+          format: int64
+          description: 字节数
+        taken_at:
+          type: string
+          format: date-time
+          description: 快照时刻,RFC 3339
+    SnapshotList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Snapshot'
+        total:
+          type: integer
+          format: int64
+    RestoreAccepted:
+      type: object
+      required: [snapshot, staged, message]
+      properties:
+        snapshot:
+          type: string
+          description: 快照名
+        staged:
+          type: string
+          description: 暂存文件路径
+        message:
+          type: string
+          description: 服务端说明
+    TokenExport:
+      type: object
+      description: 导出的 Token 元数据,无哈希
+      required: [id, user_id, name, prefix, scopes, revoked_at, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        user_id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        scopes:
+          type: string
+        revoked_at:
+          type: [string, 'null']
+          description: 吊销时刻;null 表示有效
+        created_at:
+          type: string
+    ImageExport:
+      type: object
+      description: 导出的上传引用
+      required:
+        - id
+        - blob_id
+        - user_id
+        - token_id
+        - file_name
+        - object_key
+        - expire_at
+        - ttl_seconds
+        - last_public_access_at
+        - access_count
+        - pending_cleanup
+        - cleanup_exempt
+        - created_at
+      properties:
+        id:
+          type: string
+        blob_id:
+          type: integer
+          format: int64
+        user_id:
+          type: string
+        token_id:
+          type: [integer, 'null']
+          format: int64
+        file_name:
+          type: string
+        object_key:
+          type: [string, 'null']
+          description: S3 客户端自取的对象键;null 表示无别名
+        expire_at:
+          type: [string, 'null']
+        ttl_seconds:
+          type: [integer, 'null']
+          format: int64
+        last_public_access_at:
+          type: [string, 'null']
+        access_count:
+          type: integer
+          format: int64
+        pending_cleanup:
+          type: boolean
+        cleanup_exempt:
+          type: boolean
+        created_at:
+          type: string
+    BlobExport:
+      type: object
+      description: 导出的物理图
+      required:
+        - id
+        - sha256
+        - phash
+        - storage_key
+        - mime
+        - size
+        - width
+        - height
+        - ref_count
+        - pending_delete
+        - delete_after
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        sha256:
+          type: string
+        phash:
+          type: integer
+          format: int64
+          description: 感知哈希
+        storage_key:
+          type: string
+          description: 各渠道内的对象键
+        mime:
+          type: string
+        size:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          format: int64
+        height:
+          type: integer
+          format: int64
+        ref_count:
+          type: integer
+          format: int64
+        pending_delete:
+          type: boolean
+          description: 是否已进入物理删除流程
+        delete_after:
+          type: [string, 'null']
+          description: 物理删除不早于该时刻;null 表示未排程
+        created_at:
+          type: string
+    BlobChannelExport:
+      type: object
+      description: 导出的副本分布行
+      required: [blob_id, channel_id, state, attempts, last_error, updated_at]
+      properties:
+        blob_id:
+          type: integer
+          format: int64
+        channel_id:
+          type: integer
+          format: int64
+        state:
+          $ref: '#/components/schemas/ReplicaState'
+        attempts:
+          type: integer
+          format: int64
+        last_error:
+          type: string
+        updated_at:
+          type: string
+    Export:
+      type: object
+      description: 元数据全量导出;渠道凭证与密码哈希不在内
+      required: [users, channels, tokens, images, blobs, blob_channels]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/User'
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Channel'
+        tokens:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenExport'
+        images:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImageExport'
+        blobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlobExport'
+        blob_channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/BlobChannelExport'

@@ -16,7 +16,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	neturl "net/url"
 	"os"
 	"os/exec"
@@ -51,6 +50,9 @@ func TestMain(m *testing.M) {
 	}
 	binPath = filepath.Join(dir, "imgyoung")
 	buildErr = buildBinary(binPath)
+	if buildErr == nil {
+		buildErr = loadContract()
+	}
 	m.Run()
 	_ = os.RemoveAll(dir)
 }
@@ -213,7 +215,7 @@ func listenAddr(t *testing.T, logPath string) string {
 func waitReady(t *testing.T, inst *instance) {
 	t.Helper()
 	waitUntil(t, bootDeadline, "服务就绪", func() bool {
-		resp, err := http.Get(inst.baseURL + "/healthz")
+		resp, err := newClient(t).Get(inst.baseURL + "/healthz")
 		if err != nil {
 			return false
 		}
@@ -305,7 +307,7 @@ func upload(t *testing.T, inst *instance, token, filename string, payload []byte
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("发送上传请求: %v", err)
 	}
@@ -351,7 +353,7 @@ func fetch(t *testing.T, inst *instance, url, referer string) *http.Response {
 	if referer != "" {
 		req.Header.Set("Referer", referer)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("访问图片: %v", err)
 	}
@@ -376,11 +378,7 @@ func fetchBytes(t *testing.T, inst *instance, url string) []byte {
 // adminSession 登录管理员,返回带会话 cookie 的客户端与 CSRF 令牌。
 func adminSession(t *testing.T, inst *instance) (*http.Client, string) {
 	t.Helper()
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("创建 cookie jar: %v", err)
-	}
-	client := &http.Client{Jar: jar}
+	client := newSessionClient(t)
 	body := fmt.Sprintf(`{"name":"admin","password":%q}`, testAdminPass)
 	resp, err := client.Post(inst.baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
@@ -691,9 +689,8 @@ func TestRedirectMode(t *testing.T) {
 		t.TempDir()))
 	_, url := mustUpload(t, inst, pngBytes(t), nil, nil)
 
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
+	client := newClient(t)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Get(inst.baseURL + url)
 	if err != nil {
 		t.Fatalf("访问图片: %v", err)

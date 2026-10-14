@@ -248,7 +248,7 @@ func TestS3ChunkedUpload(t *testing.T) {
 	req.Header.Set("X-Amz-Decoded-Content-Length", strconv.Itoa(len(payload)))
 	signS3Request(t, req, cred, "STREAMING-UNSIGNED-PAYLOAD-TRAILER")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("发送请求: %v", err)
 	}

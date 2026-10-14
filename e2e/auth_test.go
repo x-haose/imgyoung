@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/cookiejar"
 	"strings"
 	"testing"
 )
@@ -15,7 +14,7 @@ import (
 func loginMustChange(t *testing.T, baseURL, name, password string) (int, bool) {
 	t.Helper()
 	body := fmt.Sprintf(`{"name":%q,"password":%q}`, name, password)
-	resp, err := http.Post(baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
+	resp, err := newClient(t).Post(baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("发送登录请求: %v", err)
 	}
@@ -59,7 +58,7 @@ func TestDefaultAdminPassword(t *testing.T) {
 		t.Fatal("默认密码登录应返回 must_change_password=true")
 	}
 	// 反面:随意密码仍应被拒,确认不是"任意密码放行"。
-	code = postLogin(t, http.DefaultClient, inst.baseURL, "admin", "not-the-password")
+	code = postLogin(t, newClient(t), inst.baseURL, "admin", "not-the-password")
 	if code != http.StatusUnauthorized {
 		t.Fatalf("错误密码状态码 = %d, 期望 401", code)
 	}
@@ -88,7 +87,7 @@ func TestFirstRunPasswordChange(t *testing.T) {
 		t.Fatal("改密后 must_change_password 应为 false")
 	}
 	// 旧默认密码改后即失效。
-	if c := postLogin(t, http.DefaultClient, inst.baseURL, "admin", testAdminPass); c != http.StatusUnauthorized {
+	if c := postLogin(t, newClient(t), inst.baseURL, "admin", testAdminPass); c != http.StatusUnauthorized {
 		t.Fatalf("改密后旧默认密码状态码 = %d, 期望 401", c)
 	}
 }
@@ -98,7 +97,7 @@ func TestAdminAuthLifecycle(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
 
-	if code := postLogin(t, http.DefaultClient, inst.baseURL, "admin", "wrong"); code != http.StatusUnauthorized {
+	if code := postLogin(t, newClient(t), inst.baseURL, "admin", "wrong"); code != http.StatusUnauthorized {
 		t.Fatalf("错误密码状态码 = %d, 期望 401", code)
 	}
 
@@ -162,11 +161,7 @@ func TestCSRFEnforced(t *testing.T) {
 func TestLoginRateLimited(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("创建 cookie jar: %v", err)
-	}
-	client := &http.Client{Jar: jar}
+	client := newSessionClient(t)
 	var last int
 	for range 8 {
 		last = postLogin(t, client, inst.baseURL, "admin", "wrong")
@@ -195,7 +190,7 @@ func TestTokenAuthBoundary(t *testing.T) {
 		t.Fatalf("构造请求: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+inst.token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("发送请求: %v", err)
 	}

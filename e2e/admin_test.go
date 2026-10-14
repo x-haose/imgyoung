@@ -9,7 +9,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +17,7 @@ import (
 // loginUser 以指定用户登录,返回带会话 cookie 的客户端与 CSRF 令牌。
 func loginUser(t *testing.T, inst *instance, name, password string) (*http.Client, string) {
 	t.Helper()
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatalf("创建 cookie jar: %v", err)
-	}
-	client := &http.Client{Jar: jar}
+	client := newSessionClient(t)
 	body := fmt.Sprintf(`{"name":%q,"password":%q}`, name, password)
 	resp, err := client.Post(inst.baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
@@ -275,7 +270,7 @@ func TestUserDeleteGuards(t *testing.T) {
 	if code != http.StatusNoContent {
 		t.Fatalf("清空后删除用户状态码 = %d, 期望 204", code)
 	}
-	code = postLogin(t, http.DefaultClient, inst.baseURL, "carol", "carol-secret-1")
+	code = postLogin(t, newClient(t), inst.baseURL, "carol", "carol-secret-1")
 	if code != http.StatusUnauthorized {
 		t.Fatalf("已删用户登录状态码 = %d, 期望 401", code)
 	}
@@ -355,7 +350,7 @@ func TestAdminSessionUpload(t *testing.T) {
 		t.Fatalf("无 CSRF 上传状态码 = %d, 期望 403", code)
 	}
 
-	anon := &http.Client{}
+	anon := newClient(t)
 	noSession := sessionUpload(t, inst, anon, csrf, "panel.png", pngBytes(t))
 	code = noSession.StatusCode
 	_ = noSession.Body.Close()

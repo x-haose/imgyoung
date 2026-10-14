@@ -62,6 +62,10 @@ sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 
 Restart the service, sign in with `admin` and `imgyoung123`, and you will be asked to set a new password immediately.
 
+## API reference
+
+Every HTTP endpoint is described in OpenAPI 3.1 at [api/openapi.yaml](./api/openapi.yaml) (descriptions are in Chinese); a running instance serves the copy matching its own version at `GET /api/openapi.yaml`, ready for Scalar, Swagger UI or any code generator. The end-to-end tests validate every response against this document and the admin console's API types are generated from it, so the document and the implementation cannot drift apart. The S3 front follows the AWS specification, see above.
+
 ## Configuration
 
 Configuration is split cleanly in two, in one sentence: **environment variables only get the process started; operational parameters are changed in the console and take effect immediately**. There is no external configuration file and no koanf.

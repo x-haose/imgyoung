@@ -1,0 +1,6 @@
+# OpenAPI 文档的 lint 规则:recommended 全开,只关一条。
+extends:
+  - recommended
+rules:
+  # 健康检查与文档端点没有任何 4xx 分支,其余操作都逐条列出了错误码。
+  operation-4xx-response: off

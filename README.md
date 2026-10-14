@@ -65,6 +65,10 @@ sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 
 重启服务,用 `admin` + `imgyoung123` 登录,系统会要求你立即改成新密码。
 
+## API 文档
+
+全部 HTTP 接口以 OpenAPI 3.1 描述在 [api/openapi.yaml](./api/openapi.yaml);运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本,可直接喂给 Scalar、Swagger UI 或任何代码生成器。端到端测试按这份文档校验每条响应,管理后台的接口类型也由它生成,文档与实现不会各说各话。S3 协议面按 AWS 规范实现,见上文。
+
 ## 配置
 
 配置一刀切两类,规则一句话:**环境变量只管把进程启动起来,运营参数一律后台改、即时生效**。不设外部配置文件、不引 koanf。

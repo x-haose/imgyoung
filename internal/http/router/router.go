@@ -52,6 +52,7 @@ func New(cfg Config) http.Handler {
 	r.Use(middleware.Metrics(cfg.Metrics))
 	r.Use(middleware.SecurityHeaders())
 	r.Get("/healthz", cfg.Public.HandleHealth)
+	r.Get("/api/openapi.yaml", openAPIHandler())
 	r.With(middleware.AllowFrom(cfg.MetricsAllow, cfg.Logger)).Handle("/metrics", cfg.Metrics.Handler())
 	guards := uploadGuards{
 		rate: middleware.UploadRateLimit(func() int { return cfg.Settings().UploadRatePerMin }, cfg.Logger),

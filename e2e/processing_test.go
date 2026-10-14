@@ -139,9 +139,8 @@ func procGet(t *testing.T, inst *instance, path string, headers map[string]strin
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
-	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
-		return http.ErrUseLastResponse
-	}}
+	client := newClient(t)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("发起请求: %v", err)

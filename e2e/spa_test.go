@@ -12,7 +12,7 @@ import (
 // getPath 发送 GET 并返回状态码/Content-Type/响应体。
 func getPath(t *testing.T, inst *instance, path string) (code int, contentType, body string) {
 	t.Helper()
-	resp, err := http.Get(inst.baseURL + path)
+	resp, err := newClient(t).Get(inst.baseURL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
@@ -39,7 +39,7 @@ func TestSPAServed(t *testing.T) {
 		}
 	}
 	// SPA 页面必须带内容安全策略。
-	resp, err := http.Get(inst.baseURL + "/")
+	resp, err := newClient(t).Get(inst.baseURL + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}

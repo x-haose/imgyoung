@@ -44,7 +44,7 @@ func TestUploadURLRequiresToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("构造请求: %v", err)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("发送请求: %v", err)
 	}
@@ -64,7 +64,7 @@ func postUploadURL(t *testing.T, inst *instance, body string) (int, string) {
 	}
 	req.Header.Set("Authorization", "Bearer "+inst.token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newClient(t).Do(req)
 	if err != nil {
 		t.Fatalf("发送请求: %v", err)
 	}
