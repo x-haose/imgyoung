@@ -7,6 +7,7 @@ import {
   SidebarRail,
 } from '@/components/ui/sidebar'
 import { AppTitle } from './app-title'
+import { BuildInfo } from './build-info'
 import { NavGroup } from './nav-group'
 import { NavUser } from './nav-user'
 import { useNavGroups } from './use-nav-groups'
@@ -26,6 +27,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter>
         <NavUser />
+        <BuildInfo />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

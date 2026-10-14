@@ -14,6 +14,7 @@ import (
 	"github.com/oklog/run"
 
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/version"
 )
 
 // shutdownTimeout 优雅停机的整体预算:HTTP 收敛 + 后台循环退出 + 补齐子系统排空。
@@ -71,7 +72,9 @@ func (a *app) serve() error {
 	})
 
 	// 打印实际绑定地址:监听端口配 0 时由系统分配,配置值无法告知调用方真实端口。
-	a.logger.Info("ImgYoung 已启动", "listen", ln.Addr().String(), "data_dir", a.boot.DataDir)
+	build := version.Current()
+	a.logger.Info("ImgYoung 已启动", "version", build.Version, "commit", build.Commit,
+		"listen", ln.Addr().String(), "data_dir", a.boot.DataDir)
 	if rerr := g.Run(); rerr != nil && !errors.Is(rerr, run.ErrSignal) {
 		return rerr
 	}

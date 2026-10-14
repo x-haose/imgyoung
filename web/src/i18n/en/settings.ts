@@ -238,6 +238,9 @@ export const settings = {
       data_dir: 'Data directory',
       trusted_proxies: 'Trusted proxy networks',
       metrics_allow: 'Networks allowed on /metrics',
+      version: 'Server version',
+      commit: 'Build commit',
+      builtAt: 'Built at',
       unset: 'Not set',
       builtin: 'Built-in policies',
       loginRate:

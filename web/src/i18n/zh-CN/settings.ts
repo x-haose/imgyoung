@@ -205,6 +205,9 @@ export const settings = {
       data_dir: '数据目录',
       trusted_proxies: '信任的反代网段',
       metrics_allow: '/metrics 放行网段',
+      version: '服务端版本',
+      commit: '构建提交',
+      builtAt: '构建时刻',
       unset: '未设置',
       builtin: '内置策略',
       loginRate:

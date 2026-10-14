@@ -12,6 +12,14 @@ export interface ServerConfig {
   base_url: string // 对外站点地址;空则按请求域名推导绝对地址
   access_mode: string // 访问模式:proxy / redirect
   exif_policy: string // 全局 EXIF 档位:passthrough / strip
+  build: BuildInfo
+}
+
+/** 服务端二进制的构建信息。 */
+export interface BuildInfo {
+  version: string // 版本号:发布版为 git 标签;源码构建为 Go 推导的模块版本;无从得知时为 devel
+  commit: string // 构建所在提交的哈希,有未提交改动时带 -dirty 后缀;未知为空串
+  built_at: string // 构建时刻,RFC 3339;只有发布流水线注入,源码构建为空串
 }
 
 export const serverConfigQueryOptions = () =>

@@ -49,6 +49,11 @@ tasks:
       - ./imgyoung
 
   docker:
-    desc: 构建 Docker 镜像
+    desc: 构建 Docker 镜像(版本号取自 git 描述,传给镜像内的 Go 构建)
+    vars:
+      VERSION:
+        sh: git describe --tags --always --dirty
+      COMMIT:
+        sh: git rev-parse HEAD
     cmds:
-      - docker build -t imgyoung:dev .
+      - docker build --build-arg VERSION={{.VERSION}} --build-arg COMMIT={{.COMMIT}} -t imgyoung:dev .

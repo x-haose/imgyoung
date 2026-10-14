@@ -2,12 +2,23 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/x-haose/imgyoung/internal/infra/version"
 )
 
 // main 进程入口:装配并启动服务,阻塞至优雅停机;失败退出码 1。
+// @Description: 运行参数只有 -version:打印构建信息后退出。其余配置一律走环境变量与后台。
 func main() {
+	showVersion := flag.Bool("version", false, "打印版本信息并退出")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println(version.Current())
+		return
+	}
 	// os.Exit 放在此处而非 runServer 内:确保 runServer 的 defer cleanup 先跑完再退出。
 	if err := runServer(newLogger()); err != nil {
 		os.Exit(1)

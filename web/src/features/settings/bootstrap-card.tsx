@@ -1,5 +1,6 @@
 import { t } from '@/i18n'
 import { useMessages } from '@/context/locale-provider'
+import { useServerConfig } from '@/hooks/use-server-config'
 import {
   Card,
   CardContent,
@@ -8,16 +9,21 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { type FullConfig } from './data'
+import { formatInstant } from './format'
 
-/** 引导配置只读展示与内置策略:环境变量决定,改动需重启,这里只看不改。 */
+/** 引导配置只读展示、服务端构建信息与内置策略:环境变量与二进制决定,改动需重启,这里只看不改。 */
 export function BootstrapCard({ config }: { config: FullConfig }) {
   const b = useMessages().settings.config.bootstrap
   const { bootstrap, derived } = config
+  const build = useServerConfig()?.build
   const rows: [string, string][] = [
     [b.listen, bootstrap.listen],
     [b.data_dir, bootstrap.data_dir],
     [b.trusted_proxies, bootstrap.trusted_proxies || b.unset],
     [b.metrics_allow, bootstrap.metrics_allow || b.unset],
+    [b.version, build?.version ?? b.unset],
+    [b.commit, build?.commit || b.unset],
+    [b.builtAt, build?.built_at ? formatInstant(build.built_at) : b.unset],
   ]
   return (
     <Card>

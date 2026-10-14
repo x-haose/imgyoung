@@ -9,12 +9,19 @@ RUN pnpm build
 
 # 构建阶段:纯 Go 静态编译(内嵌前端产物),并预创建数据目录(属主 nonroot)
 FROM golang:1.26-alpine AS build
+# 构建上下文不含 .git,版本与提交由 --build-arg 传入;不传则显示为 devel
+ARG VERSION=devel
+ARG COMMIT=
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/imgyoung ./cmd/imgyoung \
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/x-haose/imgyoung/internal/infra/version.Version=${VERSION} \
+    -X github.com/x-haose/imgyoung/internal/infra/version.Commit=${COMMIT} \
+    -X github.com/x-haose/imgyoung/internal/infra/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    -o /out/imgyoung ./cmd/imgyoung \
     && mkdir -p /out/data && chown 65532:65532 /out/data
 
 # 运行阶段:distroless 静态基底(无 shell、无包管理器,最小攻击面),nonroot 运行

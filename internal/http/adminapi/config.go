@@ -13,20 +13,22 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/version"
 )
 
 // RuntimeConfigView 面向后台 UI 的只读运行配置切面,逐请求从当前快照摘取。
 // 只含 UI 呈现所需的键;凭证/密钥类一律不进此结构。
 type RuntimeConfigView struct {
-	ColdCleanupDays    int    `json:"cold_cleanup_days"`    // 冷图待清理阈值(天);0 表示未启用
-	DeleteGraceMinutes int    `json:"delete_grace_minutes"` // 引用归零到物理删的宽限(分钟);0 表示立即
-	ProcessWidths      []int  `json:"process_widths"`       // 按需处理允许的宽度档白名单(像素);空表示不允许缩放
-	DefaultTTLHours    int    `json:"default_ttl_hours"`    // 全局默认 TTL(小时);0 表示永不过期
-	TTLRenewOnAccess   bool   `json:"ttl_renew_on_access"`  // 公开访问是否顺延带 TTL 图片的到期时刻
-	MaxUploadMB        int64  `json:"max_upload_mb"`        // 单图上限(MB)
-	BaseURL            string `json:"base_url"`             // 对外站点地址;空则按请求域名推导绝对地址
-	AccessMode         string `json:"access_mode"`          // 访问模式:proxy / redirect
-	EXIFPolicy         string `json:"exif_policy"`          // 全局 EXIF 档位:passthrough / strip
+	ColdCleanupDays    int          `json:"cold_cleanup_days"`    // 冷图待清理阈值(天);0 表示未启用
+	DeleteGraceMinutes int          `json:"delete_grace_minutes"` // 引用归零到物理删的宽限(分钟);0 表示立即
+	ProcessWidths      []int        `json:"process_widths"`       // 按需处理允许的宽度档白名单(像素);空表示不允许缩放
+	DefaultTTLHours    int          `json:"default_ttl_hours"`    // 全局默认 TTL(小时);0 表示永不过期
+	TTLRenewOnAccess   bool         `json:"ttl_renew_on_access"`  // 公开访问是否顺延带 TTL 图片的到期时刻
+	MaxUploadMB        int64        `json:"max_upload_mb"`        // 单图上限(MB)
+	BaseURL            string       `json:"base_url"`             // 对外站点地址;空则按请求域名推导绝对地址
+	AccessMode         string       `json:"access_mode"`          // 访问模式:proxy / redirect
+	EXIFPolicy         string       `json:"exif_policy"`          // 全局 EXIF 档位:passthrough / strip
+	Build              version.Info `json:"build"`                // 服务端构建信息:版本、提交与构建时刻
 }
 
 // HandleConfig 返回生效运行配置的只读切面,供前端呈现阈值文案与档位。
@@ -44,6 +46,7 @@ func (h *Handlers) HandleConfig(w http.ResponseWriter, _ *http.Request) {
 		BaseURL:            set.BaseURL,
 		AccessMode:         set.AccessMode,
 		EXIFPolicy:         string(set.EXIFPolicy),
+		Build:              version.Current(),
 	})
 }
 
