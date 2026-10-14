@@ -2,7 +2,7 @@
 
 [简体中文](./README.md)
 
-A self-hosted image host with multi-channel primary/backup failover (Go + rclone). **Work in progress: iterations 0–6 are done, the S3 protocol front, URL transfer and cloud-drive channels are in; the pre-1.0 quality pass and the admin console rebuild are under way.**
+A self-hosted image host with multi-channel primary/backup failover (Go + rclone). **Work in progress: iterations 0–7 are done and the admin console has been rebuilt; the pre-1.0 release wrap-up is under way.**
 
 What it does: **multi-channel failover** (priority-based channel selection · health checks with automatic switchover · asynchronous replica fill · instant failover on access) · **encrypted channel storage** (rclone crypt, the provider only sees ciphertext) · **web admin console** (multi-user · named tokens · quotas and rate limits · duplicate and cold-image review · audit log · data export) · on-demand processing (`?w=` resizing + WebP negotiation) · background deduplication (exact duplicates merged automatically, similar ones reviewed by hand) · TTL lifecycle · magic-bytes format validation · metadata stripping (JPEG/PNG/WebP) · pixel budget · SHA256 + perceptual hash · client idempotency · hotlink protection · proxy/302 dual mode.
 
