@@ -45,6 +45,7 @@ type Config struct {
 	Queries *sqlc.Queries     // sqlc 查询集
 	Master  *secret.MasterKey // 主密钥;S3 协议凭证的密钥由它按 Token 哈希派生,不落库
 	Logger  *slog.Logger      // 结构化日志
+	Now     func() time.Time  // 登录限速的时钟源;nil 取 time.Now。测试注入冻结时钟,隔断额度恢复,断言只取决于尝试次数
 }
 
 // Service 认证服务;除 Token 使用追踪外无可变状态,并发安全。
@@ -90,10 +91,14 @@ type TokenPrincipal struct {
 }
 
 // New 创建认证服务。
-// @param cfg 依赖,字段均必填
+// @param cfg 依赖,Now 之外均必填
 // @return 就绪的认证服务
 func New(cfg Config) *Service {
-	return &Service{cfg: cfg, limiter: NewLoginLimiter(), tokenSeen: map[int64]time.Time{}}
+	limiter := NewLoginLimiter()
+	if cfg.Now != nil {
+		limiter.now = cfg.Now
+	}
+	return &Service{cfg: cfg, limiter: limiter, tokenSeen: map[int64]time.Time{}}
 }
 
 // Login 校验用户名密码并创建会话。

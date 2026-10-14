@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
@@ -127,7 +128,10 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 		Settings: store.Current,
 		Logger:   discard,
 	})
-	authSvc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: discard})
+	// 登录限速用冻结时钟:每次失败尝试都要付一遍 argon2id 的代价(竞态检测下更慢),走墙钟时
+	// 额度会在尝试之间恢复,限速断言随机化;冻结后只取决于尝试次数。
+	frozen := time.Now()
+	authSvc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: discard, Now: func() time.Time { return frozen }})
 	sum := sha256.Sum256([]byte(testToken))
 	if _, err := queries.CreateToken(t.Context(), sqlc.CreateTokenParams{
 		UserID: sqlc.DefaultUserID, Name: "test", TokenHash: hex.EncodeToString(sum[:]),
