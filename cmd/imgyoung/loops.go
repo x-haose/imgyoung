@@ -46,7 +46,7 @@ func authMaintenanceLoop(ctx context.Context, authSvc *auth.Service, logger *slo
 }
 
 // healthLoop 周期探测各渠道健康,状态变化写回 DB 并更新内存标记。
-// @Description: 各渠道并行且各自计时(见 Manager.CheckAll),本循环不再套整轮超时——
+// @Description: 各渠道并行且各自计时(见 Manager.CheckAll),本循环不设整轮超时:
 // 整轮共享预算会让排在后面的渠道因前面渠道慢而被误判不健康。
 // @param ctx 控制循环生命周期
 // @param wait 周期闸,到点放行、ctx 取消即收敛
