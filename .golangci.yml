@@ -38,25 +38,21 @@ linters:
       allow-unused: false
       require-explanation: true
       require-specific: true
-    # 依赖方向:http → core → {infra, store};store 与 infra 是并列叶子,store 不 import 任何 internal 包。
+    # 依赖方向:http → core → {infra, store};store 与 infra 是并列叶子。store 是公开包,不 import 任何 internal 包。
     # deny 只列同项目内的越界目标,外部依赖不受限。
     depguard:
       rules:
         store:
-          files: ["**/internal/store/**"]
+          files: ["**/store/**"]
           deny:
-            - pkg: github.com/x-haose/imgyoung/internal/core
-              desc: store 是可复用存储引擎,不得依赖 App(7.4 库化前提)
-            - pkg: github.com/x-haose/imgyoung/internal/infra
-              desc: store 自成一体,不得依赖 App 基建
-            - pkg: github.com/x-haose/imgyoung/internal/http
-              desc: store 不得依赖传输层
+            - pkg: github.com/x-haose/imgyoung/internal
+              desc: store 是公开可复用的存储引擎,不得依赖应用内部包
         infra:
           files: ["**/internal/infra/**"]
           deny:
             - pkg: github.com/x-haose/imgyoung/internal/core
               desc: infra 是基建叶子,不得依赖 core
-            - pkg: github.com/x-haose/imgyoung/internal/store
+            - pkg: github.com/x-haose/imgyoung/store
               desc: infra 不得依赖 store
             - pkg: github.com/x-haose/imgyoung/internal/http
               desc: infra 不得依赖传输层
@@ -92,9 +88,9 @@ linters:
           arguments: [120]
         - name: context-as-argument
           arguments: [{ allowTypesBefore: "*testing.T" }]
-        # 这些调用按文档永不返回错误(Builder/Hash 的 Write、Fprint 到 stderr),逐处 `_ =` 只是噪音
+        # 这些调用按文档永不返回错误(Builder/Hash 的 Write、Print 到标准输出/错误),逐处 `_ =` 只是噪音
         - name: unhandled-error
-          arguments: ["fmt\\.Fprint.*", "strings\\.Builder\\..*", "hash\\.Hash\\.Write", "io\\.Writer\\.Write"]
+          arguments: ["fmt\\.Print.*", "fmt\\.Fprint.*", "strings\\.Builder\\..*", "hash\\.Hash\\.Write", "io\\.Writer\\.Write"]
   exclusions:
     generated: lax
     presets:

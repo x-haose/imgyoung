@@ -20,7 +20,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 )
 
 // reconcileBatch 恢复扫描的分页大小(循环取批直到取尽)。

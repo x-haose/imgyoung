@@ -13,7 +13,7 @@ import (
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fspath"
 
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 )
 
 // openLocal 在临时目录上打开一个 local 后端驱动,测试结束自动关闭。

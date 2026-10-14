@@ -22,7 +22,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
-	storagedriver "github.com/x-haose/imgyoung/internal/store/driver"
+	storagedriver "github.com/x-haose/imgyoung/store/driver"
 )
 
 // testEnv 上传服务测试环境:共用装配之上的上传服务与内置 local 渠道的驱动。

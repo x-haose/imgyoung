@@ -152,6 +152,26 @@ Use [picgo-plugin-web-uploader](https://github.com/squirrel-land/picgo-plugin-we
 | Custom request header | `{"Authorization": "Bearer your-token"}` |
 | JSON path | `url` |
 
+## Using it as a Go library
+
+The storage engine is a public package: `store/driver` defines the `Driver` interface (put / open / stat / delete / list) and `store/rclone` implements it on top of any rclone backend, optionally wrapped in a crypt encryption layer; neither depends on the rest of this project.
+
+```go
+import (
+	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/rclone"
+)
+
+d, err := rclone.Open(ctx, rclone.Options{
+	Backend: "s3", // any rclone backend name
+	Params:  map[string]string{"provider": "Cloudflare", "access_key_id": "...", "secret_access_key": "..."},
+	Path:    "bucket/prefix",
+	Crypt:   &rclone.CryptOptions{Password: "...", Salt: "..."}, // optional: encrypts content and file names
+})
+```
+
+Encode password-like parameters with `rclone.ObscureSecrets` first, as rclone expects; a missing object is always reported as `driver.ErrNotFound`. See the [store/rclone example](./store/rclone/example_test.go) for a complete walk-through.
+
 ## Development
 
 ```bash

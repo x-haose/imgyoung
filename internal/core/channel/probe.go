@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 )
 
 // deepProbeTimeout 深探测(写→读→删三次往返)的整体超时。

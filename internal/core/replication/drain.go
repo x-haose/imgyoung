@@ -10,7 +10,7 @@ import (
 	"github.com/riverqueue/river"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 )
 
 // drainBatch 排空任务每批取出的副本行数;逐行删对象再删行,批与批之间不留状态。

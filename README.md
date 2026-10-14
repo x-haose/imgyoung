@@ -155,6 +155,26 @@ config:   provider=Cloudflare  access_key_id=...  secret_access_key=...
 | 自定义请求头 | `{"Authorization": "Bearer 你的Token"}` |
 | JSON 路径 | `url` |
 
+## 作为 Go 库使用
+
+存储引擎是公开包:`store/driver` 定义 `Driver` 接口(写入 / 读取 / 查询 / 删除 / 列举),`store/rclone` 用 rclone 的任一后端实现它,并可叠加 crypt 加密层;两者都不依赖本项目的其它代码。
+
+```go
+import (
+	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/rclone"
+)
+
+d, err := rclone.Open(ctx, rclone.Options{
+	Backend: "s3", // 任一 rclone 后端名
+	Params:  map[string]string{"provider": "Cloudflare", "access_key_id": "...", "secret_access_key": "..."},
+	Path:    "bucket/prefix",
+	Crypt:   &rclone.CryptOptions{Password: "...", Salt: "..."}, // 可选:内容与文件名加密
+})
+```
+
+密码类参数先用 `rclone.ObscureSecrets` 按 rclone 的要求编码;对象缺失统一返回 `driver.ErrNotFound`。完整示例见 [store/rclone 的 Example](./store/rclone/example_test.go)。
+
 ## 开发
 
 ```bash

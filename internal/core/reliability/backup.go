@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 )
 
 // Dir 备份对象在渠道内的目录前缀;对账 GC 必须排除该前缀。

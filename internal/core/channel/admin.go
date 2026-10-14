@@ -12,8 +12,8 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/store/driver"
-	"github.com/x-haose/imgyoung/internal/store/rclone"
+	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/rclone"
 )
 
 // ErrInvalidChannel 渠道创建参数非法(名称/后端为空或后端无法初始化)。

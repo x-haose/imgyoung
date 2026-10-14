@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 )
 
 // ErrSnapshotNotFound 指定名字的快照不在备份渠道上。

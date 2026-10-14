@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/x-haose/imgyoung/internal/store/rclone"
+	"github.com/x-haose/imgyoung/store/rclone"
 )
 
 // 字段输入类型,前端据此渲染控件。

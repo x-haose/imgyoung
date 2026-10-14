@@ -1,5 +1,7 @@
 // Package rclone 以 rclone 的 fs.Fs 实现 StorageDriver。
 // 依赖 driver 包的接口,是可选(opt-in)后端:仅 import 本包才会拖入 rclone 依赖树。
+//
+// 本包对外公开,导出标识符在 v1 主版本内保持向后兼容。
 package rclone
 
 import (
@@ -20,7 +22,7 @@ import (
 	"github.com/rclone/rclone/fs/object"
 	"github.com/rclone/rclone/fs/walk"
 
-	"github.com/x-haose/imgyoung/internal/store/driver"
+	"github.com/x-haose/imgyoung/store/driver"
 
 	// 注册 rclone 全部后端。
 	_ "github.com/rclone/rclone/backend/all"
