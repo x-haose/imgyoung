@@ -1,5 +1,5 @@
 // Package web 承载管理后台前端的构建产物(go:embed),随单二进制分发。
-// 前端源码与产物同目录:src/ 为 Refine + AntD 工程,dist/ 为 Vite 构建输出。
+// 前端源码与产物同目录:src/ 为 React + TanStack Router/Query + shadcn/ui 工程,dist/ 为 Vite 构建输出。
 package web
 
 import (

@@ -10,7 +10,7 @@ import (
 )
 
 // spaCSP 后台页面的内容安全策略:全部资源自带(embed),仅样式放行内联
-// (Ant Design 运行时注入样式所需);禁嵌入、禁外联。
+// (弹层定位与进度条以 style 属性写入所需);禁嵌入、禁外联。
 const spaCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; " +
 	"frame-ancestors 'none'; base-uri 'self'; object-src 'none'"

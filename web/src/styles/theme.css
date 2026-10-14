@@ -1,0 +1,126 @@
+/*
+ * 设计令牌:深邃工具感,双主题(暗色默认)。
+ * 主色翡翠绿贯穿品牌,语义为「就绪 / 健康」;暗色以近黑分层(框架 < 内容 < 卡片 < 浮层)表达深度,
+ * 亮色以低饱和灰阶保持同一气质。语义色 success / warning / info 供状态徽标与图表使用。
+ */
+:root {
+  color-scheme: light;
+  --radius: 0.625rem;
+  --background: #f7f8fa;
+  --foreground: #12181d;
+  --card: #ffffff;
+  --card-foreground: #12181d;
+  --popover: #ffffff;
+  --popover-foreground: #12181d;
+  --primary: #059669;
+  --primary-foreground: #ffffff;
+  --secondary: #eceff3;
+  --secondary-foreground: #12181d;
+  --muted: #eef0f4;
+  --muted-foreground: #667085;
+  --accent: #e3f5ee;
+  --accent-foreground: #065f46;
+  --destructive: #d33d38;
+  --border: #e3e7eb;
+  --input: #d5dae1;
+  --ring: #059669;
+  --success: #059669;
+  --warning: #d97706;
+  --info: #0284c7;
+  --chart-1: #059669;
+  --chart-2: #0284c7;
+  --chart-3: #d97706;
+  --chart-4: #d33d38;
+  --chart-5: #94a3b8;
+  --sidebar: #eceff3;
+  --sidebar-foreground: #3b4651;
+  --sidebar-primary: #059669;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e0e4e9;
+  --sidebar-accent-foreground: #12181d;
+  --sidebar-border: #dfe3e8;
+  --sidebar-ring: #059669;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0f1317;
+  --foreground: #e6edf1;
+  --card: #151a20;
+  --card-foreground: #e6edf1;
+  --popover: #1b2129;
+  --popover-foreground: #e6edf1;
+  --primary: #10b981;
+  --primary-foreground: #052e22;
+  --secondary: #1b2129;
+  --secondary-foreground: #e6edf1;
+  --muted: #181e25;
+  --muted-foreground: #8b98a5;
+  --accent: #15302a;
+  --accent-foreground: #c8f5e5;
+  --destructive: #e5534b;
+  --border: #242b34;
+  --input: #2d3640;
+  --ring: #10b981;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --info: #38bdf8;
+  --chart-1: #10b981;
+  --chart-2: #38bdf8;
+  --chart-3: #f59e0b;
+  --chart-4: #e5534b;
+  --chart-5: #64748b;
+  --sidebar: #090c0f;
+  --sidebar-foreground: #b3bec8;
+  --sidebar-primary: #10b981;
+  --sidebar-primary-foreground: #052e22;
+  --sidebar-accent: #141a20;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #161c22;
+  --sidebar-ring: #10b981;
+}
+
+@theme inline {
+  --font-sans:
+    'IBM Plex Sans', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei',
+    system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
