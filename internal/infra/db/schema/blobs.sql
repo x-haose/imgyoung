@@ -3,7 +3,6 @@ CREATE TABLE blobs (
     id INTEGER PRIMARY KEY, -- 内部主键(rowid 别名,自增)
     sha256 TEXT NOT NULL, -- 净化后字节的 SHA256(十六进制),哈希对象即实际存储字节
     phash INTEGER NOT NULL, -- 感知哈希(64 位按 int64 存储),供后台相似度查重
-    md5 TEXT, -- 可空,仅需要 ETag 校验的渠道才计算
     storage_key TEXT NOT NULL, -- 渠道内对象键,形如 {short_id}_{sha256 前 8 位}
     mime TEXT NOT NULL, -- 服务端判定的真实 MIME
     size INTEGER NOT NULL, -- 存储字节大小

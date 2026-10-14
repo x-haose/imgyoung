@@ -21,7 +21,6 @@ type Blob struct {
 	ID            int64
 	Sha256        string
 	Phash         int64
-	Md5           sql.NullString
 	StorageKey    string
 	Mime          string
 	Size          int64

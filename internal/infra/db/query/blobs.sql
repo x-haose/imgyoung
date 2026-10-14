@@ -59,7 +59,7 @@ WHERE pending_delete = 0 AND id > ?
 ORDER BY id;
 
 -- name: ListBlobsExport :many
-SELECT id, sha256, phash, md5, storage_key, mime, size, width, height,
+SELECT id, sha256, phash, storage_key, mime, size, width, height,
        ref_count, pending_delete, delete_after, created_at
 FROM blobs
 ORDER BY id;

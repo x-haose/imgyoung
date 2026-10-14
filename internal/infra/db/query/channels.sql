@@ -13,11 +13,6 @@ SELECT *
 FROM channels
 WHERE id = ?;
 
--- name: UpdateChannelHealth :exec
-UPDATE channels
-SET healthy = ?
-WHERE id = ?;
-
 -- name: UpdateChannelProbeResult :exec
 UPDATE channels
 SET healthy         = ?,

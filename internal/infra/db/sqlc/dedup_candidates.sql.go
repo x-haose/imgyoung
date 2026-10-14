@@ -158,49 +158,6 @@ func (q *Queries) ListPendingDedupCandidateDetails(ctx context.Context, arg List
 	return items, nil
 }
 
-const listPendingDedupCandidates = `-- name: ListPendingDedupCandidates :many
-SELECT id, blob_a, blob_b, distance, status, created_at
-FROM dedup_candidates
-WHERE status = 'pending'
-ORDER BY distance, id
-LIMIT ? OFFSET ?
-`
-
-type ListPendingDedupCandidatesParams struct {
-	Limit  int64
-	Offset int64
-}
-
-func (q *Queries) ListPendingDedupCandidates(ctx context.Context, arg ListPendingDedupCandidatesParams) ([]DedupCandidate, error) {
-	rows, err := q.db.QueryContext(ctx, listPendingDedupCandidates, arg.Limit, arg.Offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []DedupCandidate
-	for rows.Next() {
-		var i DedupCandidate
-		if err := rows.Scan(
-			&i.ID,
-			&i.BlobA,
-			&i.BlobB,
-			&i.Distance,
-			&i.Status,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const setDedupCandidateStatus = `-- name: SetDedupCandidateStatus :execrows
 UPDATE dedup_candidates
 SET status = ?

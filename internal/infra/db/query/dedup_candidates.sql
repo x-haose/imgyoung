@@ -7,13 +7,6 @@ SELECT *
 FROM dedup_candidates
 WHERE id = ?;
 
--- name: ListPendingDedupCandidates :many
-SELECT *
-FROM dedup_candidates
-WHERE status = 'pending'
-ORDER BY distance, id
-LIMIT ? OFFSET ?;
-
 -- name: ListPendingDedupCandidateDetails :many
 SELECT dc.id, dc.distance, dc.created_at,
        a.id AS blob_a, a.mime AS mime_a, a.size AS size_a, a.width AS width_a,

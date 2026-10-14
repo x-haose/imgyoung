@@ -85,7 +85,7 @@ func (q *Queries) DeleteBlob(ctx context.Context, id int64) (int64, error) {
 }
 
 const getBlob = `-- name: GetBlob :one
-SELECT id, sha256, phash, md5, storage_key, mime, size, width, height, ref_count, pending_delete, delete_after, created_at
+SELECT id, sha256, phash, storage_key, mime, size, width, height, ref_count, pending_delete, delete_after, created_at
 FROM blobs
 WHERE id = ?
 `
@@ -97,7 +97,6 @@ func (q *Queries) GetBlob(ctx context.Context, id int64) (Blob, error) {
 		&i.ID,
 		&i.Sha256,
 		&i.Phash,
-		&i.Md5,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
@@ -182,7 +181,7 @@ func (q *Queries) ListBlobsBySha256(ctx context.Context, sha256 string) ([]ListB
 }
 
 const listBlobsExport = `-- name: ListBlobsExport :many
-SELECT id, sha256, phash, md5, storage_key, mime, size, width, height,
+SELECT id, sha256, phash, storage_key, mime, size, width, height,
        ref_count, pending_delete, delete_after, created_at
 FROM blobs
 ORDER BY id
@@ -201,7 +200,6 @@ func (q *Queries) ListBlobsExport(ctx context.Context) ([]Blob, error) {
 			&i.ID,
 			&i.Sha256,
 			&i.Phash,
-			&i.Md5,
 			&i.StorageKey,
 			&i.Mime,
 			&i.Size,

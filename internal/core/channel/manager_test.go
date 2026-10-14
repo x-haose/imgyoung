@@ -106,7 +106,9 @@ func TestManagerPrimaryByPriority(t *testing.T) {
 func TestManagerSkipsUnhealthyPrimary(t *testing.T) {
 	env := newTestEnv(t)
 	id, _ := addChannel(t, env, "backup-high", 200, false)
-	if err := env.queries.UpdateChannelHealth(t.Context(), sqlc.UpdateChannelHealthParams{Healthy: 0, ID: id}); err != nil {
+	if err := env.queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
+		Healthy: 0, ID: id,
+	}); err != nil {
 		t.Fatalf("标记渠道不健康: %v", err)
 	}
 	if err := env.mgr.Reload(t.Context()); err != nil {
@@ -282,7 +284,9 @@ func TestManagerCheckAll(t *testing.T) {
 func TestManagerNoHealthyChannel(t *testing.T) {
 	env := newTestEnv(t)
 	for _, h := range env.mgr.All() {
-		if err := env.queries.UpdateChannelHealth(t.Context(), sqlc.UpdateChannelHealthParams{Healthy: 0, ID: h.ID}); err != nil {
+		if err := env.queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
+			Healthy: 0, ID: h.ID,
+		}); err != nil {
 			t.Fatalf("标记不健康: %v", err)
 		}
 	}
