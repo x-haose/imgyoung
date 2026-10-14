@@ -10,15 +10,21 @@
 
 ## 快速开始
 
-```bash
-# 本地运行(需要 https://taskfile.dev 与 pnpm;build 会先构建后台前端)
-task run
-# 首启无需任何环境变量:用 admin + 出厂默认密码 imgyoung123 登录后台,首次登录强制改密。
-# 默认监听 :8721(避开 8080 等易冲突端口),可用 IMGYOUNG_LISTEN 覆盖。
+三种安装方式任选,首启都无需任何环境变量:用 `admin` + 出厂默认密码 `imgyoung123` 登录后台,首次登录强制改密。默认监听 `:8721`(避开 8080 等易冲突端口),可用 `IMGYOUNG_LISTEN` 覆盖。
 
-# 或 Docker
-docker build -t imgyoung .
-docker run -p 8721:8721 -v imgyoung-data:/data imgyoung
+```bash
+# 1. 发布版二进制:到 Releases 下载对应平台的压缩包(linux / macOS / Windows,amd64 与 arm64),解压即用
+#    https://github.com/x-haose/imgyoung/releases
+./imgyoung            # 数据落在当前目录的 data/,可用 IMGYOUNG_DATA_DIR 指定
+./imgyoung -version   # 查看版本、提交与构建时刻
+
+# 2. Docker 镜像(多架构;latest 指向最新正式版,也可钉 1.0 或具体版本)
+docker run -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+
+# 3. 从源码(需要 https://taskfile.dev 与 pnpm;build 会先构建后台前端)
+task run
+# go install github.com/x-haose/imgyoung/cmd/imgyoung@latest 也能装,但前端产物不入库,
+# 这样装出来的二进制只有 API 没有后台页面;要后台请用前两种方式或 task build。
 ```
 
 浏览器打开 `http://localhost:8721/`,用 `admin` + 默认密码 `imgyoung123` 登录(首次登录会要求你立即改密),进后台「上传 Token」页签发一个 Token,即可用它上传:

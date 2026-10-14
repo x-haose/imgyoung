@@ -10,16 +10,21 @@ Design blueprint (Chinese): [图床项目_功能与设计定稿.md](./图床项�
 
 ## Quick start
 
-```bash
-# Run locally (needs https://taskfile.dev and pnpm; build compiles the admin console first)
-task run
-# No environment variables are needed on first start: sign in with admin and the factory
-# default password imgyoung123; you are forced to change it on first sign-in.
-# Listens on :8721 by default (avoiding 8080 and friends); override with IMGYOUNG_LISTEN.
+Pick any of the three install methods; none needs environment variables on first start: sign in with `admin` and the factory default password `imgyoung123`, and you are forced to change it on first sign-in. Listens on `:8721` by default (avoiding 8080 and friends); override with `IMGYOUNG_LISTEN`.
 
-# Or Docker
-docker build -t imgyoung .
-docker run -p 8721:8721 -v imgyoung-data:/data imgyoung
+```bash
+# 1. Release binary: download the archive for your platform from Releases (linux / macOS / Windows, amd64 and arm64) and unpack it
+#    https://github.com/x-haose/imgyoung/releases
+./imgyoung            # data lives in ./data; set IMGYOUNG_DATA_DIR to move it
+./imgyoung -version   # version, commit and build time
+
+# 2. Docker image (multi-arch; latest points at the newest stable release, or pin 1.0 or an exact version)
+docker run -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+
+# 3. From source (needs https://taskfile.dev and pnpm; build compiles the admin console first)
+task run
+# go install github.com/x-haose/imgyoung/cmd/imgyoung@latest works too, but the front-end bundle is not
+# committed, so that binary has the API only and no console; use the first two methods or task build for the console.
 ```
 
 Open `http://localhost:8721/` in a browser, sign in with `admin` and the default password `imgyoung123` (you will be asked to change it right away), issue a token on the "Upload tokens" page, and upload with it:

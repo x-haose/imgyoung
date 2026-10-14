@@ -1,4 +1,4 @@
-# CI 门禁:lint 0 issue + go.mod 已 tidy + 全量测试(-race)+ e2e + 纯 Go 构建 + Docker 镜像可构建
+# CI 门禁:lint 0 issue + 生成文件未过期 + go.mod 已 tidy + 全量测试(-race)+ e2e + 纯 Go 构建 + Docker 镜像可构建 + 发布配置合法
 name: ci
 
 on:
@@ -13,14 +13,14 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -31,8 +31,11 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm lint
           pnpm build
+      # 路由树与接口类型都是生成文件,须随源码一起提交
+      - name: Generated files are fresh
+        run: git diff --exit-code
       - name: Lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11.4
       - name: Tidy
@@ -47,6 +50,16 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t imgyoung:ci .
+
+  release-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check

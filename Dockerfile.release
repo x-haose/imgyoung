@@ -1,0 +1,14 @@
+# 发布镜像:由 goreleaser 用已构建的二进制组装,构建上下文只含各平台的二进制;源码构建见 Dockerfile。
+# /data 在构建机平台上预先以 nonroot 属主创建(匿名卷挂载后 uid 65532 才有写权限),不依赖目标架构的模拟。
+FROM --platform=$BUILDPLATFORM alpine:3.24 AS prep
+RUN mkdir -p /out/data && chown 65532:65532 /out/data
+
+# 运行阶段:distroless 静态基底(无 shell、无包管理器,最小攻击面),nonroot 运行
+FROM gcr.io/distroless/static-debian12:nonroot
+ARG TARGETPLATFORM
+COPY $TARGETPLATFORM/imgyoung /imgyoung
+COPY --from=prep --chown=nonroot:nonroot /out/data /data
+ENV IMGYOUNG_DATA_DIR=/data
+VOLUME ["/data"]
+EXPOSE 8721
+ENTRYPOINT ["/imgyoung"]

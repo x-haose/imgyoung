@@ -1,0 +1,102 @@
+# 发布流水线:六平台二进制 + GHCR 多架构镜像 + GitHub Release,由 release 工作流在 v* 标签上执行。
+# 本地验证:goreleaser check;goreleaser build --snapshot --clean --single-target --skip=before
+version: 2
+
+project_name: imgyoung
+
+before:
+  hooks:
+    # 管理后台产物随 go:embed 进二进制,构建前先生成
+    - pnpm --dir web install --frozen-lockfile
+    - pnpm --dir web build
+
+builds:
+  - id: imgyoung
+    main: ./cmd/imgyoung
+    binary: imgyoung
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    # 版本号保留 v 前缀,与 Go 模块版本及源码构建推导出的形式一致
+    ldflags:
+      - -s -w
+      - -X github.com/x-haose/imgyoung/internal/infra/version.Version=v{{ .Version }}
+      - -X github.com/x-haose/imgyoung/internal/infra/version.Commit={{ .FullCommit }}
+      - -X github.com/x-haose/imgyoung/internal/infra/version.Date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+      - README.en.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  groups:
+    - title: 新功能
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: 修复
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: 性能
+      regexp: '^perf(\(.+\))?!?:'
+      order: 2
+    - title: 其他
+      order: 999
+  filters:
+    exclude:
+      - '^test(\(.+\))?:'
+      - '^ci(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+
+# 镜像由上面已构建的二进制组装(Dockerfile.release 只做 COPY),与归档里的二进制完全一致;
+# 预发布版本不打 latest。
+dockers_v2:
+  - id: imgyoung
+    images:
+      - ghcr.io/x-haose/imgyoung
+    tags:
+      - "{{ .Version }}"
+      - "{{ .Major }}.{{ .Minor }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    dockerfile: Dockerfile.release
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.description: 多渠道主备容灾的自部署图床
+      org.opencontainers.image.source: "{{ .GitURL }}"
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: MIT
+
+release:
+  github:
+    owner: x-haose
+    name: imgyoung
+  prerelease: auto
+  footer: |
+    镜像:`docker pull ghcr.io/x-haose/imgyoung:{{ .Version }}`
