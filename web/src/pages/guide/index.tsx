@@ -248,7 +248,7 @@ export function GuidePage() {
               <Alert
                 type="info"
                 showIcon
-                message="未配置 base_url 时,返回的 url 按请求域名推导为绝对地址,直连场景开箱即用;经反代 / CDN 后对外域名与请求域名不一致时,需在服务端配置 base_url(环境变量 IMGYOUNG_BASE_URL)为你的对外域名。"
+                message="未配置对外站点地址时,返回的 url 按请求域名推导为绝对地址,直连场景开箱即用;经反代 / CDN 后对外域名与请求域名不一致时,到「设置 → 运行配置」把 base_url 填成你的对外域名。"
               />
             </Flex>
           </Card>
