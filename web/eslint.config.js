@@ -70,5 +70,22 @@ export default defineConfig(
     // 声明合并的类型参数须与原声明一致。
     files: ['src/tanstack-table.d.ts'],
     rules: { '@typescript-eslint/no-unused-vars': 'off' },
+  },
+  {
+    // 路由定义打进首屏入口块,zod 只该随表单页按需加载;搜索参数用 @/lib/search。
+    files: ['src/routes/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'zod',
+              message: '路由文件不引入 zod,搜索参数用 @/lib/search',
+            },
+          ],
+        },
+      ],
+    },
   }
 )

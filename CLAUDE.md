@@ -42,6 +42,8 @@
 
 - **界面观感是硬性验收项**:不接受组件库默认样式直出的"模板脸";层级、间距、排版、色彩、hover/focus 状态必须有设计意图,要像真实产品截图,而非脚手架 demo。
 - 前端代码同守质量红线:组件小而聚焦、设计 token 统一管理,不散落硬编码样式值。
+- 技术栈:React 19 + TanStack Router(文件路由,`web/src/routes`)+ TanStack Query + shadcn/ui + Tailwind v4;门禁 `cd web && pnpm lint`(tsc + eslint + prettier)零输出,`pnpm build` 产物进 `web/dist` 供 go:embed。
+- 文案全部走 i18n 词典(`web/src/i18n`,简体中文为基准、英文同型校验),TSX 里不出现硬编码文案;路由文件不引入 zod(搜索参数用 `web/src/lib/search.ts`,eslint 已禁),表单校验才用 zod;请求只经 `web/src/lib/api.ts`,服务端状态只经 TanStack Query。
 
 ## 工作流
 

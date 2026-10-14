@@ -1,5 +1,7 @@
 # ImgYoung
 
+[English](./README.en.md)
+
 多渠道主备容灾的自部署图床(Go + rclone)。**开发中:迭代 0–6 已完成,S3 协议面、URL 转存与网盘系渠道已接入;正在做 v1.0 之前的质量收口与管理后台重做。**
 
 已具备:**多渠道主备容灾**(优先级选渠道 · 健康检查自动切换 · 异步副本补齐 · 访问即时容灾)· **渠道存储加密**(rclone crypt,渠道商只见密文)· **Web 管理后台**(多用户 · 具名 Token · 配额/频控 · 查重与冷图裁决 · 审计 · 数据导出)· 按需处理(`?w=` 缩放 + WebP 协商)· 后台查重(精确自动合并 / 相似人工裁决)· TTL 生命周期 · magic bytes 格式校验 · 元数据剥离(JPEG/PNG/WebP) · 像素预算 · SHA256 + 感知哈希 · 客户端幂等 · 防盗链 · 代理/302 双模式。
@@ -48,7 +50,7 @@ S3 面实现 `PutObject`、`HeadBucket`、`HeadObject`、`GetObject`、`DeleteOb
 
 ## 管理后台
 
-浏览器打开 `http://localhost:8721/`,以 `admin` + 初始密码登录。后台提供:总览仪表盘、图片管理、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、元数据导出。
+浏览器打开 `http://localhost:8721/`,以 `admin` + 初始密码登录。后台提供:总览仪表盘(含未恢复告警)、图片管理(含副本分布)、Token 签发与吊销、存储渠道管理、多用户建号与配额、疑似重复并排裁决、冷图待清理裁决、审计日志、设置(运行配置 / 防盗链 / 元数据导出 / 备份快照与恢复 / 告警历史)。界面中英双语,右上角切换语言与主题。
 
 认证面只有两个:**后台走密码 + session**(argon2id / CSRF / 登录限速),**数据 API 走具名 Token**(`Authorization: Bearer`,DB 只存哈希,可吊销;S3 协议面的 SigV4 签名用的也是这批 Token,不是第三套凭证)。管理员首启播种为出厂默认密码 `imgyoung123`(公开值,仅为开箱可登录,登录后强制改密);真相入库,改后一律以库为准。上传 Token 一律在后台签发,不设环境变量托管的引导 Token。
 
@@ -115,6 +117,8 @@ sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 | `idempotency_key_ttl_hours` | `24` | 上传幂等键保留期(小时):客户端带 `Idempotency-Key` 重试的有效窗口,超期的键由清理循环回收 |
 | `cdn_cloudflare_zone_id` | (空) | Cloudflare Zone ID;与 `cdn_cloudflare_api_token`、`base_url` 三者齐备时,删除图片级联清除 CDN 缓存 |
 | `cdn_cloudflare_api_token` | (空) | Cloudflare API Token,需 Zone.Cache Purge 权限;加密入库,不进日志与任何响应 |
+| `alert_webhook_url` | (空) | 告警开启 / 恢复时以 JSON POST 到该地址(http 或 https);留空 = 只记录不外发 |
+| `audit_retention_days` | `0` | 审计日志保留天数,超期条目由清理循环回收;`0` = 永久保留 |
 
 ## 渠道管理
 
@@ -156,6 +160,6 @@ config:   provider=Cloudflare  access_key_id=...  secret_access_key=...
 ```bash
 task test   # 全量测试(-race)
 task e2e    # 端到端测试:编译真实二进制、启动进程、覆盖全部对外功能
-task lint   # golangci-lint,0 issue 门禁
+task lint   # golangci-lint + 后台前端的 tsc / eslint / prettier,0 issue 门禁
 task --list # 查看全部任务
 ```
