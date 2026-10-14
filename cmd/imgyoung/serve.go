@@ -37,7 +37,7 @@ func (a *app) serve() error {
 
 	var g run.Group
 	g.Add(run.SignalHandler(ctx, os.Interrupt, syscall.SIGTERM))
-	a.addLoops(&g, ctx, cancel)
+	a.addLoops(ctx, &g, cancel)
 
 	// 补齐子系统(River):启动后阻塞至停机,interrupt 排空在途任务。
 	g.Add(func() error {
@@ -77,13 +77,13 @@ func (a *app) serve() error {
 	return nil
 }
 
-// addLoops 把全部后台周期循环(用量/查重/清理/活跃度/健康/备份/认证维护)作为 actor 加入运行组。
+// addLoops 把全部后台周期循环(用量/查重/清理/活跃度/衍生图访问时间/健康/备份/认证维护)作为 actor 加入运行组。
 // @Description: 各循环共用 ctx,execute 跑到 ctx 取消即返回,interrupt 取消共享 ctx(幂等);
 // 间隔取自配置快照,后台改间隔即刻重排当前等待。均为兜底型循环。
-// @param g 运行组
 // @param ctx 循环生命周期;取消即各自收敛退出
+// @param g 运行组
 // @param cancel 触发全组停机的取消函数
-func (a *app) addLoops(g *run.Group, ctx context.Context, cancel context.CancelFunc) {
+func (a *app) addLoops(ctx context.Context, g *run.Group, cancel context.CancelFunc) {
 	seconds := func(pick func(config.Settings) int) waitFunc {
 		return a.waiter(func(s config.Settings) time.Duration {
 			return time.Duration(pick(s)) * time.Second
@@ -93,11 +93,12 @@ func (a *app) addLoops(g *run.Group, ctx context.Context, cancel context.CancelF
 		g.Add(func() error { fn(); return nil }, func(error) { cancel() })
 	}
 
-	add(func() { authMaintenanceLoop(ctx, a.authSvc, a.logger) })
+	add(func() { authMaintenanceLoop(ctx, a.auth, a.logger) })
 	add(func() { a.reporter.Run(ctx, seconds(func(s config.Settings) int { return s.UsageReportSeconds })) })
 	add(func() { a.merger.Run(ctx, seconds(func(s config.Settings) int { return s.DedupScanSeconds })) })
 	add(func() { a.sweeper.Run(ctx, seconds(func(s config.Settings) int { return s.CleanupSweepSeconds })) })
 	add(func() { a.tracker.Run(ctx, seconds(func(s config.Settings) int { return s.ActivityFlushSeconds })) })
+	add(func() { a.vstore.Run(ctx, seconds(func(s config.Settings) int { return s.ActivityFlushSeconds })) })
 	add(func() {
 		healthLoop(ctx, seconds(func(s config.Settings) int { return s.HealthCheckSeconds }), a.manager, a.logger)
 	})

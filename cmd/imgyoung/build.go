@@ -48,20 +48,12 @@ const idleTimeout = 120 * time.Second
 // bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。
 const bytesPerGB = 1 << 30
 
-// app 承载运行期需要生命周期管理的组件;构造在 build,启停在 serve。
+// app 运行期对象图:基础设施、业务服务与 HTTP 服务器;构造在 build,启停在 serve。
 type app struct {
-	boot     config.Bootstrap     // 引导配置(监听地址等)
-	logger   *slog.Logger         // 结构化日志
-	store    *config.Store        // 运营配置存储(各循环逐轮取间隔)
-	authSvc  *auth.Service        // 认证服务(Token 使用回写、会话回收)
-	manager  *channel.Manager     // 渠道管理器(健康探测)
-	runner   *replication.Runner  // 补齐子系统(River 客户端)
-	sweeper  *lifecycle.Sweeper   // 生命周期清理器
-	tracker  *lifecycle.Tracker   // 访问活跃度追踪器
-	reporter *usage.Reporter      // 渠道用量上报器
-	merger   *dedup.Merger        // 后台查重执行器
-	backup   *reliability.Service // 元数据库备份服务
-	httpSrv  *http.Server         // HTTP 服务器
+	infra                 // 基础设施构件
+	services              // 业务服务集
+	logger   *slog.Logger // 结构化日志
+	httpSrv  *http.Server // HTTP 服务器
 }
 
 // infra 聚合基础设施层构件,供业务服务与 HTTP 层取用;由 buildInfra 一次性装配。
@@ -73,7 +65,7 @@ type infra struct {
 	store   *config.Store     // 运营配置存储,各处逐轮取快照
 }
 
-// services 聚合全部业务服务;部分需运行期生命周期管理(见 app),其余仅供 HTTP 装配取用。
+// services 聚合全部业务服务;带后台循环的由 serve 启停,其余供 HTTP 装配取用。
 type services struct {
 	auth     *auth.Service          // 认证服务
 	manager  *channel.Manager       // 渠道管理器
@@ -81,7 +73,8 @@ type services struct {
 	referer  *referer.Service       // 防盗链白名单
 	metrics  *observability.Metrics // 指标集
 	audit    *audit.Recorder        // 审计记录器
-	variants *variants.Service      // 副本读写服务
+	vstore   *variants.Store        // 衍生图磁盘缓存(访问时间周期落库)
+	variants *variants.Service      // 按需处理服务
 	upload   *upload.Service        // 上传服务
 	tracker  *lifecycle.Tracker     // 访问活跃度追踪器
 	sweeper  *lifecycle.Sweeper     // 生命周期清理器
@@ -131,12 +124,7 @@ func build(logger *slog.Logger) (*app, func(), error) {
 		}
 		closeInfra()
 	}
-	return &app{
-		boot: in.boot, logger: logger, store: in.store,
-		authSvc: svcs.auth, manager: svcs.manager, runner: svcs.runner,
-		sweeper: svcs.sweeper, tracker: svcs.tracker, reporter: svcs.reporter,
-		merger: svcs.merger, backup: svcs.backup, httpSrv: buildHTTP(in, svcs, logger),
-	}, cleanup, nil
+	return &app{infra: in, services: svcs, logger: logger, httpSrv: buildHTTP(in, svcs, logger)}, cleanup, nil
 }
 
 // buildInfra 装配基础设施:建数据目录 → 开库 → 迁移 → 主密钥 → 运营配置存储。
@@ -189,76 +177,80 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 	return infra{boot: boot, conn: conn, queries: queries, master: master, store: store}, cleanup, nil
 }
 
-// buildServices 装配全部业务服务:先建被复用/可失败的图内节点(认证/渠道/补齐/防盗链/
-// 指标/副本存储),再一次性拼出各叶子服务。
-// @Description: 首启在此播种管理员密码;metrics 挂在 manager 上、供 reporter 与 router 共用;
-// vstore 仅在此域内被 variants 服务与清理器复用,不外泄。
+// buildServices 装配全部业务服务:先建被复用且可失败的图内节点(认证/渠道/补齐/防盗链/指标/审计/
+// 衍生图缓存),再拼出依赖它们的数据面服务与后台循环。
+// @Description: 首启在此播种管理员密码;metrics 挂在 manager 上、供 reporter 与 router 共用。
 // @param in 基础设施构件
 // @param logger 结构化日志
 // @return 业务服务集
 // @return 装配失败时的错误
 func buildServices(in infra, logger *slog.Logger) (services, error) {
 	writer := in.conn.Writer()
-	authSvc := auth.New(auth.Config{Conn: writer, Queries: in.queries, Master: in.master, Logger: logger})
+	s := services{
+		auth:  auth.New(auth.Config{Conn: writer, Queries: in.queries, Master: in.master, Logger: logger}),
+		audit: audit.New(in.queries),
+	}
 	if err := seedAdminPassword(in.queries, logger); err != nil {
 		return services{}, err
 	}
-
 	manager, err := channel.NewManager(context.Background(), channel.ManagerConfig{
 		Conn: writer, Queries: in.queries, Master: in.master, DataDir: in.boot.DataDir, Logger: logger,
 	})
 	if err != nil {
 		return services{}, err
 	}
-	runner, err := replication.NewRunner(replication.RunnerConfig{
+	s.manager = manager
+	s.runner, err = replication.NewRunner(replication.RunnerConfig{
 		Conn: writer, Queries: in.queries, Manager: manager,
 		Purger: settingsPurger{settings: in.store.Current}, Logger: logger,
 	})
 	if err != nil {
 		return services{}, err
 	}
-	refererSvc, err := referer.New(context.Background(), in.queries)
+	s.referer, err = referer.New(context.Background(), in.queries)
 	if err != nil {
 		return services{}, err
 	}
-
-	metrics := buildMetrics(manager)
-	vstore := variants.New(variants.Config{
+	s.metrics = buildMetrics(manager)
+	s.vstore = variants.New(variants.Config{
 		Dir:      filepath.Join(in.boot.DataDir, "variants"),
 		Capacity: func() int64 { return in.store.Current().VariantsCacheMB << 20 },
 		Queries:  in.queries, Logger: logger,
 	})
+	s.buildDataServices(in, logger)
+	return s, nil
+}
 
-	return services{
-		auth:     authSvc,
-		manager:  manager,
-		runner:   runner,
-		referer:  refererSvc,
-		metrics:  metrics,
-		audit:    audit.New(in.queries),
-		variants: variants.NewService(variants.ServiceConfig{Store: vstore, Settings: in.store.Current, Logger: logger}),
-		upload: upload.New(upload.Config{
-			Conn: writer, Queries: in.queries, Channels: manager, Replicator: runner,
-			Settings: in.store.Current, Logger: logger,
-		}),
-		tracker: lifecycle.NewTracker(writer, in.queries, func() bool { return in.store.Current().TTLRenewOnAccess }, logger),
-		sweeper: lifecycle.New(lifecycle.Config{
-			Conn: writer, Queries: in.queries, Deleter: runner, Variants: vstore, Purger: runner,
-			Settings: in.store.Current, Logger: logger,
-		}),
-		merger: dedup.New(dedup.Config{Conn: writer, Queries: in.queries, Settings: in.store.Current, Logger: logger}),
-		reporter: usage.New(usage.Config{
-			Queries: in.queries, Gauge: metrics,
-			QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
-			Logger:     logger,
-		}),
-		backup: reliability.New(reliability.Config{
-			Conn: in.conn.Reader(), Channels: manager, DataDir: in.boot.DataDir,
-			Keep:     func() int { return in.store.Current().BackupKeep },
-			Interval: func() time.Duration { return time.Duration(in.store.Current().BackupIntervalHours) * time.Hour },
-			Logger:   logger,
-		}),
-	}, nil
+// buildDataServices 装配依赖图内节点的数据面服务与后台循环:按需处理、上传、活跃度、清理、查重、用量、备份。
+// @param in 基础设施构件
+// @param logger 结构化日志
+func (s *services) buildDataServices(in infra, logger *slog.Logger) {
+	writer := in.conn.Writer()
+	s.variants = variants.NewService(variants.ServiceConfig{
+		Store: s.vstore, Settings: in.store.Current, Logger: logger,
+	})
+	s.upload = upload.New(upload.Config{
+		Conn: writer, Queries: in.queries, Channels: s.manager, Replicator: s.runner,
+		Settings: in.store.Current, Logger: logger,
+	})
+	s.tracker = lifecycle.NewTracker(writer, in.queries,
+		func() bool { return in.store.Current().TTLRenewOnAccess }, logger)
+	s.sweeper = lifecycle.New(lifecycle.Config{
+		Conn: writer, Queries: in.queries, Deleter: s.runner, Variants: s.vstore, Purger: s.runner,
+		Settings: in.store.Current, Logger: logger,
+	})
+	s.merger = dedup.New(dedup.Config{Conn: writer, Queries: in.queries, Settings: in.store.Current, Logger: logger})
+	s.reporter = usage.New(usage.Config{
+		Queries: in.queries, Gauge: s.metrics,
+		QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
+		Logger:     logger,
+	})
+	s.backup = reliability.New(reliability.Config{
+		Conn: in.conn.Reader(), Channels: s.manager, DataDir: in.boot.DataDir,
+		Keep:     func() int { return in.store.Current().BackupKeep },
+		Interval: func() time.Duration { return time.Duration(in.store.Current().BackupIntervalHours) * time.Hour },
+		Logger:   logger,
+	})
 }
 
 // buildHTTP 装配 HTTP 层:公有 API、后台 API、路由,组装成配好超时的 http.Server。
@@ -320,7 +312,8 @@ func loadMasterKey(boot config.Bootstrap, logger *slog.Logger) (*secret.MasterKe
 // loadSettings 装载运营配置存储,并打一行 CDN purge 启用状态便于自助排障。
 // @return 配置存储
 // @return 装载失败时的错误
-func loadSettings(conn *db.DB, queries *sqlc.Queries, master *secret.MasterKey, logger *slog.Logger) (*config.Store, error) {
+func loadSettings(conn *db.DB, queries *sqlc.Queries, master *secret.MasterKey,
+	logger *slog.Logger) (*config.Store, error) {
 	store, err := config.LoadStore(context.Background(), conn.Writer(), queries, master)
 	if err != nil {
 		return nil, err
