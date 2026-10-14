@@ -163,3 +163,7 @@ task e2e    # 端到端测试:编译真实二进制、启动进程、覆盖全�
 task lint   # golangci-lint + 后台前端的 tsc / eslint / prettier,0 issue 门禁
 task --list # 查看全部任务
 ```
+
+## 许可证
+
+[MIT](./LICENSE)。管理后台复用了 [shadcn-admin](https://github.com/satnaing/shadcn-admin) 的通用组件,其许可证见 [web/licenses/shadcn-admin.LICENSE](./web/licenses/shadcn-admin.LICENSE)。

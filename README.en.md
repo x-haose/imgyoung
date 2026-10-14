@@ -160,3 +160,7 @@ task e2e    # end-to-end tests: builds the real binary, starts the process, cove
 task lint   # golangci-lint plus the admin console's tsc + eslint + prettier, zero issues required
 task --list # list all tasks
 ```
+
+## License
+
+[MIT](./LICENSE). The admin console reuses common components from [shadcn-admin](https://github.com/satnaing/shadcn-admin); its license is at [web/licenses/shadcn-admin.LICENSE](./web/licenses/shadcn-admin.LICENSE).
