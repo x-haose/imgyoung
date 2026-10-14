@@ -243,7 +243,8 @@ func templateFieldValue(f TemplateField, inputs map[string]string) (string, erro
 	}
 	token, err := ParsePastedToken(v)
 	if err != nil {
-		return "", fmt.Errorf("字段「%s」: %w", f.Label, err)
+		// 哨兵留在链首,面向用户的文案去掉包前缀后仍从「渠道参数非法」读起。
+		return "", fmt.Errorf("%w(字段「%s」)", err, f.Label)
 	}
 	return token, nil
 }
