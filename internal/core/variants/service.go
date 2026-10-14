@@ -74,7 +74,8 @@ func NewService(cfg ServiceConfig) *Service {
 
 // GetOrProcess 取或生成衍生图:命中缓存直接返回;未命中则在并发上限内处理并落缓存。
 // @Description: srcFn 惰性拉取源图字节(接处理专用 ctx),仅未命中时调用;并发繁忙超时返回 ErrBusy 供上层回退原图。
-// 同一缓存键的并发首请求由 singleflight 合并为一次处理,其余共享结果。处理与调用方连接解耦:
+// 同一缓存键的并发首请求由 singleflight 合并为一次处理,其余共享结果;合并内再查一次缓存,
+// 在上一轮处理刚落缓存之后才进入合并的请求不会重复处理。处理与调用方连接解耦:
 // 单个请求断开不会取消已合并的共享处理,结果仍落缓存供后续命中。
 // @param ctx 上下文(仅用于命中缓存的读取;处理本身用解耦的超时 ctx)
 // @param blobID 源物理图主键
@@ -95,6 +96,15 @@ func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.Proc
 	}
 
 	v, err, _ := s.sf.Do(key, func() (any, error) {
+		// 进入合并前的缓存检查与此刻之间可能恰好有一次处理完成并落了缓存:再查一次,
+		// 否则迟到的首请求会把同一张图再编码一遍。查缓存与调用方连接解耦,同处理一样。
+		getCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cachePutTimeout)
+		defer cancel()
+		if data, format, ok, gerr := s.store.Get(getCtx, blobID, key); gerr != nil {
+			return result{}, gerr
+		} else if ok {
+			return result{data: data, mime: imaging.MIME(format)}, nil
+		}
 		return s.process(set, blobID, key, p, srcFn)
 	})
 	if err != nil {

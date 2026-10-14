@@ -125,15 +125,17 @@ func TestServiceBusyReturnsErrBusy(t *testing.T) {
 	src := pngBytes(t)
 
 	hold := make(chan struct{})
+	entered := make(chan struct{})
+	// 源图拉取发生在抢到处理槽之后:它被调用即证明占槽者已在临界区,比固定睡眠可靠。
 	//nolint:unparam // 须匹配 srcFn 回调签名 func(ctx)([]byte,error);测试替身不产生错误
-	blockingSrc := func(context.Context) ([]byte, error) { <-hold; return src, nil }
+	blockingSrc := func(context.Context) ([]byte, error) { close(entered); <-hold; return src, nil }
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		_, _, _ = svc.GetOrProcess(ctx, blobID, imaging.ProcessParams{Width: 32, Format: imaging.FormatWebP}, blockingSrc)
 	}()
-	time.Sleep(30 * time.Millisecond) // 确保占槽者已入临界区
+	<-entered
 
 	_, _, err := svc.GetOrProcess(ctx, blobID, imaging.ProcessParams{Width: 64, Format: imaging.FormatWebP},
 		func(context.Context) ([]byte, error) { return src, nil })
