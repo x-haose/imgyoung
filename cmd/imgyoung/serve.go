@@ -69,7 +69,8 @@ func (a *app) serve() error {
 		}
 	})
 
-	a.logger.Info("ImgYoung 已启动", "listen", a.boot.Listen, "data_dir", a.boot.DataDir)
+	// 打印实际绑定地址:监听端口配 0 时由系统分配,配置值无法告知调用方真实端口。
+	a.logger.Info("ImgYoung 已启动", "listen", ln.Addr().String(), "data_dir", a.boot.DataDir)
 	if rerr := g.Run(); rerr != nil && !errors.Is(rerr, run.ErrSignal) {
 		return rerr
 	}

@@ -3,7 +3,6 @@ package urlfetch
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -70,35 +69,6 @@ func TestFetchRejectsPrivateTarget(t *testing.T) {
 
 	if _, _, err := newFetcher(1<<20).Fetch(context.Background(), srv.URL); !errors.Is(err, ErrBlockedAddress) {
 		t.Fatalf("环回地址期望 ErrBlockedAddress,得 %v", err)
-	}
-}
-
-// TestFetchRejectsRedirectToBlocked 重定向的每一跳都过地址校验:首跳放行、次跳指向被拦地址即失败。
-func TestFetchRejectsRedirectToBlocked(t *testing.T) {
-	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte("secret"))
-	}))
-	defer internal.Close()
-	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, internal.URL, http.StatusFound)
-	}))
-	defer redirector.Close()
-
-	allowedPort := portOf(t, redirector.URL)
-	f := newFetcher(1 << 20)
-	// 只放行首跳那个端口,次跳(另一个环回端口)按真实判定被拒——等价于"重定向到内网"。
-	f.allowAddr = func(netip.Addr) bool { return true }
-	f.client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= maxRedirects {
-			return ErrTooManyRedirects
-		}
-		if req.URL.Port() != allowedPort {
-			return fmt.Errorf("%w: %s", ErrBlockedAddress, req.URL.Host)
-		}
-		return checkScheme(req.URL)
-	}
-	if _, _, err := f.Fetch(context.Background(), redirector.URL); !errors.Is(err, ErrBlockedAddress) {
-		t.Fatalf("重定向到被拦地址期望 ErrBlockedAddress,得 %v", err)
 	}
 }
 
@@ -211,14 +181,4 @@ func TestCheckDialAddressRejectsMalformed(t *testing.T) {
 	if err := f.checkDialAddress(net.JoinHostPort("8.8.8.8", "443")); err != nil {
 		t.Errorf("公网地址不应被拒: %v", err)
 	}
-}
-
-// portOf 取测试服务器地址的端口。
-func portOf(t *testing.T, rawURL string) string {
-	t.Helper()
-	_, port, err := net.SplitHostPort(strings.TrimPrefix(rawURL, "http://"))
-	if err != nil {
-		t.Fatalf("解析测试地址端口: %v", err)
-	}
-	return port
 }

@@ -11,14 +11,21 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// argon2id 参数:面向自部署小机型的平衡取值,单次哈希约几十毫秒;
-// 参数随 PHC 串一起存储,后续调参不影响既有哈希的校验。
+// argonCost argon2id 的开销参数。
+type argonCost struct {
+	memoryKiB  uint32 // 内存开销,KiB
+	iterations uint32 // 迭代轮数
+	lanes      uint8  // 并行 lane 数,单 lane 保证低配机可用
+}
+
+// hashCost 新哈希使用的开销:面向自部署小机型的平衡取值,单次哈希约几十毫秒。
+// 参数随 PHC 串一起存储,调参不影响既有哈希的校验;包内测试把它调低,登录用例不必逐次付几十毫秒。
+var hashCost = argonCost{memoryKiB: 64 * 1024, iterations: 3, lanes: 1}
+
+// 盐与派生密钥的长度,字节。
 const (
-	argonMemoryKiB = 64 * 1024 // 内存开销,KiB
-	argonTime      = 3         // 迭代轮数
-	argonThreads   = 1         // 并行 lane 数,单 lane 保证低配机可用
-	argonSaltLen   = 16        // 盐长度,字节
-	argonKeyLen    = 32        // 派生密钥长度,字节
+	argonSaltLen = 16
+	argonKeyLen  = 32
 )
 
 // HashPassword 将明文密码哈希为自描述的 argon2id PHC 串。
@@ -32,9 +39,9 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("生成密码盐: %w", err)
 	}
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemoryKiB, argonThreads, argonKeyLen)
+	key := argon2.IDKey([]byte(password), salt, hashCost.iterations, hashCost.memoryKiB, hashCost.lanes, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
-		argon2.Version, argonMemoryKiB, argonTime, argonThreads,
+		argon2.Version, hashCost.memoryKiB, hashCost.iterations, hashCost.lanes,
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	), nil

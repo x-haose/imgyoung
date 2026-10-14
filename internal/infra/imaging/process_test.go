@@ -34,6 +34,7 @@ func srcPNG(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
+// TestProcessEncodesEachFormat 验证每种目标格式都能编码出对应 MIME 的产物。
 func TestProcessEncodesEachFormat(t *testing.T) {
 	src := srcPNG(t, 200, 150)
 	const budget = 1 << 30
@@ -52,6 +53,7 @@ func TestProcessEncodesEachFormat(t *testing.T) {
 	}
 }
 
+// TestProcessResizeOnlyShrinks 验证缩放只缩不放:目标宽超过源宽时保持原尺寸。
 func TestProcessResizeOnlyShrinks(t *testing.T) {
 	src := srcPNG(t, 200, 150)
 	const budget = 1 << 30
@@ -84,6 +86,7 @@ func TestProcessResizeOnlyShrinks(t *testing.T) {
 	}
 }
 
+// TestProcessRejects 验证坏图、超像素预算与未知格式各自以对应错误拒绝。
 func TestProcessRejects(t *testing.T) {
 	src := srcPNG(t, 200, 150)
 

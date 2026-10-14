@@ -22,6 +22,7 @@ func tiffOrientation(o uint16) []byte {
 	return b
 }
 
+// TestReadOrientation 验证从 TIFF 头读出 IFD0 的方向值,大小端各一份。
 func TestReadOrientation(t *testing.T) {
 	for o := uint16(1); o <= 8; o++ {
 		if got := readOrientation(tiffOrientation(o)); got != int(o) {
@@ -30,6 +31,7 @@ func TestReadOrientation(t *testing.T) {
 	}
 }
 
+// TestReadOrientationMalformed 验证畸形 TIFF 一律退回正常方向而非报错。
 func TestReadOrientationMalformed(t *testing.T) {
 	cases := [][]byte{
 		nil,
@@ -45,6 +47,7 @@ func TestReadOrientationMalformed(t *testing.T) {
 	}
 }
 
+// TestJPEGOrientationNonJPEG 验证非 JPEG 字节读方向得正常方向。
 func TestJPEGOrientationNonJPEG(t *testing.T) {
 	if got := jpegOrientation([]byte("not a jpeg")); got != orientationNormal {
 		t.Errorf("非 JPEG 应回退正常方向,得 %d", got)
