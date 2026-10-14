@@ -14,17 +14,24 @@ import (
 // revisionsTable 迁移历史表名;记录每个已应用版本及其执行结果,Executor 据此判定待应用集。
 const revisionsTable = "schema_revisions"
 
+// sqlConn 迁移期间执行语句的连接,由 *sql.Conn 与 *sql.DB 满足。
+type sqlConn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // revisions 用业务库自身的一张表实现 Atlas 的 RevisionReadWriter,持久化迁移执行历史。
 type revisions struct {
-	conn *sql.DB
+	conn sqlConn // 执行迁移的同一条连接
 }
 
 // newRevisions 确保迁移历史表存在并返回读写器。
 // @param ctx 控制建表超时与取消
-// @param conn 已打开的数据库连接
+// @param conn 执行迁移的连接
 // @return 就绪的历史读写器
 // @return 建表失败时的错误
-func newRevisions(ctx context.Context, conn *sql.DB) (*revisions, error) {
+func newRevisions(ctx context.Context, conn sqlConn) (*revisions, error) {
 	const ddl = `CREATE TABLE IF NOT EXISTS ` + revisionsTable + ` (
 	version          TEXT PRIMARY KEY,
 	description      TEXT NOT NULL,

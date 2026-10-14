@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 
@@ -11,21 +10,21 @@ import (
 )
 
 // openTest 在临时目录建一个空库,生命周期随测试结束回收。
-func openTest(t *testing.T) *sql.DB {
+func openTest(t *testing.T) *DB {
 	t.Helper()
-	conn, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	d, err := Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("打开测试库: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return conn
+	t.Cleanup(func() { _ = d.Close() })
+	return d
 }
 
 // applyN 只应用前 n 个迁移版本,用于构造历史版本的旧库。
-func applyN(t *testing.T, conn *sql.DB, n int) {
+func applyN(t *testing.T, d *DB, n int) {
 	t.Helper()
 	ctx := context.Background()
-	c, err := conn.Conn(ctx)
+	c, err := d.Writer().Conn(ctx)
 	if err != nil {
 		t.Fatalf("获取迁移连接: %v", err)
 	}
@@ -38,7 +37,7 @@ func applyN(t *testing.T, conn *sql.DB, n int) {
 	if err != nil {
 		t.Fatalf("装载迁移目录: %v", err)
 	}
-	rrw, err := newRevisions(ctx, conn)
+	rrw, err := newRevisions(ctx, c)
 	if err != nil {
 		t.Fatalf("初始化版本表: %v", err)
 	}
@@ -52,10 +51,10 @@ func applyN(t *testing.T, conn *sql.DB, n int) {
 }
 
 // queryString 取单行单列字符串结果,便于断言。
-func queryString(t *testing.T, conn *sql.DB, query string, args ...any) string {
+func queryString(t *testing.T, d *DB, query string, args ...any) string {
 	t.Helper()
 	var s string
-	if err := conn.QueryRow(query, args...).Scan(&s); err != nil {
+	if err := d.QueryRowContext(context.Background(), query, args...).Scan(&s); err != nil {
 		t.Fatalf("查询 %q: %v", query, err)
 	}
 	return s
@@ -98,7 +97,7 @@ func TestMigrateBackfillsLegacyRows(t *testing.T) {
 		`INSERT INTO images (id, blob_id, user_id) VALUES ('img1', 1, NULL)`,
 		`INSERT INTO idempotency_keys (key, image_id) VALUES ('k1', 'img1')`,
 	} {
-		if _, err := conn.Exec(stmt); err != nil {
+		if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
 			t.Fatalf("写入旧版数据 %q: %v", stmt, err)
 		}
 	}
@@ -116,7 +115,7 @@ func TestMigrateBackfillsLegacyRows(t *testing.T) {
 	}
 	// 表重建后外键关系必须完好。
 	var n int
-	if err := conn.QueryRow(`SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&n); err != nil {
+	if err := conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&n); err != nil {
 		t.Fatalf("外键完整性检查: %v", err)
 	}
 	if n != 0 {

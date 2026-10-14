@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -24,13 +23,14 @@ const migrationsDir = "migrations"
 // @Description: 用 Atlas Executor 顺序应用所有未记录的迁移,幂等;每个版本在
 // schema_revisions 表留痕。启动时调用,跨版本升级会自动补齐中间所有版本。
 // 应用前校验 atlas.sum,防止迁移文件与校验和不一致。
-// @param conn 已打开的数据库连接
+// @param d 已打开的数据库句柄
 // @return 迁移失败时的错误
-func Migrate(conn *sql.DB) error {
+func Migrate(d *DB) error {
 	ctx := context.Background()
-	// 迁移钉在单个连接上执行:迁移脚本内的 PRAGMA(如 foreign_keys=off)只对
-	// 当前连接生效,经连接池分发会漂移到未设置的连接上,表重建将被外键约束拦下。
-	c, err := conn.Conn(ctx)
+	// 迁移、版本表与基线播种全钉在写句柄的唯一连接上:迁移脚本内的 PRAGMA(如
+	// foreign_keys=off)只对当前连接生效;写句柄只有这一条连接,期间任何经池的写都会
+	// 等它释放,故不能再借池执行。
+	c, err := d.write.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("获取迁移专用连接: %w", err)
 	}
@@ -46,7 +46,7 @@ func Migrate(conn *sql.DB) error {
 	if err := migrate.Validate(dir); err != nil {
 		return fmt.Errorf("迁移目录校验(atlas.sum 不匹配): %w", err)
 	}
-	rrw, err := newRevisions(ctx, conn)
+	rrw, err := newRevisions(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -67,10 +67,7 @@ func Migrate(conn *sql.DB) error {
 			}
 		}
 	}
-	if err := seedDefaults(ctx, conn); err != nil {
-		return err
-	}
-	return nil
+	return seedDefaults(ctx, c)
 }
 
 // embeddedDir 把内嵌的迁移文件(含 atlas.sum)装入内存目录供 Executor 读取。

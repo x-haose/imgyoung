@@ -18,7 +18,6 @@ import (
 	"net/http/httptest"
 	neturl "net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,7 +31,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
 	"github.com/x-haose/imgyoung/internal/http/router"
 	"github.com/x-haose/imgyoung/internal/infra/config"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
@@ -96,24 +95,11 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 	dir := t.TempDir()
 	discard := slog.New(slog.DiscardHandler)
 
-	conn, err := db.Open(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试数据库: %v", err)
-	}
-	t.Cleanup(func() {
-		if cerr := conn.Close(); cerr != nil {
-			t.Errorf("关闭测试数据库: %v", cerr)
-		}
-	})
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移测试数据库: %v", err)
-	}
-
+	conn, queries := dbtest.New(t)
 	master, err := secret.NewMasterKey()
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := sqlc.New(conn)
 	store, err := config.LoadStore(t.Context(), conn, queries, master)
 	if err != nil {
 		t.Fatalf("装载运营配置: %v", err)

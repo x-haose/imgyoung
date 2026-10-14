@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -68,7 +67,7 @@ type app struct {
 // infra 聚合基础设施层构件,供业务服务与 HTTP 层取用;由 buildInfra 一次性装配。
 type infra struct {
 	boot    config.Bootstrap  // 引导配置,监听地址与数据目录等
-	conn    *sql.DB           // 元数据库连接,全局唯一
+	conn    *db.DB            // 元数据库句柄,全局唯一;写单连接、读连接池
 	queries *sqlc.Queries     // 类型安全查询集
 	master  *secret.MasterKey // 主密钥,渠道配置与加密数据的根
 	store   *config.Store     // 运营配置存储,各处逐轮取快照
@@ -134,7 +133,7 @@ func build(logger *slog.Logger) (*app, func(), error) {
 }
 
 // buildInfra 装配基础设施:建数据目录 → 开库 → 迁移 → 主密钥 → 运营配置存储。
-// @Description: 内部自持 ok 闸,装配任一步失败即关闭已开的连接;成功则把清理函数返给
+// @Description: 内部自持 ok 闸,装配任一步失败即关闭已开的库;成功则把清理函数返给
 // 调用方(供其覆盖后续装配失败与正常退出)。
 // @param logger 结构化日志
 // @return 基础设施构件
@@ -189,19 +188,20 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 // @return 业务服务集
 // @return 装配失败时的错误
 func buildServices(in infra, logger *slog.Logger) (services, error) {
-	authSvc := auth.New(auth.Config{Conn: in.conn, Queries: in.queries, Master: in.master, Logger: logger})
+	writer := in.conn.Writer()
+	authSvc := auth.New(auth.Config{Conn: writer, Queries: in.queries, Master: in.master, Logger: logger})
 	if err := seedAdminPassword(in.queries, logger); err != nil {
 		return services{}, err
 	}
 
 	manager, err := channel.NewManager(context.Background(), channel.ManagerConfig{
-		Conn: in.conn, Queries: in.queries, Master: in.master, DataDir: in.boot.DataDir, Logger: logger,
+		Conn: writer, Queries: in.queries, Master: in.master, DataDir: in.boot.DataDir, Logger: logger,
 	})
 	if err != nil {
 		return services{}, err
 	}
 	runner, err := replication.NewRunner(replication.RunnerConfig{
-		Conn: in.conn, Queries: in.queries, Manager: manager,
+		Conn: writer, Queries: in.queries, Manager: manager,
 		Purger: settingsPurger{settings: in.store.Current}, Logger: logger,
 	})
 	if err != nil {
@@ -228,22 +228,22 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 		audit:    audit.New(in.queries),
 		variants: variants.NewService(variants.ServiceConfig{Store: vstore, Settings: in.store.Current, Logger: logger}),
 		upload: upload.New(upload.Config{
-			Conn: in.conn, Queries: in.queries, Channels: manager, Replicator: runner,
+			Conn: writer, Queries: in.queries, Channels: manager, Replicator: runner,
 			Settings: in.store.Current, Logger: logger,
 		}),
-		tracker: lifecycle.NewTracker(in.conn, in.queries, func() bool { return in.store.Current().TTLRenewOnAccess }, logger),
+		tracker: lifecycle.NewTracker(writer, in.queries, func() bool { return in.store.Current().TTLRenewOnAccess }, logger),
 		sweeper: lifecycle.New(lifecycle.Config{
-			Conn: in.conn, Queries: in.queries, Deleter: runner, Variants: vstore, Purger: runner,
+			Conn: writer, Queries: in.queries, Deleter: runner, Variants: vstore, Purger: runner,
 			Settings: in.store.Current, Logger: logger,
 		}),
-		merger: dedup.New(dedup.Config{Conn: in.conn, Queries: in.queries, Settings: in.store.Current, Logger: logger}),
+		merger: dedup.New(dedup.Config{Conn: writer, Queries: in.queries, Settings: in.store.Current, Logger: logger}),
 		reporter: usage.New(usage.Config{
 			Queries: in.queries, Gauge: metrics,
 			QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
 			Logger:     logger,
 		}),
 		backup: reliability.New(reliability.Config{
-			Conn: in.conn, Channels: manager, DataDir: in.boot.DataDir,
+			Conn: in.conn.Reader(), Channels: manager, DataDir: in.boot.DataDir,
 			Keep: func() int { return in.store.Current().BackupKeep }, Logger: logger,
 		}),
 	}, nil
@@ -306,8 +306,8 @@ func loadMasterKey(boot config.Bootstrap, logger *slog.Logger) (*secret.MasterKe
 // loadSettings 装载运营配置存储,并打一行 CDN purge 启用状态便于自助排障。
 // @return 配置存储
 // @return 装载失败时的错误
-func loadSettings(conn *sql.DB, queries *sqlc.Queries, master *secret.MasterKey, logger *slog.Logger) (*config.Store, error) {
-	store, err := config.LoadStore(context.Background(), conn, queries, master)
+func loadSettings(conn *db.DB, queries *sqlc.Queries, master *secret.MasterKey, logger *slog.Logger) (*config.Store, error) {
+	store, err := config.LoadStore(context.Background(), conn.Writer(), queries, master)
 	if err != nil {
 		return nil, err
 	}

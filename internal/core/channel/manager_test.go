@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
-	"github.com/x-haose/imgyoung/internal/infra/db"
+	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
@@ -27,23 +27,11 @@ type testEnv struct {
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
-	conn, err := db.Open(filepath.Join(dir, "test.db"))
-	if err != nil {
-		t.Fatalf("打开测试数据库: %v", err)
-	}
-	t.Cleanup(func() {
-		if cerr := conn.Close(); cerr != nil {
-			t.Errorf("关闭测试数据库: %v", cerr)
-		}
-	})
-	if err := db.Migrate(conn); err != nil {
-		t.Fatalf("迁移测试数据库: %v", err)
-	}
+	conn, queries := dbtest.New(t)
 	master, err := secret.NewMasterKey()
 	if err != nil {
 		t.Fatalf("生成主密钥: %v", err)
 	}
-	queries := sqlc.New(conn)
 	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
 		Conn:    conn,
 		Queries: queries,

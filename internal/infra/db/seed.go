@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -13,9 +12,9 @@ import (
 // 已初始化的库重复执行无副作用。内置管理员登录名为 admin,密码留空即禁止登录,
 // 首启由 seedAdminPassword 播种出厂默认密码。local 渠道在全新库中取得 id=1。
 // @param ctx 控制写入超时与取消
-// @param conn 已迁移的数据库连接
+// @param conn 执行迁移的连接
 // @return 播种失败时的错误
-func seedDefaults(ctx context.Context, conn *sql.DB) error {
+func seedDefaults(ctx context.Context, conn sqlConn) error {
 	if _, err := conn.ExecContext(ctx,
 		`INSERT OR IGNORE INTO users (id, name, role) VALUES (?, 'admin', 'admin')`, sqlc.DefaultUserID); err != nil {
 		return fmt.Errorf("播种内置管理员: %w", err)
