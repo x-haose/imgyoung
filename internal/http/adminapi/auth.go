@@ -123,8 +123,8 @@ func (h *Handlers) HandleChangePassword(w http.ResponseWriter, r *http.Request) 
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "旧密码不正确")
 		return
-	case errors.Is(err, auth.ErrEmptyPassword):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "新密码不能为空")
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
 		h.cfg.Logger.Error("修改密码失败", "user", p.UserID, "err", err)

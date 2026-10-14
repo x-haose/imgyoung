@@ -209,8 +209,11 @@ func (s *Service) Logout(ctx context.Context, sessionID string) error {
 // @param ctx 控制超时与取消
 // @param userID 目标用户 id
 // @param password 新明文密码
-// @return 基础设施错误
+// @return ErrPasswordTooShort 或基础设施错误
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
+	if err := validatePassword(password); err != nil {
+		return err
+	}
 	phc, err := HashPassword(password)
 	if err != nil {
 		return err

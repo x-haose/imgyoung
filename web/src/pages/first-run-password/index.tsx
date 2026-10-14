@@ -5,13 +5,11 @@ import { Navigate } from "react-router";
 
 import { apiFetch } from "../../api/http";
 import { BrandMark } from "../../layout/BrandMark";
+import { passwordRules } from "../../lib/password";
 import { sessionUser } from "../../providers/authProvider";
 
 /** 出厂默认密码;与后端 auth.DefaultAdminPassword 一致,公开值,仅此页作旧密码提交。 */
 const DEFAULT_ADMIN_PASSWORD = "imgyoung123";
-
-/** 新密码最小长度,防用户随手设过短口令;后端只拒空,长度门槛在前端把关。 */
-const MIN_PASSWORD_LENGTH = 8;
 
 /** 首次改密表单字段。 */
 interface FirstRunForm {
@@ -84,10 +82,7 @@ export function FirstRunPasswordPage() {
           <Form.Item
             name="new_password"
             label="新密码"
-            rules={[
-              { required: true, message: "请输入新密码" },
-              { min: MIN_PASSWORD_LENGTH, message: `至少 ${MIN_PASSWORD_LENGTH} 位` },
-            ]}
+            rules={passwordRules("请输入新密码")}
           >
             <Input.Password autoComplete="new-password" autoFocus />
           </Form.Item>

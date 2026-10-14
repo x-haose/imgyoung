@@ -4,6 +4,7 @@ import { Alert, App as AntdApp, Button, Card, Col, Flex, Form, Input, Row, Typog
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "../../api/http";
+import { passwordRules } from "../../lib/password";
 import { sessionUser } from "../../providers/authProvider";
 import type { FullConfig } from "./fullConfig";
 import { fetchFullConfig } from "./fullConfig";
@@ -77,11 +78,7 @@ export function SettingsPage() {
               >
                 <Input.Password autoComplete="current-password" />
               </Form.Item>
-              <Form.Item
-                name="new_password"
-                label="新密码"
-                rules={[{ required: true, message: "请输入新密码" }]}
-              >
+              <Form.Item name="new_password" label="新密码" rules={passwordRules("请输入新密码")}>
                 <Input.Password autoComplete="new-password" />
               </Form.Item>
               <Form.Item

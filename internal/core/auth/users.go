@@ -19,15 +19,28 @@ const (
 	RoleUser  = "user"  // 只见自己的图片与 Token
 )
 
+// MinPasswordLength 密码最小长度(按字节计);建号、改密、重置三条路径同一门槛。
+const MinPasswordLength = 8
+
 // 用户管理哨兵错误,调用方据此映射 HTTP 状态码。
 var (
-	ErrUserNameTaken = errors.New("auth: 登录名已存在")
-	ErrUserHasImages = errors.New("auth: 用户名下仍有图片")
-	ErrUserProtected = errors.New("auth: 内置管理员不可禁用、降级或删除")
-	ErrUserNotFound  = errors.New("auth: 用户不存在")
-	ErrInvalidRole   = errors.New("auth: 角色取值非法")
-	ErrEmptyPassword = errors.New("auth: 密码不能为空")
+	ErrUserNameTaken    = errors.New("auth: 登录名已存在")
+	ErrUserHasImages    = errors.New("auth: 用户名下仍有图片")
+	ErrUserProtected    = errors.New("auth: 内置管理员不可禁用、降级或删除")
+	ErrUserNotFound     = errors.New("auth: 用户不存在")
+	ErrInvalidRole      = errors.New("auth: 角色取值非法")
+	ErrPasswordTooShort = fmt.Errorf("auth: 密码至少 %d 位", MinPasswordLength)
 )
+
+// validatePassword 校验新密码满足最小长度。
+// @param password 明文密码
+// @return 过短时的 ErrPasswordTooShort
+func validatePassword(password string) error {
+	if len(password) < MinPasswordLength {
+		return ErrPasswordTooShort
+	}
+	return nil
+}
 
 // CreateUserParams 建号参数。
 type CreateUserParams struct {
@@ -42,13 +55,13 @@ type CreateUserParams struct {
 // @param ctx 控制超时与取消
 // @param p 建号参数
 // @return 新建用户行
-// @return ErrUserNameTaken / ErrInvalidRole / ErrEmptyPassword 或基础设施错误
+// @return ErrUserNameTaken / ErrInvalidRole / ErrPasswordTooShort 或基础设施错误
 func (s *Service) CreateUser(ctx context.Context, p CreateUserParams) (sqlc.User, error) {
 	if p.Role != RoleAdmin && p.Role != RoleUser {
 		return sqlc.User{}, ErrInvalidRole
 	}
-	if p.Password == "" {
-		return sqlc.User{}, ErrEmptyPassword
+	if err := validatePassword(p.Password); err != nil {
+		return sqlc.User{}, err
 	}
 	phc, err := HashPassword(p.Password)
 	if err != nil {
@@ -172,10 +185,10 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 // @param userID 目标用户 id
 // @param oldPassword 旧明文密码
 // @param newPassword 新明文密码
-// @return ErrInvalidCredentials / ErrEmptyPassword / ErrUserNotFound 或基础设施错误
+// @return ErrInvalidCredentials / ErrPasswordTooShort / ErrUserNotFound 或基础设施错误
 func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
-	if newPassword == "" {
-		return ErrEmptyPassword
+	if err := validatePassword(newPassword); err != nil {
+		return err
 	}
 	user, err := s.getUser(ctx, userID)
 	if err != nil {

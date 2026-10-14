@@ -24,6 +24,7 @@ import { apiFetch } from "../../api/http";
 import { QueryState } from "../../components/QueryState";
 import { usePageClamp } from "../../hooks/usePageClamp";
 import { formatBytes, formatTime } from "../../lib/format";
+import { passwordRules } from "../../lib/password";
 
 /** 用户列表项(对应 /api/admin/users 响应)。 */
 interface UserItem {
@@ -312,11 +313,7 @@ export function UsersPage() {
             <Input />
           </Form.Item>
           {editing === "new" && (
-            <Form.Item
-              name="password"
-              label="初始密码"
-              rules={[{ required: true, message: "请输入初始密码" }]}
-            >
+            <Form.Item name="password" label="初始密码" rules={passwordRules("请输入初始密码")}>
               <Input.Password autoComplete="new-password" />
             </Form.Item>
           )}
@@ -360,7 +357,7 @@ export function UsersPage() {
           <Form.Item
             name="password"
             label="新密码"
-            rules={[{ required: true, message: "请输入新密码" }]}
+            rules={passwordRules("请输入新密码")}
             extra="重置后该用户的全部会话即刻失效"
           >
             <Input.Password autoComplete="new-password" />

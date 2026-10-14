@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -42,5 +43,30 @@ func TestVerifyPasswordMalformed(t *testing.T) {
 		if ok, err := VerifyPassword(phc, "pw"); err == nil || ok {
 			t.Errorf("%s: 应报格式错误, got ok=%v err=%v", name, ok, err)
 		}
+	}
+}
+
+// TestValidatePassword 验证最小长度门槛:不足即拒,恰好达标放行;按字节计,多字节字符同样计长。
+func TestValidatePassword(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		password string
+		wantErr  bool
+	}{
+		{"空密码", "", true},
+		{"七位", "1234567", true},
+		{"恰好八位", "12345678", false},
+		{"长密码", "correct-horse-battery", false},
+		{"三个汉字九字节", "密码值", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePassword(tt.password)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validatePassword(%q) = %v, 期望拒绝=%v", tt.password, err, tt.wantErr)
+			}
+			if err != nil && !errors.Is(err, ErrPasswordTooShort) {
+				t.Fatalf("错误未归入 ErrPasswordTooShort: %v", err)
+			}
+		})
 	}
 }

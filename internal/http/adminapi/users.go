@@ -85,8 +85,11 @@ func (h *Handlers) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, auth.ErrUserNameTaken):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "登录名已存在")
 		return
-	case errors.Is(err, auth.ErrInvalidRole), errors.Is(err, auth.ErrEmptyPassword):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "角色或密码取值非法")
+	case errors.Is(err, auth.ErrInvalidRole):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "角色取值非法")
+		return
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
 		return
 	case err != nil:
 		h.cfg.Logger.Error("创建用户失败", "name", req.Name, "err", err)
@@ -140,8 +143,8 @@ func (h *Handlers) HandleUserResetPassword(w http.ResponseWriter, r *http.Reques
 		Password string `json:"password"` // 新明文密码
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体非法或密码为空")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
 	userID := chi.URLParam(r, "id")
@@ -149,7 +152,12 @@ func (h *Handlers) HandleUserResetPassword(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "用户不存在")
 		return
 	}
-	if err := h.cfg.Auth.SetPassword(r.Context(), userID, req.Password); err != nil {
+	err := h.cfg.Auth.SetPassword(r.Context(), userID, req.Password)
+	switch {
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
+		return
+	case err != nil:
 		h.cfg.Logger.Error("重置密码失败", "id", userID, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
