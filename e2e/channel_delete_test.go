@@ -35,7 +35,7 @@ func channelListed(t *testing.T, inst *instance, id int64) bool {
 }
 
 // TestChannelDeletePurgesObjects 删除渠道的两条路径:带清理的删除异步删光渠道上的对象后
-// 渠道消失,另一渠道的副本仍可访问;不清理的删除立即消失、远端对象原样保留。
+// 渠道消失,另一渠道的副本仍可访问;不清理的删除立即消失、远端对象原样保留;不存在的渠道 404。
 func TestChannelDeletePurgesObjects(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
@@ -50,6 +50,9 @@ func TestChannelDeletePurgesObjects(t *testing.T) {
 		t.Fatal("主渠道没有对象")
 	}
 
+	if code := deleteChannel(t, inst, 99999, true); code != http.StatusNotFound {
+		t.Fatalf("删除不存在的渠道状态码 = %d, 期望 404", code)
+	}
 	if code := deleteChannel(t, inst, purgeID, true); code != http.StatusAccepted {
 		t.Fatalf("带清理删除状态码 = %d, 期望 202", code)
 	}

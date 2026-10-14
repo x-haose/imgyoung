@@ -357,6 +357,9 @@ func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	err := h.cfg.Admin.Delete(r.Context(), channelID, purge)
 	switch {
+	case errors.Is(err, channel.ErrChannelNotFound):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		return
 	case errors.Is(err, channel.ErrHoldsSoleReplicas):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict,
 			"该渠道持有部分图片的唯一副本,删除会丢数据;请先迁移或删除相关图片")

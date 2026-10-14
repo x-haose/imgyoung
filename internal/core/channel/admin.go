@@ -329,7 +329,7 @@ func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[strin
 // 逐个删除、清完才删行(见 Remove);为 false 立即删行,渠道上的对象原样留在远端。
 // @param channelID 渠道主键
 // @param purge 是否清理渠道上的对象
-// @return ErrHoldsSoleReplicas 或落库、重载失败时的错误
+// @return ErrChannelNotFound / ErrHoldsSoleReplicas 或落库、重载失败时的错误
 func (m *Manager) Delete(ctx context.Context, channelID int64, purge bool) error {
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -339,6 +339,12 @@ func (m *Manager) Delete(ctx context.Context, channelID int64, purge bool) error
 	defer func() { _ = tx.Rollback() }()
 
 	q := m.cfg.Queries.WithTx(tx)
+	if _, err := q.GetChannel(ctx, channelID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrChannelNotFound
+		}
+		return fmt.Errorf("查询渠道: %w", err)
+	}
 	sole, err := q.CountSoleReplicas(ctx, channelID)
 	if err != nil {
 		return fmt.Errorf("检查唯一副本: %w", err)
