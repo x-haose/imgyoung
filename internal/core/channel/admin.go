@@ -100,6 +100,7 @@ type Info struct {
 	AllowDirectLink bool         `json:"allow_direct_link"` // 是否允许直链
 	LastCheckedAt   string       `json:"last_checked_at"`   // 最近探测时刻,UTC 文本;空 = 尚未探测
 	LastError       string       `json:"last_error"`        // 最近探测失败原因(人话化);空 = 最近一次探测成功
+	Deleting        bool         `json:"deleting"`          // 清理中:排空任务正在删除渠道上的对象,清完即消失
 	Replicas        ReplicaStats `json:"replicas"`          // 副本补齐水位统计
 }
 
@@ -321,11 +322,14 @@ func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[strin
 }
 
 // Delete 删除渠道;若其持有任何图的唯一就绪副本则拒绝(防数据丢失)。
-// @Description: 唯一副本检查与删除在同一事务内完成,消除并发上传落库
-// 造成的检查-删除窗口(TOCTOU)。
+// @Description: 唯一副本检查与删除在同一事务内完成,消除并发上传落库造成的检查-删除窗口;
+// 其他清理中的渠道不算可替代副本,两个渠道先后带清理删除不会把同一张图的副本删光。
+// purge 为 true 只打清理中标记:渠道即刻退出选路、补齐与探测,渠道上的对象由排空任务
+// 逐个删除、清完才删行(见 Remove);为 false 立即删行,渠道上的对象原样留在远端。
 // @param channelID 渠道主键
-// @return ErrHoldsSoleReplicas 或删除/重载失败时的错误
-func (m *Manager) Delete(ctx context.Context, channelID int64) error {
+// @param purge 是否清理渠道上的对象
+// @return ErrHoldsSoleReplicas 或落库、重载失败时的错误
+func (m *Manager) Delete(ctx context.Context, channelID int64, purge bool) error {
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开启事务: %w", err)
@@ -341,17 +345,51 @@ func (m *Manager) Delete(ctx context.Context, channelID int64) error {
 	if sole > 0 {
 		return fmt.Errorf("%w(%d 张图仅此渠道有副本)", ErrHoldsSoleReplicas, sole)
 	}
-	// 先清副本记录(外键约束);渠道上可能残留的对象文件由对账任务回收。
+	if purge {
+		if err := q.MarkChannelPendingDelete(ctx, channelID); err != nil {
+			return fmt.Errorf("标记渠道清理中: %w", err)
+		}
+	} else if err := removeChannelRows(ctx, q, channelID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交事务: %w", err)
+	}
+	return m.Reload(ctx)
+}
+
+// Remove 删除渠道记录及其全部副本记录,不检查唯一副本、不触碰远端对象。
+// @Description: 供排空任务清完对象后收尾;唯一副本检查在打清理中标记时已经做过,
+// 之后该渠道的副本不再被任何路径计入。
+// @param channelID 渠道主键
+// @return 落库或重载失败时的错误
+func (m *Manager) Remove(ctx context.Context, channelID int64) error {
+	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启事务: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := removeChannelRows(ctx, m.cfg.Queries.WithTx(tx), channelID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交事务: %w", err)
+	}
+	return m.Reload(ctx)
+}
+
+// removeChannelRows 在事务内删除渠道的副本记录与渠道记录(副本记录有外键指向渠道,先删)。
+// @param q 绑定事务的查询集
+// @param channelID 渠道主键
+// @return 删除失败时的错误
+func removeChannelRows(ctx context.Context, q *sqlc.Queries, channelID int64) error {
 	if err := q.DeleteBlobChannelsByChannel(ctx, channelID); err != nil {
 		return fmt.Errorf("清理渠道副本记录: %w", err)
 	}
 	if err := q.DeleteChannel(ctx, channelID); err != nil {
 		return fmt.Errorf("删除渠道记录: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务: %w", err)
-	}
-	return m.Reload(ctx)
+	return nil
 }
 
 // List 返回全部渠道的对外描述(按优先级降序,不含配置与凭证)。
@@ -384,6 +422,7 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 			AllowDirectLink: row.AllowDirectLink != 0,
 			LastCheckedAt:   row.LastCheckedAt.String,
 			LastError:       row.LastError.String,
+			Deleting:        row.PendingDelete != 0,
 			Replicas:        ReplicaStats{Done: s.Done, Pending: s.Pending, Failed: s.Failed},
 		})
 	}
@@ -434,13 +473,17 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 	return changed, nil
 }
 
-// snapshot 返回当前已加载渠道的副本(句柄与健康标记),供一轮探测使用。
+// snapshot 返回当前在役渠道的副本(句柄与健康标记),供一轮探测使用;清理中的渠道不探测。
 // @return 渠道运行态切片
 func (m *Manager) snapshot() []managed {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]managed, len(m.channels))
-	copy(out, m.channels)
+	out := make([]managed, 0, len(m.channels))
+	for _, c := range m.channels {
+		if !c.handle.PendingDelete {
+			out = append(out, c)
+		}
+	}
 	return out
 }
 

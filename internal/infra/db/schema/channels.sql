@@ -11,5 +11,6 @@ CREATE TABLE channels (
     created_at TEXT NOT NULL DEFAULT (datetime('now')), -- 创建时刻,UTC 文本
     last_checked_at TEXT, -- 最近一次健康探测时刻,UTC 文本;NULL 表示尚未探测过
     last_error TEXT, -- 最近一次探测失败原因(人话化文案,不含凭证);NULL 表示最近一次探测成功
-    template TEXT NOT NULL DEFAULT '' -- 配置所用模板 id,空串表示自定义配置;仅供编辑表单还原,不参与驱动构造
+    template TEXT NOT NULL DEFAULT '', -- 配置所用模板 id,空串表示自定义配置;仅供编辑表单还原,不参与驱动构造
+    pending_delete INTEGER NOT NULL DEFAULT 0 -- 清理中标记,1 表示正在删除渠道上的对象、清完即删行;期间不参与选路、补齐与探测
 );

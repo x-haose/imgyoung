@@ -127,6 +127,7 @@ config:   provider=Cloudflare  access_key_id=...  secret_access_key=...
 # 删除守卫:渠道持有某些图的唯一副本时拒绝删除(409),防止数据丢失
 ```
 
+- 删除渠道默认**同时清理渠道上的对象**(后台逐个删除,期间渠道显示为「清理中」,删完自动移除);凭证已失效或桶已不存在时选「仅移除」,远端对象原样保留。持有任何图唯一副本的渠道会被拒绝删除。
 - `encrypted: true` 的渠道经 rclone crypt 存储:内容与文件名均为密文,渠道商不可见;密码由主密钥派生,持 `master.key` 可用标准 rclone 工具独立解密(自救)。
 - 加密设置创建时固化,建后不可变(变更会使既有对象不可读)。
 - **S3 兼容后端(R2/MinIO 等)请预先创建好 bucket**:图床默认对 s3 渠道置 `no_check_bucket=true`,跳过 rclone 上传前的建桶探测——作用域凭证通常无建桶权限,否则表现为"健康探测通过但上传 403"。确需 rclone 自动建桶,在 config 显式加 `"no_check_bucket":"false"`。

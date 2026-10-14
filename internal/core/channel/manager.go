@@ -40,6 +40,7 @@ type Handle struct {
 	Encrypted       bool          // 是否为加密渠道(密文不可直链)
 	AllowDirectLink bool          // 是否允许 302 直链
 	PublicBaseURL   string        // 对外直链前缀(空 = 无直链能力);来自渠道配置键 public_base_url
+	PendingDelete   bool          // 清理中:排空任务正在删除渠道上的对象,清完即从渠道表消失;不参与选路、补齐与探测
 }
 
 // ManagerConfig 管理器依赖。
@@ -136,6 +137,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 				Encrypted:       row.Encrypted != 0,
 				AllowDirectLink: row.AllowDirectLink != 0,
 				PublicBaseURL:   strings.TrimRight(params[configKeyPublicBaseURL], "/"),
+				PendingDelete:   row.PendingDelete != 0,
 			},
 			healthy: row.Healthy != 0,
 			driver:  drv,
@@ -194,14 +196,28 @@ func (m *Manager) closeAll(ctx context.Context, channels []managed) error {
 	return errors.Join(errs...)
 }
 
-// Healthy 返回当前健康的渠道句柄,按优先级降序。
+// Healthy 返回当前健康且不在清理中的渠道句柄,按优先级降序。
 // @return 健康渠道切片(副本)
 func (m *Manager) Healthy() []Handle {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]Handle, 0, len(m.channels))
 	for _, c := range m.channels {
-		if c.healthy {
+		if c.healthy && !c.handle.PendingDelete {
+			out = append(out, c.handle)
+		}
+	}
+	return out
+}
+
+// Draining 返回清理中的渠道句柄,供排空任务的对账入队使用。
+// @return 清理中渠道切片(副本)
+func (m *Manager) Draining() []Handle {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := []Handle{}
+	for _, c := range m.channels {
+		if c.handle.PendingDelete {
 			out = append(out, c.handle)
 		}
 	}
@@ -220,27 +236,29 @@ func (m *Manager) setHealth(channelID int64, healthy bool) {
 	}
 }
 
-// Primary 返回主渠道:健康渠道中优先级最高者。
+// Primary 返回主渠道:健康且不在清理中的渠道里优先级最高者。
 // @return 主渠道句柄;无健康渠道时返回 ErrNoHealthyChannel
 func (m *Manager) Primary() (Handle, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, c := range m.channels {
-		if c.healthy {
+		if c.healthy && !c.handle.PendingDelete {
 			return c.handle, nil
 		}
 	}
 	return Handle{}, ErrNoHealthyChannel
 }
 
-// All 返回全部渠道句柄(含不健康者),按优先级降序。
+// All 返回全部在役渠道句柄(含不健康者,不含清理中者),按优先级降序。
 // @return 渠道句柄切片(副本,调用方可自由持有)
 func (m *Manager) All() []Handle {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := make([]Handle, len(m.channels))
-	for i, c := range m.channels {
-		out[i] = c.handle
+	out := make([]Handle, 0, len(m.channels))
+	for _, c := range m.channels {
+		if !c.handle.PendingDelete {
+			out = append(out, c.handle)
+		}
 	}
 	return out
 }
@@ -257,14 +275,14 @@ func (m *Manager) CandidatesForBlob(ctx context.Context, blobID int64) ([]Handle
 	out := make([]Handle, 0, len(rows))
 	for _, row := range rows { // 查询已按优先级降序
 		c, ok := byID[row.ChannelID]
-		if ok && c.healthy && row.State == StateDone {
+		if ok && c.healthy && !c.handle.PendingDelete && row.State == StateDone {
 			out = append(out, c.handle)
 		}
 	}
 	return out, nil
 }
 
-// Get 按 ID 返回渠道句柄。
+// Get 按 ID 返回渠道句柄,含清理中的渠道(调用方按 PendingDelete 自行取舍)。
 // @param channelID 渠道主键
 // @return 句柄与是否存在
 func (m *Manager) Get(channelID int64) (Handle, bool) {

@@ -55,6 +55,7 @@ type Channel struct {
 	LastCheckedAt   sql.NullString
 	LastError       sql.NullString
 	Template        string
+	PendingDelete   int64
 }
 
 type DedupCandidate struct {

@@ -89,7 +89,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template, pending_delete
 FROM channels
 WHERE id = ?
 `
@@ -110,12 +110,13 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 		&i.LastCheckedAt,
 		&i.LastError,
 		&i.Template,
+		&i.PendingDelete,
 	)
 	return i, err
 }
 
 const listChannels = `-- name: ListChannels :many
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template, pending_delete
 FROM channels
 ORDER BY priority DESC, id ASC
 `
@@ -142,6 +143,7 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 			&i.LastCheckedAt,
 			&i.LastError,
 			&i.Template,
+			&i.PendingDelete,
 		); err != nil {
 			return nil, err
 		}
@@ -154,6 +156,17 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const markChannelPendingDelete = `-- name: MarkChannelPendingDelete :exec
+UPDATE channels
+SET pending_delete = 1
+WHERE id = ?
+`
+
+func (q *Queries) MarkChannelPendingDelete(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, markChannelPendingDelete, id)
+	return err
 }
 
 const updateChannelConfig = `-- name: UpdateChannelConfig :exec

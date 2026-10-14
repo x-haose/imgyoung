@@ -24,8 +24,8 @@ type ChannelAdmin interface {
 	Create(ctx context.Context, p channel.CreateParams) (int64, error)
 	// Update 编辑渠道(配置整体替换;encrypted 不可变),含重载与编辑后深探测。
 	Update(ctx context.Context, channelID int64, p channel.UpdateParams) error
-	// Delete 删除渠道(持有唯一副本时拒绝)。
-	Delete(ctx context.Context, channelID int64) error
+	// Delete 删除渠道(持有唯一副本时拒绝);purge 为 true 只打清理中标记,对象由排空任务删除。
+	Delete(ctx context.Context, channelID int64, purge bool) error
 	// List 返回全部渠道描述(不含配置与凭证)。
 	List(ctx context.Context) ([]channel.Info, error)
 	// ProbeChannel 对已有渠道执行深探测并把结果落库。
@@ -42,6 +42,8 @@ type ChannelAdmin interface {
 type ReplicationKicker interface {
 	// Reconcile 扫描全部未完成副本并重新入队(幂等,按参数去重)。
 	Reconcile(ctx context.Context) error
+	// EnqueueChannelDrain 为清理中的渠道入队排空任务(幂等,按参数去重)。
+	EnqueueChannelDrain(ctx context.Context, channelID int64) error
 }
 
 // ImageAdmin 图片管理删除入口(由 lifecycle.Sweeper 实现)。

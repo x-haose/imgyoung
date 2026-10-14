@@ -4,8 +4,10 @@ import {
   App as AntdApp,
   Button,
   Card,
+  Checkbox,
   Empty,
   Flex,
+  Modal,
   Popconfirm,
   Space,
   Table,
@@ -22,11 +24,14 @@ import { formatRelativeTime, formatTime } from "../../lib/format";
 import { ChannelFormModal } from "./ChannelFormModal";
 import type { ChannelItem, ReplicaStats } from "./types";
 
-/** 渠道页:列表(健康详情 + 副本水位)+ 模板化创建/编辑 + 手动重检 + 删除。 */
+/** 渠道页:列表(健康详情 + 副本水位)+ 模板化创建/编辑 + 手动重检 + 删除(可选清理远端对象)。 */
 export function ChannelsPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<ChannelItem | null>(null);
   const [checkingId, setCheckingId] = useState<number | null>(null);
+  const [removing, setRemoving] = useState<ChannelItem | null>(null); // 删除确认框里的目标渠道
+  const [purge, setPurge] = useState(true); // 删除确认框里的「同时清理远端对象」
+  const [removingBusy, setRemovingBusy] = useState(false);
   const invalidate = useInvalidate();
   const { message } = AntdApp.useApp();
 
@@ -47,13 +52,18 @@ export function ChannelsPage() {
     setFormOpen(true);
   };
 
-  const remove = async (id: number) => {
+  // 删除两条路径:清理远端对象走异步排空,渠道先停留为「清理中」;不清理则立即移除。
+  const remove = async (id: number, purgeObjects: boolean) => {
+    setRemovingBusy(true);
     try {
-      await apiFetch(`/api/admin/channels/${id}`, { method: "DELETE" });
-      message.success("渠道已删除");
+      await apiFetch(`/api/admin/channels/${id}?purge=${purgeObjects}`, { method: "DELETE" });
+      message.success(purgeObjects ? "渠道已开始清理,对象删完后自动移除" : "渠道已移除,远端对象保留");
+      setRemoving(null);
       refresh();
     } catch (err) {
       message.error(err instanceof Error ? err.message : "删除失败");
+    } finally {
+      setRemovingBusy(false);
     }
   };
 
@@ -152,31 +162,45 @@ export function ChannelsPage() {
                 title: "操作",
                 key: "actions",
                 width: 170,
-                render: (_, row) => (
-                  <Space size={0}>
-                    <Button size="small" type="text" onClick={() => openEdit(row)}>
-                      编辑
-                    </Button>
-                    <Button
-                      size="small"
-                      type="text"
-                      loading={checkingId === row.id}
-                      onClick={() => check(row)}
-                    >
-                      重检
-                    </Button>
+                render: (_, row) =>
+                  row.deleting ? (
+                    // 清理中的渠道只剩一条出路:放弃清理、直接移除(远端对象保留)。
                     <Popconfirm
-                      title={`删除渠道 ${row.name}?`}
-                      description="持有唯一副本的渠道会被拒绝删除,防止丢数据。"
+                      title={`直接移除渠道 ${row.name}?`}
+                      description="停止清理,立即移除渠道;尚未删除的远端对象原样保留。"
                       okButtonProps={{ danger: true }}
-                      onConfirm={() => remove(row.id)}
+                      onConfirm={() => remove(row.id, false)}
                     >
                       <Button size="small" danger type="text">
-                        删除
+                        直接移除
                       </Button>
                     </Popconfirm>
-                  </Space>
-                ),
+                  ) : (
+                    <Space size={0}>
+                      <Button size="small" type="text" onClick={() => openEdit(row)}>
+                        编辑
+                      </Button>
+                      <Button
+                        size="small"
+                        type="text"
+                        loading={checkingId === row.id}
+                        onClick={() => check(row)}
+                      >
+                        重检
+                      </Button>
+                      <Button
+                        size="small"
+                        danger
+                        type="text"
+                        onClick={() => {
+                          setPurge(true);
+                          setRemoving(row);
+                        }}
+                      >
+                        删除
+                      </Button>
+                    </Space>
+                  ),
               },
             ]}
           />
@@ -192,6 +216,30 @@ export function ChannelsPage() {
           refresh();
         }}
       />
+
+      <Modal
+        open={removing !== null}
+        title={`删除渠道 ${removing?.name ?? ""}`}
+        okText={purge ? "删除并清理" : "仅移除"}
+        okButtonProps={{ danger: true }}
+        confirmLoading={removingBusy}
+        onOk={() => removing && void remove(removing.id, purge)}
+        onCancel={() => setRemoving(null)}
+      >
+        <Flex vertical gap={12}>
+          <Typography.Text type="secondary">
+            持有唯一副本的渠道会被拒绝删除,防止丢数据。
+          </Typography.Text>
+          <Checkbox checked={purge} onChange={(e) => setPurge(e.target.checked)}>
+            同时删除该渠道上已存储的对象
+          </Checkbox>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {purge
+              ? "对象在后台逐个删除,期间渠道显示为「清理中」,删完自动移除;凭证已失效或存储桶已不存在时请取消勾选。"
+              : "渠道立即移除,远端对象原样保留,需要时可自行到存储商处理。"}
+          </Typography.Text>
+        </Flex>
+      </Modal>
     </Flex>
   );
 }
@@ -200,7 +248,13 @@ export function ChannelsPage() {
 function HealthCell({ row }: { row: ChannelItem }) {
   return (
     <Flex vertical gap={2} align="flex-start">
-      {row.healthy ? (
+      {row.deleting ? (
+        <Tooltip title={row.last_error || "正在删除渠道上的对象,删完自动移除"}>
+          <Tag color="warning" style={{ cursor: "help" }}>
+            清理中
+          </Tag>
+        </Tooltip>
+      ) : row.healthy ? (
         <Tag color="success">健康</Tag>
       ) : (
         <Tooltip title={row.last_error || "探测未通过"}>

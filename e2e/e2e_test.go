@@ -375,8 +375,8 @@ func adminReq(t *testing.T, client *http.Client, csrf, method, url, body string)
 	return resp
 }
 
-// createChannel 通过管理 API 创建渠道并断言 201(自动登录管理员)。
-func createChannel(t *testing.T, inst *instance, body string) {
+// createChannel 通过管理 API 创建渠道并断言 201(自动登录管理员),返回渠道 id。
+func createChannel(t *testing.T, inst *instance, body string) int64 {
 	t.Helper()
 	client, csrf := adminSession(t, inst)
 	resp := adminReq(t, client, csrf, http.MethodPost, inst.baseURL+"/api/admin/channels", body)
@@ -385,6 +385,13 @@ func createChannel(t *testing.T, inst *instance, body string) {
 		raw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("创建渠道状态码 = %d, 期望 201; body=%s", resp.StatusCode, raw)
 	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("解析创建渠道响应: %v", err)
+	}
+	return created.ID
 }
 
 // dirHasFiles 目录内是否已有文件。

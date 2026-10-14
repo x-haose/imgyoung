@@ -326,12 +326,29 @@ func (h *Handlers) HandleChannelList(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleChannelDelete 删除渠道;持有唯一副本时返回 409。
+// @Description: 查询参数 purge(缺省 true)决定是否清理渠道上的对象:清理时只打清理中标记、
+// 入队排空任务并返回 202,渠道在列表里停留为"清理中"直到对象删完;purge=false 立即删行
+// 返回 204,远端对象原样保留。排空入队失败只告警——标记已落库,定期对账会补入队。
 func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := h.channelIDParam(w, r)
 	if !ok {
 		return
 	}
-	err := h.cfg.Admin.Delete(r.Context(), channelID)
+	purge := true
+	if raw := r.URL.Query().Get("purge"); raw != "" {
+		parsed, perr := strconv.ParseBool(raw)
+		if perr != nil {
+			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "purge 参数须为 true 或 false")
+			return
+		}
+		purge = parsed
+	}
+	if purge && h.cfg.Replicator == nil {
+		h.cfg.Logger.Error("删除渠道要求清理对象,但未装配补齐子系统", "id", channelID)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
+	err := h.cfg.Admin.Delete(r.Context(), channelID, purge)
 	switch {
 	case errors.Is(err, channel.ErrHoldsSoleReplicas):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "该渠道持有部分图片的唯一副本,删除会丢数据;请先迁移或删除相关图片")
@@ -341,9 +358,17 @@ func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	h.cfg.Logger.Info("渠道已删除", "id", channelID)
-	h.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10), "")
-	w.WriteHeader(http.StatusNoContent)
+	h.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10), fmt.Sprintf("purge=%v", purge))
+	if !purge {
+		h.cfg.Logger.Info("渠道已删除,远端对象保留", "id", channelID)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := h.cfg.Replicator.EnqueueChannelDrain(r.Context(), channelID); err != nil {
+		h.cfg.Logger.Warn("渠道排空任务入队失败,由定期对账补入队", "id", channelID, "err", err)
+	}
+	h.cfg.Logger.Info("渠道已标记清理中,对象删完后移除", "id", channelID)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // templateErrMsg 把渠道操作错误转成面向用户的提示:去掉包前缀,透传字段必填、

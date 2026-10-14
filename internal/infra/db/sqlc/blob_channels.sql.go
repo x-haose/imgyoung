@@ -60,9 +60,11 @@ WHERE bc.channel_id = ?
   AND bc.state = 'done'
   AND NOT EXISTS (SELECT 1
                   FROM blob_channels o
+                           JOIN channels c ON c.id = o.channel_id
                   WHERE o.blob_id = bc.blob_id
                     AND o.channel_id != bc.channel_id
-                    AND o.state = 'done')
+                    AND o.state = 'done'
+                    AND c.pending_delete = 0)
 `
 
 func (q *Queries) CountSoleReplicas(ctx context.Context, channelID int64) (int64, error) {
@@ -70,6 +72,21 @@ func (q *Queries) CountSoleReplicas(ctx context.Context, channelID int64) (int64
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteBlobChannel = `-- name: DeleteBlobChannel :exec
+DELETE FROM blob_channels
+WHERE blob_id = ? AND channel_id = ?
+`
+
+type DeleteBlobChannelParams struct {
+	BlobID    int64
+	ChannelID int64
+}
+
+func (q *Queries) DeleteBlobChannel(ctx context.Context, arg DeleteBlobChannelParams) error {
+	_, err := q.db.ExecContext(ctx, deleteBlobChannel, arg.BlobID, arg.ChannelID)
+	return err
 }
 
 const deleteBlobChannelsByBlob = `-- name: DeleteBlobChannelsByBlob :exec
@@ -214,6 +231,48 @@ func (q *Queries) ListBlobChannelsExport(ctx context.Context) ([]BlobChannel, er
 			&i.LastError,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listBlobChannelsForChannelPage = `-- name: ListBlobChannelsForChannelPage :many
+SELECT bc.blob_id, b.storage_key
+FROM blob_channels bc
+         JOIN blobs b ON b.id = bc.blob_id
+WHERE bc.channel_id = ?
+ORDER BY bc.blob_id
+LIMIT ?
+`
+
+type ListBlobChannelsForChannelPageParams struct {
+	ChannelID int64
+	Limit     int64
+}
+
+type ListBlobChannelsForChannelPageRow struct {
+	BlobID     int64
+	StorageKey string
+}
+
+func (q *Queries) ListBlobChannelsForChannelPage(ctx context.Context, arg ListBlobChannelsForChannelPageParams) ([]ListBlobChannelsForChannelPageRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobChannelsForChannelPage, arg.ChannelID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlobChannelsForChannelPageRow
+	for rows.Next() {
+		var i ListBlobChannelsForChannelPageRow
+		if err := rows.Scan(&i.BlobID, &i.StorageKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

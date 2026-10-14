@@ -46,5 +46,6 @@ export interface ChannelItem {
   allow_direct_link: boolean;
   last_checked_at: string; // 最近探测时刻,UTC 文本;空 = 尚未探测
   last_error: string; // 最近探测失败原因(人话化);空 = 最近一次探测成功
+  deleting: boolean; // 清理中:排空任务正在删除渠道上的对象,清完即消失
   replicas: ReplicaStats; // 副本补齐水位
 }

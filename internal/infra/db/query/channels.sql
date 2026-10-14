@@ -35,6 +35,11 @@ SET name              = ?,
     template          = ?
 WHERE id = ?;
 
+-- name: MarkChannelPendingDelete :exec
+UPDATE channels
+SET pending_delete = 1
+WHERE id = ?;
+
 -- name: UpdateChannelConfigSealed :exec
 UPDATE channels
 SET config_sealed = ?

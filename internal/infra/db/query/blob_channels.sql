@@ -10,9 +10,23 @@ WHERE bc.channel_id = ?
   AND bc.state = 'done'
   AND NOT EXISTS (SELECT 1
                   FROM blob_channels o
+                           JOIN channels c ON c.id = o.channel_id
                   WHERE o.blob_id = bc.blob_id
                     AND o.channel_id != bc.channel_id
-                    AND o.state = 'done');
+                    AND o.state = 'done'
+                    AND c.pending_delete = 0);
+
+-- name: ListBlobChannelsForChannelPage :many
+SELECT bc.blob_id, b.storage_key
+FROM blob_channels bc
+         JOIN blobs b ON b.id = bc.blob_id
+WHERE bc.channel_id = ?
+ORDER BY bc.blob_id
+LIMIT ?;
+
+-- name: DeleteBlobChannel :exec
+DELETE FROM blob_channels
+WHERE blob_id = ? AND channel_id = ?;
 
 -- name: DeleteBlobChannelsByChannel :exec
 DELETE FROM blob_channels

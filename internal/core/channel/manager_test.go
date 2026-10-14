@@ -348,3 +348,86 @@ func TestCheckAllAbandonsOnCancel(t *testing.T) {
 		t.Fatalf("取消的探测改动了内存健康标记: %+v/%v", primary, perr)
 	}
 }
+
+// TestDeleteWithPurgeMarksDraining 验证带清理的删除只打标记:渠道退出选路、补齐、探测与列表的在役集合,
+// Get 仍可取到并标明清理中;Remove 收尾后彻底消失。不带清理的删除立即删行。
+func TestDeleteWithPurgeMarksDraining(t *testing.T) {
+	env := newTestEnv(t)
+	id, _ := addChannel(t, env, "drain-me", 300, false)
+
+	if err := env.mgr.Delete(t.Context(), id, true); err != nil {
+		t.Fatalf("带清理删除: %v", err)
+	}
+	h, ok := env.mgr.Get(id)
+	if !ok || !h.PendingDelete {
+		t.Fatalf("Get = %+v/%v, 期望仍可取到且标明清理中", h, ok)
+	}
+	for _, c := range env.mgr.All() {
+		if c.ID == id {
+			t.Fatal("清理中渠道不应出现在在役集合 All()")
+		}
+	}
+	if primary, _ := env.mgr.Primary(); primary.ID == id {
+		t.Fatal("清理中渠道不应被选为主渠道")
+	}
+	if draining := env.mgr.Draining(); len(draining) != 1 || draining[0].ID != id {
+		t.Fatalf("Draining() = %+v, 期望仅含清理中渠道", draining)
+	}
+	list, err := env.mgr.List(t.Context())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var info channel.Info
+	for _, c := range list {
+		if c.ID == id {
+			info = c
+		}
+	}
+	if !info.Deleting {
+		t.Fatalf("列表项未标明清理中: %+v", info)
+	}
+	before := mustGetChannel(t, env, id)
+	if _, err := env.mgr.CheckAll(t.Context()); err != nil {
+		t.Fatalf("CheckAll: %v", err)
+	}
+	if after := mustGetChannel(t, env, id); after.LastCheckedAt != before.LastCheckedAt {
+		t.Fatal("清理中渠道不应再被探测")
+	}
+
+	if err := env.mgr.Remove(t.Context(), id); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if _, ok := env.mgr.Get(id); ok {
+		t.Fatal("Remove 后渠道仍可取到")
+	}
+
+	id2, _ := addChannel(t, env, "drop-now", 200, false)
+	if err := env.mgr.Delete(t.Context(), id2, false); err != nil {
+		t.Fatalf("不带清理删除: %v", err)
+	}
+	if _, ok := env.mgr.Get(id2); ok {
+		t.Fatal("不带清理的删除应立即移除渠道")
+	}
+}
+
+// TestDeleteRefusesWhenOnlyOtherCopyIsDraining 验证唯一副本判定不把清理中渠道当作可替代副本:
+// 两个渠道先后带清理删除,第二个必须被拒,否则同一张图的副本会被删光。
+func TestDeleteRefusesWhenOnlyOtherCopyIsDraining(t *testing.T) {
+	env := newTestEnv(t)
+	first, _ := addChannel(t, env, "copy-a", 300, false)
+	second, _ := addChannel(t, env, "copy-b", 200, false)
+	blobID := mustCreateBlob(t, env, "shared-hash", "shared_00000000")
+	for _, chID := range []int64{first, second} {
+		if err := env.queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
+			BlobID: blobID, ChannelID: chID, State: channel.StateDone,
+		}); err != nil {
+			t.Fatalf("写副本状态: %v", err)
+		}
+	}
+	if err := env.mgr.Delete(t.Context(), first, true); err != nil {
+		t.Fatalf("删除第一个渠道: %v", err)
+	}
+	if err := env.mgr.Delete(t.Context(), second, true); !errors.Is(err, channel.ErrHoldsSoleReplicas) {
+		t.Fatalf("删除第二个渠道错误 = %v, 期望 ErrHoldsSoleReplicas(另一份副本在清理中渠道上)", err)
+	}
+}

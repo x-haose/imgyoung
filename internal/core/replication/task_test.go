@@ -2,6 +2,7 @@ package replication_test
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"io"
 	"log/slog"
@@ -313,4 +314,41 @@ func TestGCRecoversPhantom(t *testing.T) {
 func localObjectPath(t *testing.T, env *testEnv, key string) string {
 	t.Helper()
 	return filepath.Join(env.dataDir, "blobs", key)
+}
+
+// TestDrainChannelDeletesObjectsAndRecord 验证渠道排空:带清理删除后排空任务删掉渠道上的
+// 对象与副本记录,最后删除渠道本身;另一渠道上的副本不受影响。
+func TestDrainChannelDeletesObjectsAndRecord(t *testing.T) {
+	env := newTestEnv(t)
+	blobID, key := seedBlob(t, env)
+	if err := env.runner.EnqueueReplication(t.Context(), blobID, []int64{env.backup.ID}); err != nil {
+		t.Fatalf("入队补齐任务: %v", err)
+	}
+	waitDone(t, env, blobID, env.backup.ID)
+
+	if err := env.mgr.Delete(t.Context(), env.backup.ID, true); err != nil {
+		t.Fatalf("带清理删除渠道: %v", err)
+	}
+	if err := env.runner.EnqueueChannelDrain(t.Context(), env.backup.ID); err != nil {
+		t.Fatalf("入队排空任务: %v", err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if _, ok := env.mgr.Get(env.backup.ID); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("等待排空完成超时")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := env.backup.Driver.Stat(t.Context(), key); !errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("排空后对象仍在被删渠道上: %v", err)
+	}
+	if _, err := env.local.Driver.Stat(t.Context(), key); err != nil {
+		t.Fatalf("另一渠道的副本被波及: %v", err)
+	}
+	if _, err := env.queries.GetChannel(t.Context(), env.backup.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("排空后渠道记录仍在: %v", err)
+	}
 }

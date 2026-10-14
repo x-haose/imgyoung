@@ -654,8 +654,9 @@ func TestChannelCRUD(t *testing.T) {
 	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
 	defer closeBody(t, up)
 	localID := int64(1) // 迁移内置渠道为首条记录
+	// 本装配无补齐子系统,只走不清理远端对象的删除路径;带清理的删除由端到端测试覆盖。
 	del := func(id int64) int {
-		dresp := adminReq(t, client, csrf, http.MethodDelete, fmt.Sprintf("%s/api/admin/channels/%d", ts.URL, id), "")
+		dresp := adminReq(t, client, csrf, http.MethodDelete, fmt.Sprintf("%s/api/admin/channels/%d?purge=false", ts.URL, id), "")
 		defer closeBody(t, dresp)
 		return dresp.StatusCode
 	}

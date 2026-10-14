@@ -95,6 +95,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &replicateWorker{cfg: cfg})
 	river.AddWorker(workers, &deleteObjectWorker{cfg: cfg})
+	river.AddWorker(workers, &drainChannelWorker{cfg: cfg})
 	// 无条件注册:purge 配置关停后,历史遗留的 cdn_purge 任务仍能被认领并
 	// 安静消化(Work 内空操作成功),不产生 unknown kind 噪音。
 	river.AddWorker(workers, &cdnPurgeWorker{cfg: cfg})
@@ -178,10 +179,16 @@ func (r *Runner) EnqueueDelete(ctx context.Context, channelID int64, storageKey 
 	return nil
 }
 
-// Reconcile 对账兜底:补种缺失的副本行,重置已恢复渠道的 failed 副本,再分页
-// 扫描全部未完成副本重新入队(启动恢复与定期对账共用;入队按参数去重,重复无害)。
+// Reconcile 对账兜底:补种缺失的副本行,重置已恢复渠道的 failed 副本,为清理中渠道补入
+// 排空任务,再分页扫描全部未完成副本重新入队(启动恢复与定期对账共用;入队按参数去重,重复无害)。
 // @return 播种、扫描或入队失败时的错误
 func (r *Runner) Reconcile(ctx context.Context) error {
+	// 清理中的渠道由业务表标记驱动:标记后入队失败或进程崩溃,这里补上排空任务。
+	for _, h := range r.cfg.Manager.Draining() {
+		if err := r.EnqueueChannelDrain(ctx, h.ID); err != nil {
+			return err
+		}
+	}
 	// 收敛播种:上传以开始时的渠道快照落副本行,与渠道创建并发时新渠道可能
 	// 漏掉在途 blob 的行;按 NOT EXISTS 周期补齐使缺行自愈(已收敛时近似只读)。
 	for _, h := range r.cfg.Manager.All() {
@@ -232,7 +239,7 @@ func (w *replicateWorker) Timeout(*river.Job[ReplicateArgs]) time.Duration {
 
 // Work 执行一次副本复制:从任一就绪渠道读出,写入目标渠道,状态写回业务表。
 // @Description: 幂等——副本已 done 直接返回;目标渠道不存在则取消任务并标记 failed;
-// 复制失败回退 pending 并交由 River 重试,最后一次尝试失败标记 failed。
+// 目标渠道清理中则取消任务;复制失败回退 pending 并交由 River 重试,最后一次尝试失败标记 failed。
 func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs]) error {
 	args := job.Args
 	q := w.cfg.Queries
@@ -253,6 +260,10 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 	if !ok {
 		w.markState(ctx, args, channel.StateFailed, "目标渠道不存在", 0)
 		return river.JobCancel(fmt.Errorf("目标渠道 %d 不存在", args.ChannelID))
+	}
+	if target.PendingDelete {
+		// 渠道正在清理:往上面补副本只是给排空任务添活,副本行由它一并删除。
+		return river.JobCancel(fmt.Errorf("目标渠道 %q 正在清理中", target.Name))
 	}
 	blob, err := q.GetBlob(ctx, args.BlobID)
 	if err != nil {
