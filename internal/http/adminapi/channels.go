@@ -105,7 +105,8 @@ func (h *Handlers) channelIDParam(w http.ResponseWriter, r *http.Request) (int64
 }
 
 // writeChannelInfo 输出指定渠道的最新完整描述(含探测结果与副本水位)。
-func (h *Handlers) writeChannelInfo(w http.ResponseWriter, r *http.Request, channelID int64) {
+// @param status 成功时的响应状态码
+func (h *Handlers) writeChannelInfo(w http.ResponseWriter, r *http.Request, channelID int64, status int) {
 	list, err := h.cfg.Admin.List(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("查询渠道描述失败", "id", channelID, "err", err)
@@ -114,7 +115,7 @@ func (h *Handlers) writeChannelInfo(w http.ResponseWriter, r *http.Request, chan
 	}
 	for _, c := range list {
 		if c.ID == channelID {
-			httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, c)
+			httpx.WriteJSON(h.cfg.Logger, w, status, c)
 			return
 		}
 	}
@@ -128,7 +129,7 @@ func (h *Handlers) HandleChannelTemplates(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// HandleChannelCreate 创建渠道:创建成功即深探测落库,并唤醒补齐管道回填存量。
+// HandleChannelCreate 创建渠道:创建成功即深探测落库,并唤醒补齐管道回填存量;成功返回 201 与完整描述。
 func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	var req channelCreateRequest
 	if !h.decodeChannelBody(w, r, &req) {
@@ -168,7 +169,7 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Logger.Info("渠道已创建", "id", channelID, "name", req.Name, "encrypted", encrypted)
 	h.recordAudit(r.Context(), audit.ActionChannelCreate, req.Name,
 		fmt.Sprintf("id=%d encrypted=%v", channelID, encrypted))
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusCreated, map[string]int64{"id": channelID})
+	h.writeChannelInfo(w, r, channelID, http.StatusCreated)
 }
 
 // kickReplication 后台唤醒补齐管道,消化新渠道随创建播种的存量 pending 行。
@@ -227,7 +228,7 @@ func (h *Handlers) HandleChannelUpdate(w http.ResponseWriter, r *http.Request) {
 	h.cfg.Logger.Info("渠道已编辑", "id", channelID, "name", req.Name)
 	h.recordAudit(r.Context(), audit.ActionChannelUpdate, req.Name,
 		fmt.Sprintf("id=%d priority=%d allow_direct_link=%v", channelID, req.Priority, req.AllowDirectLink))
-	h.writeChannelInfo(w, r, channelID)
+	h.writeChannelInfo(w, r, channelID, http.StatusOK)
 }
 
 // HandleChannelTest 测试连接:按创建同构的请求体执行深探测,不落库、不留渠道。
@@ -311,7 +312,7 @@ func (h *Handlers) HandleChannelCheck(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	h.writeChannelInfo(w, r, channelID)
+	h.writeChannelInfo(w, r, channelID, http.StatusOK)
 }
 
 // HandleChannelList 列出全部渠道(不含配置与凭证,含探测结果与副本水位)。

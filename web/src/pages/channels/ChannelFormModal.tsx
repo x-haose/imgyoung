@@ -258,12 +258,11 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
         if (values.encrypted === "on" || values.encrypted === "off") {
           body.encrypted = values.encrypted === "on";
         }
-        const created = await apiFetch<{ id: number }>("/api/admin/channels", {
+        const created = await apiFetch<ChannelItem>("/api/admin/channels", {
           method: "POST",
           body: JSON.stringify(body),
         });
-        const list = await apiFetch<{ items: ChannelItem[] }>("/api/admin/channels");
-        lastError = list.items.find((c) => c.id === created.id)?.last_error;
+        lastError = created.last_error;
       }
       const done = isEdit ? "保存" : "创建";
       if (lastError) {
