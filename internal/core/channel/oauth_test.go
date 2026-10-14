@@ -12,29 +12,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// TestNeedsOAuth 验证需授权后端与免授权后端被正确区分。
-func TestNeedsOAuth(t *testing.T) {
-	tests := []struct {
-		driver string
-		want   bool
-	}{
-		{"onedrive", true},
-		{"drive", true},
-		{"dropbox", true},
-		{"s3", false},
-		{"webdav", false},
-		{"local", false},
-		{"没有这个后端", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.driver, func(t *testing.T) {
-			if got := NeedsOAuth(tt.driver); got != tt.want {
-				t.Errorf("NeedsOAuth(%q) = %v, 期望 %v", tt.driver, got, tt.want)
-			}
-		})
-	}
-}
-
 // TestParsePastedTokenAcceptsBothFormats 验证 rclone authorize 的两种输出都被接受。
 func TestParsePastedTokenAcceptsBothFormats(t *testing.T) {
 	rawToken := `{"access_token":"AT","token_type":"bearer","refresh_token":"RT","expiry":"2030-01-02T15:04:05Z"}`
@@ -156,12 +133,32 @@ func TestOAuthFlowExchange(t *testing.T) {
 	}
 }
 
-// TestNewOAuthFlowRejectsNonOAuthDriver 验证免授权后端不会误入授权流。
+// TestNewOAuthFlowRejectsNonOAuthDriver 验证免授权后端不会误入授权流:
+// s3 有交互式配置但不走 OAuth,webdav 与 local 根本没有配置流程。
 func TestNewOAuthFlowRejectsNonOAuthDriver(t *testing.T) {
-	if _, err := NewOAuthFlow(t.Context(), "s3", nil, "https://img.example.com/cb"); err == nil {
-		t.Fatal("期望报错,实得 nil")
-	} else if !errors.Is(err, ErrNotOAuthDriver) {
-		t.Errorf("错误未归入 ErrNotOAuthDriver: %v", err)
+	for _, driver := range []string{"s3", "webdav", "local"} {
+		t.Run(driver, func(t *testing.T) {
+			if _, err := NewOAuthFlow(t.Context(), driver, nil, "https://img.example.com/cb"); err == nil {
+				t.Fatal("期望报错,实得 nil")
+			} else if !errors.Is(err, ErrNotOAuthDriver) {
+				t.Errorf("错误未归入 ErrNotOAuthDriver: %v", err)
+			}
+		})
+	}
+	if _, err := NewOAuthFlow(t.Context(), "没有这个后端", nil, ""); !errors.Is(err, ErrInvalidChannel) {
+		t.Errorf("未知后端错误 = %v, 期望归入 ErrInvalidChannel", err)
+	}
+}
+
+// TestNewOAuthFlowWalksToOAuthState 验证授权环节不在首步的后端(Google Drive 先查
+// client_id)也能走到授权选项;缺 client_id 时后端要求交互输入,须以明确错误拒绝。
+func TestNewOAuthFlowWalksToOAuthState(t *testing.T) {
+	if _, err := NewOAuthFlow(t.Context(), "drive", map[string]string{ConfigKeyClientID: "cid"}, ""); err != nil {
+		t.Fatalf("带 client_id 的 drive 应走到授权环节: %v", err)
+	}
+	_, err := NewOAuthFlow(t.Context(), "drive", nil, "")
+	if !errors.Is(err, ErrInvalidChannel) || errors.Is(err, ErrNotOAuthDriver) {
+		t.Fatalf("缺 client_id 的 drive 错误 = %v, 期望指出需要先提供参数的 ErrInvalidChannel", err)
 	}
 }
 

@@ -111,14 +111,6 @@ func (f *OAuthFlow) Refresh(ctx context.Context, tok *oauth2.Token) (*oauth2.Tok
 	return fresh, nil
 }
 
-// NeedsOAuth 判断后端是否需要 OAuth 授权才能使用。
-// @param driver rclone 后端名
-// @return 需要授权为 true;后端不存在亦为 false
-func NeedsOAuth(driver string) bool {
-	_, err := backendOAuthOptions(context.Background(), driver, configmap.Simple{})
-	return err == nil
-}
-
 // ParsePastedToken 归一化用户粘贴的 rclone 授权结果。
 // @Description: 兼容 rclone authorize 的两种输出——参数映射编码与裸令牌 JSON;
 // 校验刷新令牌存在,缺失则该渠道在访问令牌过期后无法续期。
@@ -139,12 +131,18 @@ func ParsePastedToken(pasted string) (string, error) {
 	return validateToken(pasted)
 }
 
+// configWalkLimit 跟随后端配置状态机寻找授权环节的最大步数;正常后端两三步内即到达。
+const configWalkLimit = 16
+
 // backendOAuthOptions 取后端声明的 OAuth 选项。
+// @Description: 后端的配置入口是一台状态机,授权环节未必在第一步(Google Drive 先校验
+// client_id 再进入授权);本函数沿无需输入的跳转一路走到授权环节。途中若后端要求
+// 交互输入(如缺 client_id 时的确认),无人可答,以明确错误返回而非猜答案。
 // @param ctx 控制取配置阶段的取消
 // @param driver rclone 后端名
-// @param m 后端参数,影响端点补全
+// @param m 后端参数,影响端点补全与状态机走向
 // @return 后端 OAuth 选项
-// @return 后端不存在或不走 OAuth 时的错误
+// @return 后端不存在、不走 OAuth 或配置流程需要交互输入时的错误
 func backendOAuthOptions(ctx context.Context, driver string, m configmap.Simple) (*oauthutil.Options, error) {
 	ri, err := fs.Find(driver)
 	if err != nil {
@@ -153,19 +151,35 @@ func backendOAuthOptions(ctx context.Context, driver string, m configmap.Simple)
 	if ri.Config == nil {
 		return nil, ErrNotOAuthDriver
 	}
-	out, err := ri.Config(ctx, oauthConfigName, m, fs.ConfigIn{})
-	if err != nil {
-		return nil, fmt.Errorf("读取后端 %q 的授权配置: %w", driver, err)
+	in := fs.ConfigIn{}
+	for range configWalkLimit {
+		out, err := ri.Config(ctx, oauthConfigName, m, in)
+		if err != nil {
+			return nil, fmt.Errorf("读取后端 %q 的授权配置: %w", driver, err)
+		}
+		// 流程结束(nil 或回到起始状态)仍未出现授权环节:后端有交互式配置但不走 OAuth(如 s3)。
+		if out == nil {
+			return nil, ErrNotOAuthDriver
+		}
+		if out.Error != "" {
+			return nil, fmt.Errorf("%w: 后端 %q 配置失败: %s", ErrInvalidChannel, driver, out.Error)
+		}
+		if out.OAuth != nil {
+			opt, ok := out.OAuth.(*oauthutil.Options)
+			if !ok || opt == nil || opt.OAuth2Config == nil {
+				return nil, ErrNotOAuthDriver
+			}
+			return opt, nil
+		}
+		if out.Option != nil {
+			return nil, fmt.Errorf("%w: 后端 %q 要求先提供 %s", ErrInvalidChannel, driver, out.Option.Name)
+		}
+		if out.State == "" {
+			return nil, ErrNotOAuthDriver
+		}
+		in = fs.ConfigIn{State: out.State, Result: out.Result}
 	}
-	// 后端可以有 Config 函数却不走 OAuth(如 s3 的交互式配置),此时返回空结果。
-	if out == nil {
-		return nil, ErrNotOAuthDriver
-	}
-	opt, ok := out.OAuth.(*oauthutil.Options)
-	if !ok || opt == nil || opt.OAuth2Config == nil {
-		return nil, ErrNotOAuthDriver
-	}
-	return opt, nil
+	return nil, ErrNotOAuthDriver
 }
 
 // validateToken 校验令牌 JSON 并归一化。

@@ -197,13 +197,15 @@ func TestWebDAVTemplateObscuresPassword(t *testing.T) {
 	}
 }
 
-// TestDriveTemplatesDeclareOAuth 验证各网盘模板的授权标记与后端实际要求一致。
+// TestDriveTemplatesDeclareOAuth 验证各网盘模板的授权标记与后端实际要求一致:
+// 能构造出授权流的后端才允许标记 RequiresOAuth,反之亦然。
 func TestDriveTemplatesDeclareOAuth(t *testing.T) {
 	for _, tpl := range Templates() {
 		t.Run(tpl.ID, func(t *testing.T) {
-			if want := NeedsOAuth(tpl.Driver); tpl.RequiresOAuth != want {
-				t.Errorf("模板 %q 标记 RequiresOAuth=%v, 后端 %q 实际 %v",
-					tpl.ID, tpl.RequiresOAuth, tpl.Driver, want)
+			_, err := NewOAuthFlow(t.Context(), tpl.Driver, map[string]string{ConfigKeyClientID: "probe"}, "")
+			if want := err == nil; tpl.RequiresOAuth != want {
+				t.Errorf("模板 %q 标记 RequiresOAuth=%v, 后端 %q 实际 %v(%v)",
+					tpl.ID, tpl.RequiresOAuth, tpl.Driver, want, err)
 			}
 		})
 	}
