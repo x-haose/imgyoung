@@ -183,10 +183,12 @@ d, err := rclone.Open(ctx, rclone.Options{
 
 ```bash
 task test   # 全量测试(-race)
-task e2e    # 端到端测试:编译真实二进制、启动进程、覆盖全部对外功能
-task lint   # golangci-lint + 后台前端的 tsc / eslint / prettier,0 issue 门禁
+task e2e    # 端到端测试:编译真实二进制、启动进程、覆盖全部对外功能,并按 OpenAPI 文档校验每条响应
+task lint   # golangci-lint + 后台前端的 tsc / eslint / prettier + 接口文档 lint,0 issue 门禁
 task --list # 查看全部任务
 ```
+
+环境、约定、提交与发布流程见 [CONTRIBUTING.md](./CONTRIBUTING.md)。推送 `vX.Y.Z` 标签即触发发布工作流:goreleaser 构建六平台二进制、GHCR 多架构镜像与 GitHub Release。
 
 ## 许可证
 

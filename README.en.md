@@ -180,10 +180,12 @@ Encode password-like parameters with `rclone.ObscureSecrets` first, as rclone ex
 
 ```bash
 task test   # full test suite (-race)
-task e2e    # end-to-end tests: builds the real binary, starts the process, covers every public feature
-task lint   # golangci-lint plus the admin console's tsc + eslint + prettier, zero issues required
+task e2e    # end-to-end tests: builds the real binary, starts the process, covers every public feature and validates every response against the OpenAPI document
+task lint   # golangci-lint plus the admin console's tsc + eslint + prettier and the API document lint, zero issues required
 task --list # list all tasks
 ```
+
+Environment, conventions, commits and the release process are in [CONTRIBUTING.en.md](./CONTRIBUTING.en.md). Pushing a `vX.Y.Z` tag triggers the release workflow: goreleaser builds binaries for six platforms, a multi-arch GHCR image and a GitHub Release.
 
 ## License
 
