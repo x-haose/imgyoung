@@ -1,4 +1,4 @@
-# ImgYoung lint 门禁:0 issue 才允许合并(项目质量红线,见 CLAUDE.md)。
+# ImgYoung lint 门禁:0 issue 才允许合并(项目质量红线)。
 # default: standard 已含 errcheck / govet / ineffassign / staticcheck / unused。
 version: "2"
 
@@ -6,21 +6,40 @@ run:
   build-tags:
     - e2e
 
+# 不截断、不按行合并:全部问题一次列出,门禁按 0 issue 判定
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
+
 linters:
   default: standard
   enable:
     - copyloopvar # 循环变量误捕获
-    - depguard    # 层间依赖方向(设计定稿·7.3)机器强制
+    - depguard    # 层间依赖方向机器强制
     - errorlint   # 错误比较必须走 errors.Is/As
+    - funlen      # 函数长度红线(50 行,不含注释;测试函数豁免)
     - gocritic    # 通用代码体检
     - gosec       # 安全静态分析
     - misspell    # 注释与字符串拼写
-    - revive      # 风格与导出注释
+    - nestif      # if 嵌套深度红线
+    - nolintlint  # nolint 指令必须有效、具体、带理由
+    - revive      # 风格与导出注释,全量规则按需关
     - unconvert   # 冗余类型转换
     - unparam     # 无用参数
   settings:
-    # 依赖方向:http·worker → core → infra;store 自成一体不 import 任何 internal 包
-    # (设计定稿·7.3/7.4)。deny 只列同项目内的越界目标,外部依赖不受限。
+    funlen:
+      lines: 50
+      statements: -1
+      ignore-comments: true
+    nestif:
+      min-complexity: 4
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
+    # 依赖方向:http → core → {infra, store};store 与 infra 是并列叶子,store 不 import 任何 internal 包。
+    # deny 只列同项目内的越界目标,外部依赖不受限。
     depguard:
       rules:
         store:
@@ -46,22 +65,48 @@ linters:
           deny:
             - pkg: github.com/x-haose/imgyoung/internal/http
               desc: core 不得依赖传输层(入站适配器只能反向依赖 core)
-        http:
-          files: ["**/internal/http/**"]
-          deny:
-            - pkg: github.com/x-haose/imgyoung/internal/worker
-              desc: http 与 worker 是并列入站适配器,不得互相依赖
     revive:
+      enable-all-rules: true
       rules:
-        # 导出标识符必须有以其命名开头的注释(注释全覆盖红线的机器检查)
-        - name: exported
-        # 每个包必须有包注释
-        - name: package-comments
+        # 魔数以命名常量表达是风格判断,逐处 nolint 比规则本身更吵
+        - name: add-constant
+          disabled: true
+        # 函数长度由 funlen 统一把关
+        - name: function-length
+          disabled: true
+        # API 包按资源聚合请求/响应结构,公开结构数不是复杂度信号
+        - name: max-public-structs
+          disabled: true
+        # 圈复杂度与认知复杂度二选一:字节级解析器天然分支多,只保留更贴近可读性的认知复杂度
+        - name: cyclomatic
+          disabled: true
+        # JSON 响应与测试里的匿名嵌套结构是惯用法
+        - name: nested-structs
+          disabled: true
+        # purge / degraded 这类布尔参数是领域事实,不是控制耦合
+        - name: flag-parameter
+          disabled: true
+        - name: cognitive-complexity
+          arguments: [15]
+        - name: line-length-limit
+          arguments: [120]
+        - name: context-as-argument
+          arguments: [{ allowTypesBefore: "*testing.T" }]
+        # 这些调用按文档永不返回错误(Builder/Hash 的 Write、Fprint 到 stderr),逐处 `_ =` 只是噪音
+        - name: unhandled-error
+          arguments: ["fmt\\.Fprint.*", "strings\\.Builder\\..*", "hash\\.Hash\\.Write", "io\\.Writer\\.Write"]
   exclusions:
     generated: lax
     presets:
       - common-false-positives
       - std-error-handling
+    rules:
+      # 测试函数按用例自然铺开,长度与复杂度不设红线;只守注释与行宽
+      - path: _test\.go$
+        linters: [funlen]
+      - path: _test\.go$
+        linters: [revive]
+        text: "cognitive-complexity"
 
 formatters:
   enable:
