@@ -271,7 +271,6 @@ func TestNewNameIsValidConfigName(t *testing.T) {
 
 // TestObscureSecrets 验证密码类参数的编码:明文编码、非密码参数不动、已编码值在宽松模式下保留。
 func TestObscureSecrets(t *testing.T) {
-	// nolint:gosec // G101:测试桩值,非真实凭证。
 	const plain = "明文密码"
 	params := map[string]string{"user": "u@example.com", "pass": plain, "url": "https://dav.example.com/"}
 	if err := ObscureSecrets("webdav", params); err != nil {

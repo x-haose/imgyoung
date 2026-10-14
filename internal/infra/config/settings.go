@@ -23,7 +23,7 @@ type Settings struct {
 	UploadRatePerMin       int                `json:"upload_rate_per_min"`       // 每用户每分钟上传次数上限;0=不启用
 	BaseURL                string             `json:"base_url"`                  // 对外站点地址(去尾斜杠);空则按请求域名推导
 	CDNCloudflareZoneID    string             `json:"cdn_cloudflare_zone_id"`    // Cloudflare Zone ID
-	CDNCloudflareAPIToken  string             `json:"cdn_cloudflare_api_token"`  // Cloudflare API Token;内存明文,入库密文,出口一律脱敏
+	CDNCloudflareAPIToken  string             `json:"cdn_cloudflare_api_token"`  // Cloudflare API Token;内存明文、入库密文、出口脱敏
 	AllowEmptyReferer      bool               `json:"allow_empty_referer"`       // 空 Referer 是否放行
 	EXIFPolicy             imaging.EXIFPolicy `json:"exif_policy"`               // 全局默认 EXIF 档位,单次上传可覆盖
 	MinSuccess             int                `json:"min_success"`               // 上传返回成功所需的最少同步副本数
@@ -139,19 +139,46 @@ func (s Settings) normalized() Settings {
 // validate 校验数值边界与枚举,首个非法项即返回。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validate() error {
+	if err := s.validateUpload(); err != nil {
+		return err
+	}
+	if err := s.validateSchedules(); err != nil {
+		return err
+	}
+	if err := s.validateLifecycle(); err != nil {
+		return err
+	}
+	return s.validateProcess()
+}
+
+// validateUpload 校验上传入口与公开访问的配置:体积与像素预算、并发与限速、副本门槛、访问模式、EXIF 档位。
+// @return 非法配置的错误;全部合法时为 nil
+func (s Settings) validateUpload() error {
 	switch {
 	case s.MaxUploadMB <= 0:
 		return fmt.Errorf("max_upload_mb=%d 非法: 需要正整数(单位 MB)", s.MaxUploadMB)
+	case s.MaxPixelsMP <= 0:
+		return fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", s.MaxPixelsMP)
 	case s.MaxConcurrentUploads <= 0:
 		return fmt.Errorf("max_concurrent_uploads=%d 非法: 需要正整数", s.MaxConcurrentUploads)
 	case s.UploadRatePerMin < 0:
 		return fmt.Errorf("upload_rate_per_min=%d 非法: 需要非负整数(0 表示不启用)", s.UploadRatePerMin)
-	case s.MaxPixelsMP <= 0:
-		return fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", s.MaxPixelsMP)
 	case s.MinSuccess < 1:
 		return fmt.Errorf("min_success=%d 非法: 需要正整数", s.MinSuccess)
 	case s.AccessMode != "proxy" && s.AccessMode != "redirect":
 		return fmt.Errorf("access_mode=%q 非法: 可选 proxy / redirect", s.AccessMode)
+	}
+	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
+	if err := imaging.ValidatePolicy(s.EXIFPolicy); err != nil {
+		return fmt.Errorf("exif_policy 配置非法: %w", err)
+	}
+	return nil
+}
+
+// validateSchedules 校验后台循环的间隔与备份保留份数:全部须为正整数,0 会让循环空转或备份无保留。
+// @return 非法配置的错误;全部合法时为 nil
+func (s Settings) validateSchedules() error {
+	switch {
 	case s.HealthCheckSeconds < 1:
 		return fmt.Errorf("health_check_seconds=%d 非法: 需要正整数", s.HealthCheckSeconds)
 	case s.BackupIntervalHours < 1:
@@ -160,22 +187,41 @@ func (s Settings) validate() error {
 		return fmt.Errorf("backup_keep=%d 非法: 需要正整数", s.BackupKeep)
 	case s.CleanupSweepSeconds < 1:
 		return fmt.Errorf("cleanup_sweep_seconds=%d 非法: 需要正整数", s.CleanupSweepSeconds)
+	case s.ActivityFlushSeconds < 1:
+		return fmt.Errorf("activity_flush_seconds=%d 非法: 需要正整数", s.ActivityFlushSeconds)
+	case s.UsageReportSeconds < 1:
+		return fmt.Errorf("usage_report_seconds=%d 非法: 需要正整数", s.UsageReportSeconds)
+	case s.DedupScanSeconds < 1:
+		return fmt.Errorf("dedup_scan_seconds=%d 非法: 需要正整数", s.DedupScanSeconds)
+	}
+	return nil
+}
+
+// validateLifecycle 校验生命周期与查重阈值:宽限、TTL、冷图天数、配额、汉明距离以 0 表示不启用、不可为负;
+// 幂等键保留期须为正。
+// @return 非法配置的错误;全部合法时为 nil
+func (s Settings) validateLifecycle() error {
+	switch {
 	case s.DeleteGraceMinutes < 0:
 		return fmt.Errorf("delete_grace_minutes=%d 非法: 不可为负", s.DeleteGraceMinutes)
 	case s.DefaultTTLHours < 0:
 		return fmt.Errorf("default_ttl_hours=%d 非法: 不可为负", s.DefaultTTLHours)
-	case s.ActivityFlushSeconds < 1:
-		return fmt.Errorf("activity_flush_seconds=%d 非法: 需要正整数", s.ActivityFlushSeconds)
 	case s.ColdCleanupDays < 0:
 		return fmt.Errorf("cold_cleanup_days=%d 非法: 不可为负", s.ColdCleanupDays)
-	case s.UsageReportSeconds < 1:
-		return fmt.Errorf("usage_report_seconds=%d 非法: 需要正整数", s.UsageReportSeconds)
 	case s.ChannelQuotaGB < 0:
 		return fmt.Errorf("channel_quota_gb=%d 非法: 不可为负", s.ChannelQuotaGB)
-	case s.DedupScanSeconds < 1:
-		return fmt.Errorf("dedup_scan_seconds=%d 非法: 需要正整数", s.DedupScanSeconds)
 	case s.DedupPhashMaxDistance < 0:
 		return fmt.Errorf("dedup_phash_max_distance=%d 非法: 不可为负(0 表示不做相似扫描)", s.DedupPhashMaxDistance)
+	case s.IdempotencyKeyTTLHours < 1:
+		return fmt.Errorf("idempotency_key_ttl_hours=%d 非法: 需要正整数", s.IdempotencyKeyTTLHours)
+	}
+	return nil
+}
+
+// validateProcess 校验按需处理的编码档位、并发与超时、缓存上限,以及宽度与格式白名单。
+// @return 非法配置的错误;全部合法时为 nil
+func (s Settings) validateProcess() error {
+	switch {
 	case s.ProcessQualityWebP < 0 || s.ProcessQualityWebP > 100:
 		return fmt.Errorf("process_quality_webp=%d 非法: 需要 [0,100]", s.ProcessQualityWebP)
 	case s.ProcessQualityJPEG < 1 || s.ProcessQualityJPEG > 100:
@@ -188,15 +234,7 @@ func (s Settings) validate() error {
 		return fmt.Errorf("process_timeout_ms=%d 非法: 需要正整数", s.ProcessTimeoutMS)
 	case s.VariantsCacheMB < 1:
 		return fmt.Errorf("variants_cache_mb=%d 非法: 需要正整数", s.VariantsCacheMB)
-	case s.IdempotencyKeyTTLHours < 1:
-		return fmt.Errorf("idempotency_key_ttl_hours=%d 非法: 需要正整数", s.IdempotencyKeyTTLHours)
 	}
-	return s.validateProcessLists()
-}
-
-// validateProcessLists 校验按需处理的档位白名单与 EXIF 档位枚举。
-// @return 非法配置的错误;全部合法时为 nil
-func (s Settings) validateProcessLists() error {
 	for _, w := range s.ProcessWidths {
 		if w < 1 {
 			return fmt.Errorf("process_widths 含非法档位 %d: 需要正整数", w)
@@ -209,10 +247,6 @@ func (s Settings) validateProcessLists() error {
 		if err := imaging.ValidateFormat(f); err != nil {
 			return fmt.Errorf("process_formats 配置非法: %w", err)
 		}
-	}
-	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
-	if err := imaging.ValidatePolicy(s.EXIFPolicy); err != nil {
-		return fmt.Errorf("exif_policy 配置非法: %w", err)
 	}
 	return nil
 }

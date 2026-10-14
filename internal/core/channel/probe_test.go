@@ -49,7 +49,8 @@ func TestManagerUpdateChannel(t *testing.T) {
 		t.Fatalf("主渠道 = %+v/%v, 期望编辑后的渠道", primary, err)
 	}
 	payload := []byte("post-update-object")
-	if err := primary.Driver.Put(t.Context(), "after.bin", strings.NewReader(string(payload)), int64(len(payload))); err != nil {
+	if err := primary.Driver.Put(t.Context(), "after.bin", strings.NewReader(string(payload)),
+		int64(len(payload))); err != nil {
 		t.Fatalf("写入编辑后渠道: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(newDir, "after.bin")); err != nil {

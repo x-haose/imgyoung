@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -128,7 +128,7 @@ func verify(r *http.Request, parts authParts, secret, payloadHash string) error 
 // @return 规范请求串
 func canonicalRequest(r *http.Request, signedHeaders []string, payloadHash string) string {
 	names := append([]string(nil), signedHeaders...)
-	sort.Strings(names)
+	slices.Sort(names)
 
 	var headers strings.Builder
 	for _, name := range names {
@@ -198,7 +198,7 @@ func canonicalQuery(u *url.URL) string {
 			parts = append(parts, rfc3986Escape(k)+"="+rfc3986Escape(v))
 		}
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return strings.Join(parts, "&")
 }
 

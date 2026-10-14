@@ -63,11 +63,12 @@ func hasSegment(t *testing.T, jpg []byte, marker byte) bool {
 // APPn 与 COM),白名单段保留,且图片仍可解码。
 func TestStripJPEGMetadataRemovesMetadata(t *testing.T) {
 	jpg := encodeJPEG(t)
-	jpg = spliceSegment(t, jpg, 0xE1, append([]byte("Exif\x00\x00"), bytes.Repeat([]byte{0xAB}, 32)...)) // APP1 Exif
-	jpg = spliceSegment(t, jpg, 0xED, []byte("Photoshop 3.0\x00fake-iptc"))                              // APP13 IPTC
-	jpg = spliceSegment(t, jpg, 0xEC, []byte("Ducky fake"))                                              // APP12
-	jpg = spliceSegment(t, jpg, 0xFE, []byte("created by some editor"))                                  // COM 注释
-	jpg = spliceSegment(t, jpg, 0xE2, []byte("ICC_PROFILE\x00fake-icc"))                                 // APP2 ICC(应保留)
+	jpg = spliceSegment(t, jpg, 0xE1,
+		append([]byte("Exif\x00\x00"), bytes.Repeat([]byte{0xAB}, 32)...)) // APP1 Exif
+	jpg = spliceSegment(t, jpg, 0xED, []byte("Photoshop 3.0\x00fake-iptc")) // APP13 IPTC
+	jpg = spliceSegment(t, jpg, 0xEC, []byte("Ducky fake"))                 // APP12
+	jpg = spliceSegment(t, jpg, 0xFE, []byte("created by some editor"))     // COM 注释
+	jpg = spliceSegment(t, jpg, 0xE2, []byte("ICC_PROFILE\x00fake-icc"))    // APP2 ICC(应保留)
 
 	got, err := StripJPEGMetadata(jpg)
 	if err != nil {

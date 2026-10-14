@@ -318,7 +318,8 @@ func (h *Handlers) deleteOneOwned(ctx context.Context, isAdmin bool, userID, ima
 // @param imageID 目标引用短 ID
 // @return 归属用户 id(审计留痕用)
 // @return 可见且可继续处理为 true
-func (h *Handlers) imageVisible(w http.ResponseWriter, r *http.Request, p auth.Principal, imageID string) (string, bool) {
+func (h *Handlers) imageVisible(w http.ResponseWriter, r *http.Request, p auth.Principal,
+	imageID string) (string, bool) {
 	owner, err := h.cfg.Queries.GetImageOwner(r.Context(), imageID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !p.IsAdmin() && owner != p.UserID) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "图片不存在")

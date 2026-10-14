@@ -27,7 +27,8 @@ func TestRecordAppendsRow(t *testing.T) {
 		t.Fatalf("审计记录数 = %d, 期望 1", len(rows))
 	}
 	r := rows[0]
-	if r.Actor != "default" || r.Action != audit.ActionChannelCreate || r.Target != "r2" || r.Detail != "id=2 encrypted=true" {
+	if r.Actor != "default" || r.Action != audit.ActionChannelCreate || r.Target != "r2" ||
+		r.Detail != "id=2 encrypted=true" {
 		t.Fatalf("审计记录字段不符: actor=%q action=%q target=%q detail=%q", r.Actor, r.Action, r.Target, r.Detail)
 	}
 }

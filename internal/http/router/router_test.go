@@ -131,7 +131,9 @@ func newTestServer(t *testing.T, mutate func(*testConfig, testEnv)) *httptest.Se
 	// 登录限速用冻结时钟:每次失败尝试都要付一遍 argon2id 的代价(竞态检测下更慢),走墙钟时
 	// 额度会在尝试之间恢复,限速断言随机化;冻结后只取决于尝试次数。
 	frozen := time.Now()
-	authSvc := auth.New(auth.Config{Conn: conn, Queries: queries, Logger: discard, Now: func() time.Time { return frozen }})
+	authSvc := auth.New(auth.Config{
+		Conn: conn, Queries: queries, Logger: discard, Now: func() time.Time { return frozen },
+	})
 	sum := sha256.Sum256([]byte(testToken))
 	if _, err := queries.CreateToken(t.Context(), sqlc.CreateTokenParams{
 		UserID: sqlc.DefaultUserID, Name: "test", TokenHash: hex.EncodeToString(sum[:]),
@@ -220,7 +222,8 @@ func multipartBody(t *testing.T, filename string, payload []byte) (*bytes.Buffer
 }
 
 // uploadReq 向测试服务发起一次上传请求;extraHeaders 追加请求头。
-func uploadReq(t *testing.T, ts *httptest.Server, token, filename string, payload []byte, extraHeaders map[string]string) *http.Response {
+func uploadReq(t *testing.T, ts *httptest.Server, token, filename string, payload []byte,
+	extraHeaders map[string]string) *http.Response {
 	t.Helper()
 	body, contentType := multipartBody(t, filename, payload)
 	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/upload", body)
@@ -490,13 +493,13 @@ func TestRefererProtection(t *testing.T) {
 	defer closeBody(t, resp)
 	_, imgURL := decodeUpload(t, resp)
 
-	get := func(referer string) int {
+	get := func(ref string) int {
 		req, err := http.NewRequest(http.MethodGet, ts.URL+imgURL, nil)
 		if err != nil {
 			t.Fatalf("构造访问请求: %v", err)
 		}
-		if referer != "" {
-			req.Header.Set("Referer", referer)
+		if ref != "" {
+			req.Header.Set("Referer", ref)
 		}
 		r, err := ts.Client().Do(req)
 		if err != nil {
@@ -660,7 +663,8 @@ func TestChannelCRUD(t *testing.T) {
 	localID := int64(1) // 迁移内置渠道为首条记录
 	// 本装配无补齐子系统,只走不清理远端对象的删除路径;带清理的删除由端到端测试覆盖。
 	del := func(id int64) int {
-		dresp := adminReq(t, client, csrf, http.MethodDelete, fmt.Sprintf("%s/api/admin/channels/%d?purge=false", ts.URL, id), "")
+		dresp := adminReq(t, client, csrf, http.MethodDelete,
+			fmt.Sprintf("%s/api/admin/channels/%d?purge=false", ts.URL, id), "")
 		defer closeBody(t, dresp)
 		return dresp.StatusCode
 	}
@@ -766,7 +770,8 @@ func TestRedirectMode(t *testing.T) {
 
 	// 高优先级 + 允许直链的渠道成为主渠道,上传即落在它上面。
 	body := fmt.Sprintf(
-		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub/"}}`,
+		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,`+
+			`"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub/"}}`,
 		t.TempDir())
 	created := postChannel(t, ts, body)
 	defer closeBody(t, created)
@@ -834,7 +839,8 @@ func TestAdminServeSkipsAccessTracking(t *testing.T) {
 	var tracker *lifecycle.Tracker
 	var queries *sqlc.Queries
 	ts := newTestServer(t, func(tc *testConfig, env testEnv) {
-		tracker = lifecycle.NewTracker(env.Conn, env.Queries, func() bool { return false }, slog.New(slog.DiscardHandler))
+		tracker = lifecycle.NewTracker(env.Conn, env.Queries, func() bool { return false },
+			slog.New(slog.DiscardHandler))
 		tc.Public.Activity = tracker
 		queries = env.Queries
 	})
@@ -1035,9 +1041,10 @@ func TestChannelTestAPI(t *testing.T) {
 		t.Fatalf("好配置结果 = %+v, 期望 ok", gr)
 	}
 
-	const secret = "TESTSECRETNEVERSHOWN"
+	const secretValue = "TESTSECRETNEVERSHOWN"
 	bad := adminReq(t, client, csrf, http.MethodPost, ts.URL+"/api/admin/channels/test",
-		`{"name":"probe","driver":"s3","config":{"provider":"Minio","endpoint":"http://127.0.0.1:1","access_key_id":"AK","secret_access_key":"`+secret+`","path":"bkt"}}`)
+		`{"name":"probe","driver":"s3","config":{"provider":"Minio","endpoint":"http://127.0.0.1:1",`+
+			`"access_key_id":"AK","secret_access_key":"`+secretValue+`","path":"bkt"}}`)
 	defer closeBody(t, bad)
 	raw, err := io.ReadAll(bad.Body)
 	if err != nil {
@@ -1056,7 +1063,7 @@ func TestChannelTestAPI(t *testing.T) {
 	if br.OK || br.Error == "" {
 		t.Fatalf("坏配置结果 = %+v, 期望 ok=false 且带错误文案", br)
 	}
-	if strings.Contains(string(raw), secret) {
+	if strings.Contains(string(raw), secretValue) {
 		t.Fatalf("测试连接响应回显了凭证: %s", raw)
 	}
 
@@ -1117,7 +1124,8 @@ func TestChannelCreateValidation(t *testing.T) {
 	}
 
 	conflict := postChannel(t, ts,
-		fmt.Sprintf(`{"name":"y","driver":"local","encrypted":true,"allow_direct_link":true,"config":{"path":%q}}`, t.TempDir()))
+		fmt.Sprintf(`{"name":"y","driver":"local","encrypted":true,"allow_direct_link":true,"config":{"path":%q}}`,
+			t.TempDir()))
 	defer closeBody(t, conflict)
 	if conflict.StatusCode != http.StatusBadRequest {
 		t.Fatalf("加密+直链矛盾组合状态码 = %d, 期望 400", conflict.StatusCode)

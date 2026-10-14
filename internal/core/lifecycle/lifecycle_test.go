@@ -165,7 +165,8 @@ func TestSweepCascadesVariants(t *testing.T) {
 		t.Errorf("blob 未物理删(疑被外键拦下): err=%v", err)
 	}
 	// 变体索引应级联删除。
-	if _, err := q.GetVariant(ctx, sqlc.GetVariantParams{BlobID: blobID, ParamsHash: key}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := q.GetVariant(ctx,
+		sqlc.GetVariantParams{BlobID: blobID, ParamsHash: key}); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("变体索引未级联删除: err=%v", err)
 	}
 }
@@ -279,7 +280,9 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	}
 	uid := sqlc.DefaultUserID
 	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "expiring01", BlobID: blobID, UserID: uid, ExpireAt: past}); err != nil {
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "expiring01", BlobID: blobID, UserID: uid, ExpireAt: past,
+	}); err != nil {
 		t.Fatalf("建到期 image: %v", err)
 	}
 	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "permanent1", BlobID: blobID, UserID: uid}); err != nil {
@@ -287,7 +290,10 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	}
 
 	deleter := &fakeDeleter{}
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: deleter, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: deleter,
+		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
@@ -328,7 +334,10 @@ func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
 		t.Fatalf("建幸存 image: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
+		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 
 	// 首次删除:引用消失,ref_count 2→1。
 	if err := sw.DeleteImage(ctx, "victimimg1"); err != nil {
@@ -340,7 +349,9 @@ func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
 	}
 
 	var refCount, pendingDelete int
-	if err := conn.QueryRowContext(ctx, "SELECT ref_count, pending_delete FROM blobs WHERE id = ?", blobID).Scan(&refCount, &pendingDelete); err != nil {
+	if err := conn.QueryRowContext(ctx,
+		"SELECT ref_count, pending_delete FROM blobs WHERE id = ?", blobID,
+	).Scan(&refCount, &pendingDelete); err != nil {
 		t.Fatalf("查 blob: %v", err)
 	}
 	if refCount != 1 || pendingDelete != 0 {
@@ -365,7 +376,9 @@ func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
 	}
 	uid := sqlc.DefaultUserID
 	past := sql.NullString{String: sqlc.TimeText(time.Now().Add(-time.Hour)), Valid: true}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "ghostimg01", BlobID: blobID, UserID: uid, ExpireAt: past}); err != nil {
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "ghostimg01", BlobID: blobID, UserID: uid, ExpireAt: past,
+	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
 	// 抢先删掉引用行(但故意不减计数),模拟并发路径已删行、本轮扫描仍持旧快照。
@@ -373,13 +386,18 @@ func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
 		t.Fatalf("抢先删引用: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: &fakeDeleter{}, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: &fakeDeleter{},
+		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 	// Sweeper 扫不到已删的到期引用,直接调 SweepOnce 应无副作用;ref_count 保持 1。
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce: %v", err)
 	}
 	var refCount int
-	if err := conn.QueryRowContext(ctx, "SELECT ref_count FROM blobs WHERE id = ?", blobID).Scan(&refCount); err != nil {
+	if err := conn.QueryRowContext(ctx,
+		"SELECT ref_count FROM blobs WHERE id = ?", blobID,
+	).Scan(&refCount); err != nil {
 		t.Fatalf("查 ref_count: %v", err)
 	}
 	if refCount != 1 {
@@ -393,7 +411,9 @@ func TestExpireOneSkipsCountWhenRowGone(t *testing.T) {
 func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	conn, q := setup(t)
 	ctx := t.Context()
-	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1})
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
+	})
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
@@ -416,7 +436,8 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 
 	var access sql.NullString
 	var pending, count int
-	row := conn.QueryRowContext(ctx, "SELECT last_public_access_at, pending_cleanup, access_count FROM images WHERE id = ?", "img0000001")
+	row := conn.QueryRowContext(ctx,
+		"SELECT last_public_access_at, pending_cleanup, access_count FROM images WHERE id = ?", "img0000001")
 	if err := row.Scan(&access, &pending, &count); err != nil {
 		t.Fatalf("读取 image: %v", err)
 	}
@@ -435,7 +456,9 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 	if err := tr.Flush(ctx); err != nil {
 		t.Fatalf("二次 Flush 返回错误: %v", err)
 	}
-	if err := conn.QueryRowContext(ctx, "SELECT access_count FROM images WHERE id = ?", "img0000001").Scan(&count); err != nil {
+	if err := conn.QueryRowContext(ctx,
+		"SELECT access_count FROM images WHERE id = ?", "img0000001",
+	).Scan(&count); err != nil {
 		t.Fatalf("读取 access_count: %v", err)
 	}
 	if count != 2 {
@@ -444,7 +467,8 @@ func TestTrackerFlushTouchesAndUnlabels(t *testing.T) {
 }
 
 // renewImage 建一条可定制到期/时长/豁免的引用。
-func renewImage(t *testing.T, conn *sql.DB, q *sqlc.Queries, id, key string, expireAt sql.NullString, ttlSeconds sql.NullInt64, exempt bool) {
+func renewImage(t *testing.T, conn *sql.DB, q *sqlc.Queries, id, key string,
+	expireAt sql.NullString, ttlSeconds sql.NullInt64, exempt bool) {
 	t.Helper()
 	blobID, err := q.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1,
@@ -458,7 +482,8 @@ func renewImage(t *testing.T, conn *sql.DB, q *sqlc.Queries, id, key string, exp
 		t.Fatalf("建 image: %v", err)
 	}
 	if exempt {
-		if _, err := conn.ExecContext(t.Context(), "UPDATE images SET cleanup_exempt = 1 WHERE id = ?", id); err != nil {
+		if _, err := conn.ExecContext(t.Context(),
+			"UPDATE images SET cleanup_exempt = 1 WHERE id = ?", id); err != nil {
 			t.Fatalf("置豁免: %v", err)
 		}
 	}
@@ -561,7 +586,9 @@ func TestTrackerFlushNoRenewWhenDisabled(t *testing.T) {
 		t.Errorf("关闭续期仍改动到期: %v", got)
 	}
 	var access sql.NullString
-	if err := conn.QueryRowContext(t.Context(), "SELECT last_public_access_at FROM images WHERE id = 'coldrenew1'").Scan(&access); err != nil {
+	if err := conn.QueryRowContext(t.Context(),
+		"SELECT last_public_access_at FROM images WHERE id = 'coldrenew1'",
+	).Scan(&access); err != nil {
 		t.Fatalf("读活跃度: %v", err)
 	}
 	if !access.Valid {
@@ -575,7 +602,9 @@ func TestLabelColdImages(t *testing.T) {
 	ctx := t.Context()
 	uid := sqlc.DefaultUserID
 	mk := func(id, key string) {
-		blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1})
+		blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+			Sha256: "h", Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1,
+		})
 		if err != nil {
 			t.Fatalf("建 blob: %v", err)
 		}
@@ -591,14 +620,18 @@ func TestLabelColdImages(t *testing.T) {
 		t.Fatalf("回拨创建时间: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
 
 	labeled := func(id string) int {
 		var p int
-		if err := conn.QueryRowContext(ctx, "SELECT pending_cleanup FROM images WHERE id = ?", id).Scan(&p); err != nil {
+		if err := conn.QueryRowContext(ctx,
+			"SELECT pending_cleanup FROM images WHERE id = ?", id,
+		).Scan(&p); err != nil {
 			t.Fatalf("读取标签: %v", err)
 		}
 		return p
@@ -621,7 +654,9 @@ func TestSweepExpiresIdempotencyKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("建 blob: %v", err)
 	}
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "idemimg001", BlobID: blobID, UserID: sqlc.DefaultUserID}); err != nil {
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "idemimg001", BlobID: blobID, UserID: sqlc.DefaultUserID,
+	}); err != nil {
 		t.Fatalf("建 image: %v", err)
 	}
 	for _, key := range []string{"stale", "fresh"} {
@@ -632,18 +667,24 @@ func TestSweepExpiresIdempotencyKeys(t *testing.T) {
 		}
 	}
 	old := sqlc.TimeText(time.Now().Add(-48 * time.Hour))
-	if _, err := conn.ExecContext(ctx, "UPDATE idempotency_keys SET created_at = ? WHERE key = 'stale'", old); err != nil {
+	if _, err := conn.ExecContext(ctx,
+		"UPDATE idempotency_keys SET created_at = ? WHERE key = 'stale'", old); err != nil {
 		t.Fatalf("回拨创建时间: %v", err)
 	}
 
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
-	if _, err := q.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{UserID: sqlc.DefaultUserID, Key: "stale"}); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := q.GetIdempotencyImage(ctx,
+		sqlc.GetIdempotencyImageParams{UserID: sqlc.DefaultUserID, Key: "stale"},
+	); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("超期幂等键未回收: err=%v", err)
 	}
-	if _, err := q.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{UserID: sqlc.DefaultUserID, Key: "fresh"}); err != nil {
+	if _, err := q.GetIdempotencyImage(ctx,
+		sqlc.GetIdempotencyImageParams{UserID: sqlc.DefaultUserID, Key: "fresh"}); err != nil {
 		t.Errorf("期内幂等键被误删: %v", err)
 	}
 }
@@ -661,15 +702,21 @@ func TestPhysicalDeleteRefusesReferencedBlob(t *testing.T) {
 	}
 	// 待删标记在、宽限已过,但 ref_count 仍为 1(被重新引用)。
 	past := sqlc.TimeText(time.Now().Add(-time.Hour))
-	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET pending_delete = 1, delete_after = ? WHERE id = ?", past, blobID); err != nil {
+	if _, err := conn.ExecContext(ctx,
+		"UPDATE blobs SET pending_delete = 1, delete_after = ? WHERE id = ?", past, blobID); err != nil {
 		t.Fatalf("置待删标记: %v", err)
 	}
-	if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{BlobID: blobID, ChannelID: 1, State: "done"}); err != nil {
+	if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
+		BlobID: blobID, ChannelID: 1, State: "done",
+	}); err != nil {
 		t.Fatalf("建副本记录: %v", err)
 	}
 
 	deleter := &fakeDeleter{}
-	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: deleter, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	sw := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Deleter: deleter,
+		Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 	if err := sw.SweepOnce(ctx); err != nil {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}

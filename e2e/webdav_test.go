@@ -19,7 +19,7 @@ import (
 const (
 	davUser = "dav-user"
 	davPass = "dav-secret-pass"
-	// nolint:gosec // G101:测试桩值,用于断言错误凭证被拒。
+	//nolint:gosec // G101:测试桩值,用于断言错误凭证被拒
 	davWrongPass = "错误的密码"
 )
 

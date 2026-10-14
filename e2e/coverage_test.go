@@ -31,16 +31,14 @@ func TestConcurrencyLimit(t *testing.T) {
 	const n = 12
 	var wg sync.WaitGroup
 	codes := make([]int, n)
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
+	for idx := range n {
+		wg.Go(func() {
 			// 每个请求独立幂等键,避免命中幂等短路。
 			resp := upload(t, inst, inst.token, "c.jpg", img, nil,
 				map[string]string{"Idempotency-Key": "conc-" + itoaLocal(idx)})
 			codes[idx] = resp.StatusCode
 			_ = resp.Body.Close()
-		}(i)
+		})
 	}
 	wg.Wait()
 	var ok, busy int
@@ -50,6 +48,7 @@ func TestConcurrencyLimit(t *testing.T) {
 			ok++
 		case 429:
 			busy++
+		default:
 		}
 	}
 	if ok == 0 {

@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	signer "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -262,8 +262,8 @@ func signS3Request(t *testing.T, req *http.Request, cred s3Credential, payloadHa
 	t.Helper()
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	creds := aws.Credentials{AccessKeyID: cred.AccessKeyID, SecretAccessKey: cred.SecretAccessKey}
-	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
-	if err := signer.SignHTTP(context.Background(), creds, req,
+	sig := signer.NewSigner(func(o *signer.SignerOptions) { o.DisableURIPathEscaping = true })
+	if err := sig.SignHTTP(context.Background(), creds, req,
 		payloadHash, "s3", cred.Region, time.Now().UTC()); err != nil {
 		t.Fatalf("签名失败: %v", err)
 	}

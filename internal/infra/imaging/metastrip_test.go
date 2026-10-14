@@ -67,7 +67,8 @@ func hasPNGChunk(t *testing.T, img []byte, ctype string) bool {
 func encodeWebP(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer
-	if err := webp.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), webp.Options{Quality: 80, Method: 0}); err != nil {
+	err := webp.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), webp.Options{Quality: 80, Method: 0})
+	if err != nil {
 		t.Fatalf("编码测试 WebP: %v", err)
 	}
 	return buf.Bytes()

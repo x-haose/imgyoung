@@ -81,7 +81,7 @@ type errorResponse struct {
 // @return 中间件处理器
 func (h *Handlers) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cred, err := h.authenticate(r)
+		cred, err := h.verifyRequest(r)
 		if err != nil {
 			h.writeError(w, r, err)
 			return
@@ -108,7 +108,7 @@ func (h *Handlers) HandlePutObject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	set := h.cfg.Settings()
-	data, err := h.readBody(w, r, set)
+	data, err := readBody(w, r, set)
 	if err != nil {
 		h.writeBodyError(w, r, set, err)
 		return
@@ -140,7 +140,7 @@ func (h *Handlers) HandlePutObject(w http.ResponseWriter, r *http.Request) {
 // @param set 配置快照,大小上限出自它
 // @return 真实正文
 // @return 超限、帧非法或哈希不符时的错误
-func (h *Handlers) readBody(w http.ResponseWriter, r *http.Request, set config.Settings) ([]byte, error) {
+func readBody(w http.ResponseWriter, r *http.Request, set config.Settings) ([]byte, error) {
 	limit := set.MaxUploadBytes()
 	if isAWSChunked(r) {
 		// 帧结构本身占不了多少,给原始流留一倍余量,真正的闸在解帧后按内容长度判。
@@ -160,16 +160,16 @@ func (h *Handlers) readBody(w http.ResponseWriter, r *http.Request, set config.S
 // HandleHeadBucket 处理 HeadBucket:客户端上传前常先探桶是否可用。
 // @Description: 本服务无桶概念,凭证有效即认为桶可用——回 404 会让不少客户端直接放弃上传。
 // 鉴权由 Authenticate 中间件完成,能走到这里即已验签通过。
-func (h *Handlers) HandleHeadBucket(w http.ResponseWriter, _ *http.Request) {
+func (*Handlers) HandleHeadBucket(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// authenticate 校验 SigV4 签名并返回凭证。
+// verifyRequest 校验 SigV4 签名并返回凭证。
 // @Description: 顺序是"先看时间戳再验签"——过期请求不必付出派生密钥与重算签名的代价。
 // @param r 收到的请求
 // @return 凭证
 // @return 签名或凭证错误
-func (h *Handlers) authenticate(r *http.Request) (auth.S3Credential, error) {
+func (h *Handlers) verifyRequest(r *http.Request) (auth.S3Credential, error) {
 	parts, err := parseAuthorization(r.Header.Get("Authorization"))
 	if err != nil {
 		return auth.S3Credential{}, err

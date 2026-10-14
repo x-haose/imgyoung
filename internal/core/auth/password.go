@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -46,36 +47,47 @@ func HashPassword(password string) (string, error) {
 // @return 是否匹配
 // @return 哈希串格式非法时的错误
 func VerifyPassword(phc, password string) (bool, error) {
-	memory, time, threads, salt, key, err := parsePHC(phc)
+	p, err := parsePHC(phc)
 	if err != nil {
 		return false, err
 	}
-	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(key))) //nolint:gosec // len(key) 来自解码结果,远小于 uint32 上限
-	return subtle.ConstantTimeCompare(got, key) == 1, nil
+	//nolint:gosec // len(key) 来自解码结果,远小于 uint32 上限
+	got := argon2.IDKey([]byte(password), p.salt, p.iterations, p.memoryKiB, p.lanes, uint32(len(p.key)))
+	return subtle.ConstantTimeCompare(got, p.key) == 1, nil
 }
 
-// parsePHC 解析 argon2id PHC 串的参数、盐与密钥。
+// phcParams argon2id PHC 串自描述的参数、盐与密钥。
+type phcParams struct {
+	memoryKiB  uint32 // 内存开销,KiB
+	iterations uint32 // 迭代轮数
+	lanes      uint8  // 并行 lane 数
+	salt       []byte // 盐
+	key        []byte // 派生密钥,非空
+}
+
+// parsePHC 解析 argon2id PHC 串。
 // @param phc 待解析哈希串
-// @return 内存(KiB)/迭代/并行参数
-// @return 盐与派生密钥
+// @return 参数、盐与密钥
 // @return 格式非法时的错误
-func parsePHC(phc string) (memory uint32, time uint32, threads uint8, salt, key []byte, err error) {
+func parsePHC(phc string) (phcParams, error) {
 	parts := strings.Split(phc, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
-		return 0, 0, 0, nil, nil, fmt.Errorf("密码哈希格式非法")
+		return phcParams{}, errors.New("密码哈希格式非法")
 	}
 	var version int
-	if _, err = fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
-		return 0, 0, 0, nil, nil, fmt.Errorf("密码哈希版本不支持")
+	if _, err := fmt.Sscanf(parts[2], "v=%d", &version); err != nil || version != argon2.Version {
+		return phcParams{}, errors.New("密码哈希版本不支持")
 	}
-	if _, err = fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &time, &threads); err != nil {
-		return 0, 0, 0, nil, nil, fmt.Errorf("密码哈希参数非法")
+	var p phcParams
+	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &p.memoryKiB, &p.iterations, &p.lanes); err != nil {
+		return phcParams{}, errors.New("密码哈希参数非法")
 	}
-	if salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil {
-		return 0, 0, 0, nil, nil, fmt.Errorf("密码盐解码失败")
+	var err error
+	if p.salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil {
+		return phcParams{}, errors.New("密码盐解码失败")
 	}
-	if key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(key) == 0 {
-		return 0, 0, 0, nil, nil, fmt.Errorf("密码密钥解码失败")
+	if p.key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(p.key) == 0 {
+		return phcParams{}, errors.New("密码密钥解码失败")
 	}
-	return memory, time, threads, salt, key, nil
+	return p, nil
 }

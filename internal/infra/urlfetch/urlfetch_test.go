@@ -52,7 +52,9 @@ func TestFetchSuccess(t *testing.T) {
 // TestFetchRejectsNonHTTPScheme 非 http/https 协议一律拒绝,不给 file:// 之类读本地文件的机会。
 func TestFetchRejectsNonHTTPScheme(t *testing.T) {
 	f := newFetcher(1 << 20)
-	for _, raw := range []string{"file:///etc/passwd", "gopher://x/1", "ftp://example.com/a.png", "data:image/png;base64,AA"} {
+	for _, raw := range []string{
+		"file:///etc/passwd", "gopher://x/1", "ftp://example.com/a.png", "data:image/png;base64,AA",
+	} {
 		if _, _, err := f.Fetch(context.Background(), raw); !errors.Is(err, ErrScheme) {
 			t.Errorf("%s 期望 ErrScheme,得 %v", raw, err)
 		}
@@ -108,7 +110,8 @@ func TestFetchRedirectHopLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, _, err := newLoopbackFetcher(t, 1<<20).Fetch(context.Background(), srv.URL); !errors.Is(err, ErrTooManyRedirects) {
+	_, _, err := newLoopbackFetcher(t, 1<<20).Fetch(context.Background(), srv.URL)
+	if !errors.Is(err, ErrTooManyRedirects) {
 		t.Fatalf("无限重定向期望 ErrTooManyRedirects,得 %v", err)
 	}
 }

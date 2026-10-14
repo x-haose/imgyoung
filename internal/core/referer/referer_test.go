@@ -106,9 +106,7 @@ func TestConcurrentWritesPublishConsistentSnapshot(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			pattern := fmt.Sprintf("h%d.example.com", i)
 			row, err := svc.Add(ctx, pattern)
 			if err != nil {
@@ -121,7 +119,7 @@ func TestConcurrentWritesPublishConsistentSnapshot(t *testing.T) {
 					t.Errorf("并发删除 %s: %v", pattern, err)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

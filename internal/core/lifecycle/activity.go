@@ -38,7 +38,9 @@ type Tracker struct {
 // @param logger 日志
 // @return 就绪的追踪器
 func NewTracker(conn *sql.DB, queries *sqlc.Queries, renewTTL func() bool, logger *slog.Logger) *Tracker {
-	return &Tracker{conn: conn, queries: queries, renewTTL: renewTTL, logger: logger, touched: make(map[string]struct{})}
+	return &Tracker{
+		conn: conn, queries: queries, renewTTL: renewTTL, logger: logger, touched: make(map[string]struct{}),
+	}
 }
 
 // Touch 记录一次公开访问(仅写内存,极轻量;真正落库由 flush 批量完成)。
@@ -77,7 +79,9 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	q := t.queries.WithTx(tx)
 	nowNull := sql.NullString{String: now, Valid: true}
 	for id := range batch {
-		if err := q.TouchImageAccess(ctx, sqlc.TouchImageAccessParams{LastPublicAccessAt: nowNull, ID: id}); err != nil {
+		if err := q.TouchImageAccess(ctx, sqlc.TouchImageAccessParams{
+			LastPublicAccessAt: nowNull, ID: id,
+		}); err != nil {
 			t.requeue(batch)
 			return fmt.Errorf("更新活跃度: %w", err)
 		}

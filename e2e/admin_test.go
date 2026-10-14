@@ -42,7 +42,8 @@ func loginUser(t *testing.T, inst *instance, name, password string) (*http.Clien
 }
 
 // createUser 经管理 API 建号并断言 201,返回用户 id。
-func createUser(t *testing.T, inst *instance, admin *http.Client, csrf, name, password string, quotaBytes int64) string {
+func createUser(t *testing.T, inst *instance, admin *http.Client, csrf, name, password string,
+	quotaBytes int64) string {
 	t.Helper()
 	body := fmt.Sprintf(`{"name":%q,"password":%q,"quota_bytes":%d}`, name, password, quotaBytes)
 	resp := adminReq(t, admin, csrf, http.MethodPost, inst.baseURL+"/api/admin/users", body)
@@ -181,7 +182,8 @@ func TestTokenRevokeStopsUpload(t *testing.T) {
 		t.Fatalf("新 Token 上传状态码 = %d, 期望 200", code)
 	}
 
-	rev := adminReq(t, admin, csrf, http.MethodPost, fmt.Sprintf("%s/api/admin/tokens/%d/revoke", inst.baseURL, tokenID), "")
+	rev := adminReq(t, admin, csrf, http.MethodPost,
+		fmt.Sprintf("%s/api/admin/tokens/%d/revoke", inst.baseURL, tokenID), "")
 	code = rev.StatusCode
 	_ = rev.Body.Close()
 	if code != http.StatusNoContent {
@@ -265,13 +267,15 @@ func TestUserDeleteGuards(t *testing.T) {
 	if code != http.StatusNoContent {
 		t.Fatalf("清空后删除用户状态码 = %d, 期望 204", code)
 	}
-	if code := postLogin(t, http.DefaultClient, inst.baseURL, "carol", "carol-secret-1"); code != http.StatusUnauthorized {
+	code = postLogin(t, http.DefaultClient, inst.baseURL, "carol", "carol-secret-1")
+	if code != http.StatusUnauthorized {
 		t.Fatalf("已删用户登录状态码 = %d, 期望 401", code)
 	}
 }
 
 // sessionUpload 以会话 + CSRF 头向后台上传端点发 multipart 图片,返回响应。
-func sessionUpload(t *testing.T, inst *instance, client *http.Client, csrf, filename string, payload []byte) *http.Response {
+func sessionUpload(t *testing.T, inst *instance, client *http.Client, csrf, filename string,
+	payload []byte) *http.Response {
 	t.Helper()
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)

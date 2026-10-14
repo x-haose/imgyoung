@@ -200,7 +200,7 @@ func TestConfigFullAdminOnly(t *testing.T) {
 		t.Errorf("settings 组取值异常: %s", raw)
 	}
 	if !body.Derived.CDNAPITokenSet {
-		t.Errorf("cdn_api_token_set = false, 期望 true(已配置)")
+		t.Error("cdn_api_token_set = false, 期望 true(已配置)")
 	}
 	if strings.Contains(string(raw), "cf-secret-token") {
 		t.Errorf("全量配置泄露凭证明文: %s", raw)

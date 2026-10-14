@@ -163,7 +163,7 @@ func TestVariantLRUEviction(t *testing.T) {
 		t.Errorf("LRU 未生效:缓存 %d 字节 远超 1MB 上限", size)
 	}
 	if size == 0 {
-		t.Errorf("缓存目录为空,变体未落盘")
+		t.Error("缓存目录为空,变体未落盘")
 	}
 }
 

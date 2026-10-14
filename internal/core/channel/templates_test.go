@@ -16,33 +16,56 @@ func TestBuildTemplateConfigMerge(t *testing.T) {
 	}{
 		"AWS 用 region、endpoint 留空": {
 			template: "aws-s3",
-			inputs:   map[string]string{"access_key_id": "AK", "secret_access_key": "SK", "region": "us-east-1", "bucket": "my-bkt"},
-			wantCfg:  map[string]string{"provider": "AWS", "access_key_id": "AK", "secret_access_key": "SK", "region": "us-east-1", "path": "my-bkt"},
+			inputs: map[string]string{
+				"access_key_id": "AK", "secret_access_key": "SK", "region": "us-east-1", "bucket": "my-bkt",
+			},
+			wantCfg: map[string]string{
+				"provider": "AWS", "access_key_id": "AK", "secret_access_key": "SK",
+				"region": "us-east-1", "path": "my-bkt",
+			},
 		},
 		"R2 拼 account 端点、region=auto、无 region 字段": {
 			template: "r2",
-			inputs:   map[string]string{"access_key_id": "AK", "secret_access_key": "SK", "account_id": "acc123", "bucket": "imgs"},
-			wantCfg:  map[string]string{"provider": "Cloudflare", "region": "auto", "endpoint": "https://acc123.r2.cloudflarestorage.com", "path": "imgs"},
+			inputs: map[string]string{
+				"access_key_id": "AK", "secret_access_key": "SK", "account_id": "acc123", "bucket": "imgs",
+			},
+			wantCfg: map[string]string{
+				"provider": "Cloudflare", "region": "auto",
+				"endpoint": "https://acc123.r2.cloudflarestorage.com", "path": "imgs",
+			},
 		},
 		"COS 由 region 拼 endpoint、region 不进 config": {
 			template: "cos",
-			inputs:   map[string]string{"access_key_id": "SID", "secret_access_key": "SKEY", "region": "ap-shanghai", "bucket": "b-125"},
-			wantCfg:  map[string]string{"provider": "TencentCOS", "endpoint": "cos.ap-shanghai.myqcloud.com", "path": "b-125"},
+			inputs: map[string]string{
+				"access_key_id": "SID", "secret_access_key": "SKEY", "region": "ap-shanghai", "bucket": "b-125",
+			},
+			wantCfg: map[string]string{
+				"provider": "TencentCOS", "endpoint": "cos.ap-shanghai.myqcloud.com", "path": "b-125",
+			},
 		},
 		"OSS region 含前缀直接拼 endpoint": {
 			template: "oss",
-			inputs:   map[string]string{"access_key_id": "AK", "secret_access_key": "SK", "region": "oss-cn-hangzhou", "bucket": "b"},
-			wantCfg:  map[string]string{"provider": "Alibaba", "endpoint": "oss-cn-hangzhou.aliyuncs.com", "path": "b"},
+			inputs: map[string]string{
+				"access_key_id": "AK", "secret_access_key": "SK", "region": "oss-cn-hangzhou", "bucket": "b",
+			},
+			wantCfg: map[string]string{"provider": "Alibaba", "endpoint": "oss-cn-hangzhou.aliyuncs.com", "path": "b"},
 		},
 		"B2 region 既进 config 又拼 endpoint": {
 			template: "b2",
-			inputs:   map[string]string{"access_key_id": "kid", "secret_access_key": "akey", "region": "us-west-004", "bucket": "b"},
-			wantCfg:  map[string]string{"provider": "Other", "region": "us-west-004", "endpoint": "https://s3.us-west-004.backblazeb2.com", "path": "b"},
+			inputs: map[string]string{
+				"access_key_id": "kid", "secret_access_key": "akey", "region": "us-west-004", "bucket": "b",
+			},
+			wantCfg: map[string]string{
+				"provider": "Other", "region": "us-west-004",
+				"endpoint": "https://s3.us-west-004.backblazeb2.com", "path": "b",
+			},
 		},
 		"MinIO 用户直填 endpoint": {
 			template: "minio",
-			inputs:   map[string]string{"access_key_id": "AK", "secret_access_key": "SK", "endpoint": "https://minio.local", "bucket": "b"},
-			wantCfg:  map[string]string{"provider": "Minio", "endpoint": "https://minio.local", "path": "b"},
+			inputs: map[string]string{
+				"access_key_id": "AK", "secret_access_key": "SK", "endpoint": "https://minio.local", "bucket": "b",
+			},
+			wantCfg: map[string]string{"provider": "Minio", "endpoint": "https://minio.local", "path": "b"},
 		},
 	}
 	for name, tc := range cases {
@@ -71,7 +94,8 @@ func TestBuildTemplateConfigMerge(t *testing.T) {
 
 // TestBuildTemplateConfigRequired 缺必填字段报错、未知模板报错。
 func TestBuildTemplateConfigRequired(t *testing.T) {
-	if _, _, err := BuildTemplateConfig("aws-s3", map[string]string{"access_key_id": "AK"}); !errors.Is(err, ErrInvalidChannel) {
+	_, _, err := BuildTemplateConfig("aws-s3", map[string]string{"access_key_id": "AK"})
+	if !errors.Is(err, ErrInvalidChannel) {
 		t.Errorf("缺 secret/region/bucket 应报错, got %v", err)
 	}
 	if _, _, err := BuildTemplateConfig("no-such", nil); !errors.Is(err, ErrUnknownTemplate) {
@@ -169,7 +193,6 @@ func TestTemplatesDownloadShape(t *testing.T) {
 // TestWebDAVTemplateObscuresPassword 验证 WebDAV 密码按 rclone 要求编码后入库。
 // @Description: 漏编码时后端会把明文当作已编码值解出乱码,表现为凭证正确却认证失败。
 func TestWebDAVTemplateObscuresPassword(t *testing.T) {
-	// nolint:gosec // G101:测试桩值,非真实凭证。
 	const plain = "明文密码"
 	drv, cfg, err := BuildTemplateConfig("webdav", map[string]string{
 		"url": "https://dav.jianguoyun.com/dav/", "vendor": "other",

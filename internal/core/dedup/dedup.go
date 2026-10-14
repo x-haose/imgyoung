@@ -105,7 +105,9 @@ func (m *Merger) mergeGroup(ctx context.Context, sha string) (int, error) {
 			return 0, fmt.Errorf("并入引用计数: %w", err)
 		}
 		// 冗余 blob 打物理删标记,其对象由 sweeper 级联清除。
-		if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: other.ID}); err != nil {
+		if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{
+			DeleteAfter: deleteAfter, ID: other.ID,
+		}); err != nil {
 			return 0, fmt.Errorf("标记冗余 blob 待删: %w", err)
 		}
 	}

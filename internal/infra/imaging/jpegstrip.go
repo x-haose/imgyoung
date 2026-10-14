@@ -38,8 +38,65 @@ func isMetadataSegment(marker byte) bool {
 	return false
 }
 
+// isStandaloneMarker 报告标记是否不带长度字段:TEM 与 RST0–RST7 只占两字节,其后紧接下一段。
+// @param marker 段标记(0xFF 后的第二字节)
+// @return 是否为独立标记
+func isStandaloneMarker(marker byte) bool {
+	return marker == markerTEM || (marker >= markerRST0 && marker <= markerRST7)
+}
+
 // errMalformedJPEG 输入不是结构完整的 JPEG。
 var errMalformedJPEG = errors.New("imaging: 畸形的 JPEG 结构")
+
+// jpegSegment 段表中一个条目在原始字节中的位置。
+type jpegSegment struct {
+	marker byte // 段标记(0xFF 后的第二字节)
+	start  int  // 起始偏移,指向标记前的 0xFF
+	end    int  // 结束偏移(不含);独立标记以及 SOS、EOI 为 start+2
+}
+
+// nextJPEGSegment 读取偏移 i 处的段表条目,跳过标记前的 0xFF 填充字节。
+// @Description: SOS 之后是熵编码数据、EOI 之后是文件尾,两者都不再有段表意义上的长度,
+// 与独立标记一样只占两字节返回,其后字节如何处理由调用方决定。
+// @param data 完整的 JPEG 字节
+// @param i 起始偏移,须指向一个 0xFF
+// @return 段位置
+// @return 段表在此处截断、不在段边界或长度越界时的错误
+func nextJPEGSegment(data []byte, i int) (jpegSegment, error) {
+	for i+2 <= len(data) && data[i] == 0xFF && data[i+1] == 0xFF {
+		i++
+	}
+	if i+2 > len(data) {
+		return jpegSegment{}, fmt.Errorf("%w: 段表在偏移 %d 处截断", errMalformedJPEG, i)
+	}
+	if data[i] != 0xFF {
+		return jpegSegment{}, fmt.Errorf("%w: 偏移 %d 处不是段边界(0x%02X)", errMalformedJPEG, i, data[i])
+	}
+	marker := data[i+1]
+	if marker == markerSOS || marker == markerEOI || isStandaloneMarker(marker) {
+		return jpegSegment{marker: marker, start: i, end: i + 2}, nil
+	}
+	if i+4 > len(data) {
+		return jpegSegment{}, fmt.Errorf("%w: 段长度字段在偏移 %d 处截断", errMalformedJPEG, i)
+	}
+	segLen := int(binary.BigEndian.Uint16(data[i+2 : i+4]))
+	if segLen < 2 || i+2+segLen > len(data) {
+		return jpegSegment{}, fmt.Errorf("%w: 偏移 %d 处段长度越界", errMalformedJPEG, i)
+	}
+	return jpegSegment{marker: marker, start: i, end: i + 2 + segLen}, nil
+}
+
+// truncateAtEOI 把从 SOS 起的字节截到首个 EOI 标记(含)为止,丢弃其后的尾部附加数据。
+// @Description: 熵编码流中 0xFF 均被填充为 FF00(RST 为 FFD0–D7),裸 FFD9 必为真正的 EOI;
+// 无 EOI 时原样返回。
+// @param tail 从 SOS 标记起的字节
+// @return 截断后的字节
+func truncateAtEOI(tail []byte) []byte {
+	if end := bytes.Index(tail, []byte{0xFF, markerEOI}); end >= 0 {
+		return tail[:end+2]
+	}
+	return tail
+}
 
 // StripJPEGMetadata 移除 JPEG 中的全部元数据段与 EOI 后的尾部附加数据,
 // 返回新的字节切片(不修改输入)。
@@ -53,56 +110,25 @@ func StripJPEGMetadata(data []byte) ([]byte, error) {
 	if len(data) < 4 || data[0] != 0xFF || data[1] != markerSOI {
 		return nil, fmt.Errorf("%w: 缺少 SOI", errMalformedJPEG)
 	}
-
 	out := make([]byte, 0, len(data))
 	out = append(out, data[:2]...)
-
-	i := 2
-	for {
-		if i+2 > len(data) {
-			return nil, fmt.Errorf("%w: 段表在偏移 %d 处截断", errMalformedJPEG, i)
+	for i := 2; ; {
+		seg, err := nextJPEGSegment(data, i)
+		if err != nil {
+			return nil, err
 		}
-		if data[i] != 0xFF {
-			return nil, fmt.Errorf("%w: 偏移 %d 处不是段边界(0x%02X)", errMalformedJPEG, i, data[i])
-		}
-		// 标记前允许出现连续 0xFF 填充字节,跳过(不写回,等价于规范化)。
-		if data[i+1] == 0xFF {
-			i++
-			continue
-		}
-
-		marker := data[i+1]
 		switch {
-		case marker == markerSOS:
-			// 段表结束,其后为熵编码数据。熵编码流中 0xFF 均被填充为 FF00
-			// (RST 为 FFD0–D7),裸 FFD9 必为真正的 EOI——在此截断,
-			// 丢弃 EOI 之后的一切尾部附加数据(Motion Photo 视频、隐写载荷等)。
-			tail := data[i:]
-			if end := bytes.Index(tail, []byte{0xFF, markerEOI}); end >= 0 {
-				tail = tail[:end+2]
-			}
-			out = append(out, tail...)
-			return out, nil
-		case marker == markerEOI:
+		case seg.marker == markerSOS:
+			// 段表结束,其后为熵编码数据;EOI 之后的尾部附加数据(Motion Photo 视频、隐写载荷等)一并丢弃。
+			return append(out, truncateAtEOI(data[seg.start:])...), nil
+		case seg.marker == markerEOI:
 			// 文件结束:只保留 EOI 本身,丢弃其后的尾部数据。
-			out = append(out, data[i:i+2]...)
-			return out, nil
-		case marker == markerTEM, marker >= markerRST0 && marker <= markerRST7:
-			// 无长度字段的独立标记,原样保留。
-			out = append(out, data[i:i+2]...)
-			i += 2
+			return append(out, data[seg.start:seg.end]...), nil
+		case isMetadataSegment(seg.marker):
+			// 元数据段:丢弃。
 		default:
-			if i+4 > len(data) {
-				return nil, fmt.Errorf("%w: 段长度字段在偏移 %d 处截断", errMalformedJPEG, i)
-			}
-			segLen := int(binary.BigEndian.Uint16(data[i+2 : i+4]))
-			if segLen < 2 || i+2+segLen > len(data) {
-				return nil, fmt.Errorf("%w: 偏移 %d 处段长度越界", errMalformedJPEG, i)
-			}
-			if !isMetadataSegment(marker) {
-				out = append(out, data[i:i+2+segLen]...)
-			}
-			i += 2 + segLen
+			out = append(out, data[seg.start:seg.end]...)
 		}
+		i = seg.end
 	}
 }

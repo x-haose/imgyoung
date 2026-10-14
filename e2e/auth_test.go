@@ -58,7 +58,8 @@ func TestDefaultAdminPassword(t *testing.T) {
 		t.Fatal("默认密码登录应返回 must_change_password=true")
 	}
 	// 反面:随意密码仍应被拒,确认不是"任意密码放行"。
-	if code := postLogin(t, http.DefaultClient, inst.baseURL, "admin", "not-the-password"); code != http.StatusUnauthorized {
+	code = postLogin(t, http.DefaultClient, inst.baseURL, "admin", "not-the-password")
+	if code != http.StatusUnauthorized {
 		t.Fatalf("错误密码状态码 = %d, 期望 401", code)
 	}
 }

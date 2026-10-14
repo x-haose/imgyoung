@@ -53,7 +53,8 @@ func (m *Manager) ConfigForEdit(ctx context.Context, channelID int64) (EditConfi
 // @param config 待还原的配置
 // @return 还原后的新配置(不修改入参)
 // @return ErrChannelNotFound、解密失败或哨兵无原值可还原时的错误
-func (m *Manager) RestoreSecrets(ctx context.Context, channelID int64, config map[string]string) (map[string]string, error) {
+func (m *Manager) RestoreSecrets(ctx context.Context, channelID int64,
+	config map[string]string) (map[string]string, error) {
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrChannelNotFound

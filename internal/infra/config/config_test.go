@@ -86,7 +86,8 @@ func TestLoadBootstrapDefaults(t *testing.T) {
 	if got := FormatPrefixes(b.TrustedProxies); got != "127.0.0.0/8, ::1/128" {
 		t.Errorf("默认信任代理 = %q", got)
 	}
-	if got := FormatPrefixes(b.MetricsAllow); got != "127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7" {
+	const wantMetrics = "127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7"
+	if got := FormatPrefixes(b.MetricsAllow); got != wantMetrics {
 		t.Errorf("默认 /metrics 放行网段 = %q", got)
 	}
 }
@@ -117,7 +118,8 @@ func TestLoadBootstrapRejectsBadPrefix(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("IMGYOUNG_METRICS_ALLOW", "10.0.0.0/8, not-an-ip")
 	_, err := LoadBootstrap()
-	if err == nil || !strings.Contains(err.Error(), "IMGYOUNG_METRICS_ALLOW") || !strings.Contains(err.Error(), "not-an-ip") {
+	if err == nil || !strings.Contains(err.Error(), "IMGYOUNG_METRICS_ALLOW") ||
+		!strings.Contains(err.Error(), "not-an-ip") {
 		t.Fatalf("错误 = %v, 期望指出变量名与非法条目", err)
 	}
 }
@@ -250,20 +252,16 @@ func TestStoreConcurrentUpdateAndRead(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for i := range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := store.Update(context.Background(), map[string]json.RawMessage{
 				"process_widths": rawPatch(t, []int{100 + i, 200 + i}),
 			}); err != nil {
 				t.Errorf("并发 Update: %v", err)
 			}
-		}()
+		})
 	}
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 50 {
 				total := 0
 				for _, w := range store.Current().ProcessWidths {
@@ -271,7 +269,7 @@ func TestStoreConcurrentUpdateAndRead(t *testing.T) {
 				}
 				_ = total
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

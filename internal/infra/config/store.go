@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -184,7 +184,7 @@ func diffSettings(cur, next Settings, patch map[string]json.RawMessage) ([]Chang
 			New: maskValue(key, nextMap[key]),
 		})
 	}
-	sort.Slice(changes, func(i, j int) bool { return changes[i].Key < changes[j].Key })
+	slices.SortFunc(changes, func(a, b Change) int { return strings.Compare(a.Key, b.Key) })
 	return changes, nil
 }
 
@@ -207,7 +207,7 @@ func (s *Store) persist(ctx context.Context, params sqlc.UpdateSettingsParams) e
 	return nil
 }
 
-// load 读出 settings 单行并映射为内存配置(int64→int/bool、解密凭证、解析 JSON 档位)。
+// load 读出 settings 单行并映射为内存配置:标量列直接换算,凭证列解密、档位列解析 JSON。
 // @param ctx 控制超时与取消
 // @return 内存配置
 // @return 数据库、解密或 JSON 解析错误
@@ -216,20 +216,26 @@ func (s *Store) load(ctx context.Context) (Settings, error) {
 	if err != nil {
 		return Settings{}, fmt.Errorf("读取 settings 表: %w", err)
 	}
-	token := ""
+	cfg := scalarsFromRow(row)
 	if row.CdnCloudflareApiToken != "" {
-		if token, err = s.master.DecryptString(row.CdnCloudflareApiToken); err != nil {
+		if cfg.CDNCloudflareAPIToken, err = s.master.DecryptString(row.CdnCloudflareApiToken); err != nil {
 			return Settings{}, fmt.Errorf("解密 cdn_cloudflare_api_token: %w", err)
 		}
 	}
-	var widths []int
-	if err := json.Unmarshal([]byte(row.ProcessWidths), &widths); err != nil {
+	if err := json.Unmarshal([]byte(row.ProcessWidths), &cfg.ProcessWidths); err != nil {
 		return Settings{}, fmt.Errorf("解析 process_widths: %w", err)
 	}
-	var formats []string
-	if err := json.Unmarshal([]byte(row.ProcessFormats), &formats); err != nil {
+	if err := json.Unmarshal([]byte(row.ProcessFormats), &cfg.ProcessFormats); err != nil {
 		return Settings{}, fmt.Errorf("解析 process_formats: %w", err)
 	}
+	return cfg, nil
+}
+
+// scalarsFromRow 换算无需解码的标量列(int64→int、0/1→bool、明文字符串)。
+// @Description: 凭证密文列与 JSON 档位列不在此映射,返回值里对应字段为零值,由调用方解码后填入。
+// @param row settings 表行
+// @return 仅含标量字段的内存配置
+func scalarsFromRow(row sqlc.Setting) Settings {
 	return Settings{
 		MaxUploadMB:            row.MaxUploadMb,
 		MaxPixelsMP:            row.MaxPixelsMp,
@@ -237,7 +243,6 @@ func (s *Store) load(ctx context.Context) (Settings, error) {
 		UploadRatePerMin:       int(row.UploadRatePerMin),
 		BaseURL:                row.BaseUrl,
 		CDNCloudflareZoneID:    row.CdnCloudflareZoneID,
-		CDNCloudflareAPIToken:  token,
 		AllowEmptyReferer:      row.AllowEmptyReferer != 0,
 		EXIFPolicy:             imaging.EXIFPolicy(row.ExifPolicy),
 		MinSuccess:             int(row.MinSuccess),
@@ -256,8 +261,6 @@ func (s *Store) load(ctx context.Context) (Settings, error) {
 		ChannelQuotaGB:         int(row.ChannelQuotaGb),
 		DedupScanSeconds:       int(row.DedupScanSeconds),
 		DedupPhashMaxDistance:  int(row.DedupPhashMaxDistance),
-		ProcessWidths:          widths,
-		ProcessFormats:         formats,
 		ProcessQualityWebP:     int(row.ProcessQualityWebp),
 		ProcessQualityJPEG:     int(row.ProcessQualityJpeg),
 		ProcessWebPMethod:      int(row.ProcessWebpMethod),
@@ -265,21 +268,21 @@ func (s *Store) load(ctx context.Context) (Settings, error) {
 		ProcessTimeoutMS:       int(row.ProcessTimeoutMs),
 		VariantsCacheMB:        row.VariantsCacheMb,
 		IdempotencyKeyTTLHours: int(row.IdempotencyKeyTtlHours),
-	}, nil
+	}
 }
 
-// toParams 把内存配置映射为 UPDATE 列参数(bool→int64、加密凭证、JSON 编码档位)。
-// @param s 待写入的配置
+// toParams 把内存配置映射为 UPDATE 列参数:标量列直接换算,凭证列加密、档位列编码 JSON。
+// @param cfg 待写入的配置
 // @return 列参数
 // @return 加密或 JSON 编码错误
 func (s *Store) toParams(cfg Settings) (sqlc.UpdateSettingsParams, error) {
-	token := ""
+	params := scalarsToParams(cfg)
 	if cfg.CDNCloudflareAPIToken != "" {
 		sealed, err := s.master.EncryptString(cfg.CDNCloudflareAPIToken)
 		if err != nil {
 			return sqlc.UpdateSettingsParams{}, fmt.Errorf("加密 cdn_cloudflare_api_token: %w", err)
 		}
-		token = sealed
+		params.CdnCloudflareApiToken = sealed
 	}
 	widths, err := json.Marshal(cfg.ProcessWidths)
 	if err != nil {
@@ -289,6 +292,16 @@ func (s *Store) toParams(cfg Settings) (sqlc.UpdateSettingsParams, error) {
 	if err != nil {
 		return sqlc.UpdateSettingsParams{}, fmt.Errorf("编码 process_formats: %w", err)
 	}
+	params.ProcessWidths = string(widths)
+	params.ProcessFormats = string(formats)
+	return params, nil
+}
+
+// scalarsToParams 换算无需编码的标量列(int→int64、bool→0/1、明文字符串)。
+// @Description: 凭证密文列与 JSON 档位列不在此映射,返回值里对应参数为空串,由调用方编码后填入。
+// @param cfg 待写入的配置
+// @return 仅含标量列的 UPDATE 参数
+func scalarsToParams(cfg Settings) sqlc.UpdateSettingsParams {
 	return sqlc.UpdateSettingsParams{
 		MaxUploadMb:            cfg.MaxUploadMB,
 		MaxPixelsMp:            cfg.MaxPixelsMP,
@@ -296,7 +309,6 @@ func (s *Store) toParams(cfg Settings) (sqlc.UpdateSettingsParams, error) {
 		UploadRatePerMin:       int64(cfg.UploadRatePerMin),
 		BaseUrl:                cfg.BaseURL,
 		CdnCloudflareZoneID:    cfg.CDNCloudflareZoneID,
-		CdnCloudflareApiToken:  token,
 		AllowEmptyReferer:      b2i(cfg.AllowEmptyReferer),
 		ExifPolicy:             string(cfg.EXIFPolicy),
 		MinSuccess:             int64(cfg.MinSuccess),
@@ -315,8 +327,6 @@ func (s *Store) toParams(cfg Settings) (sqlc.UpdateSettingsParams, error) {
 		ChannelQuotaGb:         int64(cfg.ChannelQuotaGB),
 		DedupScanSeconds:       int64(cfg.DedupScanSeconds),
 		DedupPhashMaxDistance:  int64(cfg.DedupPhashMaxDistance),
-		ProcessWidths:          string(widths),
-		ProcessFormats:         string(formats),
 		ProcessQualityWebp:     int64(cfg.ProcessQualityWebP),
 		ProcessQualityJpeg:     int64(cfg.ProcessQualityJPEG),
 		ProcessWebpMethod:      int64(cfg.ProcessWebPMethod),
@@ -324,7 +334,7 @@ func (s *Store) toParams(cfg Settings) (sqlc.UpdateSettingsParams, error) {
 		ProcessTimeoutMs:       int64(cfg.ProcessTimeoutMS),
 		VariantsCacheMb:        cfg.VariantsCacheMB,
 		IdempotencyKeyTtlHours: int64(cfg.IdempotencyKeyTTLHours),
-	}, nil
+	}
 }
 
 // b2i 布尔转 SQLite 的 0/1 整数。

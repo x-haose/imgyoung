@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
-	"strings"
 	"sync"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 	"github.com/x-haose/imgyoung/internal/store/rclone"
@@ -175,9 +175,11 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 // 快照落行、看不见本渠道,这类缺行由周期对账的收敛播种补齐。
 // @param p 创建参数
 // @param sealed 已加密的配置密文
-// @return 新渠道 ID 与播种的副本行数
-// @return ErrChannelNameExists 或落库失败时的错误
-func (m *Manager) insertChannelTx(ctx context.Context, p CreateParams, sealed string) (int64, int64, error) {
+// @return channelID 新渠道 ID
+// @return seeded 播种的副本行数
+// @return err ErrChannelNameExists 或落库失败时的错误
+func (m *Manager) insertChannelTx(ctx context.Context, p CreateParams,
+	sealed string) (channelID, seeded int64, err error) {
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, fmt.Errorf("开启事务: %w", err)
@@ -186,7 +188,7 @@ func (m *Manager) insertChannelTx(ctx context.Context, p CreateParams, sealed st
 	defer func() { _ = tx.Rollback() }()
 
 	q := m.cfg.Queries.WithTx(tx)
-	channelID, err := q.CreateChannel(ctx, sqlc.CreateChannelParams{
+	channelID, err = q.CreateChannel(ctx, sqlc.CreateChannelParams{
 		Name:            p.Name,
 		Driver:          p.Driver,
 		ConfigSealed:    sealed,
@@ -196,13 +198,12 @@ func (m *Manager) insertChannelTx(ctx context.Context, p CreateParams, sealed st
 		Template:        p.Template,
 	})
 	if err != nil {
-		// SQLite 驱动不暴露类型化的约束错误,按消息收敛为哨兵——匹配集中此一处,不外泄到 HTTP 层。
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if db.IsUniqueViolation(err, "channels.name") {
 			return 0, 0, ErrChannelNameExists
 		}
 		return 0, 0, fmt.Errorf("写入渠道记录: %w", err)
 	}
-	seeded, err := q.SeedBlobChannelsForChannel(ctx, channelID)
+	seeded, err = q.SeedBlobChannelsForChannel(ctx, channelID)
 	if err != nil {
 		return 0, 0, fmt.Errorf("播种存量副本: %w", err)
 	}
@@ -295,7 +296,7 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 		Name: p.Name, Driver: p.Driver, ConfigSealed: sealed, Priority: p.Priority,
 		AllowDirectLink: boolToInt(p.AllowDirectLink), Template: p.Template, ID: channelID,
 	}); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if db.IsUniqueViolation(err, "channels.name") {
 			return ErrChannelNameExists
 		}
 		return fmt.Errorf("更新渠道记录: %w", err)
@@ -451,11 +452,9 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 	results := make([]error, len(channels))
 	var wg sync.WaitGroup
 	for i, c := range channels {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results[i] = probeForHealth(ctx, c.handle.Driver, c.healthy)
-		}()
+		})
 	}
 	wg.Wait()
 	if err := ctx.Err(); err != nil {

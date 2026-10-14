@@ -179,7 +179,10 @@ var probeErrorRules = []struct {
 	needles []string // 底层错误文本特征(小写)
 	message string   // 面向用户的排障文案
 }{
-	{[]string{"invalidaccesskeyid", "signaturedoesnotmatch", "accessdenied", "access denied", "statuscode: 403", "401 unauthorized"}, "认证失败(403):检查 Access Key / Secret Key 及其权限"},
+	{[]string{
+		"invalidaccesskeyid", "signaturedoesnotmatch", "accessdenied", "access denied",
+		"statuscode: 403", "401 unauthorized",
+	}, "认证失败(403):检查 Access Key / Secret Key 及其权限"},
 	{[]string{"nosuchbucket", "no such bucket", "bucketregionerror"}, "存储桶不存在或无权访问:检查桶名与凭证权限"},
 	{[]string{"permanentredirect", "authorizationheadermalformed"}, "区域不匹配:检查所选区域与存储桶实际所在区域"},
 	{[]string{"no such host", "server misbehaving"}, "无法解析服务端点域名:检查 endpoint 配置"},

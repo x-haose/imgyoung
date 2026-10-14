@@ -88,7 +88,8 @@ func TestProcessRejects(t *testing.T) {
 	src := srcPNG(t, 200, 150)
 
 	// 像素预算:200×150=30000,预算设 29999 应拒绝。
-	if _, _, err := testProc(29999).Process(src, ProcessParams{Format: FormatWebP}); !errors.Is(err, ErrProcTooManyPixels) {
+	_, _, err := testProc(29999).Process(src, ProcessParams{Format: FormatWebP})
+	if !errors.Is(err, ErrProcTooManyPixels) {
 		t.Fatalf("超预算未拒绝: %v", err)
 	}
 	proc := testProc(1 << 30)
@@ -97,7 +98,8 @@ func TestProcessRejects(t *testing.T) {
 		t.Fatalf("坏格式未拒绝: %v", err)
 	}
 	// 非图片字节。
-	if _, _, err := proc.Process([]byte("not an image"), ProcessParams{Format: FormatWebP}); !errors.Is(err, ErrProcInvalidImage) {
+	_, _, err = proc.Process([]byte("not an image"), ProcessParams{Format: FormatWebP})
+	if !errors.Is(err, ErrProcInvalidImage) {
 		t.Fatalf("坏图片未拒绝: %v", err)
 	}
 }

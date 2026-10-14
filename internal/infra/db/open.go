@@ -32,12 +32,12 @@ type DB struct {
 // @return 就绪的句柄
 // @return 打开或连通性校验失败时的错误
 func Open(path string) (*DB, error) {
-	write, err := open(path, "immediate")
+	write, err := openPool(path, "immediate")
 	if err != nil {
 		return nil, err
 	}
 	write.SetMaxOpenConns(1)
-	read, err := open(path, "deferred")
+	read, err := openPool(path, "deferred")
 	if err != nil {
 		_ = write.Close()
 		return nil, err
@@ -45,12 +45,12 @@ func Open(path string) (*DB, error) {
 	return &DB{write: write, read: read}, nil
 }
 
-// open 以指定的事务锁级打开一个连接池并校验连通性。
+// openPool 以指定的事务锁级打开一个连接池并校验连通性。
 // @param path SQLite 数据库文件路径
 // @param txlock BeginTx 发出的 BEGIN 变体:immediate(写句柄)或 deferred(读句柄)
 // @return 就绪的连接池
 // @return 打开或连通性校验失败时的错误
-func open(path, txlock string) (*sql.DB, error) {
+func openPool(path, txlock string) (*sql.DB, error) {
 	conn, err := sql.Open("sqlite", fmt.Sprintf("file:%s?%s&_txlock=%s", path, pragmas, txlock))
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库 %q: %w", path, err)

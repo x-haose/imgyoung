@@ -31,11 +31,11 @@ type ChannelAdmin interface {
 	// ProbeChannel 对已有渠道执行深探测并把结果落库。
 	ProbeChannel(ctx context.Context, channelID int64) error
 	// TestConfig 用未落库的配置执行深探测(测试连接),错误文案可直接展示。
-	TestConfig(ctx context.Context, driverName string, config map[string]string) error
+	TestConfig(ctx context.Context, driverName string, params map[string]string) error
 	// ConfigForEdit 返回渠道配置的编辑视图(敏感值哨兵掩码,含模板表单字段还原)。
 	ConfigForEdit(ctx context.Context, channelID int64) (channel.EditConfig, error)
 	// RestoreSecrets 把配置中的哨兵值还原为指定渠道已存配置的同键原值。
-	RestoreSecrets(ctx context.Context, channelID int64, config map[string]string) (map[string]string, error)
+	RestoreSecrets(ctx context.Context, channelID int64, params map[string]string) (map[string]string, error)
 }
 
 // ReplicationKicker 副本补齐管道的唤醒入口(由 replication.Runner 实现)。

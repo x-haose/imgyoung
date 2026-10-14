@@ -139,7 +139,8 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 // @param set 本次请求生效的配置快照
 // @param data 待上传的图片字节
 // @param opts 上传选项,调用方按各自入口解析后填好
-func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.Settings, data []byte, opts upload.Options) {
+func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.Settings, data []byte,
+	opts upload.Options) {
 	res, err := h.cfg.Upload.Process(r.Context(), data, opts)
 	if err != nil {
 		h.writeUploadError(w, set, err)
@@ -148,7 +149,7 @@ func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.
 	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", opts.FileName, "size", len(data))
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
 		ID:  res.ImageID,
-		URL: h.imageURL(r, set, res.ImageID),
+		URL: imageURL(r, set, res.ImageID),
 	})
 }
 
@@ -157,7 +158,7 @@ func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.
 // @param set 配置快照
 // @param imageID 对外短 ID
 // @return 绝对访问地址
-func (h *Handlers) imageURL(r *http.Request, set config.Settings, imageID string) string {
+func imageURL(r *http.Request, set config.Settings, imageID string) string {
 	base := set.BaseURL
 	if base == "" {
 		base = httpx.RequestBaseURL(r)

@@ -137,7 +137,8 @@ func TestMigrateBackfillsLegacyRows(t *testing.T) {
 	}
 	// 表重建后外键关系必须完好。
 	var n int
-	if err := conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&n); err != nil {
+	row := conn.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM pragma_foreign_key_check`)
+	if err := row.Scan(&n); err != nil {
 		t.Fatalf("外键完整性检查: %v", err)
 	}
 	if n != 0 {

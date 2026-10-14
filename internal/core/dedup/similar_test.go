@@ -145,7 +145,8 @@ func TestMergeCandidateRepointsAndCleans(t *testing.T) {
 		t.Fatalf("引用指向 %d, 期望保留方 %d", blobID, b)
 	}
 	var refCount, pendingDelete int
-	if err := conn.QueryRow("SELECT ref_count, pending_delete FROM blobs WHERE id = ?", b).Scan(&refCount, &pendingDelete); err != nil {
+	row := conn.QueryRow("SELECT ref_count, pending_delete FROM blobs WHERE id = ?", b)
+	if err := row.Scan(&refCount, &pendingDelete); err != nil {
 		t.Fatalf("查保留方: %v", err)
 	}
 	if refCount != 2 || pendingDelete != 0 {
@@ -196,7 +197,9 @@ func TestMergeCandidateCountsActualRefs(t *testing.T) {
 	// 保留方 1 引用,被并方 2 引用(其中一条将被"抢先删除"模拟到期回收)。
 	keep := mkBlobWithPhash(t, ctx, q, "sha-keep", "key-keep", "keepimg001", 0)
 	drop := mkBlobWithPhash(t, ctx, q, "sha-drop", "key-drop", "dropimg001", 1)
-	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "dropimg002", BlobID: drop, UserID: sqlc.DefaultUserID}); err != nil {
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{
+		ID: "dropimg002", BlobID: drop, UserID: sqlc.DefaultUserID,
+	}); err != nil {
 		t.Fatalf("建被并方第二引用: %v", err)
 	}
 	if _, err := conn.Exec("UPDATE blobs SET ref_count = 2 WHERE id = ?", drop); err != nil {

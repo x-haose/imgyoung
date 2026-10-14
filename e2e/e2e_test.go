@@ -22,7 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -30,37 +30,41 @@ import (
 )
 
 // testAdminPass 全部实例的管理员登录密码,即出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
-const testAdminPass = "imgyoung123" //nolint:gosec // 出厂默认密码,公开值非真实凭证
+const testAdminPass = "imgyoung123"
 
 // bootDeadline 等待实例就绪的上限。
 const bootDeadline = 10 * time.Second
 
-// binPath 编译产物路径,由 TestMain 填充。
+// binPath 编译产物路径,由 TestMain 填充;buildErr 非空时为空串。
 var binPath string
 
-// TestMain 编译一次真实二进制,供全部用例复用。
-func TestMain(m *testing.M) {
-	os.Exit(runMain(m))
-}
+// buildErr TestMain 编译二进制的结果;非空时每个用例在起实例处报告它。
+var buildErr error
 
-// runMain 编译二进制并执行用例;独立函数保证 defer 清理在 os.Exit 前生效。
-// @return 进程退出码
-func runMain(m *testing.M) int {
+// TestMain 编译一次真实二进制,供全部用例复用;退出码由测试运行器按 m.Run 结果处理。
+func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "imgyoung-e2e-bin")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "创建临时目录:", err)
-		return 1
+		buildErr = fmt.Errorf("创建临时目录: %w", err)
+		m.Run()
+		return
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
-
 	binPath = filepath.Join(dir, "imgyoung")
-	build := exec.Command("go", "build", "-o", binPath, "github.com/x-haose/imgyoung/cmd/imgyoung")
+	buildErr = buildBinary(binPath)
+	m.Run()
+	_ = os.RemoveAll(dir)
+}
+
+// buildBinary 以纯 Go 方式编译服务二进制到指定路径。
+// @param out 产物路径
+// @return 编译失败时携带编译器输出的错误
+func buildBinary(out string) error {
+	build := exec.Command("go", "build", "-o", out, "github.com/x-haose/imgyoung/cmd/imgyoung")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "编译二进制失败: %v\n%s", err, out)
-		return 1
+	if output, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("编译二进制失败: %w\n%s", err, output)
 	}
-	return m.Run()
+	return nil
 }
 
 // instance 一个独立运行的服务进程。
@@ -107,6 +111,9 @@ func configure(t *testing.T, inst *instance, settings map[string]any) {
 // @param settings 运营配置补丁(键为 config.Settings 的 JSON 名);渠道健康检查间隔已默认压到 1 秒
 func startInstance(t *testing.T, settings map[string]any) *instance {
 	t.Helper()
+	if buildErr != nil {
+		t.Fatalf("服务二进制不可用: %v", buildErr)
+	}
 	dataDir := t.TempDir()
 	port := freePort(t)
 
@@ -225,7 +232,8 @@ func jpegWithEXIF(t *testing.T) []byte {
 // @param fields 额外表单字段(如 exif_policy)
 // @param headers 额外请求头(如 Idempotency-Key)
 // @return 响应对象(调用方负责关闭)
-func upload(t *testing.T, inst *instance, token, filename string, payload []byte, fields, headers map[string]string) *http.Response {
+func upload(t *testing.T, inst *instance, token, filename string, payload []byte,
+	fields, headers map[string]string) *http.Response {
 	t.Helper()
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -431,10 +439,10 @@ func TestUploadServeRoundTrip(t *testing.T) {
 		t.Errorf("Content-Type = %q", ct)
 	}
 	if v := resp.Header.Get("X-Content-Type-Options"); v != "nosniff" {
-		t.Errorf("缺 nosniff 头")
+		t.Error("缺 nosniff 头")
 	}
 	if !strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
-		t.Errorf("缺 immutable 缓存头")
+		t.Error("缺 immutable 缓存头")
 	}
 	got, err := io.ReadAll(resp.Body)
 	if err != nil || !bytes.Equal(got, payload) {
@@ -593,7 +601,8 @@ func TestEncryptedChannel(t *testing.T) {
 func TestRedirectMode(t *testing.T) {
 	inst := startInstance(t, map[string]any{"access_mode": "redirect"})
 	createChannel(t, inst, fmt.Sprintf(
-		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub"}}`,
+		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,`+
+			`"config":{"path":%q,"public_base_url":"https://cdn.example.com/pub"}}`,
 		t.TempDir()))
 	_, url := mustUpload(t, inst, pngBytes(t), nil, nil)
 
@@ -691,7 +700,7 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	if err != nil || len(snapshots) == 0 {
 		t.Fatalf("未在渠道备份目录发现快照: err=%v files=%v", err, snapshots)
 	}
-	sort.Strings(snapshots) // 文件名含时间戳,字典序末位即最新。
+	slices.Sort(snapshots) // 文件名含时间戳,字典序末位即最新。
 	newest := snapshots[len(snapshots)-1]
 	stopInstance(t, inst2)
 
@@ -706,7 +715,7 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("读取快照: %v", err)
 	}
-	// nolint:gosec // dbPath 由 t.TempDir() 派生、文件名固定,非外部输入。
+	//nolint:gosec // G306:dbPath 由 t.TempDir() 派生、文件名固定,非外部输入
 	if werr := os.WriteFile(dbPath, snap, 0o600); werr != nil {
 		t.Fatalf("以快照恢复数据库: %v", werr)
 	}

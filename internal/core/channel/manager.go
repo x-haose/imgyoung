@@ -115,34 +115,10 @@ func (m *Manager) Reload(ctx context.Context) error {
 	previous := m.byID()
 	loaded := make([]managed, 0, len(rows))
 	for _, row := range rows {
-		params, err := m.unsealConfigMap(row.ConfigSealed)
-		if err != nil {
-			m.cfg.Logger.Error("渠道配置无法解密,本渠道跳过", "channel", row.Name, "err", err)
-			continue
+		c, ok := m.loadChannel(ctx, row, previous)
+		if ok {
+			loaded = append(loaded, c)
 		}
-		source := driverSource{driver: row.Driver, encrypted: row.Encrypted != 0, createdAt: row.CreatedAt, params: params}
-		drv := (*rclone.Driver)(nil)
-		if prev, ok := previous[row.ID]; ok && prev.source.equal(source) {
-			drv, source = prev.driver, prev.source
-			delete(previous, row.ID)
-		} else if drv, err = m.openDriver(ctx, row, params); err != nil {
-			m.cfg.Logger.Error("渠道驱动构造失败,本渠道跳过", "channel", row.Name, "err", err)
-			continue
-		}
-		loaded = append(loaded, managed{
-			handle: Handle{
-				ID:              row.ID,
-				Name:            row.Name,
-				Driver:          drv,
-				Encrypted:       row.Encrypted != 0,
-				AllowDirectLink: row.AllowDirectLink != 0,
-				PublicBaseURL:   strings.TrimRight(params[configKeyPublicBaseURL], "/"),
-				PendingDelete:   row.PendingDelete != 0,
-			},
-			healthy: row.Healthy != 0,
-			driver:  drv,
-			source:  source,
-		})
 	}
 	if len(rows) > 0 && len(loaded) == 0 {
 		return fmt.Errorf("全部 %d 个渠道均无法装载", len(rows))
@@ -156,6 +132,45 @@ func (m *Manager) Reload(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// loadChannel 为一条渠道记录装配运行态:驱动输入未变则沿用既有实例并从 previous 摘除,否则构造新实例。
+// @param ctx 控制驱动构造的取消
+// @param row 渠道记录
+// @param previous 换入前的运行态索引;沿用的项会被摘除,剩余项由调用方关闭
+// @return 运行态
+// @return 是否成功;解密或构造失败时已记录错误日志
+func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous map[int64]managed) (managed, bool) {
+	params, err := m.unsealConfigMap(row.ConfigSealed)
+	if err != nil {
+		m.cfg.Logger.Error("渠道配置无法解密,本渠道跳过", "channel", row.Name, "err", err)
+		return managed{}, false
+	}
+	source := driverSource{
+		driver: row.Driver, encrypted: row.Encrypted != 0, createdAt: row.CreatedAt, params: params,
+	}
+	var drv *rclone.Driver
+	if prev, ok := previous[row.ID]; ok && prev.source.equal(source) {
+		drv, source = prev.driver, prev.source
+		delete(previous, row.ID)
+	} else if drv, err = m.openDriver(ctx, row, params); err != nil {
+		m.cfg.Logger.Error("渠道驱动构造失败,本渠道跳过", "channel", row.Name, "err", err)
+		return managed{}, false
+	}
+	return managed{
+		handle: Handle{
+			ID:              row.ID,
+			Name:            row.Name,
+			Driver:          drv,
+			Encrypted:       row.Encrypted != 0,
+			AllowDirectLink: row.AllowDirectLink != 0,
+			PublicBaseURL:   strings.TrimRight(params[configKeyPublicBaseURL], "/"),
+			PendingDelete:   row.PendingDelete != 0,
+		},
+		healthy: row.Healthy != 0,
+		driver:  drv,
+		source:  source,
+	}, true
 }
 
 // byID 返回当前已加载渠道按主键的索引(副本)。
@@ -180,13 +195,13 @@ func (m *Manager) Close(ctx context.Context) error {
 	channels := m.channels
 	m.channels = nil
 	m.mu.Unlock()
-	return m.closeAll(ctx, channels)
+	return closeDrivers(ctx, channels)
 }
 
-// closeAll 关闭一组渠道的驱动,汇总失败。
+// closeDrivers 关闭一组渠道的驱动,汇总失败。
 // @param channels 待关闭的渠道
 // @return 任一驱动关闭失败时的错误
-func (m *Manager) closeAll(ctx context.Context, channels []managed) error {
+func closeDrivers(ctx context.Context, channels []managed) error {
 	var errs []error
 	for _, c := range channels {
 		if err := c.driver.Close(ctx); err != nil {

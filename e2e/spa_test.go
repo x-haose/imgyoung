@@ -10,15 +10,18 @@ import (
 )
 
 // getPath 发送 GET 并返回状态码/Content-Type/响应体。
-func getPath(t *testing.T, inst *instance, path string) (int, string, string) {
+func getPath(t *testing.T, inst *instance, path string) (code int, contentType, body string) {
 	t.Helper()
 	resp, err := http.Get(inst.baseURL + path)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, resp.Header.Get("Content-Type"), string(body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("读 GET %s 响应体: %v", path, err)
+	}
+	return resp.StatusCode, resp.Header.Get("Content-Type"), string(raw)
 }
 
 // TestSPAServed 冒烟:根路径与前端路由均返回内嵌后台页面,API 未匹配路径保持纯 404。

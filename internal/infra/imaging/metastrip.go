@@ -99,6 +99,61 @@ const (
 	webpChunkVP8X   = "VP8X"
 )
 
+// riffChunk RIFF 容器中一个 chunk 在原始字节中的位置。
+type riffChunk struct {
+	fourCC string // chunk 类型标识,定长 4 字节
+	size   int    // 头部声明的数据长度,字节,不含对齐填充
+	start  int    // chunk 头起始偏移
+	end    int    // 结束偏移(不含),含偶数对齐填充字节;末 chunk 缺填充时即数据末尾
+}
+
+// webpRIFFEnd 校验 RIFF/WEBP 头并返回 RIFF 声明的容器结束偏移(不含)。
+// @param data 完整的 WebP 字节
+// @return 容器结束偏移,其后的字节不属于容器
+// @return 头缺失或声明长度越界时的错误
+func webpRIFFEnd(data []byte) (int, error) {
+	if len(data) < webpHeaderSize || string(data[:4]) != "RIFF" || string(data[8:webpHeaderSize]) != "WEBP" {
+		return 0, fmt.Errorf("%w: 缺少 RIFF/WEBP 头", errMalformedWebP)
+	}
+	riffLen := binary.LittleEndian.Uint32(data[4:riffChunkHeader])
+	// 上限校验防 32 位平台 int 转换为负/加法回绕后错位。
+	if riffLen > math.MaxInt32-riffChunkHeader {
+		return 0, fmt.Errorf("%w: RIFF 总长度越界", errMalformedWebP)
+	}
+	riffEnd := riffChunkHeader + int(riffLen)
+	if riffEnd < webpHeaderSize || riffEnd > len(data) {
+		return 0, fmt.Errorf("%w: RIFF 总长度越界", errMalformedWebP)
+	}
+	return riffEnd, nil
+}
+
+// nextRIFFChunk 读取偏移 i 处的 chunk 头,按偶数对齐规则算出其结束偏移。
+// @Description: chunk 数据按偶数对齐,奇数长度补一填充字节;末 chunk 允许缺失该填充。
+// @param data 完整的 WebP 字节
+// @param i chunk 头起始偏移
+// @param riffEnd RIFF 容器结束偏移(不含)
+// @return chunk 位置
+// @return chunk 头截断或长度越界时的错误
+func nextRIFFChunk(data []byte, i, riffEnd int) (riffChunk, error) {
+	if i+riffChunkHeader > riffEnd {
+		return riffChunk{}, fmt.Errorf("%w: chunk 表在偏移 %d 处截断", errMalformedWebP, i)
+	}
+	rawSize := binary.LittleEndian.Uint32(data[i+4 : i+riffChunkHeader])
+	// 上限校验防 32 位平台 int 转换为负后错位。
+	if rawSize > math.MaxInt32 {
+		return riffChunk{}, fmt.Errorf("%w: 偏移 %d 处 chunk 长度越界", errMalformedWebP, i)
+	}
+	size := int(rawSize)
+	end := i + riffChunkHeader + size
+	if end < i || end > riffEnd {
+		return riffChunk{}, fmt.Errorf("%w: 偏移 %d 处 chunk 长度越界", errMalformedWebP, i)
+	}
+	if size%2 == 1 && end < riffEnd {
+		end++
+	}
+	return riffChunk{fourCC: string(data[i : i+4]), size: size, start: i, end: end}, nil
+}
+
 // StripWebPMetadata 移除 WebP RIFF 容器中的 EXIF/XMP chunk,同步清零 VP8X 头的
 // 对应标志位并修正 RIFF 总长度字段,返回新的字节切片(不修改输入)。
 // @Description: 纯 chunk 级字节操作,不解码;像素 chunk(VP8/VP8L/ANMF 等)原样保留。
@@ -107,61 +162,39 @@ const (
 // @return 剥离后的 WebP 字节
 // @return 输入不是结构完整的 WebP 时的错误
 func StripWebPMetadata(data []byte) ([]byte, error) {
-	if len(data) < webpHeaderSize || string(data[:4]) != "RIFF" || string(data[8:webpHeaderSize]) != "WEBP" {
-		return nil, fmt.Errorf("%w: 缺少 RIFF/WEBP 头", errMalformedWebP)
-	}
-	riffLen := binary.LittleEndian.Uint32(data[4:riffChunkHeader])
-	// 上限校验防 32 位平台 int 转换为负/加法回绕后错位。
-	if riffLen > math.MaxInt32-riffChunkHeader {
-		return nil, fmt.Errorf("%w: RIFF 总长度越界", errMalformedWebP)
-	}
-	riffEnd := riffChunkHeader + int(riffLen)
-	if riffEnd < webpHeaderSize || riffEnd > len(data) {
-		return nil, fmt.Errorf("%w: RIFF 总长度越界", errMalformedWebP)
+	riffEnd, err := webpRIFFEnd(data)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]byte, 0, len(data))
 	out = append(out, data[:webpHeaderSize]...)
 	vp8xFlagsAt := -1 // out 中 VP8X 标志字节的下标;-1 表示尚未见到 VP8X
 	for i := webpHeaderSize; i < riffEnd; {
-		if i+riffChunkHeader > riffEnd {
-			return nil, fmt.Errorf("%w: chunk 表在偏移 %d 处截断", errMalformedWebP, i)
+		c, err := nextRIFFChunk(data, i, riffEnd)
+		if err != nil {
+			return nil, err
 		}
-		fourCC := string(data[i : i+4])
-		rawSize := binary.LittleEndian.Uint32(data[i+4 : i+riffChunkHeader])
-		// 上限校验防 32 位平台 int 转换为负后错位。
-		if rawSize > math.MaxInt32 {
-			return nil, fmt.Errorf("%w: 偏移 %d 处 chunk 长度越界", errMalformedWebP, i)
-		}
-		size := int(rawSize)
-		// chunk 数据按偶数对齐,奇数长度补一填充字节;末 chunk 允许缺失该填充。
-		padded := size + size%2
-		end := i + riffChunkHeader + padded
-		if end < i || end > riffEnd {
-			end = i + riffChunkHeader + size
-			if end < i || end > riffEnd {
-				return nil, fmt.Errorf("%w: 偏移 %d 处 chunk 长度越界", errMalformedWebP, i)
-			}
-		}
-		switch fourCC {
+		switch c.fourCC {
 		case webpChunkEXIF, webpChunkXMP:
 			// 元数据 chunk:丢弃。
 		case webpChunkVP8X:
-			if size < 1 {
+			if c.size < 1 {
 				return nil, fmt.Errorf("%w: VP8X 头为空", errMalformedWebP)
 			}
 			// 只认首个 VP8X(规范容器仅一个;畸形多头时只清首个,其余原样保留)。
 			if vp8xFlagsAt < 0 {
 				vp8xFlagsAt = len(out) + riffChunkHeader
 			}
-			out = append(out, data[i:end]...)
+			out = append(out, data[c.start:c.end]...)
 		default:
-			out = append(out, data[i:end]...)
+			out = append(out, data[c.start:c.end]...)
 		}
-		i = end
+		i = c.end
 	}
 	if vp8xFlagsAt >= 0 {
 		out[vp8xFlagsAt] &^= vp8xFlagEXIF | vp8xFlagXMP
 	}
-	binary.LittleEndian.PutUint32(out[4:riffChunkHeader], uint32(len(out)-riffChunkHeader)) //nolint:gosec // 输出不长于输入,RIFF 容器本身以 uint32 记长,合法输入不溢出
+	//nolint:gosec // G115:输出不长于输入,RIFF 容器本身以 uint32 记长,合法输入不溢出
+	binary.LittleEndian.PutUint32(out[4:riffChunkHeader], uint32(len(out)-riffChunkHeader))
 	return out, nil
 }

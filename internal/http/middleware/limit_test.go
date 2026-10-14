@@ -24,12 +24,10 @@ func TestConcurrencyLimitRejectsWhenFull(t *testing.T) {
 
 	// 第一个请求占住唯一槽位。
 	var wg sync.WaitGroup
-	wg.Add(1)
 	firstRec := httptest.NewRecorder()
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		handler.ServeHTTP(firstRec, httptest.NewRequest(http.MethodPost, "/", nil))
-	}()
+	})
 	<-entered
 
 	// 槽位已满:第二个请求应立即 429。

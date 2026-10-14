@@ -29,6 +29,20 @@ func matchRefererHost(patterns []string, host string) bool {
 	return false
 }
 
+// refererAllowed 判定请求来源是否可放行:无 Referer 按 allowEmpty,有则其主机须命中白名单。
+// @Description: Referer 解析失败视为未命中——畸形来源与陌生来源同样不放行。
+// @param whitelist 白名单模式列表,非空
+// @param ref 请求 Referer 头原文,可为空
+// @param allowEmpty 空 Referer 是否放行
+// @return 是否放行
+func refererAllowed(whitelist []string, ref string, allowEmpty bool) bool {
+	if ref == "" {
+		return allowEmpty
+	}
+	u, err := url.Parse(ref)
+	return err == nil && matchRefererHost(whitelist, u.Hostname())
+}
+
 // RefererCheck 防盗链中间件。
 // @Description: 白名单与空 Referer 策略逐请求取快照,变更即时生效(热生效);
 // patterns 为 nil 或返回空 = 不启用;空 Referer 按 allowEmpty 决定;
@@ -47,17 +61,7 @@ func RefererCheck(patterns func() []string, allowEmpty func() bool) func(http.Ha
 				next.ServeHTTP(w, r)
 				return
 			}
-			ref := r.Header.Get("Referer")
-			if ref == "" {
-				if allowEmpty() {
-					next.ServeHTTP(w, r)
-					return
-				}
-				http.Error(w, "禁止访问", http.StatusForbidden)
-				return
-			}
-			u, err := url.Parse(ref)
-			if err != nil || !matchRefererHost(whitelist, u.Hostname()) {
+			if !refererAllowed(whitelist, r.Header.Get("Referer"), allowEmpty()) {
 				http.Error(w, "禁止访问", http.StatusForbidden)
 				return
 			}

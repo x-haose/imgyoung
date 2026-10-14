@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
-
-// sqliteConstraintUnique modernc 驱动的唯一约束冲突扩展错误码(SQLITE_CONSTRAINT_UNIQUE)。
-const sqliteConstraintUnique = 2067
 
 // IssueToken 为用户签发一个具名上传 Token。
 // @Description: 明文仅此一次返回,落库只存 SHA256 与识别前缀;同一用户的有效
@@ -58,7 +56,8 @@ func (s *Service) IssueToken(ctx context.Context, userID, name string, expiresIn
 // @param expiresAt 到期时刻;零值表示永久
 // @return 签发结果(含明文)
 // @return ErrTokenNameTaken 或基础设施错误
-func issueToken(ctx context.Context, q *sqlc.Queries, userID, name string, expiresAt sql.NullString) (IssuedToken, error) {
+func issueToken(ctx context.Context, q *sqlc.Queries, userID, name string,
+	expiresAt sql.NullString) (IssuedToken, error) {
 	plaintext, err := newTokenPlaintext()
 	if err != nil {
 		return IssuedToken{}, err
@@ -73,7 +72,7 @@ func issueToken(ctx context.Context, q *sqlc.Queries, userID, name string, expir
 		ExpiresAt: expiresAt,
 	})
 	if err != nil {
-		if isUniqueViolation(err, "tokens.name") {
+		if db.IsUniqueViolation(err, "tokens.name") {
 			return IssuedToken{}, ErrTokenNameTaken
 		}
 		return IssuedToken{}, fmt.Errorf("写入 Token: %w", err)

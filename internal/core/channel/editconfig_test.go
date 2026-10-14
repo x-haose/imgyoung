@@ -57,7 +57,8 @@ func TestManagerConfigForEdit(t *testing.T) {
 	if ec.Inputs["secret_access_key"] != channel.SecretPlaceholder {
 		t.Fatalf("密码字段未掩码: %+v", ec.Inputs)
 	}
-	if ec.Inputs["access_key_id"] != "AKTEST" || ec.Inputs["bucket"] != "bkt" || ec.Inputs["endpoint"] != "http://127.0.0.1:1" {
+	if ec.Inputs["access_key_id"] != "AKTEST" || ec.Inputs["bucket"] != "bkt" ||
+		ec.Inputs["endpoint"] != "http://127.0.0.1:1" {
 		t.Fatalf("模板表单字段未还原: %+v", ec.Inputs)
 	}
 

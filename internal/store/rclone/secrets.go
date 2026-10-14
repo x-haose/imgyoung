@@ -14,7 +14,7 @@ import (
 // @param params 后端参数
 // @return 后端不存在或编码失败时的错误
 func ObscureSecrets(backend string, params map[string]string) error {
-	return obscureSecrets(backend, params, func(string) bool { return true })
+	return obscureMatching(backend, params, func(string) bool { return true })
 }
 
 // ObscurePlainSecrets 同 ObscureSecrets,但已是编码产物的值原样保留。
@@ -26,18 +26,18 @@ func ObscureSecrets(backend string, params map[string]string) error {
 // @param params 后端参数
 // @return 后端不存在或编码失败时的错误
 func ObscurePlainSecrets(backend string, params map[string]string) error {
-	return obscureSecrets(backend, params, func(v string) bool {
+	return obscureMatching(backend, params, func(v string) bool {
 		_, err := obscure.Reveal(v)
 		return err != nil
 	})
 }
 
-// obscureSecrets 对密码类参数中 isPlain 判定为明文的值编码。
+// obscureMatching 对密码类参数中 isPlain 判定为明文的值编码。
 // @param backend rclone 后端名
 // @param params 后端参数
 // @param isPlain 判定值是否为待编码明文
 // @return 后端不存在或编码失败时的错误
-func obscureSecrets(backend string, params map[string]string, isPlain func(string) bool) error {
+func obscureMatching(backend string, params map[string]string, isPlain func(string) bool) error {
 	ri, err := fs.Find(backend)
 	if err != nil {
 		return fmt.Errorf("未知的 rclone 后端 %q", backend)

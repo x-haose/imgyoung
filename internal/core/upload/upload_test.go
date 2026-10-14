@@ -144,7 +144,9 @@ func TestProcessStoresPNG(t *testing.T) {
 	env := newTestEnv(t, 50)
 	payload := pngBytes(t)
 
-	res, err := env.svc.Process(t.Context(), payload, upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough})
+	res, err := env.svc.Process(t.Context(), payload, upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+	})
 	if err != nil {
 		t.Fatalf("Process 返回错误: %v", err)
 	}
@@ -355,7 +357,9 @@ func TestProcessTruncatesLongFileName(t *testing.T) {
 // TestProcessRejectsUnsupportedType 验证非白名单类型返回 ErrUnsupportedType。
 func TestProcessRejectsUnsupportedType(t *testing.T) {
 	env := newTestEnv(t, 50)
-	_, err := env.svc.Process(t.Context(), []byte("just some text"), upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.txt", EXIFPolicy: imaging.PolicyPassthrough})
+	_, err := env.svc.Process(t.Context(), []byte("just some text"), upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.txt", EXIFPolicy: imaging.PolicyPassthrough,
+	})
 	if !errors.Is(err, upload.ErrUnsupportedType) {
 		t.Fatalf("错误 = %v, 期望 ErrUnsupportedType", err)
 	}
@@ -364,7 +368,9 @@ func TestProcessRejectsUnsupportedType(t *testing.T) {
 // TestProcessRejectsTooManyPixels 验证超出像素预算返回 ErrTooManyPixels(不进解码器)。
 func TestProcessRejectsTooManyPixels(t *testing.T) {
 	env := newTestEnv(t, 1) // 预算 1 百万像素,1024x1024 必超
-	_, err := env.svc.Process(t.Context(), bigPNG(t), upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough})
+	_, err := env.svc.Process(t.Context(), bigPNG(t), upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+	})
 	if !errors.Is(err, upload.ErrTooManyPixels) {
 		t.Fatalf("错误 = %v, 期望 ErrTooManyPixels", err)
 	}
@@ -375,11 +381,17 @@ func TestProcessIdempotency(t *testing.T) {
 	env := newTestEnv(t, 50)
 	payload := pngBytes(t)
 
-	first, err := env.svc.Process(t.Context(), payload, upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", IdempotencyKey: "retry-key-1", EXIFPolicy: imaging.PolicyPassthrough})
+	first, err := env.svc.Process(t.Context(), payload, upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", IdempotencyKey: "retry-key-1",
+		EXIFPolicy: imaging.PolicyPassthrough,
+	})
 	if err != nil {
 		t.Fatalf("第一次 Process: %v", err)
 	}
-	second, err := env.svc.Process(t.Context(), payload, upload.Options{UserID: sqlc.DefaultUserID, FileName: "a.png", IdempotencyKey: "retry-key-1", EXIFPolicy: imaging.PolicyPassthrough})
+	second, err := env.svc.Process(t.Context(), payload, upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", IdempotencyKey: "retry-key-1",
+		EXIFPolicy: imaging.PolicyPassthrough,
+	})
 	if err != nil {
 		t.Fatalf("第二次 Process: %v", err)
 	}

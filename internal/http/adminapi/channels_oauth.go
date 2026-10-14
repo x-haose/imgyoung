@@ -77,7 +77,7 @@ func (h *Handlers) HandleChannelOAuthStart(w http.ResponseWriter, r *http.Reques
 func (h *Handlers) HandleChannelOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	state := q.Get("state")
-	driver, params, redirectURI, err := h.cfg.OAuth.Pending(state)
+	pending, err := h.cfg.OAuth.Pending(state)
 	if err != nil {
 		writeOAuthPage(w, http.StatusBadRequest, "授权会话已失效,请回到后台重新发起。")
 		return
@@ -88,7 +88,7 @@ func (h *Handlers) HandleChannelOAuthCallback(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	flow, err := channel.NewOAuthFlow(r.Context(), driver, params, redirectURI)
+	flow, err := channel.NewOAuthFlow(r.Context(), pending.Driver, pending.Params, pending.RedirectURI)
 	if err != nil {
 		_ = h.cfg.OAuth.Complete(state, "", templateErrMsg(err))
 		writeOAuthPage(w, http.StatusOK, "授权未完成,请回到后台查看。")
@@ -97,7 +97,7 @@ func (h *Handlers) HandleChannelOAuthCallback(w http.ResponseWriter, r *http.Req
 	token, err := flow.Exchange(r.Context(), q.Get("code"))
 	if err != nil {
 		// 换取失败多为应用凭证或回调地址与开放平台登记值不一致,原因需回传给管理员。
-		h.cfg.Logger.Warn("换取网盘授权令牌失败", "driver", driver, "err", err)
+		h.cfg.Logger.Warn("换取网盘授权令牌失败", "driver", pending.Driver, "err", err)
 		_ = h.cfg.OAuth.Complete(state, "", "换取令牌失败,请核对应用凭证与回调地址")
 		writeOAuthPage(w, http.StatusOK, "授权未完成,请回到后台查看。")
 		return

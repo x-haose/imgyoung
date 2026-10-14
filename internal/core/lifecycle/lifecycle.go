@@ -195,7 +195,8 @@ func (s *Sweeper) expireOne(ctx context.Context, imageID string, blobID int64) e
 	if refCount <= 0 {
 		grace := time.Duration(s.cfg.Settings().DeleteGraceMinutes) * time.Minute
 		deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(grace)), Valid: true}
-		if err := q.MarkBlobForDelete(ctx, sqlc.MarkBlobForDeleteParams{DeleteAfter: deleteAfter, ID: blobID}); err != nil {
+		mark := sqlc.MarkBlobForDeleteParams{DeleteAfter: deleteAfter, ID: blobID}
+		if err := q.MarkBlobForDelete(ctx, mark); err != nil {
 			return fmt.Errorf("标记物理图待删: %w", err)
 		}
 	}
@@ -276,26 +277,36 @@ func (s *Sweeper) physicalDelete(ctx context.Context) error {
 	return nil
 }
 
-// deleteBlob 物理删一个物理图:先取副本渠道清单,事务内删业务行,再级联入队删渠道对象。
+// deleteBlob 物理删一个物理图:清衍生图缓存,取副本渠道清单,事务内删业务行,再级联入队删渠道对象。
 // @Description: 渠道对象删除走 best-effort 入队——失败即对象成孤儿,由对账 GC 最终回收,
 // 不阻塞逻辑删。CDN purge 不在此层:物理删时引用行已全部消亡,无公开 URL 可还原,
 // 每条引用的 purge 已在 expireOne 回收该引用时逐条入队。
-// @return 事务失败时的错误
+// @return 缓存清理、查询或事务失败时的错误
 func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey string) error {
-	// 先清衍生图缓存(文件+索引):variants 有外键指向 blobs,不先删其行,下面的 DeleteBlob 会被外键约束拦下。
+	// 先清衍生图缓存(文件+索引):variants 有外键指向 blobs,不先删其行,DeleteBlob 会被外键约束拦下。
 	// 缓存是可重建的派生物,即便后续事务回滚也只是让其冷启,无数据风险。
 	if s.cfg.Variants != nil {
 		if err := s.cfg.Variants.DeleteByBlob(ctx, blobID); err != nil {
 			return fmt.Errorf("清理衍生图缓存: %w", err)
 		}
 	}
-
 	// 删业务行前取副本渠道清单(删后就查不到了)。
 	channelIDs, err := s.cfg.Queries.ListBlobChannelIDs(ctx, blobID)
 	if err != nil {
 		return fmt.Errorf("查询副本渠道: %w", err)
 	}
+	if err := s.deleteBlobRows(ctx, blobID); err != nil {
+		return err
+	}
+	s.enqueueObjectDeletes(ctx, blobID, storageKey, channelIDs)
+	return nil
+}
 
+// deleteBlobRows 在单事务内删除物理图及其副本记录、衍生图索引、相似候选。
+// @Description: 事务内复查:扫描到物理删之间 blob 若被重新引用或撤销待删标记,删除条件不再成立、
+// 影响 0 行,整个事务回滚——副本记录与变体索引随之保留,不会留下一个有引用却无副本的物理图。
+// @return 事务失败或物理图已不满足删除条件时的错误
+func (s *Sweeper) deleteBlobRows(ctx context.Context, blobID int64) error {
 	tx, err := s.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开启事务: %w", err)
@@ -305,7 +316,7 @@ func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey strin
 	if err := q.DeleteBlobChannelsByBlob(ctx, blobID); err != nil {
 		return fmt.Errorf("删除副本记录: %w", err)
 	}
-	// 无条件删 variant 索引行作外键兜底:上面 DeleteByBlob 已删则此处 0 行;若 Variants 为 nil 而有残留行,
+	// 无条件删 variant 索引行作外键兜底:缓存清理已删则此处 0 行;Variants 为 nil 而有残留行时
 	// 这里兜住,避免 DeleteBlob 撞外键约束致该物理图每轮重试删不掉(文件清理仍依赖 DeleteByBlob)。
 	if err := q.DeleteVariantsByBlob(ctx, blobID); err != nil {
 		return fmt.Errorf("删除衍生图索引: %w", err)
@@ -316,8 +327,6 @@ func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey strin
 	}); err != nil {
 		return fmt.Errorf("删除相似候选: %w", err)
 	}
-	// 事务内复查:扫描到物理删之间 blob 若被重新引用或撤销待删标记,删除条件不再成立、影响 0 行,
-	// 整个事务回滚——副本记录与变体索引随之保留,不会留下一个有引用却无副本的物理图。
 	deleted, err := q.DeleteBlob(ctx, blobID)
 	if err != nil {
 		return fmt.Errorf("删除物理图: %w", err)
@@ -328,14 +337,21 @@ func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey strin
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交物理删: %w", err)
 	}
+	return nil
+}
 
+// enqueueObjectDeletes 为物理图在各渠道的对象入队删除任务;入队口未配置时跳过,单个入队失败只告警。
+// @param blobID 物理图主键(日志定位用)
+// @param storageKey 对象键
+// @param channelIDs 持有该对象的渠道
+func (s *Sweeper) enqueueObjectDeletes(ctx context.Context, blobID int64, storageKey string,
+	channelIDs []int64) {
+	if s.cfg.Deleter == nil {
+		return
+	}
 	for _, chID := range channelIDs {
-		if s.cfg.Deleter == nil {
-			continue
-		}
 		if err := s.cfg.Deleter.EnqueueDelete(ctx, chID, storageKey); err != nil {
 			s.cfg.Logger.Warn("入队删除渠道对象失败,待对账 GC 兜底", "blob", blobID, "channel", chID, "err", err)
 		}
 	}
-	return nil
 }

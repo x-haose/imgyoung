@@ -10,11 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
 // Dir 备份对象在渠道内的目录前缀;对账 GC 必须排除该前缀。
@@ -169,7 +170,7 @@ func (s *Service) prune(ctx context.Context, h channel.Handle) error {
 	if len(objs) <= keep {
 		return nil
 	}
-	sort.Slice(objs, func(i, j int) bool { return objs[i].Key > objs[j].Key })
+	slices.SortFunc(objs, func(a, b driver.ObjectInfo) int { return strings.Compare(b.Key, a.Key) })
 	for _, o := range objs[keep:] {
 		if err := h.Driver.Delete(ctx, o.Key); err != nil {
 			return fmt.Errorf("清理旧备份 %q: %w", o.Key, err)

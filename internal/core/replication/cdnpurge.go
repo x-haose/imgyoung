@@ -52,7 +52,7 @@ type cdnPurgeWorker struct {
 }
 
 // Timeout 单任务执行超时。
-func (w *cdnPurgeWorker) Timeout(*river.Job[CDNPurgeArgs]) time.Duration {
+func (*cdnPurgeWorker) Timeout(*river.Job[CDNPurgeArgs]) time.Duration {
 	return purgeJobTimeout
 }
 

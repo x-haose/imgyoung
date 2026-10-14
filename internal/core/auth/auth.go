@@ -140,6 +140,15 @@ func (s *Service) Login(ctx context.Context, name, password, clientIP string) (L
 	// 凭证正确即清空限速计数:限速只针对失败尝试,不误伤合法用户的正常登录。
 	s.limiter.Reset("ip:" + clientIP)
 	s.limiter.Reset("user:" + name)
+	return s.openSession(ctx, user)
+}
+
+// openSession 为已通过凭证校验的用户创建会话:生成会话 id 与 CSRF 令牌,会话 id 只存哈希。
+// @param ctx 控制超时与取消
+// @param user 用户行
+// @return 会话明文、CSRF 令牌与主体
+// @return 随机数生成或写库失败时的错误
+func (s *Service) openSession(ctx context.Context, user sqlc.User) (LoginResult, error) {
 	sessionID, err := randomString()
 	if err != nil {
 		return LoginResult{}, fmt.Errorf("生成会话 id: %w", err)

@@ -5,10 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
-	sqlite "modernc.org/sqlite"
-
+	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/id"
 )
@@ -76,7 +74,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateUserParams) (sqlc.User
 		QuotaBytes:      quotaNull(p.QuotaBytes),
 		DefaultTtlHours: p.DefaultTTLHours,
 	}); err != nil {
-		if isUniqueViolation(err, "users.name") {
+		if db.IsUniqueViolation(err, "users.name") {
 			return sqlc.User{}, ErrUserNameTaken
 		}
 		return sqlc.User{}, fmt.Errorf("写入用户: %w", err)
@@ -121,7 +119,7 @@ func (s *Service) UpdateUser(ctx context.Context, userID string, p UpdateUserPar
 		Disabled:        boolInt(p.Disabled),
 		ID:              userID,
 	}); err != nil {
-		if isUniqueViolation(err, "users.name") {
+		if db.IsUniqueViolation(err, "users.name") {
 			return ErrUserNameTaken
 		}
 		return fmt.Errorf("更新用户: %w", err)
@@ -169,7 +167,7 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 		return fmt.Errorf("删除用户会话: %w", err)
 	}
 	if err := q.DeleteUser(ctx, userID); err != nil {
-		if isForeignKeyViolation(err) {
+		if db.IsForeignKeyViolation(err) {
 			return ErrUserHasImages
 		}
 		return fmt.Errorf("删除用户: %w", err)
@@ -232,24 +230,4 @@ func boolInt(b bool) int64 {
 		return 1
 	}
 	return 0
-}
-
-// isUniqueViolation 判定错误是否为指定列的唯一约束冲突。
-// @param err 待判定错误
-// @param column 形如 "users.name" 的约束列
-// @return 命中为 true
-func isUniqueViolation(err error, column string) bool {
-	var se *sqlite.Error
-	return errors.As(err, &se) && se.Code() == sqliteConstraintUnique && strings.Contains(se.Error(), column)
-}
-
-// sqliteConstraintForeignKey modernc 驱动的外键约束冲突扩展错误码(SQLITE_CONSTRAINT_FOREIGNKEY)。
-const sqliteConstraintForeignKey = 787
-
-// isForeignKeyViolation 判定错误是否为外键约束冲突。
-// @param err 待判定错误
-// @return 命中为 true
-func isForeignKeyViolation(err error) bool {
-	var se *sqlite.Error
-	return errors.As(err, &se) && se.Code() == sqliteConstraintForeignKey
 }

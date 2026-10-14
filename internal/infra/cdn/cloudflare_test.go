@@ -104,7 +104,10 @@ func TestPurgeAPIFailure(t *testing.T) {
 		body   string
 		want   string
 	}{
-		{"信封失败", http.StatusForbidden, `{"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}`, "10000"},
+		{
+			"信封失败", http.StatusForbidden,
+			`{"success":false,"errors":[{"code":10000,"message":"Authentication error"}]}`, "10000",
+		},
 		{"信封失败无明细且 2xx", http.StatusOK, `{"success":false,"errors":[]}`, "success=false"},
 		{"非 2xx 无信封", http.StatusBadGateway, "gateway error", "502"},
 	}

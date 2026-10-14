@@ -32,13 +32,17 @@ func TestReportOnceSumsDoneReplicas(t *testing.T) {
 		if err != nil {
 			t.Fatalf("建 blob: %v", err)
 		}
-		if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{BlobID: blobID, ChannelID: 1, State: "done"}); err != nil {
+		if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
+			BlobID: blobID, ChannelID: 1, State: "done",
+		}); err != nil {
 			t.Fatalf("建副本: %v", err)
 		}
 	}
 
 	g := &fakeGauge{vals: map[string]float64{}}
-	r := usage.New(usage.Config{Queries: q, Gauge: g, QuotaBytes: func() int64 { return 0 }, Logger: slog.New(slog.DiscardHandler)})
+	r := usage.New(usage.Config{
+		Queries: q, Gauge: g, QuotaBytes: func() int64 { return 0 }, Logger: slog.New(slog.DiscardHandler),
+	})
 	if err := r.ReportOnce(ctx); err != nil {
 		t.Fatalf("ReportOnce 返回错误: %v", err)
 	}

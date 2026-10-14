@@ -63,18 +63,25 @@ func (s *OAuthSessions) Start(driver string, params map[string]string, redirectU
 	return state, nil
 }
 
+// PendingAuth 一次待换取令牌的授权的发起信息。
+type PendingAuth struct {
+	Driver      string            // rclone 后端名
+	Params      map[string]string // 后端参数,含自建应用凭证
+	RedirectURI string            // 发起时使用的回调地址,换取令牌时必须一致
+}
+
 // Pending 取出待换取令牌的会话信息。
 // @param state 一次性 state
-// @return 后端名、后端参数、回调地址
+// @return 发起信息
 // @return ErrOAuthSessionNotFound
-func (s *OAuthSessions) Pending(state string) (string, map[string]string, string, error) {
+func (s *OAuthSessions) Pending(state string) (PendingAuth, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[state]
-	if !ok || s.expiredLocked(sess) {
-		return "", nil, "", ErrOAuthSessionNotFound
+	if !ok || expired(sess) {
+		return PendingAuth{}, ErrOAuthSessionNotFound
 	}
-	return sess.driver, sess.params, sess.redirectURI, nil
+	return PendingAuth{Driver: sess.driver, Params: sess.params, RedirectURI: sess.redirectURI}, nil
 }
 
 // Complete 记录换取结果。
@@ -86,7 +93,7 @@ func (s *OAuthSessions) Complete(state, token, failure string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[state]
-	if !ok || s.expiredLocked(sess) {
+	if !ok || expired(sess) {
 		return ErrOAuthSessionNotFound
 	}
 	sess.token, sess.failure = token, failure
@@ -96,14 +103,14 @@ func (s *OAuthSessions) Complete(state, token, failure string) error {
 // Take 取走授权结果,取走即销毁会话。
 // @Description: 令牌只允许被领取一次,避免同一 state 被重放领第二次。
 // @param state 一次性 state
-// @return 令牌 JSON;尚未完成时为空
-// @return 失败原因;无失败时为空
-// @return ErrOAuthSessionNotFound
-func (s *OAuthSessions) Take(state string) (string, string, error) {
+// @return token 令牌 JSON;尚未完成时为空
+// @return failure 失败原因;无失败时为空
+// @return err ErrOAuthSessionNotFound
+func (s *OAuthSessions) Take(state string) (token, failure string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[state]
-	if !ok || s.expiredLocked(sess) {
+	if !ok || expired(sess) {
 		return "", "", ErrOAuthSessionNotFound
 	}
 	if sess.token == "" && sess.failure == "" {
@@ -113,17 +120,17 @@ func (s *OAuthSessions) Take(state string) (string, string, error) {
 	return sess.token, sess.failure, nil
 }
 
-// expiredLocked 判定会话是否已过期;调用方须持锁。
+// expired 判定会话是否已过期。
 // @param sess 会话
 // @return 是否过期
-func (s *OAuthSessions) expiredLocked(sess *oauthSession) bool {
+func expired(sess *oauthSession) bool {
 	return time.Since(sess.createdAt) > oauthSessionTTL
 }
 
 // evictExpiredLocked 清理过期会话;调用方须持锁。
 func (s *OAuthSessions) evictExpiredLocked() {
 	for state, sess := range s.sessions {
-		if s.expiredLocked(sess) {
+		if expired(sess) {
 			delete(s.sessions, state)
 		}
 	}

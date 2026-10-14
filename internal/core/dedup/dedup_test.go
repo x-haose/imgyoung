@@ -58,7 +58,9 @@ func TestMergeExactCollapsesDuplicates(t *testing.T) {
 	keeperID := mkBlobWithImage(t, ctx, q, "samehash", "img_a_key", "imageaaaa1")
 	redundantID := mkBlobWithImage(t, ctx, q, "samehash", "img_b_key", "imagebbbb1")
 
-	m := dedup.New(dedup.Config{Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	m := dedup.New(dedup.Config{
+		Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler),
+	})
 	n, err := m.MergeExactOnce(ctx)
 	if err != nil {
 		t.Fatalf("MergeExactOnce 返回错误: %v", err)
@@ -80,7 +82,8 @@ func TestMergeExactCollapsesDuplicates(t *testing.T) {
 
 	// 保留 blob 引用计数并入为 2。
 	var keeperRef, keeperPending int
-	if err := conn.QueryRowContext(ctx, "SELECT ref_count, pending_delete FROM blobs WHERE id = ?", keeperID).Scan(&keeperRef, &keeperPending); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT ref_count, pending_delete FROM blobs WHERE id = ?", keeperID).
+		Scan(&keeperRef, &keeperPending); err != nil {
 		t.Fatalf("查保留 blob: %v", err)
 	}
 	if keeperRef != 2 || keeperPending != 0 {
@@ -89,7 +92,8 @@ func TestMergeExactCollapsesDuplicates(t *testing.T) {
 
 	// 冗余 blob 引用归零并打物理删标记(其对象交 sweeper 清)。
 	var redRef, redPending int
-	if err := conn.QueryRowContext(ctx, "SELECT ref_count, pending_delete FROM blobs WHERE id = ?", redundantID).Scan(&redRef, &redPending); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT ref_count, pending_delete FROM blobs WHERE id = ?", redundantID).
+		Scan(&redRef, &redPending); err != nil {
 		t.Fatalf("查冗余 blob: %v", err)
 	}
 	if redRef != 0 || redPending != 1 {

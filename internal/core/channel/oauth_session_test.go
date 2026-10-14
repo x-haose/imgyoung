@@ -14,12 +14,12 @@ func TestOAuthSessionRoundTrip(t *testing.T) {
 		t.Fatalf("Start 报错: %v", err)
 	}
 
-	driver, params, redirect, err := s.Pending(state)
+	pending, err := s.Pending(state)
 	if err != nil {
 		t.Fatalf("Pending 报错: %v", err)
 	}
-	if driver != "drive" || params["client_id"] != "cid" || redirect != "https://x/cb" {
-		t.Errorf("回读错位: driver=%q params=%v redirect=%q", driver, params, redirect)
+	if pending.Driver != "drive" || pending.Params["client_id"] != "cid" || pending.RedirectURI != "https://x/cb" {
+		t.Errorf("回读错位: %+v", pending)
 	}
 
 	// 未完成时领取应得空结果而非报错——前端靠这个状态继续轮询。
@@ -65,12 +65,12 @@ func TestOAuthSessionParamsAreCopied(t *testing.T) {
 	}
 	params["client_id"] = "被改掉了"
 
-	_, got, _, err := s.Pending(state)
+	again, err := s.Pending(state)
 	if err != nil {
 		t.Fatalf("Pending 报错: %v", err)
 	}
-	if got["client_id"] != "cid" {
-		t.Errorf("会话参数被外部改动污染: %q", got["client_id"])
+	if again.Params["client_id"] != "cid" {
+		t.Errorf("会话参数被外部改动污染: %q", again.Params["client_id"])
 	}
 }
 
@@ -86,7 +86,7 @@ func TestOAuthSessionExpires(t *testing.T) {
 	s.sessions[state].createdAt = time.Now().Add(-oauthSessionTTL - time.Second)
 	s.mu.Unlock()
 
-	if _, _, _, err := s.Pending(state); !errors.Is(err, ErrOAuthSessionNotFound) {
+	if _, err := s.Pending(state); !errors.Is(err, ErrOAuthSessionNotFound) {
 		t.Errorf("Pending 错误 = %v, 期望 ErrOAuthSessionNotFound", err)
 	}
 	if err := s.Complete(state, "TOKEN", ""); !errors.Is(err, ErrOAuthSessionNotFound) {
@@ -97,7 +97,7 @@ func TestOAuthSessionExpires(t *testing.T) {
 // TestOAuthSessionUnknownState 验证未知 state 一律被拒。
 func TestOAuthSessionUnknownState(t *testing.T) {
 	s := NewOAuthSessions()
-	if _, _, _, err := s.Pending("没这个"); !errors.Is(err, ErrOAuthSessionNotFound) {
+	if _, err := s.Pending("没这个"); !errors.Is(err, ErrOAuthSessionNotFound) {
 		t.Errorf("Pending 错误 = %v", err)
 	}
 	if _, _, err := s.Take("没这个"); !errors.Is(err, ErrOAuthSessionNotFound) {

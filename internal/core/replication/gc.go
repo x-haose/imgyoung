@@ -52,30 +52,25 @@ func (r *Runner) RunGC(ctx context.Context) ([]GCResult, error) {
 	return results, nil
 }
 
+// inventory 渠道上业务对象的盘点结果,系统目录与健康探测对象已排除。
+type inventory struct {
+	sizes map[string]int64 // 对象键 → 字节数
+	stale []string         // 修改时间早于孤儿宽限期的对象键,孤儿回收只在其中选
+	bytes int64            // 对象总字节
+}
+
 // gcChannel 对单个渠道做双向对账。
 // @param h 目标渠道
 // @return 对账统计
 // @return 列举或查询失败时的错误
 func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, error) {
 	res := GCResult{Channel: h.Name}
-
-	objs, err := h.Driver.List(ctx, "")
+	inv, err := takeInventory(ctx, h)
 	if err != nil {
-		return res, fmt.Errorf("列举渠道对象: %w", err)
+		return res, err
 	}
-	onChannel := make(map[string]int64, len(objs))
-	var orphanCandidates []string
-	for _, o := range objs {
-		if strings.HasPrefix(o.Key, systemPrefix) || o.Key == channel.HealthProbeKey {
-			continue
-		}
-		res.Objects++
-		res.Bytes += o.Size
-		onChannel[o.Key] = o.Size
-		if time.Since(o.ModTime) > orphanGrace {
-			orphanCandidates = append(orphanCandidates, o.Key)
-		}
-	}
+	res.Objects = len(inv.sizes)
+	res.Bytes = inv.bytes
 
 	rows, err := r.cfg.Queries.ListDoneBlobChannelsForChannel(ctx, h.ID)
 	if err != nil {
@@ -85,36 +80,79 @@ func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, err
 	for _, row := range rows {
 		inDB[row.StorageKey] = row.BlobID
 	}
+	res.OrphansDeleted = r.reclaimOrphans(ctx, h, inv.stale, inDB)
+	res.PhantomsRequeued = r.requeuePhantoms(ctx, h, inDB, inv.sizes)
+	return res, nil
+}
 
-	// 孤儿:渠道有、DB 无、已过宽限期 → 回收。
-	for _, key := range orphanCandidates {
+// takeInventory 列举渠道对象并盘点:统计总量,挑出已过宽限期的孤儿候选。
+// @param h 目标渠道
+// @return 盘点结果
+// @return 列举失败时的错误
+func takeInventory(ctx context.Context, h channel.Handle) (inventory, error) {
+	objs, err := h.Driver.List(ctx, "")
+	if err != nil {
+		return inventory{}, fmt.Errorf("列举渠道对象: %w", err)
+	}
+	inv := inventory{sizes: make(map[string]int64, len(objs))}
+	for _, o := range objs {
+		if strings.HasPrefix(o.Key, systemPrefix) || o.Key == channel.HealthProbeKey {
+			continue
+		}
+		inv.sizes[o.Key] = o.Size
+		inv.bytes += o.Size
+		if time.Since(o.ModTime) > orphanGrace {
+			inv.stale = append(inv.stale, o.Key)
+		}
+	}
+	return inv, nil
+}
+
+// reclaimOrphans 回收孤儿对象:渠道有、DB 无、已过宽限期。单个删除失败只告警,留待下一轮。
+// @param h 目标渠道
+// @param stale 已过宽限期的对象键
+// @param inDB DB 记为就绪的对象键 → blob 主键
+// @return 回收的对象数
+func (r *Runner) reclaimOrphans(ctx context.Context, h channel.Handle, stale []string,
+	inDB map[string]int64) int {
+	deleted := 0
+	for _, key := range stale {
 		if _, ok := inDB[key]; ok {
 			continue
 		}
-		if derr := h.Driver.Delete(ctx, key); derr != nil {
-			r.cfg.Logger.Warn("孤儿对象回收失败", "channel", h.Name, "key", key, "err", derr)
+		if err := h.Driver.Delete(ctx, key); err != nil {
+			r.cfg.Logger.Warn("孤儿对象回收失败", "channel", h.Name, "key", key, "err", err)
 			continue
 		}
-		res.OrphansDeleted++
+		deleted++
 	}
+	return deleted
+}
 
-	// 幻影:DB 记为就绪、渠道缺失 → 回退 pending 并重新入队补齐。
+// requeuePhantoms 处理幻影副本:DB 记为就绪、渠道缺失的,回退 pending 并重新入队补齐。
+// @Description: 复位失败的行跳过不计数;入队失败只告警,pending 行由下一轮对账扫描兜底入队。
+// @param h 目标渠道
+// @param inDB DB 记为就绪的对象键 → blob 主键
+// @param onChannel 渠道上实际存在的对象键 → 字节数
+// @return 复位并重新入队的副本数
+func (r *Runner) requeuePhantoms(ctx context.Context, h channel.Handle,
+	inDB, onChannel map[string]int64) int {
+	requeued := 0
 	for key, blobID := range inDB {
 		if _, ok := onChannel[key]; ok {
 			continue
 		}
-		if merr := r.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
+		if err := r.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
 			State: channel.StatePending, LastError: "对账:渠道对象缺失", Attempts: 0,
 			BlobID: blobID, ChannelID: h.ID,
-		}); merr != nil {
-			r.cfg.Logger.Warn("幻影副本重置失败", "channel", h.Name, "key", key, "err", merr)
+		}); err != nil {
+			r.cfg.Logger.Warn("幻影副本重置失败", "channel", h.Name, "key", key, "err", err)
 			continue
 		}
-		if _, ierr := r.client.Insert(ctx, ReplicateArgs{BlobID: blobID, ChannelID: h.ID}, nil); ierr != nil {
-			r.cfg.Logger.Warn("幻影副本补齐入队失败,待恢复扫描兜底", "channel", h.Name, "key", key, "err", ierr)
+		if _, err := r.client.Insert(ctx, ReplicateArgs{BlobID: blobID, ChannelID: h.ID}, nil); err != nil {
+			r.cfg.Logger.Warn("幻影副本补齐入队失败,待恢复扫描兜底", "channel", h.Name, "key", key, "err", err)
 		}
-		res.PhantomsRequeued++
+		requeued++
 	}
-
-	return res, nil
+	return requeued
 }

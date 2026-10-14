@@ -24,6 +24,49 @@ type rateEntry struct {
 	lastSeen  time.Time     // 最近一次请求时刻,闲置回收依据
 }
 
+// rateLimiters 按用户 id 索引的令牌桶表;表满时回收闲置键,内存有界。
+type rateLimiters struct {
+	mu      sync.Mutex
+	entries map[string]*rateEntry // 用户 id → 令牌桶
+}
+
+// allow 报告用户此刻是否还有上传额度,并消耗一个令牌。
+// @Description: 用户首次出现或额度变更时按 quota 新建令牌桶(突发额度等于每分钟额度)。
+// @param userID 认证主体用户 id
+// @param quota 当前每分钟额度,须 > 0
+// @param now 判定时刻
+// @return 是否放行
+func (t *rateLimiters) allow(userID string, quota int, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	e, exists := t.entries[userID]
+	if !exists || e.perMinute != quota {
+		if !exists {
+			t.evictIdle(now)
+		}
+		e = &rateEntry{
+			lim:       rate.NewLimiter(rate.Every(time.Minute/time.Duration(quota)), quota),
+			perMinute: quota,
+		}
+		t.entries[userID] = e
+	}
+	e.lastSeen = now
+	return e.lim.AllowN(now, 1)
+}
+
+// evictIdle 表达到容量上限时删除闲置超过 rateLimiterEntryTTL 的键;未满则不动。
+// @param now 判定时刻
+func (t *rateLimiters) evictIdle(now time.Time) {
+	if len(t.entries) < rateLimiterMaxEntries {
+		return
+	}
+	for k, v := range t.entries {
+		if now.Sub(v.lastSeen) > rateLimiterEntryTTL {
+			delete(t.entries, k)
+		}
+	}
+}
+
 // uploadSubject 解析上传请求的认证主体用户 id:Token 主体或会话主体皆可。
 // @param r 已过认证中间件的请求
 // @return 用户 id 与是否存在
@@ -46,8 +89,7 @@ func uploadSubject(r *http.Request) (string, bool) {
 // @param l 结构化日志
 // @return 中间件
 func UploadRateLimit(perMinute func() int, l *slog.Logger) func(http.Handler) http.Handler {
-	var mu sync.Mutex
-	entries := map[string]*rateEntry{}
+	table := &rateLimiters{entries: map[string]*rateEntry{}}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			quota := perMinute()
@@ -60,27 +102,7 @@ func UploadRateLimit(perMinute func() int, l *slog.Logger) func(http.Handler) ht
 				httpx.WriteError(l, w, http.StatusUnauthorized, "未认证的上传请求")
 				return
 			}
-			mu.Lock()
-			now := time.Now()
-			e, exists := entries[userID]
-			if !exists || e.perMinute != quota {
-				if !exists && len(entries) >= rateLimiterMaxEntries {
-					for k, v := range entries {
-						if now.Sub(v.lastSeen) > rateLimiterEntryTTL {
-							delete(entries, k)
-						}
-					}
-				}
-				e = &rateEntry{
-					lim:       rate.NewLimiter(rate.Every(time.Minute/time.Duration(quota)), quota),
-					perMinute: quota,
-				}
-				entries[userID] = e
-			}
-			e.lastSeen = now
-			allowed := e.lim.AllowN(now, 1)
-			mu.Unlock()
-			if !allowed {
+			if !table.allow(userID, quota, time.Now()) {
 				w.Header().Set("Retry-After", "60")
 				httpx.WriteError(l, w, http.StatusTooManyRequests, "上传过于频繁,请稍后重试")
 				return

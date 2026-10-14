@@ -76,7 +76,8 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "r2", Name: "Cloudflare R2", Description: "Cloudflare 对象存储,零出口流量费",
-		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "Cloudflare", "region": "auto"},
+		Category: CategoryObjectStorage, Driver: "s3",
+		preset:          map[string]string{"provider": "Cloudflare", "region": "auto"},
 		endpointPattern: "https://{account_id}.r2.cloudflarestorage.com",
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
@@ -91,7 +92,8 @@ var s3Templates = []Template{
 		endpointPattern: "cos.{region}.myqcloud.com",
 		Fields: []TemplateField{
 			{Key: "access_key_id", Label: "SecretId", Type: FieldText, Required: true, configKey: "access_key_id"},
-			{Key: "secret_access_key", Label: "SecretKey", Type: FieldPassword, Required: true, configKey: "secret_access_key"},
+			{Key: "secret_access_key", Label: "SecretKey", Type: FieldPassword, Required: true,
+				configKey: "secret_access_key"},
 			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, Options: cosRegions},
 			bucketField("桶名需带 APPID 后缀,如 mybucket-1250000000"), publicBaseURLField(),
 		},
@@ -112,7 +114,8 @@ var s3Templates = []Template{
 		endpointPattern: "https://s3.{region}.backblazeb2.com",
 		Fields: []TemplateField{
 			{Key: "access_key_id", Label: "Key ID", Type: FieldText, Required: true, configKey: "access_key_id"},
-			{Key: "secret_access_key", Label: "Application Key", Type: FieldPassword, Required: true, configKey: "secret_access_key"},
+			{Key: "secret_access_key", Label: "Application Key", Type: FieldPassword, Required: true,
+				configKey: "secret_access_key"},
 			{Key: "region", Label: "区域", Type: FieldText, Required: true, configKey: "region",
 				Placeholder: "如 us-west-004", Help: "B2 账户所在区域,须与端点一致"},
 			bucketField(""), publicBaseURLField(),
@@ -142,12 +145,17 @@ var s3Templates = []Template{
 
 // accessKeyField 通用 Access Key 字段。
 func accessKeyField() TemplateField {
-	return TemplateField{Key: "access_key_id", Label: "Access Key", Type: FieldText, Required: true, configKey: "access_key_id"}
+	return TemplateField{
+		Key: "access_key_id", Label: "Access Key", Type: FieldText, Required: true, configKey: "access_key_id",
+	}
 }
 
 // secretKeyField 通用 Secret Key 字段(密文)。
 func secretKeyField() TemplateField {
-	return TemplateField{Key: "secret_access_key", Label: "Secret Key", Type: FieldPassword, Required: true, configKey: "secret_access_key"}
+	return TemplateField{
+		Key: "secret_access_key", Label: "Secret Key", Type: FieldPassword, Required: true,
+		configKey: "secret_access_key",
+	}
 }
 
 // bucketField 通用 Bucket 字段;值落入渠道 path(渠道内根路径),extraHelp 追加提示。
@@ -175,7 +183,7 @@ func Templates() []Template { return templates }
 // @return 模板副本
 // @return 模板是否存在
 func TemplateByID(templateID string) (Template, bool) {
-	tpl := templateByID(templateID)
+	tpl := findTemplate(templateID)
 	if tpl == nil {
 		return Template{}, false
 	}
@@ -185,13 +193,14 @@ func TemplateByID(templateID string) (Template, bool) {
 // BuildTemplateConfig 按模板与用户输入合并出渠道 config,并做必填校验。
 // @Description: 合并顺序为固定预设 → 字段值(按 configKey 落位)→ endpoint 拼接;
 // 参与拼接的中间字段(region/account_id)若 configKey 为空则不直接进 config。
+// 表单字段的密码一律按明文编码;漏编码会被后端当作已编码值解出乱码,凭证正确却认证失败。
 // @param templateID 模板标识
 // @param inputs 用户填写的字段值(键为 TemplateField.Key)
 // @return rclone 后端名
 // @return 合并后的渠道 config(含约定键 path)
 // @return ErrUnknownTemplate 或字段必填校验失败的 ErrInvalidChannel
 func BuildTemplateConfig(templateID string, inputs map[string]string) (string, map[string]string, error) {
-	tpl := templateByID(templateID)
+	tpl := findTemplate(templateID)
 	if tpl == nil {
 		return "", nil, ErrUnknownTemplate
 	}
@@ -200,40 +209,61 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 		config = map[string]string{}
 	}
 	for _, f := range tpl.Fields {
-		v := strings.TrimSpace(inputs[f.Key])
-		if f.Required && v == "" {
-			return "", nil, fmt.Errorf("%w: 字段「%s」必填", ErrInvalidChannel, f.Label)
-		}
-		// 授权令牌可能是一键授权的产物,也可能是用户粘贴的 rclone authorize 输出:统一归一化并校验。
-		if f.Type == FieldOAuth && v != "" && v != SecretPlaceholder {
-			token, err := ParsePastedToken(v)
-			if err != nil {
-				return "", nil, fmt.Errorf("字段「%s」: %w", f.Label, err)
-			}
-			v = token
+		v, err := templateFieldValue(f, inputs)
+		if err != nil {
+			return "", nil, err
 		}
 		if f.configKey != "" && v != "" {
 			config[f.configKey] = v
 		}
 	}
 	if tpl.endpointPattern != "" {
-		ep := tpl.endpointPattern
-		for _, f := range tpl.Fields {
-			ep = strings.ReplaceAll(ep, "{"+f.Key+"}", strings.TrimSpace(inputs[f.Key]))
-		}
-		config["endpoint"] = ep
+		config["endpoint"] = renderEndpoint(tpl, inputs)
 	}
-	// 表单字段的密码一律按明文编码;漏编码会被后端当作已编码值解出乱码,凭证正确却认证失败。
 	if err := rclone.ObscureSecrets(tpl.Driver, config); err != nil {
 		return "", nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 	return tpl.Driver, config, nil
 }
 
-// templateByID 按标识查内置模板。
+// templateFieldValue 取一个字段的规范值:去首尾空白并做必填校验;授权令牌字段归一化并校验令牌格式。
+// @Description: 授权令牌可能是一键授权的产物,也可能是用户粘贴的 rclone authorize 输出;
+// 哨兵值表示沿用原凭证,原样返回。
+// @param f 模板字段
+// @param inputs 用户填写的字段值
+// @return 规范值,可为空串
+// @return 必填缺失或令牌格式非法时的错误
+func templateFieldValue(f TemplateField, inputs map[string]string) (string, error) {
+	v := strings.TrimSpace(inputs[f.Key])
+	if f.Required && v == "" {
+		return "", fmt.Errorf("%w: 字段「%s」必填", ErrInvalidChannel, f.Label)
+	}
+	if f.Type != FieldOAuth || v == "" || v == SecretPlaceholder {
+		return v, nil
+	}
+	token, err := ParsePastedToken(v)
+	if err != nil {
+		return "", fmt.Errorf("字段「%s」: %w", f.Label, err)
+	}
+	return token, nil
+}
+
+// renderEndpoint 把各字段值代入模板的 endpoint 拼接模式。
+// @param tpl 模板,endpointPattern 非空
+// @param inputs 用户填写的字段值
+// @return 拼接后的 endpoint
+func renderEndpoint(tpl *Template, inputs map[string]string) string {
+	ep := tpl.endpointPattern
+	for _, f := range tpl.Fields {
+		ep = strings.ReplaceAll(ep, "{"+f.Key+"}", strings.TrimSpace(inputs[f.Key]))
+	}
+	return ep
+}
+
+// findTemplate 按标识查内置模板。
 // @param templateID 模板标识
 // @return 命中的模板;不存在返回 nil
-func templateByID(templateID string) *Template {
+func findTemplate(templateID string) *Template {
 	for i := range templates {
 		if templates[i].ID == templateID {
 			return &templates[i]
@@ -251,7 +281,7 @@ func templateByID(templateID string) *Template {
 // @return 表单字段值(键为 TemplateField.Key)
 // @return 模板是否存在
 func TemplateInputsFromConfig(templateID string, config map[string]string) (map[string]string, bool) {
-	tpl := templateByID(templateID)
+	tpl := findTemplate(templateID)
 	if tpl == nil {
 		return nil, false
 	}
@@ -271,6 +301,7 @@ func TemplateInputsFromConfig(templateID string, config map[string]string) (map[
 			if v, ok := extractPatternField(tpl.endpointPattern, f.Key, config["endpoint"]); ok {
 				inputs[f.Key] = v
 			}
+		default:
 		}
 	}
 	return inputs, true

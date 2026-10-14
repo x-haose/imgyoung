@@ -69,10 +69,10 @@ func TestApplyOrientationRotate90(t *testing.T) {
 	}
 	// 顺时针 90 后:原左(红)转到顶部,原右(蓝)转到底部。
 	if r, _, _, _ := dst.At(0, 0).RGBA(); r>>8 != 255 {
-		t.Errorf("顶部像素应为红")
+		t.Error("顶部像素应为红")
 	}
 	if _, _, bl, _ := dst.At(0, 1).RGBA(); bl>>8 != 255 {
-		t.Errorf("底部像素应为蓝")
+		t.Error("底部像素应为蓝")
 	}
 }
 
@@ -80,6 +80,6 @@ func TestApplyOrientationRotate90(t *testing.T) {
 func TestApplyOrientationNormal(t *testing.T) {
 	src := image.NewRGBA(image.Rect(0, 0, 2, 2))
 	if applyOrientation(src, orientationNormal) != image.Image(src) {
-		t.Errorf("正常方向应原样返回同一图像")
+		t.Error("正常方向应原样返回同一图像")
 	}
 }

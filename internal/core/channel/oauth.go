@@ -143,29 +143,46 @@ func backendOAuthOptions(ctx context.Context, driver string, m configmap.Simple)
 		if err != nil {
 			return nil, fmt.Errorf("读取后端 %q 的授权配置: %w", driver, err)
 		}
-		// 流程结束(nil 或回到起始状态)仍未出现授权环节:后端有交互式配置但不走 OAuth(如 s3)。
-		if out == nil {
-			return nil, ErrNotOAuthDriver
+		opt, next, err := oauthStep(driver, out)
+		if err != nil {
+			return nil, err
 		}
-		if out.Error != "" {
-			return nil, fmt.Errorf("%w: 后端 %q 配置失败: %s", ErrInvalidChannel, driver, out.Error)
-		}
-		if out.OAuth != nil {
-			opt, ok := out.OAuth.(*oauthutil.Options)
-			if !ok || opt == nil || opt.OAuth2Config == nil {
-				return nil, ErrNotOAuthDriver
-			}
+		if opt != nil {
 			return opt, nil
 		}
-		if out.Option != nil {
-			return nil, fmt.Errorf("%w: 后端 %q 要求先提供 %s", ErrInvalidChannel, driver, out.Option.Name)
-		}
-		if out.State == "" {
-			return nil, ErrNotOAuthDriver
-		}
-		in = fs.ConfigIn{State: out.State, Result: out.Result}
+		in = next
 	}
 	return nil, ErrNotOAuthDriver
+}
+
+// oauthStep 解读配置状态机的一步输出:到达授权环节返回选项,可继续则返回下一步输入。
+// @Description: 流程结束(nil 输出或空状态)仍未出现授权环节,说明后端有交互式配置但不走 OAuth(如 s3)。
+// @param driver rclone 后端名,仅用于错误文案
+// @param out 本步输出
+// @return 授权选项;尚未到达授权环节为 nil
+// @return 下一步输入;已到达授权环节时无意义
+// @return 后端配置失败、要求交互输入或不走 OAuth 时的错误
+func oauthStep(driver string, out *fs.ConfigOut) (*oauthutil.Options, fs.ConfigIn, error) {
+	if out == nil {
+		return nil, fs.ConfigIn{}, ErrNotOAuthDriver
+	}
+	if out.Error != "" {
+		return nil, fs.ConfigIn{}, fmt.Errorf("%w: 后端 %q 配置失败: %s", ErrInvalidChannel, driver, out.Error)
+	}
+	if out.OAuth != nil {
+		opt, ok := out.OAuth.(*oauthutil.Options)
+		if !ok || opt == nil || opt.OAuth2Config == nil {
+			return nil, fs.ConfigIn{}, ErrNotOAuthDriver
+		}
+		return opt, fs.ConfigIn{}, nil
+	}
+	if out.Option != nil {
+		return nil, fs.ConfigIn{}, fmt.Errorf("%w: 后端 %q 要求先提供 %s", ErrInvalidChannel, driver, out.Option.Name)
+	}
+	if out.State == "" {
+		return nil, fs.ConfigIn{}, ErrNotOAuthDriver
+	}
+	return nil, fs.ConfigIn{State: out.State, Result: out.Result}, nil
 }
 
 // validateToken 校验令牌 JSON 并归一化。
@@ -191,7 +208,7 @@ func validateToken(raw string) (string, error) {
 // @return 令牌 JSON
 // @return 序列化失败时的错误
 func marshalToken(tok *oauth2.Token) (string, error) {
-	// nolint:gosec // G117:序列化令牌正是本函数的职责,产物存入渠道配置时由 AES-GCM 加密。
+	//nolint:gosec // G117:序列化令牌正是本函数的职责,产物存入渠道配置时由 AES-GCM 加密
 	b, err := json.Marshal(tok)
 	if err != nil {
 		return "", fmt.Errorf("序列化令牌: %w", err)

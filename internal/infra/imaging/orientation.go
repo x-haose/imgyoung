@@ -1,6 +1,7 @@
 package imaging
 
 import (
+	"bytes"
 	"encoding/binary"
 	"image"
 )
@@ -29,44 +30,29 @@ func jpegOrientation(src []byte) int {
 	return readOrientation(tiff)
 }
 
+// exifPrefix APP1 段负载开头的 Exif 标识,其后紧接 TIFF 头。
+var exifPrefix = []byte("Exif\x00\x00")
+
 // findEXIFTIFF 遍历 JPEG 段表,返回 APP1/Exif 段内 TIFF 数据的起始切片;未找到返回 nil。
+// @Description: 段表畸形同样返回 nil——方向读取容错优先,畸形输入交由解码器本身报错。
 // @param data JPEG 字节
 // @return "Exif\0\0" 之后的 TIFF 字节,或 nil
 func findEXIFTIFF(data []byte) []byte {
 	if len(data) < 4 || data[0] != 0xFF || data[1] != markerSOI {
 		return nil
 	}
-	const exifPrefix = "Exif\x00\x00"
-	i := 2
-	for i+4 <= len(data) {
-		if data[i] != 0xFF {
-			return nil
+	for i := 2; ; {
+		seg, err := nextJPEGSegment(data, i)
+		if err != nil || seg.marker == markerSOS || seg.marker == markerEOI {
+			return nil // 段表畸形,或已到熵编码数据/文件尾:其后不再有元数据段
 		}
-		marker := data[i+1]
-		if marker == 0xFF { // 标记前填充字节
-			i++
-			continue
-		}
-		if marker == markerSOS || marker == markerEOI { // 其后无元数据段
-			return nil
-		}
-		if marker == markerTEM || (marker >= markerRST0 && marker <= markerRST7) { // 无长度字段
-			i += 2
-			continue
-		}
-		segLen := int(binary.BigEndian.Uint16(data[i+2 : i+4]))
-		if segLen < 2 || i+2+segLen > len(data) {
-			return nil
-		}
-		if marker == markerAPP1 {
-			seg := data[i+4 : i+2+segLen]
-			if len(seg) >= len(exifPrefix) && string(seg[:len(exifPrefix)]) == exifPrefix {
-				return seg[len(exifPrefix):]
+		if seg.marker == markerAPP1 {
+			if payload := data[seg.start+4 : seg.end]; bytes.HasPrefix(payload, exifPrefix) {
+				return payload[len(exifPrefix):]
 			}
 		}
-		i += 2 + segLen
+		i = seg.end
 	}
-	return nil
 }
 
 // readOrientation 从 TIFF 头解析 IFD0 的 Orientation tag;任何越界或异常退回正常方向。
@@ -128,8 +114,8 @@ func applyOrientation(src image.Image, o int) image.Image {
 		dw, dh = h, w
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, dw, dh))
-	for dy := 0; dy < dh; dy++ {
-		for dx := 0; dx < dw; dx++ {
+	for dy := range dh {
+		for dx := range dw {
 			sx, sy := srcCoord(o, dx, dy, w, h)
 			dst.Set(dx, dy, src.At(b.Min.X+sx, b.Min.Y+sy))
 		}
@@ -145,7 +131,7 @@ func applyOrientation(src image.Image, o int) image.Image {
 // @param h 源高
 // @return 源横坐标
 // @return 源纵坐标
-func srcCoord(o, dx, dy, w, h int) (int, int) {
+func srcCoord(o, dx, dy, w, h int) (sx, sy int) {
 	switch o {
 	case 2: // 水平镜像
 		return w - 1 - dx, dy

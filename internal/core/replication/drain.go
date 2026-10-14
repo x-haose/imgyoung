@@ -50,7 +50,7 @@ type drainChannelWorker struct {
 }
 
 // Timeout 单任务执行超时。
-func (w *drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
+func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 	return drainJobTimeout
 }
 
@@ -100,7 +100,9 @@ func (w *drainChannelWorker) drain(ctx context.Context, channelID int64, d drive
 			if err := d.Delete(ctx, row.StorageKey); err != nil && !errors.Is(err, driver.ErrNotFound) {
 				return deleted, fmt.Errorf("删除对象 %q: %w", row.StorageKey, err)
 			}
-			if err := q.DeleteBlobChannel(ctx, sqlc.DeleteBlobChannelParams{BlobID: row.BlobID, ChannelID: channelID}); err != nil {
+			if err := q.DeleteBlobChannel(ctx, sqlc.DeleteBlobChannelParams{
+				BlobID: row.BlobID, ChannelID: channelID,
+			}); err != nil {
 				return deleted, fmt.Errorf("删除副本记录(blob %d): %w", row.BlobID, err)
 			}
 			deleted++

@@ -53,11 +53,12 @@ func newRevisions(ctx context.Context, conn sqlConn) (*revisions, error) {
 }
 
 // revisionCols 历史表的列清单,读写共用以保证顺序一致。
-const revisionCols = `version, description, type, applied, total, executed_at, execution_time, error, error_stmt, hash, partial_hashes, operator_version`
+const revisionCols = `version, description, type, applied, total, executed_at, execution_time, ` +
+	`error, error_stmt, hash, partial_hashes, operator_version`
 
 // Ident 返回历史表标识,Executor 的洁净性检查据此排除该表。
 // @return 历史表标识
-func (r *revisions) Ident() *migrate.TableIdent {
+func (*revisions) Ident() *migrate.TableIdent {
 	return &migrate.TableIdent{Name: revisionsTable}
 }
 

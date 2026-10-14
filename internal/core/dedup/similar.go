@@ -88,27 +88,52 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	if cand.Status != "pending" {
 		return ErrCandidateNotFound
 	}
-	var loserID int64
-	switch keepBlobID {
-	case cand.BlobA:
-		loserID = cand.BlobB
-	case cand.BlobB:
-		loserID = cand.BlobA
-	default:
-		return ErrBadKeeper
+	loserID, err := loserOf(cand, keepBlobID)
+	if err != nil {
+		return err
 	}
 	if _, err := m.aliveBlob(ctx, loserID); err != nil {
 		return err
 	}
+	if err := m.mergeInto(ctx, keepBlobID, loserID); err != nil {
+		return err
+	}
+	m.cfg.Logger.Info("相似候选已合并", "candidate", candidateID, "keep", keepBlobID, "merged", loserID)
+	return nil
+}
 
+// loserOf 返回候选对中被并入的一方。
+// @param cand 候选行
+// @param keepBlobID 保留的物理图 id
+// @return 被并入的物理图 id
+// @return keepBlobID 不属于该对时为 ErrBadKeeper
+func loserOf(cand sqlc.DedupCandidate, keepBlobID int64) (int64, error) {
+	switch keepBlobID {
+	case cand.BlobA:
+		return cand.BlobB, nil
+	case cand.BlobB:
+		return cand.BlobA, nil
+	default:
+		return 0, ErrBadKeeper
+	}
+}
+
+// mergeInto 单事务内把 loser 并入 keep:复查保留对象存活、改指向、并计数、标记待删、清理候选。
+// @Description: 事务内复查保留对象存活:裁决与合并之间它自身引用可能全到期被减到 0 并标记物理删,
+// 此时并入会把引用改指向一个待删 blob;已入删除流程即视为候选失效,交前端刷新。
+// 并入实际改指向的引用数,而非事务外快照——期间被并对象的引用可能已被到期回收,
+// 用快照会多计致保留对象引用计数永不归零(存储泄漏)。
+// @param ctx 控制超时与取消
+// @param keepBlobID 保留的物理图 id
+// @param loserID 被并入的物理图 id
+// @return ErrCandidateStale 或基础设施错误
+func (m *Merger) mergeInto(ctx context.Context, keepBlobID, loserID int64) error {
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("开启合并事务: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := m.cfg.Queries.WithTx(tx)
-	// 事务内复查保留对象存活:裁决与合并之间它自身引用可能全到期被减到 0 并标记物理删,
-	// 此时并入会把引用改指向一个待删 blob。已入删除流程即视为候选失效,交前端刷新。
 	keep, err := q.GetBlob(ctx, keepBlobID)
 	if err != nil {
 		return fmt.Errorf("复查保留对象: %w", err)
@@ -116,8 +141,6 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	if keep.PendingDelete != 0 {
 		return ErrCandidateStale
 	}
-	// 并入实际改指向的引用数,而非事务外快照——期间被并对象的引用可能已被到期回收,
-	// 用快照会多计致保留对象引用计数永不归零(存储泄漏)。
 	moved, err := q.RepointImages(ctx, sqlc.RepointImagesParams{BlobID: keepBlobID, BlobID_2: loserID})
 	if err != nil {
 		return fmt.Errorf("改指向保留对象: %w", err)
@@ -127,7 +150,9 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	}
 	grace := time.Duration(m.cfg.Settings().DeleteGraceMinutes) * time.Minute
 	deleteAfter := sql.NullString{String: sqlc.TimeText(time.Now().Add(grace)), Valid: true}
-	if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{DeleteAfter: deleteAfter, ID: loserID}); err != nil {
+	if err := q.MarkBlobMergedAway(ctx, sqlc.MarkBlobMergedAwayParams{
+		DeleteAfter: deleteAfter, ID: loserID,
+	}); err != nil {
 		return fmt.Errorf("标记被并对象待删: %w", err)
 	}
 	if err := q.DeleteDedupCandidatesByBlob(ctx, sqlc.DeleteDedupCandidatesByBlobParams{
@@ -138,7 +163,6 @@ func (m *Merger) MergeCandidate(ctx context.Context, candidateID, keepBlobID int
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交相似合并: %w", err)
 	}
-	m.cfg.Logger.Info("相似候选已合并", "candidate", candidateID, "keep", keepBlobID, "merged", loserID)
 	return nil
 }
 

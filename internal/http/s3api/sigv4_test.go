@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	signer "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 )
 
 // 测试用凭证;派生逻辑在 auth 包,本包只关心"给定密钥能否验签"。
@@ -41,8 +41,8 @@ func signedRequest(t *testing.T, target string, body []byte, when time.Time) *ht
 
 	creds := aws.Credentials{AccessKeyID: testAK, SecretAccessKey: testSecret}
 	// S3 规范不对路径做二次转义,官方 S3 客户端一律带此选项;不设则签出的是非 S3 语义的签名。
-	signer := v4.NewSigner(func(o *v4.SignerOptions) { o.DisableURIPathEscaping = true })
-	if err := signer.SignHTTP(context.Background(), creds, req, payloadHash, "s3", "us-east-1", when); err != nil {
+	sig := signer.NewSigner(func(o *signer.SignerOptions) { o.DisableURIPathEscaping = true })
+	if err := sig.SignHTTP(context.Background(), creds, req, payloadHash, "s3", "us-east-1", when); err != nil {
 		t.Fatalf("签名失败: %v", err)
 	}
 	// 服务端读到的是 r.Host,httptest 之外需手动对齐签名时用的 Host。
@@ -127,7 +127,8 @@ func TestVerifyRejectsTamperedRequest(t *testing.T) {
 				t.Fatalf("解析 Authorization: %v", err)
 			}
 			tamper(req)
-			if err := verify(req, parts, testSecret, req.Header.Get(contentSHAHeader)); !errors.Is(err, ErrSignatureMismatch) {
+			err = verify(req, parts, testSecret, req.Header.Get(contentSHAHeader))
+			if !errors.Is(err, ErrSignatureMismatch) {
 				t.Fatalf("篡改后期望 ErrSignatureMismatch,得 %v", err)
 			}
 		})
@@ -140,12 +141,22 @@ func TestParseAuthorizationRejectsMalformed(t *testing.T) {
 		header string
 		want   error
 	}{
-		"空头":      {"", ErrMalformedAuth},
-		"其他算法":    {"AWS1-HMAC-SHA1 Credential=a/b/c/s3/aws4_request,SignedHeaders=host,Signature=x", ErrUnsupportedAlgorithm},
-		"缺签名":     {sigV4Algorithm + " Credential=ak/20260727/us-east-1/s3/aws4_request,SignedHeaders=host", ErrMalformedAuth},
-		"作用域不完整":  {sigV4Algorithm + " Credential=ak/20260727/s3,SignedHeaders=host,Signature=x", ErrMalformedAuth},
-		"非 s3 服务": {sigV4Algorithm + " Credential=ak/20260727/us-east-1/ec2/aws4_request,SignedHeaders=host,Signature=x", ErrMalformedAuth},
-		"作用域尾段错":  {sigV4Algorithm + " Credential=ak/20260727/us-east-1/s3/aws5_request,SignedHeaders=host,Signature=x", ErrMalformedAuth},
+		"空头": {"", ErrMalformedAuth},
+		"其他算法": {
+			"AWS1-HMAC-SHA1 Credential=a/b/c/s3/aws4_request,SignedHeaders=host,Signature=x", ErrUnsupportedAlgorithm,
+		},
+		"缺签名": {
+			sigV4Algorithm + " Credential=ak/20260727/us-east-1/s3/aws4_request,SignedHeaders=host", ErrMalformedAuth,
+		},
+		"作用域不完整": {sigV4Algorithm + " Credential=ak/20260727/s3,SignedHeaders=host,Signature=x", ErrMalformedAuth},
+		"非 s3 服务": {
+			sigV4Algorithm + " Credential=ak/20260727/us-east-1/ec2/aws4_request,SignedHeaders=host,Signature=x",
+			ErrMalformedAuth,
+		},
+		"作用域尾段错": {
+			sigV4Algorithm + " Credential=ak/20260727/us-east-1/s3/aws5_request,SignedHeaders=host,Signature=x",
+			ErrMalformedAuth,
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -237,7 +248,8 @@ func TestObjectKeyFromPath(t *testing.T) {
 			}
 		})
 	}
-	if _, err := objectKeyFromPath("/s3/bucket/" + strings.Repeat("k", maxObjectKeyBytes+1)); !errors.Is(err, errKeyTooLong) {
+	_, err := objectKeyFromPath("/s3/bucket/" + strings.Repeat("k", maxObjectKeyBytes+1))
+	if !errors.Is(err, errKeyTooLong) {
 		t.Error("超长对象键应被拒")
 	}
 }

@@ -19,31 +19,39 @@ import (
 // channelBodyLimit 渠道管理请求体上限。
 const channelBodyLimit = 1 << 20
 
-// channelCreateRequest 创建渠道的请求体;测试连接接口复用同一结构。
-// @Description: 两种模式二选一——模板模式给 template + inputs(推荐,内置 S3 系厂商);
-// 自定义模式给 driver + config(高级,直填 rclone 参数)。通用字段两种模式共用。
-type channelCreateRequest struct {
-	Name             string            `json:"name"`               // 渠道名(唯一)
-	Priority         int64             `json:"priority"`           // 优先级,越大越优先
-	Encrypted        *bool             `json:"encrypted"`          // 是否加密渠道;缺省用全局默认(创建时固化)
-	AllowDirectLink  bool              `json:"allow_direct_link"`  // 是否允许 302 直链
-	AutoCreateBucket bool              `json:"auto_create_bucket"` // 是否创建时主动建桶(需凭证有建桶权限)
-	Template         string            `json:"template"`           // 模板模式:模板 id;空或 custom 走自定义
-	Inputs           map[string]string `json:"inputs"`             // 模板模式:字段值
-	Driver           string            `json:"driver"`             // 自定义模式:rclone 后端名
-	Config           map[string]string `json:"config"`             // 自定义模式:后端参数(含约定键 path / public_base_url)
+// channelSource 渠道配置的来源,两种模式二选一:模板模式给 template + inputs(内置厂商模板),
+// 自定义模式给 driver + config(直填 rclone 参数)。创建、编辑与测试连接的请求体共用。
+type channelSource struct {
+	Template string            `json:"template"` // 模板模式:模板 id;空或 custom 走自定义
+	Inputs   map[string]string `json:"inputs"`   // 模板模式:字段值
+	Driver   string            `json:"driver"`   // 自定义模式:rclone 后端名
+	Config   map[string]string `json:"config"`   // 自定义模式:后端参数(含约定键 path / public_base_url)
 }
 
-// channelUpdateRequest 编辑渠道的请求体;配置部分与创建同构(模板或自定义),整体替换。
+// channelSpec 归一化后的渠道配置:模板模式按模板合并出后端参数,自定义模式沿用原值。
+type channelSpec struct {
+	template string            // 归一化模板 id;自定义为空串
+	driver   string            // rclone 后端名
+	config   map[string]string // 后端参数
+}
+
+// channelCreateRequest 创建渠道的请求体;测试连接接口复用同一结构。
+type channelCreateRequest struct {
+	channelSource           // 配置来源(模板或自定义)
+	Name             string `json:"name"`               // 渠道名(唯一)
+	Priority         int64  `json:"priority"`           // 优先级,越大越优先
+	Encrypted        *bool  `json:"encrypted"`          // 是否加密渠道;缺省用全局默认(创建时固化)
+	AllowDirectLink  bool   `json:"allow_direct_link"`  // 是否允许 302 直链
+	AutoCreateBucket bool   `json:"auto_create_bucket"` // 是否创建时主动建桶(需凭证有建桶权限)
+}
+
+// channelUpdateRequest 编辑渠道的请求体;配置部分与创建同构,整体替换。
 type channelUpdateRequest struct {
-	Name            string            `json:"name"`              // 渠道名(唯一)
-	Priority        int64             `json:"priority"`          // 优先级,越大越优先
-	Encrypted       *bool             `json:"encrypted"`         // 可回传但必须与现状一致;试图变更返回 409
-	AllowDirectLink bool              `json:"allow_direct_link"` // 是否允许 302 直链
-	Template        string            `json:"template"`          // 模板模式:模板 id;空或 custom 走自定义
-	Inputs          map[string]string `json:"inputs"`            // 模板模式:字段值
-	Driver          string            `json:"driver"`            // 自定义模式:rclone 后端名
-	Config          map[string]string `json:"config"`            // 自定义模式:后端参数(含约定键 path / public_base_url)
+	channelSource          // 配置来源(模板或自定义)
+	Name            string `json:"name"`              // 渠道名(唯一)
+	Priority        int64  `json:"priority"`          // 优先级,越大越优先
+	Encrypted       *bool  `json:"encrypted"`         // 可回传但必须与现状一致;试图变更返回 409
+	AllowDirectLink bool   `json:"allow_direct_link"` // 是否允许 302 直链
 }
 
 // channelTestRequest 测试连接的请求体:配置部分与创建同构,可携渠道 ID 支持编辑场景。
@@ -73,24 +81,21 @@ func (h *Handlers) decodeChannelBody(w http.ResponseWriter, r *http.Request, dst
 	return true
 }
 
-// resolveChannelConfig 按请求解析出模板 id、后端名与配置:模板模式按模板合并,
-// 自定义模式沿用原值。
-// @param template 模板 id;空或 custom 走自定义
-// @param inputs 模板字段值
-// @param drv 自定义模式的后端名
-// @param config 自定义模式的配置
-// @return 归一化模板 id(自定义为空串)、后端名、配置、是否成功;失败时已写出 400 响应
-func (h *Handlers) resolveChannelConfig(w http.ResponseWriter, template string, inputs map[string]string,
-	drv string, config map[string]string) (string, string, map[string]string, bool) {
-	if template == "" || template == "custom" {
-		return "", drv, config, true
+// resolveChannelConfig 把请求里的配置来源归一化:模板模式按模板合并出后端参数,自定义模式沿用原值。
+// @param w 响应写入器
+// @param src 请求携带的配置来源
+// @return 归一化配置
+// @return 是否成功;失败时已写出 400 响应
+func (h *Handlers) resolveChannelConfig(w http.ResponseWriter, src channelSource) (channelSpec, bool) {
+	if src.Template == "" || src.Template == "custom" {
+		return channelSpec{driver: src.Driver, config: src.Config}, true
 	}
-	merged, cfg, err := channel.BuildTemplateConfig(template, inputs)
+	driverName, cfg, err := channel.BuildTemplateConfig(src.Template, src.Inputs)
 	if err != nil {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
-		return "", "", nil, false
+		return channelSpec{}, false
 	}
-	return template, merged, cfg, true
+	return channelSpec{template: src.Template, driver: driverName, config: cfg}, true
 }
 
 // channelIDParam 解析路径中的渠道 ID。
@@ -123,7 +128,7 @@ func (h *Handlers) writeChannelInfo(w http.ResponseWriter, r *http.Request, chan
 }
 
 // HandleChannelTemplates 下发内置渠道模板清单(供前端渲染选模板 + 字段表单)。
-func (h *Handlers) HandleChannelTemplates(w http.ResponseWriter, r *http.Request) {
+func (h *Handlers) HandleChannelTemplates(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{
 		Items: channel.Templates(), Total: int64(len(channel.Templates())),
 	})
@@ -135,7 +140,7 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeChannelBody(w, r, &req) {
 		return
 	}
-	tplID, driverName, config, ok := h.resolveChannelConfig(w, req.Template, req.Inputs, req.Driver, req.Config)
+	spec, ok := h.resolveChannelConfig(w, req.channelSource)
 	if !ok {
 		return
 	}
@@ -145,9 +150,9 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	channelID, err := h.cfg.Admin.Create(r.Context(), channel.CreateParams{
 		Name:             req.Name,
-		Driver:           driverName,
-		Config:           config,
-		Template:         tplID,
+		Driver:           spec.driver,
+		Config:           spec.config,
+		Template:         spec.template,
 		Priority:         req.Priority,
 		Encrypted:        encrypted,
 		AllowDirectLink:  req.AllowDirectLink,
@@ -198,12 +203,12 @@ func (h *Handlers) HandleChannelUpdate(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeChannelBody(w, r, &req) {
 		return
 	}
-	tplID, driverName, config, ok := h.resolveChannelConfig(w, req.Template, req.Inputs, req.Driver, req.Config)
+	spec, ok := h.resolveChannelConfig(w, req.channelSource)
 	if !ok {
 		return
 	}
 	err := h.cfg.Admin.Update(r.Context(), channelID, channel.UpdateParams{
-		Name: req.Name, Driver: driverName, Config: config, Template: tplID,
+		Name: req.Name, Driver: spec.driver, Config: spec.config, Template: spec.template,
 		Priority: req.Priority, Encrypted: req.Encrypted, AllowDirectLink: req.AllowDirectLink,
 	})
 	switch {
@@ -240,10 +245,11 @@ func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 	if !h.decodeChannelBody(w, r, &req) {
 		return
 	}
-	_, driverName, config, ok := h.resolveChannelConfig(w, req.Template, req.Inputs, req.Driver, req.Config)
+	spec, ok := h.resolveChannelConfig(w, req.channelSource)
 	if !ok {
 		return
 	}
+	config := spec.config
 	if req.ChannelID > 0 {
 		restored, err := h.cfg.Admin.RestoreSecrets(r.Context(), req.ChannelID, config)
 		switch {
@@ -260,7 +266,7 @@ func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 		}
 		config = restored
 	}
-	err := h.cfg.Admin.TestConfig(r.Context(), driverName, config)
+	err := h.cfg.Admin.TestConfig(r.Context(), spec.driver, config)
 	if errors.Is(err, channel.ErrInvalidChannel) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
 		return
@@ -352,14 +358,16 @@ func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	err := h.cfg.Admin.Delete(r.Context(), channelID, purge)
 	switch {
 	case errors.Is(err, channel.ErrHoldsSoleReplicas):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "该渠道持有部分图片的唯一副本,删除会丢数据;请先迁移或删除相关图片")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict,
+			"该渠道持有部分图片的唯一副本,删除会丢数据;请先迁移或删除相关图片")
 		return
 	case err != nil:
 		h.cfg.Logger.Error("删除渠道失败", "id", channelID, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	h.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10), fmt.Sprintf("purge=%v", purge))
+	h.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10),
+		fmt.Sprintf("purge=%v", purge))
 	if !purge {
 		h.cfg.Logger.Info("渠道已删除,远端对象保留", "id", channelID)
 		w.WriteHeader(http.StatusNoContent)

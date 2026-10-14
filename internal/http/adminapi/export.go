@@ -1,6 +1,8 @@
 package adminapi
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
@@ -33,70 +35,81 @@ type tokenExportItem struct {
 
 // HandleExport 导出全部元数据(仅管理员路由),渠道凭证脱敏。
 func (h *Handlers) HandleExport(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	usersRows, err := h.cfg.Queries.ListUsersWithUsage(ctx)
+	payload, err := h.collectExport(r.Context())
 	if err != nil {
-		h.exportFail(w, "users", err)
+		h.cfg.Logger.Error("导出元数据失败", "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
+	}
+	h.recordAudit(r.Context(), audit.ActionDataExport, "", "")
+	w.Header().Set("Content-Disposition", `attachment; filename="imgyoung-export.json"`)
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, payload)
+}
+
+// collectExport 逐分区读出导出内容;任一分区失败整体失败,错误带分区名。
+// @param ctx 上下文
+// @return 导出内容
+// @return 错误
+func (h *Handlers) collectExport(ctx context.Context) (exportPayload, error) {
+	users, err := h.cfg.Queries.ListUsersWithUsage(ctx)
+	if err != nil {
+		return exportPayload{}, fmt.Errorf("users: %w", err)
 	}
 	channels, err := h.cfg.Admin.List(ctx)
 	if err != nil {
-		h.exportFail(w, "channels", err)
-		return
+		return exportPayload{}, fmt.Errorf("channels: %w", err)
 	}
 	tokens, err := h.cfg.Queries.ListTokensExport(ctx)
 	if err != nil {
-		h.exportFail(w, "tokens", err)
-		return
+		return exportPayload{}, fmt.Errorf("tokens: %w", err)
 	}
 	images, err := h.cfg.Queries.ListImagesExport(ctx)
 	if err != nil {
-		h.exportFail(w, "images", err)
-		return
+		return exportPayload{}, fmt.Errorf("images: %w", err)
 	}
 	blobs, err := h.cfg.Queries.ListBlobsExport(ctx)
 	if err != nil {
-		h.exportFail(w, "blobs", err)
-		return
+		return exportPayload{}, fmt.Errorf("blobs: %w", err)
 	}
 	blobChannels, err := h.cfg.Queries.ListBlobChannelsExport(ctx)
 	if err != nil {
-		h.exportFail(w, "blob_channels", err)
-		return
+		return exportPayload{}, fmt.Errorf("blob_channels: %w", err)
 	}
-
-	payload := exportPayload{
-		Users:        make([]userItem, 0, len(usersRows)),
+	return exportPayload{
+		Users:        usersExport(users),
 		Channels:     channels,
-		Tokens:       make([]tokenExportItem, 0, len(tokens)),
+		Tokens:       tokensExport(tokens),
 		Images:       images,
 		Blobs:        blobs,
 		BlobChannels: blobChannels,
-	}
-	for _, u := range usersRows {
-		payload.Users = append(payload.Users, userItem{
+	}, nil
+}
+
+// usersExport 把用户行映射为导出项(无凭证材料)。
+// @param rows 用户与用量行
+// @return 导出项
+func usersExport(rows []sqlc.ListUsersWithUsageRow) []userItem {
+	items := make([]userItem, 0, len(rows))
+	for _, u := range rows {
+		items = append(items, userItem{
 			ID: u.ID, Name: u.Name, Role: u.Role, QuotaBytes: nullableInt(u.QuotaBytes),
 			Disabled: u.Disabled != 0, CreatedAt: u.CreatedAt,
 			UsedBytes: u.UsedBytes, ImageCount: u.ImageCount,
 		})
 	}
-	for _, t := range tokens {
-		payload.Tokens = append(payload.Tokens, tokenExportItem{
+	return items
+}
+
+// tokensExport 把 Token 行映射为导出项(仅前缀,无哈希)。
+// @param rows Token 导出行
+// @return 导出项
+func tokensExport(rows []sqlc.ListTokensExportRow) []tokenExportItem {
+	items := make([]tokenExportItem, 0, len(rows))
+	for _, t := range rows {
+		items = append(items, tokenExportItem{
 			ID: t.ID, UserID: t.UserID, Name: t.Name, Prefix: t.Prefix,
 			Scopes: t.Scopes, RevokedAt: nullableStr(t.RevokedAt), CreatedAt: t.CreatedAt,
 		})
 	}
-
-	h.recordAudit(ctx, audit.ActionDataExport, "", "")
-	w.Header().Set("Content-Disposition", `attachment; filename="imgyoung-export.json"`)
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, payload)
-}
-
-// exportFail 导出中途失败的统一出口。
-// @param w 响应写入器
-// @param part 失败的数据分区名
-// @param err 底层错误
-func (h *Handlers) exportFail(w http.ResponseWriter, part string, err error) {
-	h.cfg.Logger.Error("导出元数据失败", "part", part, "err", err)
-	httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+	return items
 }
