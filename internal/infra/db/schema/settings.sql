@@ -37,5 +37,7 @@ CREATE TABLE settings (
     process_timeout_ms INTEGER NOT NULL DEFAULT 5000, -- 单请求处理超时(毫秒)
     variants_cache_mb INTEGER NOT NULL DEFAULT 10240, -- variant 磁盘缓存上限(MB),超则 LRU 淘汰
     idempotency_key_ttl_hours INTEGER NOT NULL DEFAULT 24, -- 上传幂等键保留期(小时),超期由清理循环回收;客户端重试窗口以此为界
+    alert_webhook_url TEXT NOT NULL DEFAULT '', -- 告警 Webhook 地址(http/https),告警开启与恢复时 POST JSON;空=不外发
+    audit_retention_days INTEGER NOT NULL DEFAULT 0, -- 审计日志保留天数,超期由清理循环回收;0=永久保留
     updated_at TEXT NOT NULL DEFAULT (datetime('now')) -- 最近写入时刻,UTC 文本
 );

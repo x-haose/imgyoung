@@ -139,6 +139,8 @@ type Setting struct {
 	ProcessTimeoutMs       int64
 	VariantsCacheMb        int64
 	IdempotencyKeyTtlHours int64
+	AlertWebhookUrl        string
+	AuditRetentionDays     int64
 	UpdatedAt              string
 }
 

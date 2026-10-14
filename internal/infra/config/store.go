@@ -268,6 +268,8 @@ func scalarsFromRow(row sqlc.Setting) Settings {
 		ProcessTimeoutMS:       int(row.ProcessTimeoutMs),
 		VariantsCacheMB:        row.VariantsCacheMb,
 		IdempotencyKeyTTLHours: int(row.IdempotencyKeyTtlHours),
+		AlertWebhookURL:        row.AlertWebhookUrl,
+		AuditRetentionDays:     int(row.AuditRetentionDays),
 	}
 }
 
@@ -334,6 +336,8 @@ func scalarsToParams(cfg Settings) sqlc.UpdateSettingsParams {
 		ProcessTimeoutMs:       int64(cfg.ProcessTimeoutMS),
 		VariantsCacheMb:        cfg.VariantsCacheMB,
 		IdempotencyKeyTtlHours: int64(cfg.IdempotencyKeyTTLHours),
+		AlertWebhookUrl:        cfg.AlertWebhookURL,
+		AuditRetentionDays:     int64(cfg.AuditRetentionDays),
 	}
 }
 

@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ type Settings struct {
 	ProcessTimeoutMS       int                `json:"process_timeout_ms"`        // 单请求处理超时(毫秒)
 	VariantsCacheMB        int64              `json:"variants_cache_mb"`         // variant 磁盘缓存上限(MB),超则 LRU 淘汰
 	IdempotencyKeyTTLHours int                `json:"idempotency_key_ttl_hours"` // 上传幂等键保留期(小时),超期回收;客户端重试窗口以此为界
+	AlertWebhookURL        string             `json:"alert_webhook_url"`         // 告警 Webhook 地址(http/https);空=不外发
+	AuditRetentionDays     int                `json:"audit_retention_days"`      // 审计日志保留天数,超期由清理循环回收;0=永久保留
 }
 
 // Defaults 返回与 settings 表列 DEFAULT 一致的出厂配置,供测试与工具构造基线。
@@ -93,7 +96,15 @@ func Defaults() Settings {
 		ProcessTimeoutMS:       5000,
 		VariantsCacheMB:        10240,
 		IdempotencyKeyTTLHours: 24,
+		AlertWebhookURL:        "",
+		AuditRetentionDays:     0,
 	}
+}
+
+// AuditRetention 审计日志保留期;零值表示永久保留。
+// @return 保留时长
+func (s Settings) AuditRetention() time.Duration {
+	return time.Duration(s.AuditRetentionDays) * 24 * time.Hour
 }
 
 // IdempotencyKeyTTL 上传幂等键保留期。
@@ -148,7 +159,10 @@ func (s Settings) validate() error {
 	if err := s.validateLifecycle(); err != nil {
 		return err
 	}
-	return s.validateProcess()
+	if err := s.validateProcess(); err != nil {
+		return err
+	}
+	return validateWebhookURL(s.AlertWebhookURL)
 }
 
 // validateUpload 校验上传入口与公开访问的配置:体积与像素预算、并发与限速、副本门槛、访问模式、EXIF 档位。
@@ -197,8 +211,8 @@ func (s Settings) validateSchedules() error {
 	return nil
 }
 
-// validateLifecycle 校验生命周期与查重阈值:宽限、TTL、冷图天数、配额、汉明距离以 0 表示不启用、不可为负;
-// 幂等键保留期须为正。
+// validateLifecycle 校验生命周期与查重阈值:宽限、TTL、冷图天数、配额、汉明距离、审计保留期以 0 表示不启用或永久、
+// 不可为负;幂等键保留期须为正。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateLifecycle() error {
 	switch {
@@ -214,6 +228,22 @@ func (s Settings) validateLifecycle() error {
 		return fmt.Errorf("dedup_phash_max_distance=%d 非法: 不可为负(0 表示不做相似扫描)", s.DedupPhashMaxDistance)
 	case s.IdempotencyKeyTTLHours < 1:
 		return fmt.Errorf("idempotency_key_ttl_hours=%d 非法: 需要正整数", s.IdempotencyKeyTTLHours)
+	case s.AuditRetentionDays < 0:
+		return fmt.Errorf("audit_retention_days=%d 非法: 不可为负(0 表示永久保留)", s.AuditRetentionDays)
+	}
+	return nil
+}
+
+// validateWebhookURL 校验告警 Webhook 地址:空表示不外发,否则须为带主机的 http/https 地址。
+// @param raw 配置值
+// @return 非法地址的错误;合法或为空时为 nil
+func validateWebhookURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("alert_webhook_url=%q 非法: 需要 http/https 地址", raw)
 	}
 	return nil
 }

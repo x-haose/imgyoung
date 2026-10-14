@@ -43,5 +43,7 @@ SET max_upload_mb = ?,
     process_timeout_ms = ?,
     variants_cache_mb = ?,
     idempotency_key_ttl_hours = ?,
+    alert_webhook_url = ?,
+    audit_retention_days = ?,
     updated_at = datetime('now')
 WHERE id = 1;
