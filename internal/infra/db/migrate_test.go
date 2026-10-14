@@ -84,6 +84,28 @@ func TestMigrateFresh(t *testing.T) {
 	}
 }
 
+// TestMigrateDoesNotReviveLocalChannel 验证内置 local 渠道只播种一次:管理员删掉它之后
+// 再次迁移(每次启动都会跑)不得把它种回来;渠道表彻底为空的全新库才播种。
+func TestMigrateDoesNotReviveLocalChannel(t *testing.T) {
+	conn := openTest(t)
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("首次迁移: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := conn.ExecContext(ctx, `INSERT INTO channels (name, driver) VALUES ('mine', 's3')`); err != nil {
+		t.Fatalf("新增渠道: %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `DELETE FROM channels WHERE name = 'local'`); err != nil {
+		t.Fatalf("删除 local 渠道: %v", err)
+	}
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("再次迁移: %v", err)
+	}
+	if got := queryString(t, conn, `SELECT COUNT(*) FROM channels WHERE name = 'local'`); got != "0" {
+		t.Fatalf("已删除的 local 渠道被重新播种(count=%s)", got)
+	}
+}
+
 // TestMigrateBackfillsLegacyRows 存量库:旧版 schema 中的历史数据经迁移后被正确回填。
 func TestMigrateBackfillsLegacyRows(t *testing.T) {
 	conn := openTest(t)
