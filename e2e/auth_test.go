@@ -48,6 +48,7 @@ func postLogin(t *testing.T, client *http.Client, baseURL, name, password string
 
 // TestDefaultAdminPassword 零配置首启:出厂默认密码可直接登录,且响应标记须改密;错误密码 401。
 func TestDefaultAdminPassword(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 
 	code, mustChange := loginMustChange(t, inst.baseURL, "admin", testAdminPass)
@@ -66,6 +67,7 @@ func TestDefaultAdminPassword(t *testing.T) {
 
 // TestFirstRunPasswordChange 强制改密闭环:默认密码改掉后,新密码登录不再须改密,旧默认密码失效。
 func TestFirstRunPasswordChange(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	client, csrf := adminSession(t, inst)
 
@@ -93,6 +95,7 @@ func TestFirstRunPasswordChange(t *testing.T) {
 
 // TestAdminAuthLifecycle 管理面认证闭环:登录→/me 恢复会话→登出→会话失效;错误密码 401。
 func TestAdminAuthLifecycle(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 
 	if code := postLogin(t, http.DefaultClient, inst.baseURL, "admin", "wrong"); code != http.StatusUnauthorized {
@@ -101,10 +104,22 @@ func TestAdminAuthLifecycle(t *testing.T) {
 
 	client, csrf := adminSession(t, inst)
 	me := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/me", "")
-	code := me.StatusCode
+	if me.StatusCode != http.StatusOK {
+		t.Fatalf("/me 状态码 = %d, 期望 200", me.StatusCode)
+	}
+	var mr struct {
+		User struct {
+			Name string `json:"name"`
+			Role string `json:"role"`
+		} `json:"user"`
+		CSRFToken string `json:"csrf_token"`
+	}
+	if err := json.NewDecoder(me.Body).Decode(&mr); err != nil {
+		t.Fatalf("解析 /me: %v", err)
+	}
 	_ = me.Body.Close()
-	if code != http.StatusOK {
-		t.Fatalf("/me 状态码 = %d, 期望 200", code)
+	if mr.User.Name != "admin" || mr.User.Role != "admin" || mr.CSRFToken != csrf {
+		t.Fatalf("/me 内容异常: %+v", mr)
 	}
 
 	lo := adminReq(t, client, csrf, http.MethodPost, inst.baseURL+"/api/admin/auth/logout", "")
@@ -123,6 +138,7 @@ func TestAdminAuthLifecycle(t *testing.T) {
 
 // TestCSRFEnforced 反向断言:持有效会话但缺 CSRF 头的状态变更请求必须 403。
 func TestCSRFEnforced(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	client, _ := adminSession(t, inst)
 
@@ -144,6 +160,7 @@ func TestCSRFEnforced(t *testing.T) {
 
 // TestLoginRateLimited 连续错误密码触发登录限速(突发额度 5 次)。
 func TestLoginRateLimited(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -162,6 +179,7 @@ func TestLoginRateLimited(t *testing.T) {
 // TestTokenAuthBoundary Token 鉴权边界:后台签发的 Token 可上传,伪造值 401,
 // 管理面拒绝 Token 凭证(Token 只授权数据 API)。
 func TestTokenAuthBoundary(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 
 	forged := upload(t, inst, "forged-token", "e2e.png", pngBytes(t), nil, nil)

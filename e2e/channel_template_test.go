@@ -12,6 +12,7 @@ import (
 
 // TestChannelTemplatesDownload 模板清单 API 下发全部内置模板,且不泄露 provider 预设。
 func TestChannelTemplatesDownload(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	client, csrf := adminSession(t, inst)
 
@@ -70,6 +71,7 @@ func TestChannelTemplatesDownload(t *testing.T) {
 
 // TestChannelTemplateValidation 模板模式缺必填字段返回 400 且含字段名;未知模板 400。
 func TestChannelTemplateValidation(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	client, csrf := adminSession(t, inst)
 

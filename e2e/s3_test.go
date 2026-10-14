@@ -126,6 +126,7 @@ func objectPath(inst *instance, cred s3Credential, objectKey string) string {
 // TestS3PutObjectRoundTrip S3 协议闭环:官方 SDK 上传 → 客户端按 urlPrefix 拼的地址可访问 →
 // 字节与原图一致。这是"能否接上 PicGo 生态"的实质验收。
 func TestS3PutObjectRoundTrip(t *testing.T) {
+	t.Parallel()
 	env := s3Setup(t, nil)
 	inst, cred := env.inst, env.cred
 
@@ -152,6 +153,7 @@ func TestS3PutObjectRoundTrip(t *testing.T) {
 // TestS3PutObjectOverwrite 同键重传按 S3 语义覆盖:别名指向新图,旧图的短 ID 仍可访问
 // (可能已被分享出去,不能因为一次覆盖就失效)。
 func TestS3PutObjectOverwrite(t *testing.T) {
+	t.Parallel()
 	env := s3Setup(t, nil)
 	inst, client, csrf, cred := env.inst, env.client, env.csrf, env.cred
 	s3c := newS3Client(t, cred)
@@ -196,6 +198,7 @@ func TestS3PutObjectOverwrite(t *testing.T) {
 
 // TestS3RejectsBadCredential 凭证不对一律 403:伪造 access key、错误密钥、Token 吊销后。
 func TestS3RejectsBadCredential(t *testing.T) {
+	t.Parallel()
 	env := s3Setup(t, nil)
 	cred := env.cred
 
@@ -217,6 +220,7 @@ func TestS3RejectsBadCredential(t *testing.T) {
 // TestS3UnderRateLimit 开启上传频控后 S3 入口仍可用:频控按认证主体计,
 // 而 S3 面的主体要验签才产生——验签若排在闸门之后,整个协议面会一律 401。
 func TestS3UnderRateLimit(t *testing.T) {
+	t.Parallel()
 	env := s3Setup(t, map[string]any{"upload_rate_per_min": 60})
 	if err := putWith(t, env.cred, "rated.png"); err != nil {
 		t.Fatalf("频控开启后 S3 上传失败: %v", err)
@@ -226,6 +230,7 @@ func TestS3UnderRateLimit(t *testing.T) {
 // TestS3ChunkedUpload aws-chunked 分块正文:aws-cli v2 与新版 botocore 默认走这条路,
 // 不解帧则带帧的字节会被当成"不是图片"。此处手工构帧,不依赖某个 SDK 版本的默认行为。
 func TestS3ChunkedUpload(t *testing.T) {
+	t.Parallel()
 	env := s3Setup(t, nil)
 	inst, cred := env.inst, env.cred
 
@@ -271,6 +276,7 @@ func signS3Request(t *testing.T, req *http.Request, cred s3Credential, payloadHa
 
 // TestS3RejectsNonImage S3 入口与直传共用同一条净化管道:非图片内容同样被拒。
 func TestS3RejectsNonImage(t *testing.T) {
+	t.Parallel()
 	env := s3Setup(t, nil)
 
 	_, err := newS3Client(t, env.cred).PutObject(context.Background(), &s3.PutObjectInput{

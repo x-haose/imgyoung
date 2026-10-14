@@ -26,6 +26,7 @@ func getPath(t *testing.T, inst *instance, path string) (code int, contentType, 
 
 // TestSPAServed 冒烟:根路径与前端路由均返回内嵌后台页面,API 未匹配路径保持纯 404。
 func TestSPAServed(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 
 	for _, path := range []string{"/", "/login", "/images"} {

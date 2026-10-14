@@ -102,7 +102,7 @@ func countFiles(t *testing.T, dir string) int {
 func TestServeVariantResizeAndCache(t *testing.T) {
 	ts, vdir := setupVariants(t, 50)
 
-	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
+	up := uploadReq(t, ts, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
 
@@ -159,7 +159,7 @@ func TestServeVariantResizeAndCache(t *testing.T) {
 // TestServeVariantRejectsBadTier 验收:档外宽度/格式返回 400。
 func TestServeVariantRejectsBadTier(t *testing.T) {
 	ts, _ := setupVariants(t, 50)
-	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
+	up := uploadReq(t, ts, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
 
@@ -178,7 +178,7 @@ func TestServeVariantRejectsBadTier(t *testing.T) {
 // TestServeVariantNegotiatesFormat 验收:Accept: image/webp 时无 format 参数也协商为 webp。
 func TestServeVariantNegotiatesFormat(t *testing.T) {
 	ts, _ := setupVariants(t, 50)
-	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
+	up := uploadReq(t, ts, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
 
@@ -204,7 +204,7 @@ func TestServeVariantNegotiatesFormat(t *testing.T) {
 // TestServeVariantGifNotProcessed 验收:gif 源即便显式请求处理参数也只发原图(不解码首帧转静图、动画不丢)。
 func TestServeVariantGifNotProcessed(t *testing.T) {
 	ts, vdir := setupVariants(t, 50)
-	up := uploadReq(t, ts, testToken, "a.gif", gifBytes(t), nil)
+	up := uploadReq(t, ts, "a.gif", gifBytes(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
 
@@ -229,7 +229,7 @@ func TestServeVariantGifNotProcessed(t *testing.T) {
 func TestServeVariantDegradedFallbackNoStore(t *testing.T) {
 	// 处理引擎像素预算置极小(100),300x200 源必超预算 → 处理失败 → 降级回退;但原图服务不解码,照常可用。
 	ts, vdir := setupVariants(t, 0)
-	up := uploadReq(t, ts, testToken, "a.png", bigPNG(t), nil)
+	up := uploadReq(t, ts, "a.png", bigPNG(t), nil)
 	defer closeBody(t, up)
 	id, _ := decodeUpload(t, up)
 

@@ -52,6 +52,7 @@ func startWebDAVServer(t *testing.T) string {
 // @Description: 覆盖网盘系渠道的完整闭环,顺带证明模板路径下密码编码正确
 // (编码错则 WebDAV 服务器返回 401,上传必失败)。
 func TestWebDAVChannelRoundTrip(t *testing.T) {
+	t.Parallel()
 	davURL := startWebDAVServer(t)
 	inst := startInstance(t, nil)
 
@@ -99,6 +100,7 @@ func TestWebDAVChannelRoundTrip(t *testing.T) {
 
 // TestWebDAVChannelRejectsWrongPassword 密码错误时测试连接失败,不留假健康渠道。
 func TestWebDAVChannelRejectsWrongPassword(t *testing.T) {
+	t.Parallel()
 	davURL := startWebDAVServer(t)
 	inst := startInstance(t, nil)
 	client, csrf := adminSession(t, inst)

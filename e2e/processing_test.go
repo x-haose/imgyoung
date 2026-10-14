@@ -24,6 +24,7 @@ var procSettings = map[string]any{
 
 // TestProcessResize 缩放:jpeg 上传后 ?w=320 应返回宽 320 的图。
 func TestProcessResize(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(800, 600, 0), nil, nil)
 	_, body := procGet(t, inst, url+"?w=320", nil)
@@ -34,6 +35,7 @@ func TestProcessResize(t *testing.T) {
 
 // TestProcessFormatConvert 转格式:?format=webp 应返回 webp。
 func TestProcessFormatConvert(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	resp, body := procGet(t, inst, url+"?format=webp", nil)
@@ -47,6 +49,7 @@ func TestProcessFormatConvert(t *testing.T) {
 
 // TestProcessNegotiationVary Accept 协商 + Vary:带 Accept image/webp 且无 format 应协商为 webp,响应带 Vary: Accept。
 func TestProcessNegotiationVary(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	resp, body := procGet(t, inst, url+"?w=320", map[string]string{"Accept": "image/webp"})
@@ -60,6 +63,7 @@ func TestProcessNegotiationVary(t *testing.T) {
 
 // TestProcessETag304 变体 ETag/304:带处理参数取回得 ETag,再带 If-None-Match 应 304。
 func TestProcessETag304(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	resp, _ := procGet(t, inst, url+"?w=320", nil)
@@ -76,6 +80,7 @@ func TestProcessETag304(t *testing.T) {
 // TestProcessOrientation EXIF orientation 校正(L5):800×600 左红右蓝 + orient=6 →
 // ?w=320 应得 320×426 竖图,且顶部像素偏红(顺时针 90 后原左半红转到顶部)。
 func TestProcessOrientation(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(800, 600, 6), nil, nil)
 	_, body := procGet(t, inst, url+"?w=320", nil)
@@ -95,6 +100,7 @@ func TestProcessOrientation(t *testing.T) {
 
 // TestProcessGifAnimationProtected 动图保护:gif 带处理参数仍应回原动图(不可重编码、不拍成静图)。
 func TestProcessGifAnimationProtected(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	src := procGIF(100, 100, 4)
 	_, url := mustUpload(t, inst, src, nil, nil)
@@ -112,6 +118,7 @@ func TestProcessGifAnimationProtected(t *testing.T) {
 
 // TestProcessBadParams 档外参数应 400。
 func TestProcessBadParams(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, procSettings)
 	_, url := mustUpload(t, inst, procJPEG(640, 480, 0), nil, nil)
 	if resp, _ := procGet(t, inst, url+"?w=999", nil); resp.StatusCode != 400 {

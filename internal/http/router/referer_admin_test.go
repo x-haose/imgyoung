@@ -50,7 +50,7 @@ func TestRefererWhitelistHotReload(t *testing.T) {
 	ts := newTestServer(t, func(_ *testConfig, e testEnv) { env = e })
 	client, csrf := adminSession(t, ts)
 
-	up := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	up := uploadReq(t, ts, "a.png", pngBytes(t), nil)
 	defer closeBody(t, up)
 	_, imgURL := decodeUpload(t, up)
 	imgFull := ts.URL + imgURL
@@ -238,7 +238,7 @@ func TestConfigUpdateHotReload(t *testing.T) {
 
 	// 初始额度 1MB:2MB 载荷应 413。
 	big := make([]byte, 2<<20)
-	rejected := uploadReq(t, ts, testToken, "big.bin", append(pngBytes(t), big...), nil)
+	rejected := uploadReq(t, ts, "big.bin", append(pngBytes(t), big...), nil)
 	closeBody(t, rejected)
 	if rejected.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("扩容前上传状态码 = %d, 期望 413", rejected.StatusCode)
@@ -260,7 +260,7 @@ func TestConfigUpdateHotReload(t *testing.T) {
 	if updated.Settings.MaxUploadMB != 10 {
 		t.Fatalf("响应中 max_upload_mb = %d, 期望 10", updated.Settings.MaxUploadMB)
 	}
-	accepted := uploadReq(t, ts, testToken, "a.png", pngBytes(t), nil)
+	accepted := uploadReq(t, ts, "a.png", pngBytes(t), nil)
 	closeBody(t, accepted)
 	if accepted.StatusCode != http.StatusOK {
 		t.Fatalf("扩容后上传状态码 = %d, 期望 200", accepted.StatusCode)

@@ -15,13 +15,13 @@ import (
 	"image/png"
 	"io"
 	"mime/multipart"
-	"net"
 	"net/http"
 	"net/http/cookiejar"
 	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -107,7 +107,9 @@ func configure(t *testing.T, inst *instance, settings map[string]any) {
 	}
 }
 
-// startInstance 以独立数据目录与端口启动一个服务进程,就绪后签发 Token 并应用运营配置。
+// startInstance 以独立数据目录与系统分配的端口启动一个服务进程,就绪后签发 Token 并应用运营配置。
+// @Description: 端口交给系统分配、实际地址从启动日志取:先自选空闲端口再交给进程绑定,
+// 并行用例之间会抢到同一个端口。
 // @param settings 运营配置补丁(键为 config.Settings 的 JSON 名);渠道健康检查间隔已默认压到 1 秒
 func startInstance(t *testing.T, settings map[string]any) *instance {
 	t.Helper()
@@ -115,27 +117,32 @@ func startInstance(t *testing.T, settings map[string]any) *instance {
 		t.Fatalf("服务二进制不可用: %v", buildErr)
 	}
 	dataDir := t.TempDir()
-	port := freePort(t)
-
-	inst := &instance{
-		baseURL: fmt.Sprintf("http://127.0.0.1:%d", port),
-		dataDir: dataDir,
-		logPath: filepath.Join(dataDir, "server.log"),
+	inst := &instance{dataDir: dataDir, logPath: filepath.Join(dataDir, "server.log")}
+	spawn(t, inst, "127.0.0.1:0")
+	inst.baseURL = "http://" + listenAddr(t, inst.logPath)
+	waitReady(t, inst)
+	seedToken(t, inst)
+	// 健康检查间隔全实例压到 1 秒:用例等渠道状态翻转,出厂间隔太长会把每个用例拖成分钟级。
+	patch := map[string]any{"health_check_seconds": 1}
+	for k, v := range settings {
+		patch[k] = v
 	}
+	configure(t, inst, patch)
+	return inst
+}
+
+// spawn 启动服务进程,日志落 inst.logPath;进程随测试结束被 SIGTERM 收尾,超时则强杀,
+// 用例失败时把服务日志尾部打进测试输出。
+// @param inst 已填好 dataDir 与 logPath 的实例
+// @param listen 监听地址,端口 0 表示由系统分配
+func spawn(t *testing.T, inst *instance, listen string) {
+	t.Helper()
 	logFile, err := os.Create(inst.logPath)
 	if err != nil {
 		t.Fatalf("创建日志文件: %v", err)
 	}
-
-	env := map[string]string{
-		"IMGYOUNG_DATA_DIR": dataDir,
-		"IMGYOUNG_LISTEN":   fmt.Sprintf("127.0.0.1:%d", port),
-	}
 	cmd := exec.Command(binPath)
-	cmd.Env = os.Environ()
-	for k, v := range env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = append(os.Environ(), "IMGYOUNG_DATA_DIR="+inst.dataDir, "IMGYOUNG_LISTEN="+listen)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -154,38 +161,73 @@ func startInstance(t *testing.T, settings map[string]any) *instance {
 		if closeErr := logFile.Close(); closeErr != nil {
 			t.Logf("关闭日志文件: %v", closeErr)
 		}
+		if t.Failed() {
+			t.Logf("服务日志尾部:\n%s", logTail(inst.logPath))
+		}
 	})
+}
 
+// logTailBytes 用例失败时回显的服务日志尾部长度。
+const logTailBytes = 4 << 10
+
+// logTail 读服务日志的最后一段。
+// @param path 日志文件路径
+// @return 日志尾部;读不到时为空串
+func logTail(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if len(raw) > logTailBytes {
+		raw = raw[len(raw)-logTailBytes:]
+	}
+	return string(raw)
+}
+
+// listenAddrPattern 启动日志里的实际监听地址字段。
+var listenAddrPattern = regexp.MustCompile(`listen=(127\.0\.0\.1:\d+)`)
+
+// listenAddr 从启动日志取进程实际绑定的地址。
+// @param logPath 服务日志路径
+// @return host:port
+func listenAddr(t *testing.T, logPath string) string {
+	t.Helper()
+	var addr string
+	waitUntil(t, bootDeadline, "启动日志打出监听地址", func() bool {
+		raw, err := os.ReadFile(logPath)
+		if err != nil {
+			return false
+		}
+		m := listenAddrPattern.FindSubmatch(raw)
+		if m == nil {
+			return false
+		}
+		addr = string(m[1])
+		return true
+	})
+	return addr
+}
+
+// waitReady 轮询 /healthz 直到实例就绪。
+// @param inst 已启动的实例
+func waitReady(t *testing.T, inst *instance) {
+	t.Helper()
 	waitUntil(t, bootDeadline, "服务就绪", func() bool {
-		resp, gerr := http.Get(inst.baseURL + "/healthz")
-		if gerr != nil {
+		resp, err := http.Get(inst.baseURL + "/healthz")
+		if err != nil {
 			return false
 		}
 		defer func() { _ = resp.Body.Close() }()
 		return resp.StatusCode == http.StatusOK
 	})
-	seedToken(t, inst)
-	// 健康检查间隔全实例压到 1 秒:用例等渠道状态翻转,出厂间隔太长会把每个用例拖成分钟级。
-	patch := map[string]any{"health_check_seconds": 1}
-	for k, v := range settings {
-		patch[k] = v
-	}
-	configure(t, inst, patch)
-	return inst
 }
 
-// freePort 取一个空闲端口。
-func freePort(t *testing.T) int {
+// skipIfRoot 以 root 运行时跳过依赖文件权限制造故障的用例:root 不受权限位约束,故障造不出来。
+func skipIfRoot(t *testing.T) {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("申请空闲端口: %v", err)
+	if os.Geteuid() == 0 {
+		t.Skip("root 不受文件权限约束,无法用权限位模拟故障")
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	if err := l.Close(); err != nil {
-		t.Fatalf("释放探测端口: %v", err)
-	}
-	return port
 }
 
 // waitUntil 轮询直到条件满足,超时即失败。
@@ -402,30 +444,28 @@ func createChannel(t *testing.T, inst *instance, body string) int64 {
 	return created.ID
 }
 
-// dirHasFiles 目录内是否已有文件。
-func dirHasFiles(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	return err == nil && len(entries) > 0
-}
-
-// dirHasObjectFile 目录下是否已有顶层普通文件(渠道内的图片对象)。
-// @Description: 排除备份等系统对象——它们落在 _imgyoung/ 子目录下,仅表现为目录项;
-// 用于等待异步副本真正到达,而非被启动快照误判为已补齐。
-func dirHasObjectFile(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			return true
+// countObjects 统计渠道存储目录下的对象文件数;排除 _imgyoung 下的备份等系统对象,
+// 等待异步副本到达时不会被启动快照误判为已补齐。
+// @param dir 渠道存储目录
+// @return 对象文件数;目录不存在为 0
+func countObjects(dir string) int {
+	n := 0
+	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
 		}
-	}
-	return false
+		if !strings.Contains(p, "_imgyoung") {
+			n++
+		}
+		return nil
+	})
+	return n
 }
 
-// TestUploadServeRoundTrip 核心闭环:上传 → 访问,字节一致且响应头正确。
+// TestUploadServeRoundTrip 核心闭环:上传 → 访问,字节一致且响应头正确;
+// 内容不可变故 If-None-Match 命中 304;不存在的短 ID 一律 404。
 func TestUploadServeRoundTrip(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	payload := pngBytes(t)
 	_, url := mustUpload(t, inst, payload, nil, nil)
@@ -448,10 +488,42 @@ func TestUploadServeRoundTrip(t *testing.T) {
 	if err != nil || !bytes.Equal(got, payload) {
 		t.Fatalf("取回字节不一致: err=%v", err)
 	}
+
+	etag := resp.Header.Get("ETag")
+	if etag == "" || etag[0] != '"' {
+		t.Fatalf("ETag = %q, 期望带引号的强 ETag", etag)
+	}
+	cond, _ := procGet(t, inst, url, map[string]string{"If-None-Match": etag})
+	if cond.StatusCode != http.StatusNotModified {
+		t.Errorf("If-None-Match 命中状态码 = %d, 期望 304", cond.StatusCode)
+	}
+	missing := fetch(t, inst, "/i/nonexistent0", "")
+	_ = missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Errorf("不存在短 ID 状态码 = %d, 期望 404", missing.StatusCode)
+	}
+}
+
+// TestUploadURLUsesBaseURL 配置对外站点地址后,上传响应的 url 一律以它开头(PicGo 等客户端需要)。
+func TestUploadURLUsesBaseURL(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, map[string]any{"base_url": "https://img.example.com"})
+	resp := upload(t, inst, inst.token, "a.png", pngBytes(t), nil, nil)
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("解析上传响应: %v", err)
+	}
+	if !strings.HasPrefix(out.URL, "https://img.example.com/i/") {
+		t.Fatalf("url = %q, 期望以配置的站点地址开头", out.URL)
+	}
 }
 
 // TestAuthAndValidation 鉴权与输入校验:401 / 415 / 413。
 func TestAuthAndValidation(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, map[string]any{"max_upload_mb": 1})
 
 	noAuth := upload(t, inst, "", "a.png", pngBytes(t), nil, nil)
@@ -474,8 +546,9 @@ func TestAuthAndValidation(t *testing.T) {
 	}
 }
 
-// TestEXIFPolicies 默认 passthrough 保留元数据,strip 字段剥离元数据。
+// TestEXIFPolicies 默认 passthrough 保留元数据,strip 字段剥离元数据,实验档 spoof 显式指定即 400。
 func TestEXIFPolicies(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	marker := []byte("Exif\x00\x00")
 
@@ -488,10 +561,17 @@ func TestEXIFPolicies(t *testing.T) {
 	if bytes.Contains(fetchBytes(t, inst, stripURL), marker) {
 		t.Error("strip 档未剥离 EXIF")
 	}
+
+	bad := upload(t, inst, inst.token, "e.jpg", jpegWithEXIF(t), map[string]string{"exif_policy": "spoof"}, nil)
+	_ = bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Errorf("spoof 档状态码 = %d, 期望 400(实验特性未实现)", bad.StatusCode)
+	}
 }
 
 // TestIdempotency 同一 Idempotency-Key 重复上传返回同一 ID。
 func TestIdempotency(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	headers := map[string]string{"Idempotency-Key": "e2e-retry"}
 	id1, _ := mustUpload(t, inst, pngBytes(t), nil, headers)
@@ -503,6 +583,7 @@ func TestIdempotency(t *testing.T) {
 
 // TestRefererProtection 防盗链:白名单命中放行、未命中 403、空 Referer 放行。
 func TestRefererProtection(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	// 白名单以 referer_whitelist 表为真相、增删即时生效,故经管理 API 加规则。
 	client, csrf := adminSession(t, inst)
@@ -535,6 +616,8 @@ func TestRefererProtection(t *testing.T) {
 // TestMultiChannelReplicationAndFailover 多渠道全链路:
 // 补齐复制 → 拔主渠道访问即时切换 → 健康检查感知后新上传落备用渠道。
 func TestMultiChannelReplicationAndFailover(t *testing.T) {
+	t.Parallel()
+	skipIfRoot(t)
 	inst := startInstance(t, nil)
 	fastDir := t.TempDir()
 	createChannel(t, inst, fmt.Sprintf(
@@ -545,8 +628,8 @@ func TestMultiChannelReplicationAndFailover(t *testing.T) {
 
 	// 主渠道(fast)同步写入,内置 local 由补齐任务异步复制。
 	localDir := filepath.Join(inst.dataDir, "blobs")
-	waitUntil(t, 15*time.Second, "副本补齐到 local", func() bool { return dirHasObjectFile(localDir) })
-	if !dirHasObjectFile(fastDir) {
+	waitUntil(t, 15*time.Second, "副本补齐到 local", func() bool { return countObjects(localDir) > 0 })
+	if countObjects(fastDir) == 0 {
 		t.Fatal("主渠道 fast 没有对象")
 	}
 
@@ -568,6 +651,7 @@ func TestMultiChannelReplicationAndFailover(t *testing.T) {
 
 // TestEncryptedChannel 加密渠道:落盘文件名与内容均为密文,访问返回明文。
 func TestEncryptedChannel(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	vaultDir := t.TempDir()
 	createChannel(t, inst, fmt.Sprintf(
@@ -599,6 +683,7 @@ func TestEncryptedChannel(t *testing.T) {
 
 // TestRedirectMode 302 省流量模式:允许直链的渠道返回重定向。
 func TestRedirectMode(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, map[string]any{"access_mode": "redirect"})
 	createChannel(t, inst, fmt.Sprintf(
 		`{"name":"cdn","driver":"local","priority":300,"allow_direct_link":true,`+
@@ -624,6 +709,7 @@ func TestRedirectMode(t *testing.T) {
 
 // TestChannelGuards 渠道管理守卫:唯一副本删除拒绝、未知字段拒绝。
 func TestChannelGuards(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	_, _ = mustUpload(t, inst, pngBytes(t), nil, nil)
 
@@ -637,6 +723,7 @@ func TestChannelGuards(t *testing.T) {
 
 // TestGracefulShutdown SIGTERM 后进程以零码优雅退出。
 func TestGracefulShutdown(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	_, _ = mustUpload(t, inst, pngBytes(t), nil, nil)
 
@@ -658,6 +745,7 @@ func TestGracefulShutdown(t *testing.T) {
 
 // TestRestartRecovery 重启恢复:进程重启后既有图仍可访问、可继续上传。
 func TestRestartRecovery(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	payload := pngBytes(t)
 	_, url := mustUpload(t, inst, payload, nil, nil)
@@ -681,6 +769,7 @@ func TestRestartRecovery(t *testing.T) {
 // TestBackupSnapshotRestore 验证迭代 3 灾备验收:启动时元数据库自动快照上传到渠道,
 // 删掉本地 DB 后用渠道内快照替换重启,既有图的元数据完好、仍可访问。
 func TestBackupSnapshotRestore(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	payload := pngBytes(t)
 	_, url := mustUpload(t, inst, payload, nil, nil)
@@ -695,11 +784,11 @@ func TestBackupSnapshotRestore(t *testing.T) {
 		t.Fatalf("清空既有快照: %v", err)
 	}
 	inst2 := startInstanceAt(t, inst, listen)
-	waitUntil(t, 15*time.Second, "启动快照落到渠道", func() bool { return dirHasFiles(backupDir) })
-	snapshots, err := filepath.Glob(filepath.Join(backupDir, "imgyoung-*.db"))
-	if err != nil || len(snapshots) == 0 {
-		t.Fatalf("未在渠道备份目录发现快照: err=%v files=%v", err, snapshots)
-	}
+	var snapshots []string
+	waitUntil(t, 15*time.Second, "启动快照落到渠道", func() bool {
+		snapshots, _ = filepath.Glob(filepath.Join(backupDir, "imgyoung-*.db"))
+		return len(snapshots) > 0
+	})
 	slices.Sort(snapshots) // 文件名含时间戳,字典序末位即最新。
 	newest := snapshots[len(snapshots)-1]
 	stopInstance(t, inst2)
@@ -728,6 +817,7 @@ func TestBackupSnapshotRestore(t *testing.T) {
 
 // TestTTLExpiryDeletes 验证迭代 4 验收:设短 TTL 的图到点消失、渠道副本随后被清。
 func TestTTLExpiryDeletes(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, map[string]any{
 		"cleanup_sweep_seconds": 1,
 		"delete_grace_minutes":  0,
@@ -748,9 +838,7 @@ func TestTTLExpiryDeletes(t *testing.T) {
 	})
 	// 渠道副本对象随后被级联清除(local 渠道盘上无顶层对象文件)。
 	localDir := filepath.Join(inst.dataDir, "blobs")
-	waitUntil(t, 10*time.Second, "渠道副本对象被清除", func() bool {
-		return !dirHasObjectFile(localDir)
-	})
+	waitUntil(t, 10*time.Second, "渠道副本对象被清除", func() bool { return countObjects(localDir) == 0 })
 }
 
 // stopInstance 向实例发 SIGTERM 并等待退出(重启前的优雅停机)。
@@ -776,41 +864,7 @@ func startInstanceAt(t *testing.T, prev *instance, listen string) *instance {
 		logPath: filepath.Join(prev.dataDir, "server-restart.log"),
 		token:   prev.token,
 	}
-	logFile, err := os.Create(inst.logPath)
-	if err != nil {
-		t.Fatalf("创建日志文件: %v", err)
-	}
-	cmd := exec.Command(binPath)
-	cmd.Env = append(os.Environ(),
-		"IMGYOUNG_DATA_DIR="+prev.dataDir,
-		"IMGYOUNG_LISTEN="+listen,
-	)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("启动服务进程: %v", err)
-	}
-	inst.cmd = cmd
-	t.Cleanup(func() {
-		_ = cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { _, _ = cmd.Process.Wait(); close(done) }()
-		select {
-		case <-done:
-		case <-time.After(15 * time.Second):
-			_ = cmd.Process.Kill()
-		}
-		if closeErr := logFile.Close(); closeErr != nil {
-			t.Logf("关闭日志文件: %v", closeErr)
-		}
-	})
-	waitUntil(t, bootDeadline, "服务就绪", func() bool {
-		resp, gerr := http.Get(inst.baseURL + "/healthz")
-		if gerr != nil {
-			return false
-		}
-		defer func() { _ = resp.Body.Close() }()
-		return resp.StatusCode == http.StatusOK
-	})
+	spawn(t, inst, listen)
+	waitReady(t, inst)
 	return inst
 }

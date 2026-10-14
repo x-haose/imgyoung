@@ -15,6 +15,7 @@ import (
 // TestUploadURLRejectsSSRFTargets URL 转存的 SSRF 闸:非 http/https 协议与内网地址一律拒绝,
 // 且不因目标可达与否泄露差异。
 func TestUploadURLRejectsSSRFTargets(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 
 	targets := map[string]string{
@@ -36,6 +37,7 @@ func TestUploadURLRejectsSSRFTargets(t *testing.T) {
 
 // TestUploadURLRequiresToken URL 转存与直传同一道鉴权:无 Token 一律 401。
 func TestUploadURLRequiresToken(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	req, err := http.NewRequest(http.MethodPost, inst.baseURL+"/api/upload/url",
 		strings.NewReader(`{"url":"https://example.com/a.png"}`))

@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"strings"
 	"testing"
+	"time"
 )
 
 // loginUser 以指定用户登录,返回带会话 cookie 的客户端与 CSRF 令牌。
@@ -107,6 +108,7 @@ func listImages(t *testing.T, inst *instance, client *http.Client, csrf string) 
 
 // TestMultiUserIsolation 验收:两个用户各用自己的 Token 传图、有各自视图,互相看不见、删不掉。
 func TestMultiUserIsolation(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	admin, adminCSRF := adminSession(t, inst)
 	createUser(t, inst, admin, adminCSRF, "bob", "bob-secret-1", 0)
@@ -150,11 +152,13 @@ func TestMultiUserIsolation(t *testing.T) {
 	}
 
 	// bob 访问管理员资源 → 403。
-	users := adminReq(t, bob, bobCSRF, http.MethodGet, inst.baseURL+"/api/admin/users", "")
-	code = users.StatusCode
-	_ = users.Body.Close()
-	if code != http.StatusForbidden {
-		t.Fatalf("普通用户访问用户管理状态码 = %d, 期望 403", code)
+	for _, path := range []string{"/api/admin/users", "/api/admin/channels"} {
+		forbidden := adminReq(t, bob, bobCSRF, http.MethodGet, inst.baseURL+path, "")
+		code = forbidden.StatusCode
+		_ = forbidden.Body.Close()
+		if code != http.StatusForbidden {
+			t.Fatalf("普通用户访问 %s 状态码 = %d, 期望 403", path, code)
+		}
 	}
 
 	// 公开 URL 保持人人可访问(图床语义,隔离只在管理面)。
@@ -168,6 +172,7 @@ func TestMultiUserIsolation(t *testing.T) {
 
 // TestTokenRevokeStopsUpload 验收:签发的 Token 可上传,吊销后立即 401。
 func TestTokenRevokeStopsUpload(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	admin, csrf := adminSession(t, inst)
 	tokenID, plaintext := issueToken(t, inst, admin, csrf, "cli")
@@ -199,6 +204,7 @@ func TestTokenRevokeStopsUpload(t *testing.T) {
 
 // TestQuotaEnforced 验收:配额用尽后上传 403,删除图片释放账面后恢复。
 func TestQuotaEnforced(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	admin, adminCSRF := adminSession(t, inst)
 	createUser(t, inst, admin, adminCSRF, "tiny", "tiny-secret-1", 10)
@@ -215,6 +221,7 @@ func TestQuotaEnforced(t *testing.T) {
 
 // TestUploadRateLimit 验收:每分钟频控生效,超出额度 429。
 func TestUploadRateLimit(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, map[string]any{"upload_rate_per_min": 2})
 	for i := range 2 {
 		resp := upload(t, inst, inst.token, "a.png", pngBytes(t), nil, nil)
@@ -233,6 +240,7 @@ func TestUploadRateLimit(t *testing.T) {
 
 // TestUserDeleteGuards 验收:名下有图的用户删除被拒,清空后可删,删后无法登录。
 func TestUserDeleteGuards(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	admin, csrf := adminSession(t, inst)
 	userID := createUser(t, inst, admin, csrf, "carol", "carol-secret-1", 0)
@@ -307,6 +315,7 @@ func sessionUpload(t *testing.T, inst *instance, client *http.Client, csrf, file
 // TestAdminSessionUpload 验收:登录 → 后台端点传图 → 列表可见 → 图可公开访问;
 // 无 CSRF 头 403、无会话 401。
 func TestAdminSessionUpload(t *testing.T) {
+	t.Parallel()
 	inst := startInstance(t, nil)
 	admin, csrf := adminSession(t, inst)
 
@@ -353,4 +362,62 @@ func TestAdminSessionUpload(t *testing.T) {
 	if code != http.StatusUnauthorized {
 		t.Fatalf("无会话上传状态码 = %d, 期望 401", code)
 	}
+}
+
+// imageAccessCount 以会话读单图详情,返回累计公开访问次数。
+func imageAccessCount(t *testing.T, inst *instance, client *http.Client, csrf, id string) int64 {
+	t.Helper()
+	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/images/"+id, "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("图片详情状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	var item struct {
+		AccessCount int64 `json:"access_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
+		t.Fatalf("解析图片详情: %v", err)
+	}
+	return item.AccessCount
+}
+
+// TestAdminThumbSkipsAccessTracking 后台缩略图通道:匿名 401、会话内 200,且不计公开访问活跃度;
+// 公开入口访问后计数才累加。
+// @Description: 缩略图访问是否被误计,靠对照图判定:缩略图访问之后再公开访问另一张图,
+// 等后者的计数落库——同一轮 flush 会把之前记下的全部访问一起落库,此时被看的图仍须为 0。
+func TestAdminThumbSkipsAccessTracking(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, map[string]any{"activity_flush_seconds": 1})
+	admin, csrf := adminSession(t, inst)
+	watched, watchedURL := mustUpload(t, inst, pngBytes(t), nil, nil)
+	control, controlURL := mustUpload(t, inst, pngBytes(t), nil, nil)
+
+	thumbPath := "/api/admin/images/" + watched + "/thumb"
+	anon := fetch(t, inst, thumbPath, "")
+	_ = anon.Body.Close()
+	if anon.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("匿名访问后台缩略图状态码 = %d, 期望 401", anon.StatusCode)
+	}
+	thumb := adminReq(t, admin, csrf, http.MethodGet, inst.baseURL+thumbPath, "")
+	ct := thumb.Header.Get("Content-Type")
+	code := thumb.StatusCode
+	_ = thumb.Body.Close()
+	if code != http.StatusOK || !strings.HasPrefix(ct, "image/") {
+		t.Fatalf("后台缩略图状态码 = %d Content-Type = %q, 期望 200 与图片类型", code, ct)
+	}
+
+	pub := fetch(t, inst, controlURL, "")
+	_ = pub.Body.Close()
+	waitUntil(t, 10*time.Second, "对照图的公开访问落库", func() bool {
+		return imageAccessCount(t, inst, admin, csrf, control) == 1
+	})
+	if n := imageAccessCount(t, inst, admin, csrf, watched); n != 0 {
+		t.Fatalf("后台浏览被计入公开访问: access_count = %d, 期望 0", n)
+	}
+
+	pubWatched := fetch(t, inst, watchedURL, "")
+	_ = pubWatched.Body.Close()
+	waitUntil(t, 10*time.Second, "公开访问计数累加", func() bool {
+		return imageAccessCount(t, inst, admin, csrf, watched) == 1
+	})
 }

@@ -12,47 +12,15 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"testing"
 	"time"
 )
 
-// channelInfo 对应 /api/admin/channels 返回项。
-type channelInfo struct {
-	Name    string `json:"name"`
-	Driver  string `json:"driver"`
-	Healthy bool   `json:"healthy"`
-}
-
-// listChannels 以管理员会话拉取渠道列表。
-func listChannels(t *testing.T, inst *instance) []channelInfo {
-	t.Helper()
-	client, csrf := adminSession(t, inst)
-	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/channels", "")
-	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
-	var out struct {
-		Items []channelInfo `json:"items"`
-	}
-	_ = json.Unmarshal(raw, &out)
-	return out.Items
-}
-
-// channelHealthy 判断指定渠道当前是否健康。
-func channelHealthy(t *testing.T, inst *instance, name string) bool {
-	t.Helper()
-	for _, c := range listChannels(t, inst) {
-		if c.Name == name {
-			return c.Healthy
-		}
-	}
-	return false
-}
-
 // TestRemoteR2RoundTrip 真实 R2 渠道:上传写入 R2 → 取回字节一致 → TTL 到期后对象删除。
 func TestRemoteR2RoundTrip(t *testing.T) {
+	t.Parallel()
 	endpoint := os.Getenv("IMGYOUNG_E2E_R2_ENDPOINT")
 	key := os.Getenv("IMGYOUNG_E2E_R2_KEY")
 	secret := os.Getenv("IMGYOUNG_E2E_R2_SECRET")
@@ -96,19 +64,10 @@ func TestRemoteR2RoundTrip(t *testing.T) {
 	}
 
 	// TTL 到期 + 清理:取回应变 404(引用回收 + R2 对象删除任务已入队执行)。
-	deleted := false
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
+	waitUntil(t, 20*time.Second, "R2 图 TTL 到期后引用回收", func() bool {
 		resp := fetch(t, inst, url, "")
 		code := resp.StatusCode
 		_ = resp.Body.Close()
-		if code == 404 {
-			deleted = true
-			break
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-	if !deleted {
-		t.Error("R2 图 TTL 到期后仍可取回(引用未回收)")
-	}
+		return code == http.StatusNotFound
+	})
 }
