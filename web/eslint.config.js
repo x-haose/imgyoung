@@ -7,8 +7,15 @@ import { defineConfig } from 'eslint/config'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig(
-  // src/components/ui 是 shadcn 的组件源码;routeTree.gen.ts 由路由插件生成。
-  { ignores: ['dist', 'src/components/ui', 'src/routeTree.gen.ts'] },
+  // src/components/ui 是 shadcn 的组件源码;routeTree.gen.ts 由路由插件生成,api.gen.ts 由接口文档生成。
+  {
+    ignores: [
+      'dist',
+      'src/components/ui',
+      'src/routeTree.gen.ts',
+      'src/lib/api.gen.ts',
+    ],
+  },
   {
     extends: [
       js.configs.recommended,

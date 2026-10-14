@@ -1,36 +1,15 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query'
-import { api, type ListResponse } from '@/lib/api'
+import { api, type ListResponse, type Schema } from '@/lib/api'
 import { parseUTC } from '@/lib/format'
 
 /** Token 列表项(对应 GET /api/admin/tokens);只有识别前缀,无哈希无明文。 */
-export interface TokenItem {
-  id: number
-  name: string
-  prefix: string
-  scopes: string
-  expires_at: string | null // 到期时刻;null 表示永久
-  last_used_at: string | null // 最近使用时刻;null 表示从未使用
-  revoked_at: string | null // 吊销时刻;null 表示未吊销
-  created_at: string
-}
+export type TokenItem = Schema<'Token'>
 
 /** 签发 / 轮转的响应:token 为明文,仅此一次下发。 */
-export interface IssuedToken {
-  id: number
-  name: string
-  prefix: string
-  token: string
-}
+export type IssuedToken = Schema<'IssuedToken'>
 
 /** 一枚 Token 的 S3 协议凭证与端点配置(对应 POST /api/admin/tokens/{id}/s3-credential)。 */
-export interface S3Credential {
-  access_key_id: string
-  secret_access_key: string
-  endpoint: string
-  region: string
-  bucket: string
-  url_prefix: string
-}
+export type S3Credential = Schema<'S3Credential'>
 
 export type TokenStatus = 'active' | 'expired' | 'revoked'
 
@@ -72,7 +51,7 @@ export const tokensQueryOptions = (params: TokenListParams) =>
     placeholderData: keepPreviousData,
   })
 
-export const issueToken = (body: { name: string; expires_in_hours: number }) =>
+export const issueToken = (body: Schema<'TokenCreateRequest'>) =>
   api.post<IssuedToken>('/api/admin/tokens', body)
 
 export const rotateToken = (id: number) =>

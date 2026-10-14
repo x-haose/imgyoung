@@ -7,17 +7,16 @@ type TemplatePickerProps = {
   onSelect: (id: string) => void
 }
 
+/** 网格里一张卡片所需的字段;自定义模式不是后端模板,只有这三项。 */
+type PickerItem = Pick<ChannelTemplate, 'id' | 'name' | 'description'>
+
 /** 渠道创建的选类型步:按分类分组的品牌徽标网格,自定义模式收在末尾。 */
 export function TemplatePicker({ templates, onSelect }: TemplatePickerProps) {
   const m = useMessages()
-  const custom: ChannelTemplate = {
+  const custom: PickerItem = {
     id: CUSTOM,
     name: m.channels.customName,
     description: m.channels.customDesc,
-    driver: '',
-    category: CUSTOM,
-    requires_oauth: false,
-    fields: [],
   }
   const groups = [
     { key: 'object_storage', label: m.channels.groupObjectStorage },

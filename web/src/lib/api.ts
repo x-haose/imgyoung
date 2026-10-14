@@ -5,6 +5,11 @@
  * 401(登录与 me 端点除外)交给 onUnauthorized 注册的处理器,由应用层决定跳转。
  */
 import { messages, t } from '@/i18n'
+import type { components } from './api.gen'
+
+/** 接口文档里的数据结构;键为 api/openapi.yaml 的 components.schemas 名,类型由 pnpm gen:api 生成。 */
+export type Schema<K extends keyof components['schemas']> =
+  components['schemas'][K]
 
 /** API 错误:携带 HTTP 状态码与后端 {error} 信封中的消息;status 为 0 表示网络层失败。 */
 export class ApiError extends Error {

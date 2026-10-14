@@ -1,25 +1,11 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query'
-import { api, type ListResponse } from '@/lib/api'
+import { api, type ListResponse, type Schema } from '@/lib/api'
 
 /** 待清理项(对应 /api/admin/cleanup 响应)。 */
-export interface CleanupItem {
-  id: string // 引用短 ID
-  url: string // 公开访问路径
-  user_id: string // 归属用户
-  file_name: string
-  mime: string
-  size: number // 存储字节
-  width: number
-  height: number
-  last_access_at: string | null // 最近公开访问,UTC 文本;null 表示从未
-  created_at: string // 上传时刻,UTC 文本
-}
+export type CleanupItem = Schema<'CleanupItem'>
 
 /** POST /images/batch-delete 的响应。 */
-export interface BatchDeleteResult {
-  deleted: number
-  failed: { id: string; error: string }[]
-}
+export type BatchDeleteResult = Schema<'BatchDeleteResult'>
 
 /** 单次批量删除的 id 数上限,与后端 batchDeleteMax 一致;每页至多 100 条,全选本页不会越界。 */
 export const BATCH_DELETE_MAX = 100

@@ -4,22 +4,14 @@ import {
   useSuspenseQuery,
 } from '@tanstack/react-query'
 import { type ParsedLocation, redirect } from '@tanstack/react-router'
-import { api, setCsrfToken } from './api'
+import { api, type Schema, setCsrfToken } from './api'
 import { hasStatus } from './errors'
 
 /** 会话主体信息,由登录与 /me 响应返回。 */
-export interface SessionUser {
-  id: string
-  name: string
-  role: 'admin' | 'user'
-  must_change_password: boolean // 仍为出厂默认密码;为真时改前不放行其余页面
-}
+export type SessionUser = Schema<'SessionUser'>
 
 /** 登录与 /me 的响应:主体与状态变更请求须回传的 CSRF 令牌。 */
-export interface Session {
-  user: SessionUser
-  csrf_token: string
-}
+export type Session = Schema<'Session'>
 
 /** 首次强制改密页路由;仍用默认密码时所有已认证页都重定向到此。 */
 export const FIRST_RUN_PATH = '/first-run-password'

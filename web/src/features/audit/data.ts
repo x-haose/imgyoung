@@ -1,5 +1,5 @@
 import { keepPreviousData, queryOptions } from '@tanstack/react-query'
-import { api, type ListResponse } from '@/lib/api'
+import { api, type ListResponse, type Schema } from '@/lib/api'
 import { toUTCText } from '@/lib/format'
 import { type AuditAction } from './actions'
 
@@ -7,15 +7,7 @@ import { type AuditAction } from './actions'
 export const AUDIT_PAGE_SIZE = 50
 
 /** 审计记录项(对应 /api/admin/audit 响应)。 */
-export interface AuditItem {
-  id: number
-  actor: string // 操作者用户 id
-  actor_name: string // 操作者用户名;账号已删除时为原始 id
-  action: string // 动作标识,形如 channel.create
-  target: string // 操作目标标识
-  detail: string // 附加说明
-  created_at: string // 记录时刻,UTC 文本
-}
+export type AuditItem = Schema<'AuditEntry'>
 
 /** 列表筛选;日期为本地日界的 YYYY-MM-DD,区间为闭开 [from 00:00, to 次日 00:00)。 */
 export interface AuditFilters {

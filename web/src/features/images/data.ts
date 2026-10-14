@@ -1,71 +1,30 @@
 /** 图片页数据层:契约类型、查询定义与写操作,全部经会话态管理 API。 */
 import { queryOptions } from '@tanstack/react-query'
 import { type Messages, t } from '@/i18n'
-import { api, type ListResponse, type QueryValue } from '@/lib/api'
+import { api, type ListResponse, type QueryValue, type Schema } from '@/lib/api'
 import { parseUTC, toUTCText } from '@/lib/format'
 import { type ImagesSearch, PAGE_SIZE } from './search'
 
 /** 图片列表 / 详情项(对应 /api/admin/images 响应)。 */
-export interface ImageItem {
-  id: string
-  url: string // 访问路径,相对站点根
-  user_id: string
-  token_id: number | null // 上传来源 Token;null 表示后台上传或来源已删除
-  token_name: string | null
-  file_name: string
-  mime: string
-  size: number // 存储字节
-  width: number
-  height: number
-  sha256: string
-  expire_at: string | null // 到期时刻,UTC 文本;null 表示永久
-  ttl_seconds: number | null
-  last_access_at: string | null // 最近公开访问;null 表示从未
-  access_count: number // flush 周期粒度,非精确 PV
-  pending_cleanup: boolean
-  cleanup_exempt: boolean
-  created_at: string
-  ref_count: number // 物理图引用计数
-}
+export type ImageItem = Schema<'Image'>
 
 /** 单图在一个渠道上的副本状态。 */
-export interface ReplicaItem {
-  channel_id: number
-  channel_name: string
-  state: 'pending' | 'uploading' | 'done' | 'failed'
-  attempts: number
-  last_error: string // 空表示无
-  updated_at: string
-}
+export type ReplicaItem = Schema<'Replica'>
 
 /** 图片详情:列表项字段之外附带副本分布,按渠道优先级降序。 */
-export interface ImageDetail extends ImageItem {
-  replicas: ReplicaItem[]
-}
+export type ImageDetail = Schema<'ImageDetail'>
 
 /** 批量删除响应。 */
-export interface BatchDeleteResult {
-  deleted: number
-  failed: { id: string; error: string }[]
-}
+export type BatchDeleteResult = Schema<'BatchDeleteResult'>
 
 /** 上传与转存的成功响应;url 已是绝对地址。 */
-export interface UploadResult {
-  id: string
-  url: string
-}
+export type UploadResult = Schema<'UploadResult'>
 
 /** 筛选下拉所需的 Token 切面。 */
-export interface TokenOption {
-  id: number
-  name: string
-}
+export type TokenOption = Pick<Schema<'Token'>, 'id' | 'name'>
 
 /** 筛选下拉所需的用户切面(仅管理员)。 */
-export interface UserOption {
-  id: string
-  name: string
-}
+export type UserOption = Pick<Schema<'User'>, 'id' | 'name'>
 
 /** 列表查询参数,键名与后端查询串一致。 */
 export interface ImageListParams {
@@ -169,10 +128,7 @@ export const userOptionsQueryOptions = () =>
   })
 
 /** PATCH 修改项;ttl_hours 为 0 表示改永久,cleanup_exempt 仅管理员可带。 */
-export interface ImagePatch {
-  ttl_hours?: number
-  cleanup_exempt?: boolean
-}
+export type ImagePatch = Schema<'ImagePatch'>
 
 export const patchImage = (id: string, patch: ImagePatch) =>
   api.patch<ImageDetail>(`/api/admin/images/${id}`, patch)

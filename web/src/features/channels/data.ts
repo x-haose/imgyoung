@@ -1,5 +1,5 @@
 import { queryOptions, useQueryClient } from '@tanstack/react-query'
-import { api, type ListResponse } from '@/lib/api'
+import { api, type ListResponse, type Schema } from '@/lib/api'
 import type {
   ChannelItem,
   ChannelTemplate,
@@ -86,23 +86,11 @@ export const checkChannel = (id: number) =>
 export const deleteChannel = (id: number, purge: boolean) =>
   api.delete(`/api/admin/channels/${id}?purge=${purge}`)
 
-export interface OAuthStartBody {
-  template: string
-  inputs: Record<string, string> // 已填字段,提供区域等影响端点的参数
-  client_id: string
-  client_secret: string
-}
+export type OAuthStartBody = Schema<'OAuthStartRequest'>
 
-export interface OAuthStartResponse {
-  auth_url: string // 引导用户前往的授权地址
-  state: string // 领取结果用的一次性标识
-}
+export type OAuthStartResponse = Schema<'OAuthStartResponse'>
 
-export interface OAuthResultResponse {
-  pending: boolean // 用户尚未完成授权
-  token?: string // 授权令牌,填入表单后随渠道提交
-  error?: string // 授权失败原因
-}
+export type OAuthResultResponse = Schema<'OAuthResult'>
 
 export const startOAuth = (body: OAuthStartBody) =>
   api.post<OAuthStartResponse>('/api/admin/channel-oauth/start', body)
