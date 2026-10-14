@@ -87,7 +87,28 @@ func (s *Sweeper) SweepOnce(ctx context.Context) error {
 	if err := s.labelColdImages(ctx); err != nil {
 		return err
 	}
-	return s.expireIdempotencyKeys(ctx)
+	if err := s.expireIdempotencyKeys(ctx); err != nil {
+		return err
+	}
+	return s.expireAuditLog(ctx)
+}
+
+// expireAuditLog 回收超过保留期的审计日志;保留期为零表示永久保留,不删。
+// @Description: 保留天数逐轮取配置,热生效;只按记录时刻裁剪,不区分动作类型。
+// @return 删除失败时的错误
+func (s *Sweeper) expireAuditLog(ctx context.Context) error {
+	retention := s.cfg.Settings().AuditRetention()
+	if retention <= 0 {
+		return nil
+	}
+	n, err := s.cfg.Queries.DeleteAuditLogBefore(ctx, sqlc.TimeText(time.Now().Add(-retention)))
+	if err != nil {
+		return fmt.Errorf("回收超期审计日志: %w", err)
+	}
+	if n > 0 {
+		s.cfg.Logger.Info("超期审计日志回收", "count", n)
+	}
+	return nil
 }
 
 // expireIdempotencyKeys 回收超过保留期的上传幂等键。

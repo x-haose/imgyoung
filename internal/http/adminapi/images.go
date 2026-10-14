@@ -42,6 +42,42 @@ type imageItem struct {
 	RefCount       int64   `json:"ref_count"`       // 物理图引用计数(同图去重共享)
 }
 
+// replicaItem 单图在一个渠道上的副本状态。
+type replicaItem struct {
+	ChannelID   int64  `json:"channel_id"`   // 渠道主键
+	ChannelName string `json:"channel_name"` // 渠道名
+	State       string `json:"state"`        // 副本状态:pending / uploading / done / failed
+	Attempts    int64  `json:"attempts"`     // 累计补齐尝试次数
+	LastError   string `json:"last_error"`   // 最近一次失败原因;空表示无
+	UpdatedAt   string `json:"updated_at"`   // 状态最近更新时刻,UTC 文本
+}
+
+// imageDetail 图片详情:列表项字段之外附带副本分布。
+type imageDetail struct {
+	imageItem
+	Replicas []replicaItem `json:"replicas"` // 物理图在各渠道的副本状态,按渠道优先级降序
+}
+
+// imageDetailFrom 把详情查询行与副本分布翻译为详情响应。
+// @param ctx 上下文
+// @param row 图片详情查询行
+// @return 详情响应
+// @return 副本查询失败时的错误
+func (h *Handlers) imageDetailFrom(ctx context.Context, row sqlc.GetImageAdminRow) (imageDetail, error) {
+	rows, err := h.cfg.Queries.ListImageReplicas(ctx, row.ID)
+	if err != nil {
+		return imageDetail{}, fmt.Errorf("查询副本分布: %w", err)
+	}
+	replicas := make([]replicaItem, 0, len(rows))
+	for _, r := range rows {
+		replicas = append(replicas, replicaItem{
+			ChannelID: r.ChannelID, ChannelName: r.ChannelName, State: r.State,
+			Attempts: r.Attempts, LastError: r.LastError, UpdatedAt: r.UpdatedAt,
+		})
+	}
+	return imageDetail{imageItem: imageItemFrom(row), Replicas: replicas}, nil
+}
+
 // imageItemFrom 把查询行翻译为响应项(列表行与详情行字段同构,列表行经类型转换复用)。
 // @param row 图片详情查询行
 // @return 面向前端的响应项
@@ -104,7 +140,7 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: items, Total: total})
 }
 
-// HandleImageGet 图片详情;普通用户只可见自己的(他人图一律 404,不泄露存在性)。
+// HandleImageGet 图片详情(含副本分布);普通用户只可见自己的(他人图一律 404,不泄露存在性)。
 func (h *Handlers) HandleImageGet(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
@@ -122,7 +158,19 @@ func (h *Handlers) HandleImageGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, imageItemFrom(row))
+	h.writeImageDetail(w, r, row)
+}
+
+// writeImageDetail 输出图片详情响应;副本查询失败记日志并回 500。
+// @param row 图片详情查询行
+func (h *Handlers) writeImageDetail(w http.ResponseWriter, r *http.Request, row sqlc.GetImageAdminRow) {
+	detail, err := h.imageDetailFrom(r.Context(), row)
+	if err != nil {
+		h.cfg.Logger.Error("查询图片副本分布失败", "id", row.ID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, detail)
 }
 
 // patchTTLMaxHours ttl_hours 上限(100 年),防 time.Duration 乘法溢出。
@@ -174,7 +222,7 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, imageItemFrom(row))
+	h.writeImageDetail(w, r, row)
 }
 
 // applyImagePatch 落库 PATCH 的修改项并拼审计说明。

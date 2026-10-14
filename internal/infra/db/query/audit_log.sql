@@ -23,3 +23,7 @@ WHERE (@actor = '' OR actor = @actor)
   AND (@target = '' OR target = @target)
   AND (@since = '' OR created_at >= @since)
   AND (@until = '' OR created_at < @until);
+
+-- name: DeleteAuditLogBefore :execrows
+DELETE FROM audit_log
+WHERE created_at < ?;

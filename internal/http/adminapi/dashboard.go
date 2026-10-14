@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 )
 
@@ -112,11 +113,16 @@ func (h *Handlers) adminDashboard(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	stats, err := h.channelStats(ctx)
+	chans, err := h.cfg.Admin.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stats, err := h.channelStats(ctx, chans)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
+		"backup_colocated":       backupColocated(chans),
 		"images":                 images,
 		"storage_bytes":          storage,
 		"users":                  users,
@@ -148,15 +154,32 @@ func (h *Handlers) topImages(ctx context.Context) ([]topImage, error) {
 	return items, nil
 }
 
+// backupColocated 判定元数据库快照是否与图片数据同盘:快照落在最高优先级的健康渠道,
+// 当它是 local 驱动且此外没有其它在役渠道时,主机全损会连同快照一起丢失。
+// @param chans 渠道描述列表,按优先级降序
+// @return 同盘为 true;没有健康渠道时为 false
+func backupColocated(chans []channel.Info) bool {
+	var primary *channel.Info
+	inService := 0
+	for i := range chans {
+		c := &chans[i]
+		if c.Deleting {
+			continue
+		}
+		inService++
+		if primary == nil && c.Healthy {
+			primary = c
+		}
+	}
+	return primary != nil && primary.Driver == "local" && inService == 1
+}
+
 // channelStats 渠道概览:每个渠道的健康状态与已存字节(副本口径)。
 // @param ctx 上下文
+// @param chans 渠道描述列表
 // @return 渠道概览列表
 // @return 错误
-func (h *Handlers) channelStats(ctx context.Context) ([]channelStat, error) {
-	chans, err := h.cfg.Admin.List(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (h *Handlers) channelStats(ctx context.Context, chans []channel.Info) ([]channelStat, error) {
 	usage, err := h.cfg.Queries.ChannelStorageUsage(ctx)
 	if err != nil {
 		return nil, err

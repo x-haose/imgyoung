@@ -738,6 +738,66 @@ func TestSweepExpiresIdempotencyKeys(t *testing.T) {
 	}
 }
 
+// seedAuditRows 写两条审计日志,其中 stale 的记录时刻回拨到 40 天前。
+func seedAuditRows(t *testing.T, conn *sql.DB, q *sqlc.Queries) {
+	t.Helper()
+	ctx := t.Context()
+	for _, target := range []string{"stale", "fresh"} {
+		if err := q.CreateAuditLog(ctx, sqlc.CreateAuditLogParams{
+			Actor: sqlc.DefaultUserID, Action: "channel.create", Target: target,
+		}); err != nil {
+			t.Fatalf("写审计日志 %s: %v", target, err)
+		}
+	}
+	old := sqlc.TimeText(time.Now().Add(-40 * 24 * time.Hour))
+	if _, err := conn.ExecContext(ctx, "UPDATE audit_log SET created_at = ? WHERE target = 'stale'", old); err != nil {
+		t.Fatalf("回拨记录时刻: %v", err)
+	}
+}
+
+// auditTargets 读出审计日志里现存的目标标识集合。
+func auditTargets(t *testing.T, q *sqlc.Queries) map[string]bool {
+	t.Helper()
+	rows, err := q.ListAuditLog(t.Context(), sqlc.ListAuditLogParams{
+		Actor: "", Action: "", Target: "", Since: "", Until: "", PageLimit: 10,
+	})
+	if err != nil {
+		t.Fatalf("读审计日志: %v", err)
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Target] = true
+	}
+	return got
+}
+
+// TestSweepExpiresAuditLog 验证审计日志按保留天数回收:超期行删除、期内行保留;保留天数为 0 时一律保留。
+func TestSweepExpiresAuditLog(t *testing.T) {
+	conn, q := setup(t)
+	seedAuditRows(t, conn, q)
+
+	keep := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Settings: testenv.Settings(nil), Logger: slog.New(slog.DiscardHandler),
+	})
+	if err := keep.SweepOnce(t.Context()); err != nil {
+		t.Fatalf("SweepOnce 返回错误: %v", err)
+	}
+	if got := auditTargets(t, q); !got["stale"] || !got["fresh"] {
+		t.Fatalf("保留天数为 0 仍删了审计日志: %v", got)
+	}
+
+	trim := lifecycle.New(lifecycle.Config{
+		Conn: conn, Queries: q, Logger: slog.New(slog.DiscardHandler),
+		Settings: testenv.Settings(func(s *config.Settings) { s.AuditRetentionDays = 30 }),
+	})
+	if err := trim.SweepOnce(t.Context()); err != nil {
+		t.Fatalf("SweepOnce 返回错误: %v", err)
+	}
+	if got := auditTargets(t, q); got["stale"] || !got["fresh"] {
+		t.Fatalf("按 30 天保留后审计日志 = %v, 期望只剩期内的 fresh", got)
+	}
+}
+
 // TestPhysicalDeleteRefusesReferencedBlob 验证物理删在事务内复查引用计数:
 // 扫描到的待删 blob 若又有了引用,删除放弃、副本记录保留、渠道对象不入队删除。
 func TestPhysicalDeleteRefusesReferencedBlob(t *testing.T) {

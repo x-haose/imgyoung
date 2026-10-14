@@ -421,3 +421,35 @@ func TestAdminThumbSkipsAccessTracking(t *testing.T) {
 		return imageAccessCount(t, inst, admin, csrf, watched) == 1
 	})
 }
+
+// backupColocated 读管理员总览里的「备份与数据同盘」标记。
+func backupColocated(t *testing.T, inst *instance, client *http.Client, csrf string) bool {
+	t.Helper()
+	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/dashboard", "")
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("总览状态码 = %d, 期望 200", resp.StatusCode)
+	}
+	var body struct {
+		BackupColocated bool `json:"backup_colocated"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("解析总览: %v", err)
+	}
+	return body.BackupColocated
+}
+
+// TestDashboardBackupColocated 只有内置 local 渠道时总览提示备份与数据同盘;再加一个渠道后提示消失。
+func TestDashboardBackupColocated(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, nil)
+	admin, csrf := adminSession(t, inst)
+	if !backupColocated(t, inst, admin, csrf) {
+		t.Fatal("默认装配只有内置 local,总览应提示备份与数据同盘")
+	}
+	createChannel(t, inst, fmt.Sprintf(
+		`{"name":"offsite","driver":"local","priority":10,"config":{"path":%q}}`, t.TempDir()))
+	if backupColocated(t, inst, admin, csrf) {
+		t.Fatal("有第二个渠道后不应再提示同盘")
+	}
+}

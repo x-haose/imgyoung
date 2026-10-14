@@ -4,18 +4,27 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 )
 
 // imageDetail 图片详情响应中本文件断言用到的字段。
 type imageDetail struct {
-	ID             string  `json:"id"`              // 引用短 ID
-	ExpireAt       *string `json:"expire_at"`       // 到期时刻;null 表示永久
-	TTLSeconds     *int64  `json:"ttl_seconds"`     // 有效时长(秒);null 表示永久
-	PendingCleanup bool    `json:"pending_cleanup"` // 是否在待清理列表
-	CleanupExempt  bool    `json:"cleanup_exempt"`  // 是否清理豁免
+	ID             string         `json:"id"`              // 引用短 ID
+	ExpireAt       *string        `json:"expire_at"`       // 到期时刻;null 表示永久
+	TTLSeconds     *int64         `json:"ttl_seconds"`     // 有效时长(秒);null 表示永久
+	PendingCleanup bool           `json:"pending_cleanup"` // 是否在待清理列表
+	CleanupExempt  bool           `json:"cleanup_exempt"`  // 是否清理豁免
+	Replicas       []imageReplica `json:"replicas"`        // 各渠道的副本状态,按渠道优先级降序
+}
+
+// imageReplica 详情里一条副本状态。
+type imageReplica struct {
+	ChannelName string `json:"channel_name"` // 渠道名
+	State       string `json:"state"`        // 副本状态
 }
 
 // patchImage 以指定会话修改一张图,返回状态码与响应体解析出的详情(非 200 时详情为零值)。
@@ -178,4 +187,32 @@ func TestImagePatchRejectsBadBody(t *testing.T) {
 	if code != http.StatusNotFound {
 		t.Fatalf("改不存在的图状态码 = %d, 期望 404", code)
 	}
+}
+
+// replicaStates 把详情里的副本分布整理成渠道名 → 状态。
+func replicaStates(d imageDetail) map[string]string {
+	states := make(map[string]string, len(d.Replicas))
+	for _, r := range d.Replicas {
+		states[r.ChannelName] = r.State
+	}
+	return states
+}
+
+// TestImageDetailReplicas 详情带副本分布:单渠道时只有内置 local 一条就绪副本;加一个渠道后存量回填,
+// 两条副本都就绪。
+func TestImageDetailReplicas(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, nil)
+	admin, csrf := adminSession(t, inst)
+	id, _ := mustUpload(t, inst, pngBytes(t), nil, nil)
+
+	if got := replicaStates(getImage(t, inst, admin, csrf, id)); len(got) != 1 || got["local"] != "done" {
+		t.Fatalf("单渠道详情副本 = %v, 期望只有 local 一条 done", got)
+	}
+	createChannel(t, inst, fmt.Sprintf(
+		`{"name":"mirror","driver":"local","priority":10,"config":{"path":%q}}`, t.TempDir()))
+	waitUntil(t, 15*time.Second, "存量回填到新渠道", func() bool {
+		got := replicaStates(getImage(t, inst, admin, csrf, id))
+		return len(got) == 2 && got["local"] == "done" && got["mirror"] == "done"
+	})
 }

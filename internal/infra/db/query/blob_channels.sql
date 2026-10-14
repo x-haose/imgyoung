@@ -101,6 +101,14 @@ WHERE c.id = ?
                   WHERE bc.blob_id = b.id
                     AND bc.channel_id = c.id);
 
+-- name: ListImageReplicas :many
+SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error, bc.updated_at
+FROM images i
+JOIN blob_channels bc ON bc.blob_id = i.blob_id
+JOIN channels c ON c.id = bc.channel_id
+WHERE i.id = ?
+ORDER BY c.priority DESC, c.id ASC;
+
 -- name: ListBlobChannelsExport :many
 SELECT blob_id, channel_id, state, attempts, last_error, updated_at
 FROM blob_channels

@@ -321,6 +321,54 @@ func (q *Queries) ListDoneBlobChannelsForChannel(ctx context.Context, channelID 
 	return items, nil
 }
 
+const listImageReplicas = `-- name: ListImageReplicas :many
+SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error, bc.updated_at
+FROM images i
+JOIN blob_channels bc ON bc.blob_id = i.blob_id
+JOIN channels c ON c.id = bc.channel_id
+WHERE i.id = ?
+ORDER BY c.priority DESC, c.id ASC
+`
+
+type ListImageReplicasRow struct {
+	ChannelID   int64
+	ChannelName string
+	State       string
+	Attempts    int64
+	LastError   string
+	UpdatedAt   string
+}
+
+func (q *Queries) ListImageReplicas(ctx context.Context, id string) ([]ListImageReplicasRow, error) {
+	rows, err := q.db.QueryContext(ctx, listImageReplicas, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListImageReplicasRow
+	for rows.Next() {
+		var i ListImageReplicasRow
+		if err := rows.Scan(
+			&i.ChannelID,
+			&i.ChannelName,
+			&i.State,
+			&i.Attempts,
+			&i.LastError,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingBlobChannelsPage = `-- name: ListPendingBlobChannelsPage :many
 SELECT blob_id, channel_id
 FROM blob_channels
