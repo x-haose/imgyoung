@@ -35,6 +35,7 @@ export interface RuntimeSettings {
   process_workers: number; // 处理并发上限
   process_timeout_ms: number; // 单请求处理超时(毫秒)
   variants_cache_mb: number; // variant 磁盘缓存上限(MB)
+  idempotency_key_ttl_hours: number; // 上传幂等键保留期(小时)
 }
 
 /** 全量生效配置切面(GET /api/admin/config/full,仅管理员)。 */

@@ -20,7 +20,7 @@ func (q *Queries) EnsureSettingsRow(ctx context.Context) error {
 }
 
 const getSettings = `-- name: GetSettings :one
-SELECT id, max_upload_mb, max_pixels_mp, max_concurrent_uploads, upload_rate_per_min, base_url, cdn_cloudflare_zone_id, cdn_cloudflare_api_token, allow_empty_referer, exif_policy, min_success, access_mode, encrypt_new_channels, health_check_seconds, backup_interval_hours, backup_keep, cleanup_sweep_seconds, delete_grace_minutes, default_ttl_hours, ttl_renew_on_access, activity_flush_seconds, cold_cleanup_days, usage_report_seconds, channel_quota_gb, dedup_scan_seconds, dedup_phash_max_distance, process_widths, process_formats, process_quality_webp, process_quality_jpeg, process_webp_method, process_workers, process_timeout_ms, variants_cache_mb, updated_at
+SELECT id, max_upload_mb, max_pixels_mp, max_concurrent_uploads, upload_rate_per_min, base_url, cdn_cloudflare_zone_id, cdn_cloudflare_api_token, allow_empty_referer, exif_policy, min_success, access_mode, encrypt_new_channels, health_check_seconds, backup_interval_hours, backup_keep, cleanup_sweep_seconds, delete_grace_minutes, default_ttl_hours, ttl_renew_on_access, activity_flush_seconds, cold_cleanup_days, usage_report_seconds, channel_quota_gb, dedup_scan_seconds, dedup_phash_max_distance, process_widths, process_formats, process_quality_webp, process_quality_jpeg, process_webp_method, process_workers, process_timeout_ms, variants_cache_mb, idempotency_key_ttl_hours, updated_at
 FROM settings
 WHERE id = 1
 `
@@ -63,6 +63,7 @@ func (q *Queries) GetSettings(ctx context.Context) (Setting, error) {
 		&i.ProcessWorkers,
 		&i.ProcessTimeoutMs,
 		&i.VariantsCacheMb,
+		&i.IdempotencyKeyTtlHours,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -103,44 +104,46 @@ SET max_upload_mb = ?,
     process_workers = ?,
     process_timeout_ms = ?,
     variants_cache_mb = ?,
+    idempotency_key_ttl_hours = ?,
     updated_at = datetime('now')
 WHERE id = 1
 `
 
 type UpdateSettingsParams struct {
-	MaxUploadMb           int64
-	MaxPixelsMp           int64
-	MaxConcurrentUploads  int64
-	UploadRatePerMin      int64
-	BaseUrl               string
-	CdnCloudflareZoneID   string
-	CdnCloudflareApiToken string
-	AllowEmptyReferer     int64
-	ExifPolicy            string
-	MinSuccess            int64
-	AccessMode            string
-	EncryptNewChannels    int64
-	HealthCheckSeconds    int64
-	BackupIntervalHours   int64
-	BackupKeep            int64
-	CleanupSweepSeconds   int64
-	DeleteGraceMinutes    int64
-	DefaultTtlHours       int64
-	TtlRenewOnAccess      int64
-	ActivityFlushSeconds  int64
-	ColdCleanupDays       int64
-	UsageReportSeconds    int64
-	ChannelQuotaGb        int64
-	DedupScanSeconds      int64
-	DedupPhashMaxDistance int64
-	ProcessWidths         string
-	ProcessFormats        string
-	ProcessQualityWebp    int64
-	ProcessQualityJpeg    int64
-	ProcessWebpMethod     int64
-	ProcessWorkers        int64
-	ProcessTimeoutMs      int64
-	VariantsCacheMb       int64
+	MaxUploadMb            int64
+	MaxPixelsMp            int64
+	MaxConcurrentUploads   int64
+	UploadRatePerMin       int64
+	BaseUrl                string
+	CdnCloudflareZoneID    string
+	CdnCloudflareApiToken  string
+	AllowEmptyReferer      int64
+	ExifPolicy             string
+	MinSuccess             int64
+	AccessMode             string
+	EncryptNewChannels     int64
+	HealthCheckSeconds     int64
+	BackupIntervalHours    int64
+	BackupKeep             int64
+	CleanupSweepSeconds    int64
+	DeleteGraceMinutes     int64
+	DefaultTtlHours        int64
+	TtlRenewOnAccess       int64
+	ActivityFlushSeconds   int64
+	ColdCleanupDays        int64
+	UsageReportSeconds     int64
+	ChannelQuotaGb         int64
+	DedupScanSeconds       int64
+	DedupPhashMaxDistance  int64
+	ProcessWidths          string
+	ProcessFormats         string
+	ProcessQualityWebp     int64
+	ProcessQualityJpeg     int64
+	ProcessWebpMethod      int64
+	ProcessWorkers         int64
+	ProcessTimeoutMs       int64
+	VariantsCacheMb        int64
+	IdempotencyKeyTtlHours int64
 }
 
 func (q *Queries) UpdateSettings(ctx context.Context, arg UpdateSettingsParams) error {
@@ -178,6 +181,7 @@ func (q *Queries) UpdateSettings(ctx context.Context, arg UpdateSettingsParams) 
 		arg.ProcessWorkers,
 		arg.ProcessTimeoutMs,
 		arg.VariantsCacheMb,
+		arg.IdempotencyKeyTtlHours,
 	)
 	return err
 }

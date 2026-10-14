@@ -74,7 +74,7 @@ func (s *Sweeper) Run(ctx context.Context, wait func(context.Context) bool) {
 	}
 }
 
-// SweepOnce 一轮清理:先回收到期引用,再物理删已过宽限的物理图。
+// SweepOnce 一轮清理:回收到期引用 → 物理删已过宽限的物理图 → 冷图打标 → 回收超期幂等键。
 // @Description: 每轮各处理至多 sweepBatch 条,积压留待下一轮追赶(不在单轮内长循环)。
 // @return 扫描查询失败时的错误(单条删除失败只告警、不中断本轮)
 func (s *Sweeper) SweepOnce(ctx context.Context) error {
@@ -84,7 +84,26 @@ func (s *Sweeper) SweepOnce(ctx context.Context) error {
 	if err := s.physicalDelete(ctx); err != nil {
 		return err
 	}
-	return s.labelColdImages(ctx)
+	if err := s.labelColdImages(ctx); err != nil {
+		return err
+	}
+	return s.expireIdempotencyKeys(ctx)
+}
+
+// expireIdempotencyKeys 回收超过保留期的上传幂等键。
+// @Description: 幂等键的职责是吸收客户端的网络重试,保留期之外再命中只会把陈旧结果当新上传返回;
+// 表也不能无限增长。保留期逐轮取配置,热生效。
+// @return 删除失败时的错误
+func (s *Sweeper) expireIdempotencyKeys(ctx context.Context) error {
+	cutoff := sqlc.TimeText(time.Now().Add(-s.cfg.Settings().IdempotencyKeyTTL()))
+	n, err := s.cfg.Queries.DeleteExpiredIdempotencyKeys(ctx, cutoff)
+	if err != nil {
+		return fmt.Errorf("回收超期幂等键: %w", err)
+	}
+	if n > 0 {
+		s.cfg.Logger.Info("超期幂等键回收", "count", n)
+	}
+	return nil
 }
 
 // labelColdImages 给超阈值未被公开访问的引用打 pending_cleanup 标签(不自动删,进后台待裁决)。
@@ -297,8 +316,14 @@ func (s *Sweeper) deleteBlob(ctx context.Context, blobID int64, storageKey strin
 	}); err != nil {
 		return fmt.Errorf("删除相似候选: %w", err)
 	}
-	if err := q.DeleteBlob(ctx, blobID); err != nil {
+	// 事务内复查:扫描到物理删之间 blob 若被重新引用或撤销待删标记,删除条件不再成立、影响 0 行,
+	// 整个事务回滚——副本记录与变体索引随之保留,不会留下一个有引用却无副本的物理图。
+	deleted, err := q.DeleteBlob(ctx, blobID)
+	if err != nil {
 		return fmt.Errorf("删除物理图: %w", err)
+	}
+	if deleted == 0 {
+		return errors.New("物理图已被重新引用或撤销待删,放弃本次物理删")
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交物理删: %w", err)

@@ -610,3 +610,76 @@ func TestLabelColdImages(t *testing.T) {
 		t.Error("新鲜图被误打标签")
 	}
 }
+
+// TestSweepExpiresIdempotencyKeys 验证幂等键按保留期回收:超期的键删除,期内的键保留。
+func TestSweepExpiresIdempotencyKeys(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "k", Mime: "image/png", Size: 1, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	if err := q.CreateImage(ctx, sqlc.CreateImageParams{ID: "idemimg001", BlobID: blobID, UserID: sqlc.DefaultUserID}); err != nil {
+		t.Fatalf("建 image: %v", err)
+	}
+	for _, key := range []string{"stale", "fresh"} {
+		if err := q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
+			UserID: sqlc.DefaultUserID, Key: key, ImageID: "idemimg001",
+		}); err != nil {
+			t.Fatalf("建幂等键 %s: %v", key, err)
+		}
+	}
+	old := sqlc.TimeText(time.Now().Add(-48 * time.Hour))
+	if _, err := conn.ExecContext(ctx, "UPDATE idempotency_keys SET created_at = ? WHERE key = 'stale'", old); err != nil {
+		t.Fatalf("回拨创建时间: %v", err)
+	}
+
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce 返回错误: %v", err)
+	}
+	if _, err := q.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{UserID: sqlc.DefaultUserID, Key: "stale"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("超期幂等键未回收: err=%v", err)
+	}
+	if _, err := q.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{UserID: sqlc.DefaultUserID, Key: "fresh"}); err != nil {
+		t.Errorf("期内幂等键被误删: %v", err)
+	}
+}
+
+// TestPhysicalDeleteRefusesReferencedBlob 验证物理删在事务内复查引用计数:
+// 扫描到的待删 blob 若又有了引用,删除放弃、副本记录保留。
+func TestPhysicalDeleteRefusesReferencedBlob(t *testing.T) {
+	conn, q := setup(t)
+	ctx := t.Context()
+	blobID, err := q.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "h", Phash: 1, StorageKey: "revived", Mime: "image/png", Size: 1, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("建 blob: %v", err)
+	}
+	// 待删标记在、宽限已过,但 ref_count 仍为 1(被重新引用)。
+	past := sqlc.TimeText(time.Now().Add(-time.Hour))
+	if _, err := conn.ExecContext(ctx, "UPDATE blobs SET pending_delete = 1, delete_after = ? WHERE id = ?", past, blobID); err != nil {
+		t.Fatalf("置待删标记: %v", err)
+	}
+	if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{BlobID: blobID, ChannelID: 1, State: "done"}); err != nil {
+		t.Fatalf("建副本记录: %v", err)
+	}
+
+	deleter := &fakeDeleter{}
+	sw := lifecycle.New(lifecycle.Config{Conn: conn, Queries: q, Deleter: deleter, Settings: testSettings(t, nil), Logger: slog.New(slog.DiscardHandler)})
+	if err := sw.SweepOnce(ctx); err != nil {
+		t.Fatalf("SweepOnce 返回错误: %v", err)
+	}
+	if _, err := q.GetBlob(ctx, blobID); err != nil {
+		t.Fatalf("仍被引用的物理图被物理删: %v", err)
+	}
+	if _, err := q.GetBlobChannel(ctx, sqlc.GetBlobChannelParams{BlobID: blobID, ChannelID: 1}); err != nil {
+		t.Fatalf("放弃物理删后副本记录应随事务回滚保留: %v", err)
+	}
+	if len(deleter.calls) != 0 {
+		t.Fatalf("放弃物理删不应入队渠道对象删除: %+v", deleter.calls)
+	}
+}

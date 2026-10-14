@@ -10,3 +10,7 @@ WHERE user_id = ? AND key = ?;
 -- name: DeleteIdempotencyKeysByImage :exec
 DELETE FROM idempotency_keys
 WHERE image_id = ?;
+
+-- name: DeleteExpiredIdempotencyKeys :execrows
+DELETE FROM idempotency_keys
+WHERE created_at < ?;

@@ -71,14 +71,17 @@ func (q *Queries) DecrementBlobRef(ctx context.Context, id int64) (int64, error)
 	return ref_count, err
 }
 
-const deleteBlob = `-- name: DeleteBlob :exec
+const deleteBlob = `-- name: DeleteBlob :execrows
 DELETE FROM blobs
-WHERE id = ?
+WHERE id = ? AND ref_count <= 0 AND pending_delete = 1
 `
 
-func (q *Queries) DeleteBlob(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, deleteBlob, id)
-	return err
+func (q *Queries) DeleteBlob(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBlob, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getBlob = `-- name: GetBlob :one

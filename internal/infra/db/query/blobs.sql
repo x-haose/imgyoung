@@ -25,9 +25,9 @@ FROM blobs
 WHERE pending_delete = 1 AND delete_after IS NOT NULL AND delete_after <= ?
 LIMIT ?;
 
--- name: DeleteBlob :exec
+-- name: DeleteBlob :execrows
 DELETE FROM blobs
-WHERE id = ?;
+WHERE id = ? AND ref_count <= 0 AND pending_delete = 1;
 
 -- name: ListDuplicateSha256 :many
 SELECT sha256

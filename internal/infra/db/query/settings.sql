@@ -42,5 +42,6 @@ SET max_upload_mb = ?,
     process_workers = ?,
     process_timeout_ms = ?,
     variants_cache_mb = ?,
+    idempotency_key_ttl_hours = ?,
     updated_at = datetime('now')
 WHERE id = 1;

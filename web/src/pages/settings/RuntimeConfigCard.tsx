@@ -229,6 +229,7 @@ export function RuntimeConfigCard({ config, onSaved }: RuntimeConfigCardProps) {
           <NumField name="delete_grace_minutes" label="删除宽限" unit="分钟" min={0} tooltip="引用归零到物理删除的等待;0 表示立即" />
           <NumField name="cleanup_sweep_seconds" label="清理扫描间隔" unit="秒" min={1} />
           <NumField name="activity_flush_seconds" label="活跃度落库间隔" unit="秒" min={1} />
+          <NumField name="idempotency_key_ttl_hours" label="幂等键保留期" unit="小时" min={1} tooltip="客户端带 Idempotency-Key 重试的有效窗口,超期的键回收" />
           <Col xs={24} sm={12} xl={6}>
             <Form.Item
               name="ttl_renew_on_access"

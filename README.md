@@ -109,6 +109,7 @@ sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 | `process_workers` | `4` | 处理并发上限 |
 | `process_timeout_ms` | `5000` | 单请求处理超时(毫秒),超时回退原图 |
 | `variants_cache_mb` | `10240` | 衍生图磁盘缓存上限(MB),超过按最近访问 LRU 淘汰 |
+| `idempotency_key_ttl_hours` | `24` | 上传幂等键保留期(小时):客户端带 `Idempotency-Key` 重试的有效窗口,超期的键由清理循环回收 |
 | `cdn_cloudflare_zone_id` | (空) | Cloudflare Zone ID;与 `cdn_cloudflare_api_token`、`base_url` 三者齐备时,删除图片级联清除 CDN 缓存 |
 | `cdn_cloudflare_api_token` | (空) | Cloudflare API Token,需 Zone.Cache Purge 权限;加密入库,不进日志与任何响应 |
 
