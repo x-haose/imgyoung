@@ -373,8 +373,10 @@ export function RuntimeConfigCard({ config, onSaved }: RuntimeConfigCardProps) {
           items={[
             { key: "listen", label: "监听地址", children: config?.bootstrap.listen ?? "-" },
             { key: "data_dir", label: "数据目录", children: config?.bootstrap.data_dir ?? "-" },
+            { key: "trusted_proxies", label: "信任的反代网段", children: config?.bootstrap.trusted_proxies ?? "-" },
+            { key: "metrics_allow", label: "/metrics 放行网段", children: config?.bootstrap.metrics_allow ?? "-" },
           ]}
-          styles={{ root: { maxWidth: 480 }, label: { whiteSpace: "nowrap" } }}
+          styles={{ root: { maxWidth: 640 }, label: { whiteSpace: "nowrap" } }}
           title={
             <Typography.Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>
               引导配置(环境变量 IMGYOUNG_*,改动需重启)

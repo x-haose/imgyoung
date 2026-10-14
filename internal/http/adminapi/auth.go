@@ -3,7 +3,6 @@ package adminapi
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
@@ -43,8 +42,10 @@ func toUserInfo(p auth.Principal) userInfo {
 }
 
 // HandleLogin 登录:校验凭证、创建会话并下发 cookie。
-// @Description: 会话 cookie HttpOnly + SameSite=Lax,仅 TLS 请求带 Secure;
-// CSRF 令牌经响应体交给前端,由后续请求以头回传。
+// @Description: 会话 cookie HttpOnly + SameSite=Lax,客户端第一跳为 HTTPS 时带 Secure
+// (经信任反代转发时看 X-Forwarded-Proto);CSRF 令牌经响应体交给前端,由后续请求以头回传。
+// 登录限速按解析后的客户端地址计:经信任反代时取转发链里的真实客户端,不会把全部用户
+// 归并到反代地址上一起限掉。
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, loginBodyLimit)
 	var req loginRequest
@@ -52,7 +53,7 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
 		return
 	}
-	res, err := h.cfg.Auth.Login(r.Context(), req.Name, req.Password, clientIP(r))
+	res, err := h.cfg.Auth.Login(r.Context(), req.Name, req.Password, httpx.ClientIP(r))
 	switch {
 	case errors.Is(err, auth.ErrTooManyAttempts):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusTooManyRequests, "登录尝试过于频繁,请稍后再试")
@@ -152,19 +153,6 @@ func sessionCookie(value string, r *http.Request, maxAge int) *http.Cookie {
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil,
+		Secure:   httpx.IsSecure(r),
 	}
-}
-
-// clientIP 提取客户端 IP(不含端口),作登录限速键。
-// @Description: 直接取连接对端地址;经反代部署时为反代地址,限速粒度随之放粗,
-// 仍能阻止单点爆破。
-// @param r 当前请求
-// @return 客户端 IP 文本
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
 }

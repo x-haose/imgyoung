@@ -62,28 +62,63 @@ func rawPatch(t *testing.T, v any) json.RawMessage {
 	return blob
 }
 
-// TestLoadBootstrapDefaults 验证无环境变量时引导配置取文档约定的默认值。
+// mustBootstrap 装配引导配置,失败即终止测试。
+func mustBootstrap(t *testing.T) Bootstrap {
+	t.Helper()
+	b, err := LoadBootstrap()
+	if err != nil {
+		t.Fatalf("LoadBootstrap 返回错误: %v", err)
+	}
+	return b
+}
+
+// TestLoadBootstrapDefaults 验证无环境变量时引导配置取文档约定的默认值:
+// 反代只信回环,/metrics 只对回环与私网开放。
 func TestLoadBootstrapDefaults(t *testing.T) {
 	clearEnv(t)
-	b := LoadBootstrap()
+	b := mustBootstrap(t)
 	if b.Listen != ":8721" || b.DataDir != "data" {
 		t.Errorf("引导默认值异常: %+v", b)
 	}
 	if b.MasterKey != "" {
 		t.Errorf("主密钥期望默认为空: %+v", b)
 	}
+	if got := FormatPrefixes(b.TrustedProxies); got != "127.0.0.0/8, ::1/128" {
+		t.Errorf("默认信任代理 = %q", got)
+	}
+	if got := FormatPrefixes(b.MetricsAllow); got != "127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7" {
+		t.Errorf("默认 /metrics 放行网段 = %q", got)
+	}
 }
 
-// TestLoadBootstrapEnv 验证引导配置的环境变量覆盖。
+// TestLoadBootstrapEnv 验证引导配置的环境变量覆盖,网段清单接受 CIDR 与裸地址。
 func TestLoadBootstrapEnv(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("IMGYOUNG_LISTEN", "127.0.0.1:9000")
 	t.Setenv("IMGYOUNG_DATA_DIR", "/var/lib/imgyoung")
 	t.Setenv("IMGYOUNG_MASTER_KEY", "deadbeef")
-	b := LoadBootstrap()
+	t.Setenv("IMGYOUNG_TRUSTED_PROXIES", " 172.16.0.0/12 , 203.0.113.9 ,,")
+	t.Setenv("IMGYOUNG_METRICS_ALLOW", "10.1.2.3/8")
+	b := mustBootstrap(t)
 	if b.Listen != "127.0.0.1:9000" || b.DataDir != "/var/lib/imgyoung" ||
 		b.MasterKey != "deadbeef" {
 		t.Fatalf("引导配置未按环境变量覆盖: %+v", b)
+	}
+	if got := FormatPrefixes(b.TrustedProxies); got != "172.16.0.0/12, 203.0.113.9/32" {
+		t.Errorf("信任代理 = %q, 期望裸地址转为 /32、空项忽略", got)
+	}
+	if got := FormatPrefixes(b.MetricsAllow); got != "10.0.0.0/8" {
+		t.Errorf("/metrics 放行网段 = %q, 期望主机位清零", got)
+	}
+}
+
+// TestLoadBootstrapRejectsBadPrefix 验证网段清单写错一项即启动失败,错误指出变量名与条目。
+func TestLoadBootstrapRejectsBadPrefix(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("IMGYOUNG_METRICS_ALLOW", "10.0.0.0/8, not-an-ip")
+	_, err := LoadBootstrap()
+	if err == nil || !strings.Contains(err.Error(), "IMGYOUNG_METRICS_ALLOW") || !strings.Contains(err.Error(), "not-an-ip") {
+		t.Fatalf("错误 = %v, 期望指出变量名与非法条目", err)
 	}
 }
 

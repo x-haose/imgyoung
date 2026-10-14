@@ -42,6 +42,8 @@ export interface FullConfig {
   bootstrap: {
     listen: string; // HTTP 监听地址(环境变量,改需重启)
     data_dir: string; // 数据目录(环境变量,改需重启)
+    trusted_proxies: string; // 信任其转发头的反向代理网段,逗号分隔(环境变量,改需重启)
+    metrics_allow: string; // 允许抓取 /metrics 的网段,逗号分隔(环境变量,改需重启)
   };
   settings: RuntimeSettings;
   derived: {

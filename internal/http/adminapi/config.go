@@ -49,8 +49,10 @@ func (h *Handlers) HandleConfig(w http.ResponseWriter, _ *http.Request) {
 
 // BootstrapView 引导配置的只读展示切面;密钥与密码类引导项绝不进任何响应。
 type BootstrapView struct {
-	Listen  string `json:"listen"`   // HTTP 监听地址
-	DataDir string `json:"data_dir"` // 数据目录
+	Listen         string `json:"listen"`          // HTTP 监听地址
+	DataDir        string `json:"data_dir"`        // 数据目录
+	TrustedProxies string `json:"trusted_proxies"` // 信任其转发头的反向代理网段,逗号分隔
+	MetricsAllow   string `json:"metrics_allow"`   // 允许抓取 /metrics 的网段,逗号分隔
 }
 
 // DerivedView 派生/编译期常量的展示切面,帮助自助排障但不可编辑。
@@ -75,8 +77,12 @@ type FullConfigView struct {
 func (h *Handlers) fullConfigView() FullConfigView {
 	set := h.cfg.Settings.Current()
 	return FullConfigView{
-		Bootstrap: BootstrapView{Listen: h.cfg.Boot.Listen, DataDir: h.cfg.Boot.DataDir},
-		Settings:  set.Masked(),
+		Bootstrap: BootstrapView{
+			Listen: h.cfg.Boot.Listen, DataDir: h.cfg.Boot.DataDir,
+			TrustedProxies: config.FormatPrefixes(h.cfg.Boot.TrustedProxies),
+			MetricsAllow:   config.FormatPrefixes(h.cfg.Boot.MetricsAllow),
+		},
+		Settings: set.Masked(),
 		Derived: DerivedView{
 			CDNPurgeEnabled:          set.CDNPurgeEnabled(),
 			CDNAPITokenSet:           set.CDNCloudflareAPIToken != "",

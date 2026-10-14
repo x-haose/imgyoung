@@ -147,7 +147,10 @@ func build(logger *slog.Logger) (*app, func(), error) {
 // @return 数据库清理函数(仅成功时非 nil)
 // @return 装配失败时的错误
 func buildInfra(logger *slog.Logger) (infra, func(), error) {
-	boot := config.LoadBootstrap()
+	boot, err := config.LoadBootstrap()
+	if err != nil {
+		return infra{}, nil, fmt.Errorf("引导配置非法: %w", err)
+	}
 	if err := os.MkdirAll(boot.DataDir, 0o750); err != nil {
 		return infra{}, nil, fmt.Errorf("创建数据目录 %q: %w", boot.DataDir, err)
 	}
@@ -278,7 +281,9 @@ func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
 	})
 	handler := router.New(router.Config{
 		Public: pub, Admin: adm, S3: s3, Auth: s.auth, Settings: in.store.Current,
-		RefererPatterns: s.referer.Patterns, Metrics: s.metrics, Web: web.Dist(), Logger: logger,
+		RefererPatterns: s.referer.Patterns, Metrics: s.metrics,
+		TrustedProxies: in.boot.TrustedProxies, MetricsAllow: in.boot.MetricsAllow,
+		Web: web.Dist(), Logger: logger,
 	})
 	return &http.Server{
 		Addr:              in.boot.Listen,

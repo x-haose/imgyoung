@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 
 	"github.com/go-chi/chi/v5"
 
@@ -26,6 +27,8 @@ type Config struct {
 	Settings        func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);上传频率/并发上限/空 Referer 策略出自它
 	RefererPatterns func() []string        // 防盗链白名单快照读取口(热生效);nil 或返回空表示不启用
 	Metrics         *observability.Metrics // 指标集,用于请求计数/时延与 /metrics 暴露
+	TrustedProxies  []netip.Prefix         // 连接对端落在这些网段时才采信 X-Forwarded-* 转发头;空表示一概不信
+	MetricsAllow    []netip.Prefix         // 客户端地址落在这些网段时才放行 /metrics;空表示对谁都不开放
 	Web             fs.FS                  // 后台前端产物;nil 表示不服务页面
 	Logger          *slog.Logger           // 结构化日志
 }
@@ -37,10 +40,12 @@ type Config struct {
 // @return 可直接挂载到 http.Server 的处理器
 func New(cfg Config) http.Handler {
 	r := chi.NewRouter()
+	// 来源判定最先挂:之后的限速键、Secure cookie、对外地址推导与 /metrics 门槛都只认它。
+	r.Use(middleware.ProxyHeaders(cfg.TrustedProxies))
 	r.Use(middleware.Metrics(cfg.Metrics))
 	r.Use(middleware.SecurityHeaders())
 	r.Get("/healthz", cfg.Public.HandleHealth)
-	r.Handle("/metrics", cfg.Metrics.Handler())
+	r.With(middleware.AllowFrom(cfg.MetricsAllow, cfg.Logger)).Handle("/metrics", cfg.Metrics.Handler())
 	// 上传防护闸只此一份,数据面与后台上传共享:频率限制按认证主体的用户 id 计,
 	// 并发闸全局共享(峰值内存由总并发决定,与入口无关)。
 	uploadRate := middleware.UploadRateLimit(func() int { return cfg.Settings().UploadRatePerMin }, cfg.Logger)

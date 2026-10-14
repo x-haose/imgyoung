@@ -71,6 +71,8 @@ sqlite3 data/imgyoung.db "UPDATE users SET password_hash='' WHERE name='admin';"
 | `IMGYOUNG_LISTEN` | `:8721` | HTTP 监听地址 |
 | `IMGYOUNG_DATA_DIR` | `data` | 数据目录(SQLite 与本地存储) |
 | `IMGYOUNG_MASTER_KEY` | (自动生成 `data/master.key`) | 主密钥(64 位 hex),加密渠道凭证与派生渠道加密密码;**丢失则渠道配置与密文数据不可恢复** |
+| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | 信任其转发头的反向代理网段(逗号分隔 CIDR 或 IP)。连接对端在网段内时才采信 `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`:登录限速按真实客户端计、HTTPS 时会话 cookie 带 Secure、未配 `base_url` 时按对外域名推导地址。反代不在同一台机器(如 Docker 网络)时填它的网段 |
+| `IMGYOUNG_METRICS_ALLOW` | 回环 + 私网(`10/8`、`172.16/12`、`192.168/16`、`fc00::/7`) | 允许抓取 `/metrics` 的网段,网段外一律 403;指标含路由模板、渠道名与用量,不对公网开放 |
 
 **运营配置**(真相在数据库 `settings` 单行宽表,后台「设置 → 运行配置」修改、保存即热生效):**不接受环境变量**——新实例登录后台配置一次即可,DB 随数据卷持久。下表列出各键与出厂默认(默认值即表列 `DEFAULT`,防盗链白名单在设置页单独管理):
 
