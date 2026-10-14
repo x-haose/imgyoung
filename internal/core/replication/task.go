@@ -16,6 +16,7 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riversqlite"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -44,9 +45,20 @@ type ReplicateArgs struct {
 // Kind 任务类型标识(River 要求)。
 func (ReplicateArgs) Kind() string { return "replicate_blob" }
 
-// InsertOpts 按参数去重:同一(blob, channel)不重复入队。
+// InsertOpts 按参数去重:同一(blob, channel)在途时不重复入队。
+// @Description: 完成态不参与去重——副本做完后对象可能再次丢失(幻影),对账复位后须能立即再入队;
+// 把完成态算作重复,则完成态任务被 River 清理前(默认 24 小时)同一键都插不进新任务。
 func (ReplicateArgs) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{UniqueOpts: river.UniqueOpts{ByArgs: true}}
+	return river.InsertOpts{UniqueOpts: river.UniqueOpts{ByArgs: true, ByState: inFlightStates()}}
+}
+
+// inFlightStates 入队去重只看尚未结束的任务状态;可用、待定、运行中、已排程四态是 River 要求必含的。
+// @return 参与去重的状态集
+func inFlightStates() []rivertype.JobState {
+	return []rivertype.JobState{
+		rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRetryable,
+		rivertype.JobStateRunning, rivertype.JobStateScheduled,
+	}
 }
 
 // DeleteObjectArgs 删除某渠道内一个对象的任务参数(三段式删除的级联执行)。
@@ -104,7 +116,10 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: replicateQueueWorkers},
 		},
-		Workers: workers,
+		// 进程被硬杀时在跑的任务停在运行态,River 的救援器按此时限把它们重排;
+		// 时限须大于任一 worker 的执行超时,否则仍在跑的任务会被重复执行。
+		RescueStuckJobsAfter: replicateJobTimeout + time.Minute,
+		Workers:              workers,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("初始化 River 客户端: %w", err)

@@ -17,6 +17,7 @@ require (
 	github.com/rclone/rclone v1.75.2
 	github.com/riverqueue/river v0.39.0
 	github.com/riverqueue/river/riverdriver/riversqlite v0.39.0
+	github.com/riverqueue/river/rivertype v0.39.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.61.0
@@ -195,7 +196,6 @@ require (
 	github.com/rfjakob/eme v1.2.0 // indirect
 	github.com/riverqueue/river/riverdriver v0.39.0 // indirect
 	github.com/riverqueue/river/rivershared v0.39.0 // indirect
-	github.com/riverqueue/river/rivertype v0.39.0 // indirect
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.6 // indirect

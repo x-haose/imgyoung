@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,15 +12,15 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/replication"
-	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
-// testEnv 补齐任务测试环境:两个 local 渠道 + River Runner。
+// testEnv 补齐任务测试环境:两个 local 渠道 + 已启动的 River Runner。
 type testEnv struct {
 	runner  *replication.Runner
+	conn    *sql.DB // 写句柄,直查 River 任务表用
 	queries *sqlc.Queries
 	mgr     *channel.Manager
 	dataDir string
@@ -32,32 +31,11 @@ type testEnv struct {
 // newTestEnv 组装环境并启动 Runner。
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	dir := t.TempDir()
-	conn, queries := dbtest.New(t)
-	master, err := secret.NewMasterKey()
-	if err != nil {
-		t.Fatalf("生成主密钥: %v", err)
-	}
-	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
-		Conn: conn, Queries: queries, Master: master, DataDir: dir,
-		Logger: slog.New(slog.DiscardHandler),
-	})
-	if err != nil {
-		t.Fatalf("创建渠道管理器: %v", err)
-	}
-	if _, err := mgr.Create(t.Context(), channel.CreateParams{
-		Name: "backup", Driver: "local",
-		Config:   map[string]string{"path": t.TempDir()},
-		Priority: 200,
-	}); err != nil {
-		t.Fatalf("创建备份渠道: %v", err)
-	}
+	env := testenv.New(t)
+	env.AddLocalChannel(t, "backup", 200, false)
 
 	runner, err := replication.NewRunner(replication.RunnerConfig{
-		Conn:    conn,
-		Queries: queries,
-		Manager: mgr,
-		Logger:  slog.New(slog.DiscardHandler),
+		Conn: env.Conn, Queries: env.Queries, Manager: env.Manager, Logger: env.Logger,
 	})
 	if err != nil {
 		t.Fatalf("NewRunner 返回错误: %v", err)
@@ -71,15 +49,15 @@ func newTestEnv(t *testing.T) *testEnv {
 		}
 	})
 
-	env := &testEnv{runner: runner, queries: queries, mgr: mgr, dataDir: dir}
-	for _, h := range mgr.All() {
+	te := &testEnv{runner: runner, conn: env.Conn, queries: env.Queries, mgr: env.Manager, dataDir: env.DataDir}
+	for _, h := range env.Manager.All() {
 		if h.Name == "local" {
-			env.local = h
+			te.local = h
 		} else {
-			env.backup = h
+			te.backup = h
 		}
 	}
-	return env
+	return te
 }
 
 // seedBlob 造一个 blob:对象存在于 local 渠道(done),backup 渠道 pending。
@@ -111,20 +89,40 @@ func seedBlob(t *testing.T, env *testEnv) (int64, string) {
 	return blobID, key
 }
 
-// waitDone 轮询等待副本进入 done 状态。
-func waitDone(t *testing.T, env *testEnv, blobID, chID int64) {
+// waitUntil 轮询直到条件满足,超时即失败;后台 worker 的进度只能这样观察。
+func waitUntil(t *testing.T, timeout time.Duration, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		row, err := env.queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{
-			BlobID: blobID, ChannelID: chID,
-		})
-		if err == nil && row.State == channel.StateDone {
+		if cond() {
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("等待副本状态 %q 超时", channel.StateDone)
+	t.Fatalf("等待%s超时(%s)", what, timeout)
+}
+
+// waitDone 等待副本进入 done 状态。
+func waitDone(t *testing.T, env *testEnv, blobID, chID int64) {
+	t.Helper()
+	waitUntil(t, 15*time.Second, "副本就绪", func() bool {
+		row, err := env.queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{
+			BlobID: blobID, ChannelID: chID,
+		})
+		return err == nil && row.State == channel.StateDone
+	})
+}
+
+// gcResultFor 从一轮对账结果里取指定渠道的统计;缺失即失败。
+func gcResultFor(t *testing.T, results []replication.GCResult, name string) replication.GCResult {
+	t.Helper()
+	for _, r := range results {
+		if r.Channel == name {
+			return r
+		}
+	}
+	t.Fatalf("对账结果缺少渠道 %q: %+v", name, results)
+	return replication.GCResult{}
 }
 
 // TestEnqueueReplicationCopiesBlob 验证补齐链路:入队 → worker 复制 → 状态 done,
@@ -273,8 +271,15 @@ func TestGCRemovesExpiredOrphans(t *testing.T) {
 		t.Fatalf("回拨对象时间: %v", err)
 	}
 
-	if _, err := env.runner.RunGC(ctx); err != nil {
+	results, err := env.runner.RunGC(ctx)
+	if err != nil {
 		t.Fatalf("RunGC 返回错误: %v", err)
+	}
+	// 盘点口径:两个业务对象各 6 字节,系统目录对象不计;回收 1 个孤儿,无幻影。
+	got := gcResultFor(t, results, "local")
+	want := replication.GCResult{Channel: "local", Objects: 2, Bytes: 12, OrphansDeleted: 1}
+	if got != want {
+		t.Errorf("local 对账统计 = %+v, 期望 %+v", got, want)
 	}
 
 	if _, err := env.local.Driver.Stat(ctx, "stale-orphan.bin"); !errors.Is(err, driver.ErrNotFound) {
@@ -301,12 +306,57 @@ func TestGCRecoversPhantom(t *testing.T) {
 		t.Fatalf("伪造幻影副本: %v", err)
 	}
 
-	if _, err := env.runner.RunGC(ctx); err != nil {
+	results, err := env.runner.RunGC(ctx)
+	if err != nil {
 		t.Fatalf("RunGC 返回错误: %v", err)
+	}
+	// backup 上一个对象都没有,只有一条幻影被复位;local 的源对象有 done 行,既非孤儿也非幻影。
+	wantBackup := replication.GCResult{Channel: "backup", PhantomsRequeued: 1}
+	if got := gcResultFor(t, results, "backup"); got != wantBackup {
+		t.Errorf("backup 对账统计 = %+v, 期望 %+v", got, wantBackup)
+	}
+	local := gcResultFor(t, results, "local")
+	if local.PhantomsRequeued != 0 || local.OrphansDeleted != 0 || local.Objects != 1 {
+		t.Errorf("local 对账统计 = %+v, 期望 1 个对象、无回收无复位", local)
 	}
 	waitDone(t, env, blobID, env.backup.ID)
 	if _, err := env.backup.Driver.Stat(ctx, key); err != nil {
 		t.Fatalf("幻影副本未被真实补齐: %v", err)
+	}
+}
+
+// TestGCRequeuesPhantomAfterCompletedJob 验证补齐任务完成后对象再次丢失,对账能立即重新入队补齐:
+// 完成态任务不参与入队去重,否则同一(blob, channel)在完成态任务被清理前都插不进新任务。
+func TestGCRequeuesPhantomAfterCompletedJob(t *testing.T) {
+	env := newTestEnv(t)
+	ctx := t.Context()
+	blobID, key := seedBlob(t, env)
+	if err := env.runner.EnqueueReplication(ctx, blobID, []int64{env.backup.ID}); err != nil {
+		t.Fatalf("入队补齐任务: %v", err)
+	}
+	waitDone(t, env, blobID, env.backup.ID)
+	// worker 先写 done 再返回,任务进入完成态略晚于副本就绪。
+	waitUntil(t, 15*time.Second, "补齐任务进入完成态", func() bool {
+		var n int
+		err := env.conn.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM river_job WHERE kind = ? AND state = 'completed'", replication.ReplicateArgs{}.Kind(),
+		).Scan(&n)
+		return err == nil && n == 1
+	})
+	if err := env.backup.Driver.Delete(ctx, key); err != nil {
+		t.Fatalf("制造幻影(删掉备份渠道上的对象): %v", err)
+	}
+
+	results, err := env.runner.RunGC(ctx)
+	if err != nil {
+		t.Fatalf("RunGC 返回错误: %v", err)
+	}
+	if got := gcResultFor(t, results, "backup"); got.PhantomsRequeued != 1 {
+		t.Fatalf("backup 对账统计 = %+v, 期望复位 1 条幻影", got)
+	}
+	waitDone(t, env, blobID, env.backup.ID)
+	if _, err := env.backup.Driver.Stat(ctx, key); err != nil {
+		t.Fatalf("完成态任务挡住了重新入队,幻影未被补齐: %v", err)
 	}
 }
 
@@ -332,16 +382,10 @@ func TestDrainChannelDeletesObjectsAndRecord(t *testing.T) {
 	if err := env.runner.EnqueueChannelDrain(t.Context(), env.backup.ID); err != nil {
 		t.Fatalf("入队排空任务: %v", err)
 	}
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		if _, ok := env.mgr.Get(env.backup.ID); !ok {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("等待排空完成超时")
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	waitUntil(t, 15*time.Second, "排空完成", func() bool {
+		_, ok := env.mgr.Get(env.backup.ID)
+		return !ok
+	})
 	if _, err := env.backup.Driver.Stat(t.Context(), key); !errors.Is(err, driver.ErrNotFound) {
 		t.Fatalf("排空后对象仍在被删渠道上: %v", err)
 	}
