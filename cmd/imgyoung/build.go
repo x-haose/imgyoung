@@ -5,11 +5,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/core/alert"
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -48,12 +51,25 @@ const idleTimeout = 120 * time.Second
 // bytesPerGB 一 GB 的字节数(渠道配额阈值换算)。
 const bytesPerGB = 1 << 30
 
+// webhookTimeout 告警 Webhook 单次投递的超时;投递失败由下一轮评估重试。
+const webhookTimeout = 10 * time.Second
+
+// queueStatsTimeout 指标 scrape 时统计任务队列深度的查询超时。
+const queueStatsTimeout = 2 * time.Second
+
 // app 运行期对象图:基础设施、业务服务与 HTTP 服务器;构造在 build,启停在 serve。
 type app struct {
-	infra                 // 基础设施构件
-	services              // 业务服务集
-	logger   *slog.Logger // 结构化日志
-	httpSrv  *http.Server // HTTP 服务器
+	infra                  // 基础设施构件
+	services               // 业务服务集
+	logger   *slog.Logger  // 结构化日志
+	httpSrv  *http.Server  // HTTP 服务器
+	stop     chan struct{} // 关闭即请求整个进程优雅停机(恢复快照后由进程管理器拉起换入)
+	stopOnce sync.Once     // 保证 stop 只关闭一次
+}
+
+// requestShutdown 请求优雅停机,可重复调用。
+func (a *app) requestShutdown() {
+	a.stopOnce.Do(func() { close(a.stop) })
 }
 
 // infra 聚合基础设施层构件,供业务服务与 HTTP 层取用;由 buildInfra 一次性装配。
@@ -73,6 +89,7 @@ type services struct {
 	referer  *referer.Service       // 防盗链白名单
 	metrics  *observability.Metrics // 指标集
 	audit    *audit.Recorder        // 审计记录器
+	alerts   *alert.Service         // 告警评估与投递
 	vstore   *variants.Store        // 衍生图磁盘缓存(访问时间周期落库)
 	variants *variants.Service      // 按需处理服务
 	upload   *upload.Service        // 上传服务
@@ -124,7 +141,9 @@ func build(logger *slog.Logger) (*app, func(), error) {
 		}
 		closeInfra()
 	}
-	return &app{infra: in, services: svcs, logger: logger, httpSrv: buildHTTP(in, svcs, logger)}, cleanup, nil
+	a := &app{infra: in, services: svcs, logger: logger, stop: make(chan struct{})}
+	a.httpSrv = buildHTTP(in, svcs, a.requestShutdown, logger)
+	return a, cleanup, nil
 }
 
 // buildInfra 装配基础设施:建数据目录 → 开库 → 迁移 → 主密钥 → 运营配置存储。
@@ -143,7 +162,11 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 		return infra{}, nil, fmt.Errorf("创建数据目录 %q: %w", boot.DataDir, err)
 	}
 
-	conn, err := db.Open(filepath.Join(boot.DataDir, "imgyoung.db"))
+	// 开库之前换入暂存的恢复快照:全部句柄都指着库文件,只有这个时刻能安全替换。
+	if _, err := reliability.ApplyStaged(boot.DataDir, logger); err != nil {
+		return infra{}, nil, fmt.Errorf("换入恢复快照: %w", err)
+	}
+	conn, err := db.Open(filepath.Join(boot.DataDir, reliability.DBFileName))
 	if err != nil {
 		return infra{}, nil, err
 	}
@@ -200,18 +223,19 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 		return services{}, err
 	}
 	s.manager = manager
+	s.metrics = buildMetrics(manager)
 	s.runner, err = replication.NewRunner(replication.RunnerConfig{
-		Conn: writer, Queries: in.queries, Manager: manager,
+		Conn: writer, Queries: in.queries, Manager: manager, Metrics: s.metrics,
 		Purger: settingsPurger{settings: in.store.Current}, Logger: logger,
 	})
 	if err != nil {
 		return services{}, err
 	}
+	registerQueueGauges(s.metrics, s.runner, logger)
 	s.referer, err = referer.New(context.Background(), in.queries)
 	if err != nil {
 		return services{}, err
 	}
-	s.metrics = buildMetrics(manager)
 	s.vstore = variants.New(variants.Config{
 		Dir:      filepath.Join(in.boot.DataDir, "variants"),
 		Capacity: func() int64 { return in.store.Current().VariantsCacheMB << 20 },
@@ -227,11 +251,11 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 func (s *services) buildDataServices(in infra, logger *slog.Logger) {
 	writer := in.conn.Writer()
 	s.variants = variants.NewService(variants.ServiceConfig{
-		Store: s.vstore, Settings: in.store.Current, Logger: logger,
+		Store: s.vstore, Settings: in.store.Current, Metrics: s.metrics, Logger: logger,
 	})
 	s.upload = upload.New(upload.Config{
 		Conn: writer, Queries: in.queries, Channels: s.manager, Replicator: s.runner,
-		Settings: in.store.Current, Logger: logger,
+		Settings: in.store.Current, Metrics: s.metrics, Logger: logger,
 	})
 	s.tracker = lifecycle.NewTracker(writer, in.queries,
 		func() bool { return in.store.Current().TTLRenewOnAccess }, logger)
@@ -251,14 +275,50 @@ func (s *services) buildDataServices(in infra, logger *slog.Logger) {
 		Interval: func() time.Duration { return time.Duration(in.store.Current().BackupIntervalHours) * time.Hour },
 		Logger:   logger,
 	})
+	s.alerts = alert.New(alert.Config{
+		Queries:    in.queries,
+		QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
+		Backup:     s.backup,
+		WebhookURL: func() string { return in.store.Current().AlertWebhookURL },
+		Client:     &http.Client{Timeout: webhookTimeout},
+		Logger:     logger,
+	})
+}
+
+// registerQueueGauges 挂任务队列深度量表:scrape 时查一次任务表;查询失败记日志并报 NaN(表示未知)。
+// @param m 指标集
+// @param runner 补齐子系统
+// @param logger 结构化日志
+func registerQueueGauges(m *observability.Metrics, runner *replication.Runner, logger *slog.Logger) {
+	stats := func() replication.QueueStats {
+		ctx, cancel := context.WithTimeout(context.Background(), queueStatsTimeout)
+		defer cancel()
+		st, err := runner.QueueStats(ctx)
+		if err != nil {
+			logger.Warn("统计任务队列深度失败", "err", err)
+			return replication.QueueStats{Waiting: -1, Running: -1}
+		}
+		return st
+	}
+	gauge := func(v int64) float64 {
+		if v < 0 {
+			return math.NaN()
+		}
+		return float64(v)
+	}
+	m.RegisterGauge("queue_jobs_waiting", "任务队列里等待执行的任务数(可认领、已排程与待重试)。",
+		func() float64 { return gauge(stats().Waiting) })
+	m.RegisterGauge("queue_jobs_running", "任务队列里正在执行的任务数。",
+		func() float64 { return gauge(stats().Running) })
 }
 
 // buildHTTP 装配 HTTP 层:公有 API、后台 API、路由,组装成配好超时的 http.Server。
 // @param in 基础设施构件
 // @param s 业务服务集
+// @param shutdown 请求整个进程优雅停机的入口,恢复快照后调用
 // @param logger 结构化日志
 // @return HTTP 服务器
-func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
+func buildHTTP(in infra, s services, shutdown func(), logger *slog.Logger) *http.Server {
 	// URL 转存的大小上限与单图上限同源(逐次取快照,后台改即生效)。
 	fetcher := urlfetch.New(func() int64 { return in.store.Current().MaxUploadBytes() }, urlFetchTimeout)
 	pub := publicapi.New(publicapi.Config{
@@ -268,7 +328,8 @@ func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
 	adm := adminapi.New(adminapi.Config{
 		Admin: s.manager, OAuth: channel.NewOAuthSessions(),
 		Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
-		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot, Logger: logger,
+		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot,
+		Backups: s.backup, Shutdown: shutdown, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{
 		Auth: s.auth, Upload: s.upload, Queries: in.queries, Objects: pub, Images: s.sweeper, Audit: s.audit,

@@ -17,20 +17,28 @@ import (
 // ErrBusy 处理并发已满且等待超时,调用方应回退原图。
 var ErrBusy = errors.New("处理繁忙,超时未获得处理槽")
 
+// LookupMetrics 衍生图缓存查找的指标记录口(由 observability.Metrics 实现)。
+type LookupMetrics interface {
+	// RecordVariantLookup 记录一次缓存查找是否命中。
+	RecordVariantLookup(hit bool)
+}
+
 // ServiceConfig 按需处理服务依赖。
 type ServiceConfig struct {
 	Store    *Store                 // 衍生图磁盘缓存
 	Settings func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);编码档位/并发上限/超时出自它
+	Metrics  LookupMetrics          // 指标记录口;可为 nil(不记指标)
 	Logger   *slog.Logger           // 结构化日志
 }
 
 // Service 按需处理协调器:命中缓存直取,未命中在并发上限内处理并落缓存,同键并发合并为一次。
 type Service struct {
-	store *Store
-	set   func() config.Settings
-	sem   resizableSem       // 处理槽信号量,容量随配置热调整
-	sf    singleflight.Group // 合并同缓存键的并发首请求,避免重复重编码
-	log   *slog.Logger
+	store   *Store
+	set     func() config.Settings
+	sem     resizableSem       // 处理槽信号量,容量随配置热调整
+	sf      singleflight.Group // 合并同缓存键的并发首请求,避免重复重编码
+	metrics LookupMetrics      // 指标记录口;nil 表示不记
+	log     *slog.Logger
 }
 
 // resizableSem 容量可热调整的信号量:容量变更时换新通道,在途持有者向旧通道释放。
@@ -69,9 +77,10 @@ type result struct {
 // @return 服务
 func NewService(cfg ServiceConfig) *Service {
 	return &Service{
-		store: cfg.Store,
-		set:   cfg.Settings,
-		log:   cfg.Logger,
+		store:   cfg.Store,
+		set:     cfg.Settings,
+		metrics: cfg.Metrics,
+		log:     cfg.Logger,
 	}
 }
 
@@ -93,9 +102,14 @@ func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.Proc
 	quality, tuning := encodeParams(set, p.Format)
 	key := Key(blobID, p.Width, p.Format, quality, tuning)
 
-	if hit, ok, err := s.store.Get(ctx, blobID, key); err != nil {
+	hit, ok, err := s.store.Get(ctx, blobID, key)
+	if err != nil {
 		return nil, "", err
-	} else if ok {
+	}
+	if s.metrics != nil {
+		s.metrics.RecordVariantLookup(ok)
+	}
+	if ok {
 		return hit.Data, imaging.MIME(hit.Format), nil
 	}
 

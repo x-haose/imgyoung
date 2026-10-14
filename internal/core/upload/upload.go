@@ -100,6 +100,14 @@ type ReplicationEnqueuer interface {
 	EnqueueReplication(ctx context.Context, blobID int64, channelIDs []int64) error
 }
 
+// Metrics 上传管道的指标记录口(由 observability.Metrics 实现)。
+type Metrics interface {
+	// ObserveUpload 记录一次上传管道的耗时与结果(ok / rejected / failed)。
+	ObserveUpload(outcome string, dur time.Duration)
+	// RecordChannelPut 记录一次向渠道同步写对象的成败。
+	RecordChannelPut(name string, ok bool)
+}
+
 // Config Service 的全部依赖与参数。
 type Config struct {
 	Conn       *sql.DB                // 数据库连接(事务用)
@@ -107,6 +115,7 @@ type Config struct {
 	Channels   ChannelSelector        // 渠道选择器:主渠道同步写入,其余渠道记 pending 待补齐
 	Replicator ReplicationEnqueuer    // 补齐入队口;可为 nil(pending 行由恢复扫描兜底)
 	Settings   func() config.Settings // 运营配置快照读取口(逐次上传取值,热生效);像素预算/最少副本数/全局默认 TTL 出自它
+	Metrics    Metrics                // 指标记录口;可为 nil(不记指标)
 	Logger     *slog.Logger           // 结构化日志
 }
 
@@ -154,6 +163,36 @@ func New(cfg Config) *Service {
 // @return 上传结果
 // @return 业务错误(见哨兵)或基础设施错误
 func (s *Service) Process(ctx context.Context, data []byte, opts Options) (Result, error) {
+	started := time.Now()
+	res, err := s.runPipeline(ctx, data, opts)
+	if s.cfg.Metrics != nil {
+		s.cfg.Metrics.ObserveUpload(outcomeOf(err), time.Since(started))
+	}
+	return res, err
+}
+
+// outcomeOf 把管道结果归为指标标签:成功 ok,输入或配额不合规 rejected,其余 failed。
+// @param err 管道返回的错误
+// @return 结果标签
+func outcomeOf(err error) string {
+	switch {
+	case err == nil:
+		return "ok"
+	case errors.Is(err, ErrUnsupportedType), errors.Is(err, ErrTooManyPixels), errors.Is(err, ErrInvalidImage),
+		errors.Is(err, ErrQuotaExceeded), errors.Is(err, imaging.ErrUnknownPolicy):
+		return "rejected"
+	default:
+		return "failed"
+	}
+}
+
+// runPipeline 执行上传管道的全部步骤。
+// @param ctx 控制超时与取消
+// @param data 完整的上传字节
+// @param opts 上传参数
+// @return 上传结果
+// @return 业务错误(见哨兵)或基础设施错误
+func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (Result, error) {
 	set := s.cfg.Settings()
 	// 归属用户必填(多租户隔离的前提),档位必须是明确合法值。
 	if opts.UserID == "" {
@@ -317,7 +356,11 @@ func (s *Service) writeReplicas(ctx context.Context, key string, data []byte, ne
 		if len(doneIDs) >= need {
 			break
 		}
-		if err := putWithTimeout(ctx, h, key, data); err != nil {
+		err := putWithTimeout(ctx, h, key, data)
+		if s.cfg.Metrics != nil {
+			s.cfg.Metrics.RecordChannelPut(h.Name, err == nil)
+		}
+		if err != nil {
 			s.cfg.Logger.Warn("渠道写入失败,顺延下一渠道", "channel", h.Name, "err", err)
 			continue
 		}

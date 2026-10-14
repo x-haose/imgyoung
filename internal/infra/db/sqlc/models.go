@@ -8,6 +8,17 @@ import (
 	"database/sql"
 )
 
+type Alert struct {
+	ID              int64
+	Kind            string
+	Target          string
+	Message         string
+	OpenedAt        string
+	ResolvedAt      sql.NullString
+	OpenNotified    int64
+	ResolveNotified int64
+}
+
 type AuditLog struct {
 	ID        int64
 	Actor     string

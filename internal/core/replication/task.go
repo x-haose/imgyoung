@@ -81,7 +81,20 @@ type RunnerConfig struct {
 	Queries *sqlc.Queries    // sqlc 查询集
 	Manager *channel.Manager // 渠道管理器(取源/目标驱动)
 	Purger  ObjectPurger     // CDN 缓存清理执行器;nil 表示 purge 未启用,EnqueuePurge 为空操作
+	Metrics PutMetrics       // 指标记录口;可为 nil(不记指标)
 	Logger  *slog.Logger     // 结构化日志
+}
+
+// PutMetrics 向渠道写对象的指标记录口(由 observability.Metrics 实现)。
+type PutMetrics interface {
+	// RecordChannelPut 记录一次向渠道写对象的成败。
+	RecordChannelPut(name string, ok bool)
+}
+
+// QueueStats 任务队列的深度:等待执行与正在执行的任务数。
+type QueueStats struct {
+	Waiting int64 // 可认领、已排程与待重试的任务数
+	Running int64 // 正在执行的任务数
 }
 
 // Runner 补齐子系统:封装 River client 的生命周期与入队/恢复扫描。
@@ -377,6 +390,9 @@ func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target c
 		if cerr := rc.Close(); cerr != nil && lastErr == nil {
 			lastErr = cerr
 		}
+		if w.cfg.Metrics != nil {
+			w.cfg.Metrics.RecordChannelPut(target.Name, lastErr == nil)
+		}
 		if lastErr == nil {
 			return nil
 		}
@@ -422,4 +438,21 @@ func (w *deleteObjectWorker) Work(ctx context.Context, job *river.Job[DeleteObje
 	}
 	w.cfg.Logger.Info("渠道对象已删除", "channel", h.Name, "key", args.StorageKey)
 	return nil
+}
+
+// QueueStats 统计任务队列深度,供指标在 scrape 时读取。
+// @Description: 直接查 River 的任务表:状态列是 River 的公开契约,本项目不另记一份队列状态。
+// @param ctx 控制超时与取消
+// @return 队列深度
+// @return 查询失败时的错误
+func (r *Runner) QueueStats(ctx context.Context) (QueueStats, error) {
+	var st QueueStats
+	err := r.cfg.Conn.QueryRowContext(ctx, `
+SELECT CAST(COALESCE(SUM(CASE WHEN state IN ('available', 'scheduled', 'retryable') THEN 1 ELSE 0 END), 0) AS INTEGER),
+       CAST(COALESCE(SUM(CASE WHEN state = 'running' THEN 1 ELSE 0 END), 0) AS INTEGER)
+FROM river_job`).Scan(&st.Waiting, &st.Running)
+	if err != nil {
+		return QueueStats{}, fmt.Errorf("统计任务队列深度: %w", err)
+	}
+	return st, nil
 }

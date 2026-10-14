@@ -37,6 +37,7 @@ func (a *app) serve() error {
 
 	var g run.Group
 	g.Add(run.SignalHandler(ctx, os.Interrupt, syscall.SIGTERM))
+	a.addStopRequest(ctx, &g, cancel)
 	a.addLoops(ctx, &g, cancel)
 
 	// 补齐子系统(River):启动后阻塞至停机,interrupt 排空在途任务。
@@ -78,7 +79,22 @@ func (a *app) serve() error {
 	return nil
 }
 
-// addLoops 把全部后台周期循环(用量/查重/清理/活跃度/衍生图访问时间/健康/备份/认证维护)作为 actor 加入运行组。
+// addStopRequest 把后台请求的停机(恢复快照)作为 actor 加入运行组:actor 退出即触发全组停机,等同一次正常停机。
+// @param ctx 运行组生命周期
+// @param g 运行组
+// @param cancel 触发全组停机的取消函数
+func (a *app) addStopRequest(ctx context.Context, g *run.Group, cancel context.CancelFunc) {
+	g.Add(func() error {
+		select {
+		case <-a.stop:
+			a.logger.Warn("收到停机请求,优雅停机后由进程管理器拉起")
+		case <-ctx.Done():
+		}
+		return nil
+	}, func(error) { cancel() })
+}
+
+// addLoops 把全部后台周期循环(用量/查重/清理/活跃度/衍生图访问时间/健康/告警/备份/认证维护)作为 actor 加入运行组。
 // @Description: 各循环共用 ctx,execute 跑到 ctx 取消即返回,interrupt 取消共享 ctx(幂等);
 // 间隔取自配置快照,后台改间隔即刻重排当前等待。均为兜底型循环。
 // @param ctx 循环生命周期;取消即各自收敛退出
@@ -103,6 +119,8 @@ func (a *app) addLoops(ctx context.Context, g *run.Group, cancel context.CancelF
 	add(func() {
 		healthLoop(ctx, seconds(func(s config.Settings) int { return s.HealthCheckSeconds }), a.manager, a.logger)
 	})
+	// 告警评估与健康探测同节奏:探测结果是告警的主要输入。
+	add(func() { a.alerts.Run(ctx, seconds(func(s config.Settings) int { return s.HealthCheckSeconds })) })
 	add(func() {
 		a.backup.Run(ctx, a.waiter(func(s config.Settings) time.Duration {
 			return time.Duration(s.BackupIntervalHours) * time.Hour

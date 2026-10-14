@@ -74,7 +74,7 @@ func listBackups(t *testing.T, env *testEnv) []driver.ObjectInfo {
 // 数据库恢复(打开后能查到既有记录)。
 func TestRunOnceUploadsSnapshot(t *testing.T) {
 	env := newTestEnv(t)
-	if err := env.svc.RunOnce(t.Context()); err != nil {
+	if _, err := env.svc.RunOnce(t.Context()); err != nil {
 		t.Fatalf("RunOnce 返回错误: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestRunOnceUploadsSnapshot(t *testing.T) {
 func TestRunOncePrunesOldBackups(t *testing.T) {
 	env := newTestEnv(t)
 	for range 3 {
-		if err := env.svc.RunOnce(t.Context()); err != nil {
+		if _, err := env.svc.RunOnce(t.Context()); err != nil {
 			t.Fatalf("RunOnce 返回错误: %v", err)
 		}
 	}

@@ -37,6 +37,10 @@ const (
 	ActionImageUpdate = "image.update"
 	// ActionDataExport 元数据导出。
 	ActionDataExport = "data.export"
+	// ActionBackupCreate 手动触发元数据库备份。
+	ActionBackupCreate = "backup.create"
+	// ActionBackupRestore 暂存快照待重启换入。
+	ActionBackupRestore = "backup.restore"
 	// ActionDedupMerge 相似候选人工合并。
 	ActionDedupMerge = "dedup.merge"
 	// ActionDedupDismiss 相似候选忽略。

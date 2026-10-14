@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -39,7 +40,8 @@ type Config struct {
 
 // Service 备份服务。
 type Service struct {
-	cfg Config // 依赖
+	cfg         Config                 // 依赖
+	lastFailure atomic.Pointer[string] // 最近一次备份的失败原因;nil 表示最近一次成功或尚未运行
 }
 
 // New 创建备份服务。
@@ -49,44 +51,57 @@ func New(cfg Config) *Service {
 	return &Service{cfg: cfg}
 }
 
-// RunOnce 执行一次备份:快照 → 上传主渠道 → 清理超额旧份。
-// @Description: 快照经渠道驱动写入,加密渠道自动得到密文备份;
-// 恢复 = 从渠道取回快照文件替换 imgyoung.db。
+// RunOnce 执行一次备份:快照 → 上传主渠道 → 清理超额旧份;结果记入 LastFailure。
+// @Description: 快照经渠道驱动写入,加密渠道自动得到密文备份;恢复经 Stage 暂存、重启时 ApplyStaged 换入。
+// @return 新快照
 // @return 快照、上传或清理失败时的错误
-func (s *Service) RunOnce(ctx context.Context) error {
+func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
+	snap, err := s.backup(ctx)
+	s.recordResult(err)
+	return snap, err
+}
+
+// backup 执行一次备份的全部步骤。
+// @param ctx 控制超时与取消
+// @return 新快照
+// @return 快照、上传或清理失败时的错误
+func (s *Service) backup(ctx context.Context) (Snapshot, error) {
 	primary, err := s.cfg.Channels.Primary()
 	if err != nil {
-		return fmt.Errorf("选择备份目标渠道: %w", err)
+		return Snapshot{}, fmt.Errorf("选择备份目标渠道: %w", err)
 	}
 
 	tmp := filepath.Join(s.cfg.DataDir, snapshotTmpName)
 	// 残留的上次临时文件会让 VACUUM INTO 失败,先清。
 	_ = os.Remove(tmp)
 	if _, err := s.cfg.Conn.ExecContext(ctx, "VACUUM INTO ?", tmp); err != nil {
-		return fmt.Errorf("生成数据库快照: %w", err)
+		return Snapshot{}, fmt.Errorf("生成数据库快照: %w", err)
 	}
 	defer func() { _ = os.Remove(tmp) }()
 
 	f, err := os.Open(tmp)
 	if err != nil {
-		return fmt.Errorf("打开快照文件: %w", err)
+		return Snapshot{}, fmt.Errorf("打开快照文件: %w", err)
 	}
 	info, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
-		return fmt.Errorf("读取快照大小: %w", err)
+		return Snapshot{}, fmt.Errorf("读取快照大小: %w", err)
 	}
-	key := snapshotKey(time.Now())
+	taken := time.Now()
+	key := snapshotKey(taken)
 	err = primary.Driver.Put(ctx, key, f, info.Size())
 	if cerr := f.Close(); cerr != nil && err == nil {
 		err = cerr
 	}
 	if err != nil {
-		return fmt.Errorf("上传快照到渠道 %q: %w", primary.Name, err)
+		return Snapshot{}, fmt.Errorf("上传快照到渠道 %q: %w", primary.Name, err)
 	}
 	s.cfg.Logger.Info("元数据库快照已备份", "channel", primary.Name, "key", key, "bytes", info.Size())
-
-	return s.prune(ctx, primary)
+	if err := s.prune(ctx, primary); err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{Name: strings.TrimPrefix(key, Dir+"/"), Size: info.Size(), TakenAt: taken.UTC()}, nil
 }
 
 // Run 周期执行备份,直至 ctx 取消;启动时上一份快照已超过一个间隔才先备份一次。
@@ -101,14 +116,35 @@ func (s *Service) Run(ctx context.Context, wait func(context.Context) bool) {
 	}
 	if !due {
 		s.cfg.Logger.Info("上一份元数据库快照仍在备份间隔内,启动时不重复备份")
-	} else if err := s.RunOnce(ctx); err != nil {
+	} else if _, err := s.RunOnce(ctx); err != nil {
 		s.cfg.Logger.Warn("启动备份未完成", "err", err)
 	}
 	for wait(ctx) {
-		if err := s.RunOnce(ctx); err != nil {
+		if _, err := s.RunOnce(ctx); err != nil {
 			s.cfg.Logger.Warn("定时备份未完成", "err", err)
 		}
 	}
+}
+
+// LastFailure 返回最近一次备份的失败原因,供告警评估读取。
+// @return message 失败原因;最近一次成功或尚未运行时为空串
+// @return failed 最近一次是否失败
+func (s *Service) LastFailure() (message string, failed bool) {
+	if p := s.lastFailure.Load(); p != nil {
+		return *p, true
+	}
+	return "", false
+}
+
+// recordResult 记下一次备份的结果,供 LastFailure 读取。
+// @param err 本次备份的错误;nil 表示成功
+func (s *Service) recordResult(err error) {
+	if err == nil {
+		s.lastFailure.Store(nil)
+		return
+	}
+	msg := err.Error()
+	s.lastFailure.Store(&msg)
 }
 
 // startupDue 判断启动时是否需要立即备份:主渠道上最新快照距今已超过一个备份间隔。

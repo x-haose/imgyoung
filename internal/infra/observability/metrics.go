@@ -21,6 +21,9 @@ type Metrics struct {
 	httpRequests   *prometheus.CounterVec   // 按方法/路由模板/状态码计数的请求总量
 	httpDuration   *prometheus.HistogramVec // 按方法/路由模板的请求时延分布
 	channelStorage *prometheus.GaugeVec     // 各渠道逻辑存储用量(字节),按渠道名
+	uploadDuration *prometheus.HistogramVec // 上传管道耗时分布,按结果
+	channelPuts    *prometheus.CounterVec   // 向渠道写对象的次数,按渠道名与成败
+	variantLookups *prometheus.CounterVec   // 衍生图缓存查找次数,按命中与否
 }
 
 // New 创建指标集,注册 Go 运行时与进程采集器及内置 HTTP 指标。
@@ -42,11 +45,59 @@ func New() *Metrics {
 		Namespace: namespace, Subsystem: "channel", Name: "storage_bytes",
 		Help: "各渠道逻辑存储用量(字节,按已就绪副本的图片大小求和)。",
 	}, []string{"channel"})
-	reg.MustRegister(httpRequests, httpDuration, channelStorage)
+	uploadDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace, Subsystem: "upload", Name: "duration_seconds",
+		Help:    "上传管道耗时(秒),按结果:ok / rejected(输入或配额不合规)/ failed(基础设施失败)。",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"outcome"})
+	channelPuts := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "channel", Name: "puts_total",
+		Help: "向渠道写对象的次数(同步写入与异步补齐),按渠道名与成败。",
+	}, []string{"channel", "result"})
+	variantLookups := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace, Subsystem: "variant", Name: "lookups_total",
+		Help: "衍生图缓存查找次数,按命中与否。",
+	}, []string{"result"})
+	reg.MustRegister(httpRequests, httpDuration, channelStorage, uploadDuration, channelPuts, variantLookups)
 
 	return &Metrics{
 		reg: reg, httpRequests: httpRequests, httpDuration: httpDuration, channelStorage: channelStorage,
+		uploadDuration: uploadDuration, channelPuts: channelPuts, variantLookups: variantLookups,
 	}
+}
+
+// ObserveUpload 记录一次上传管道的耗时与结果。
+// @param outcome 结果:ok / rejected / failed
+// @param dur 管道耗时
+func (m *Metrics) ObserveUpload(outcome string, dur time.Duration) {
+	m.uploadDuration.WithLabelValues(outcome).Observe(dur.Seconds())
+}
+
+// RecordChannelPut 记录一次向渠道写对象的结果。
+// @param channel 渠道名
+// @param ok 是否成功
+func (m *Metrics) RecordChannelPut(channel string, ok bool) {
+	m.channelPuts.WithLabelValues(channel, resultLabel(ok)).Inc()
+}
+
+// RecordVariantLookup 记录一次衍生图缓存查找。
+// @param hit 是否命中
+func (m *Metrics) RecordVariantLookup(hit bool) {
+	result := "miss"
+	if hit {
+		result = "hit"
+	}
+	m.variantLookups.WithLabelValues(result).Inc()
+}
+
+// resultLabel 把成败翻译成标签值。
+// @param ok 是否成功
+// @return ok / error
+func resultLabel(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "error"
 }
 
 // SetChannelStorage 设置某渠道的存储用量量表值(由用量上报器周期调用)。

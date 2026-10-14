@@ -5,6 +5,7 @@ package adminapi
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/referer"
+	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -52,6 +54,18 @@ type ImageAdmin interface {
 	DeleteImage(ctx context.Context, imageID string) error
 }
 
+// BackupAdmin 元数据库备份的管理入口(由 reliability.Service 实现)。
+type BackupAdmin interface {
+	// List 列出备份渠道上的快照,最新在前。
+	List(ctx context.Context) ([]reliability.Snapshot, error)
+	// RunOnce 立即备份一次并返回新快照。
+	RunOnce(ctx context.Context) (reliability.Snapshot, error)
+	// Open 打开一份快照供下载,返回字节流与大小。
+	Open(ctx context.Context, name string) (io.ReadCloser, int64, error)
+	// Stage 把快照暂存到数据目录,等进程重启换入。
+	Stage(ctx context.Context, name string) (string, error)
+}
+
 // SettingsStore 运营配置存储口(由 config.Store 实现):读取当前快照、应用修改热生效。
 type SettingsStore interface {
 	// Current 返回当前生效配置快照(切片字段只读)。
@@ -73,6 +87,8 @@ type Config struct {
 	Referer    *referer.Service       // 防盗链白名单管理(增删热生效)
 	Settings   SettingsStore          // 运营配置存储:读取快照供各请求取值,PUT /config 经它落库热生效
 	Boot       config.Bootstrap       // 引导配置(只读展示用;密钥与密码不进任何响应)
+	Backups    BackupAdmin            // 备份管理入口
+	Shutdown   func()                 // 触发整个进程优雅停机;恢复快照后调用,由进程管理器拉起时换入
 	Logger     *slog.Logger           // 结构化日志
 }
 
