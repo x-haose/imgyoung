@@ -254,7 +254,9 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 		}),
 		backup: reliability.New(reliability.Config{
 			Conn: in.conn.Reader(), Channels: manager, DataDir: in.boot.DataDir,
-			Keep: func() int { return in.store.Current().BackupKeep }, Logger: logger,
+			Keep:     func() int { return in.store.Current().BackupKeep },
+			Interval: func() time.Duration { return time.Duration(in.store.Current().BackupIntervalHours) * time.Hour },
+			Logger:   logger,
 		}),
 	}, nil
 }

@@ -672,9 +672,13 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	listen := strings.TrimPrefix(inst.baseURL, "http://")
 	stopInstance(t, inst)
 
-	// 重启触发一次启动备份,此时快照已含刚上传的图。
-	inst2 := startInstanceAt(t, inst, listen)
+	// 启动备份只在上一份快照超过备份间隔时执行:抹掉首次启动留下的快照,让重启必然重新备份,
+	// 此时快照已含刚上传的图。
 	backupDir := filepath.Join(inst.dataDir, "blobs", "_imgyoung", "backup")
+	if err := os.RemoveAll(backupDir); err != nil {
+		t.Fatalf("清空既有快照: %v", err)
+	}
+	inst2 := startInstanceAt(t, inst, listen)
 	waitUntil(t, 15*time.Second, "启动快照落到渠道", func() bool { return dirHasFiles(backupDir) })
 	snapshots, err := filepath.Glob(filepath.Join(backupDir, "imgyoung-*.db"))
 	if err != nil || len(snapshots) == 0 {

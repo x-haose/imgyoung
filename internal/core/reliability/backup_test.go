@@ -1,10 +1,12 @@
 package reliability_test
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
@@ -59,9 +61,16 @@ func newTestEnv(t *testing.T) *testEnv {
 		Channels: mgr,
 		DataDir:  dir,
 		Keep:     func() int { return 2 },
+		Interval: func() time.Duration { return time.Hour },
 		Logger:   slog.New(slog.DiscardHandler),
 	})
 	return &testEnv{svc: svc, queries: queries, mgr: mgr, dataDir: dir}
+}
+
+// runStartupOnly 以立即收敛的周期闸调用 Run,只执行其启动阶段。
+func runStartupOnly(t *testing.T, env *testEnv) {
+	t.Helper()
+	env.svc.Run(t.Context(), func(context.Context) bool { return false })
 }
 
 // listBackups 列出主渠道上的备份对象键。
@@ -122,5 +131,30 @@ func TestRunOncePrunesOldBackups(t *testing.T) {
 	objs := listBackups(t, env)
 	if len(objs) != 2 {
 		t.Fatalf("备份对象数 = %d, 期望保留 2 份", len(objs))
+	}
+}
+
+// TestRunSkipsStartupBackupWhenRecent 验证启动备份只在上一份快照超过间隔时执行:
+// 空渠道启动即备份;刚备过再启动不重复;把既有快照改名为一天前的时间戳后再启动则备份。
+func TestRunSkipsStartupBackupWhenRecent(t *testing.T) {
+	env := newTestEnv(t)
+	runStartupOnly(t, env)
+	if n := len(listBackups(t, env)); n != 1 {
+		t.Fatalf("空渠道首次启动后快照数 = %d, 期望 1", n)
+	}
+	runStartupOnly(t, env)
+	if n := len(listBackups(t, env)); n != 1 {
+		t.Fatalf("上一份仍新鲜时再启动快照数 = %d, 期望仍为 1", n)
+	}
+
+	// local 渠道即 dataDir/blobs 下的文件:把唯一快照改名成一天前的时间戳。
+	backupDir := filepath.Join(env.dataDir, "blobs", reliability.Dir)
+	old := filepath.Join(backupDir, "imgyoung-"+time.Now().Add(-24*time.Hour).UTC().Format("20060102-150405.000")+".db")
+	if err := os.Rename(filepath.Join(env.dataDir, "blobs", listBackups(t, env)[0].Key), old); err != nil {
+		t.Fatalf("改名快照: %v", err)
+	}
+	runStartupOnly(t, env)
+	if n := len(listBackups(t, env)); n != 2 {
+		t.Fatalf("上一份已超过间隔时再启动快照数 = %d, 期望 2", n)
 	}
 }
