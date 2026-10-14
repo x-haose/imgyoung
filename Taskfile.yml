@@ -1,6 +1,10 @@
 # ImgYoung 开发入口:task <name>(https://taskfile.dev)
 version: '3'
 
+# 全程纯 Go:构建、测试、lint 都在 CGO_ENABLED=0 下进行,与发布二进制保持同一套构建条件
+env:
+  CGO_ENABLED: '0'
+
 tasks:
   web:
     desc: 构建管理后台前端(产物进 web/dist,随 go:embed 打进二进制)
@@ -12,8 +16,6 @@ tasks:
   build:
     desc: 构建单二进制(纯 Go,无 cgo;含后台前端产物)
     deps: [web]
-    env:
-      CGO_ENABLED: '0'
     cmds:
       - go build -trimpath -o imgyoung ./cmd/imgyoung
 
@@ -29,9 +31,10 @@ tasks:
       - go test -tags e2e -count=1 ./e2e/ -timeout 300s
 
   lint:
-    desc: lint 门禁:0 issue 才算过(质量红线)
+    desc: lint 门禁:0 issue 才算过(质量红线);同时确认 go.mod/go.sum 已 tidy
     cmds:
       - golangci-lint run
+      - go mod tidy -diff
 
   generate:
     desc: 重新生成 sqlc 查询代码

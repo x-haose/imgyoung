@@ -1,0 +1,16 @@
+# 构建上下文只需要 Go 源、go.mod/go.sum 与前端源码;前端依赖与产物在镜像内重新生成
+.git
+.github
+.idea
+.claude
+.DS_Store
+*.md
+data
+dist
+imgyoung
+*.test
+coverage.out
+imgyoung.yml
+web/node_modules
+web/dist
+web/tsconfig.tsbuildinfo

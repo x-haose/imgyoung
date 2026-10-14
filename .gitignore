@@ -17,3 +17,6 @@ web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
 web/tsconfig.tsbuildinfo
+
+# claude code 本机会话设置
+.claude/settings.local.json

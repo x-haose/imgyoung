@@ -1,10 +1,13 @@
-# CI 门禁:lint 0 issue + 全量测试(-race)+ 纯 Go 构建
+# CI 门禁:lint 0 issue + go.mod 已 tidy + 全量测试(-race)+ e2e + 纯 Go 构建 + Docker 镜像可构建
 name: ci
 
 on:
   push:
     branches: [main, master]
   pull_request:
+
+env:
+  CGO_ENABLED: "0"
 
 jobs:
   ci:
@@ -31,9 +34,18 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.11.4
+      - name: Tidy
+        run: go mod tidy -diff
       - name: Test
         run: go test -race ./...
       - name: E2E
         run: go test -tags e2e -count=1 ./e2e/ -timeout 300s
       - name: Build
-        run: CGO_ENABLED=0 go build -trimpath ./cmd/imgyoung
+        run: go build -trimpath ./cmd/imgyoung
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t imgyoung:ci .
