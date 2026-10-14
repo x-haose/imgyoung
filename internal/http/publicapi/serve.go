@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -158,7 +159,8 @@ func (h *Handlers) openFirstReadable(ctx context.Context, candidates []channel.H
 	return nil
 }
 
-// writeOriginalHeaders 设置原图响应头:降级响应 no-store;正常响应内容不可变(URL 即版本)缓存一年并带强 ETag。
+// writeOriginalHeaders 设置原图响应头:降级响应 no-store;正常响应内容不可变(URL 即版本)缓存一年,
+// 带强 ETag 与上传时刻的 Last-Modified。
 // @Description: nosniff 强制浏览器信任服务端类型判定。
 // @param hd 响应头
 // @param row 引用与物理图信息
@@ -173,4 +175,61 @@ func writeOriginalHeaders(hd http.Header, row sqlc.GetImageBlobRow, degraded boo
 	}
 	hd.Set("Cache-Control", cacheImmutable)
 	hd.Set("ETag", `"`+row.Sha256+`"`)
+	if uploaded, err := sqlc.ParseTimeText(row.CreatedAt); err == nil {
+		hd.Set("Last-Modified", uploaded.UTC().Format(http.TimeFormat))
+	}
+}
+
+// 对象输出的错误哨兵,供 S3 协议面翻译成对应错误码。
+var (
+	// ErrObjectNotFound 引用不存在。
+	ErrObjectNotFound = errors.New("publicapi: 对象不存在")
+	// ErrObjectUnavailable 引用存在但当前没有渠道能读出对象。
+	ErrObjectUnavailable = errors.New("publicapi: 对象暂不可读")
+)
+
+// ServeObject 按短 ID 向已验签的客户端输出原图:元数据头、If-None-Match 协商与流式字节。
+// @Description: 客户端取回的是自己的对象,与公开浏览不同——不计活跃度、不走 302 直链、不做按需处理;
+// HEAD 只写元数据头,不打开渠道对象流。错误只在写出任何响应之前返回,调用方据此写自己的错误体。
+// @param w 响应写入器
+// @param r 请求,GET 或 HEAD
+// @param imageID 对外短 ID
+// @return ErrObjectNotFound / ErrObjectUnavailable 或查询失败的错误
+func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID string) error {
+	row, err := h.cfg.Queries.GetImageBlob(r.Context(), imageID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrObjectNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("查询引用记录: %w", err)
+	}
+	etag := `"` + row.Sha256 + `"`
+	if r.Header.Get("If-None-Match") == etag {
+		w.Header().Set("ETag", etag)
+		w.WriteHeader(http.StatusNotModified)
+		return nil
+	}
+	if r.Method == http.MethodHead {
+		writeOriginalHeaders(w.Header(), row, false)
+		w.WriteHeader(http.StatusOK)
+		return nil
+	}
+	candidates, err := h.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)
+	if err != nil {
+		return fmt.Errorf("查询渠道候选: %w", err)
+	}
+	rc := h.openFirstReadable(r.Context(), candidates, row)
+	if rc == nil {
+		return ErrObjectUnavailable
+	}
+	defer func() {
+		if cerr := rc.Close(); cerr != nil {
+			h.cfg.Logger.Debug("关闭渠道对象失败", "id", row.ID, "err", cerr)
+		}
+	}()
+	writeOriginalHeaders(w.Header(), row, false)
+	if _, err := io.Copy(w, rc); err != nil {
+		h.cfg.Logger.Debug("输出对象中断", "id", row.ID, "err", err)
+	}
+	return nil
 }

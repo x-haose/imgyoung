@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
@@ -14,10 +15,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -46,10 +49,26 @@ var (
 	errInvalidObjectKey = errors.New("s3api: 对象键含非法字符")
 )
 
+// ObjectServer 按短 ID 输出对象字节与元数据(由 publicapi.Handlers 实现)。
+type ObjectServer interface {
+	// ServeObject 向已验签的客户端输出原图;错误只在写出任何响应之前返回。
+	ServeObject(w http.ResponseWriter, r *http.Request, imageID string) error
+}
+
+// ImageDeleter 删除一条引用(由 lifecycle.Sweeper 实现)。
+type ImageDeleter interface {
+	// DeleteImage 删除引用,引用计数与级联与后台删除同一语义。
+	DeleteImage(ctx context.Context, imageID string) error
+}
+
 // Config Handlers 的全部依赖与参数。
 type Config struct {
 	Auth     *auth.Service          // 认证服务:按 access key 取凭证、派生密钥
 	Upload   *upload.Service        // 上传编排服务
+	Queries  *sqlc.Queries          // 查询集:按签名主体与对象键定位引用
+	Objects  ObjectServer           // 对象输出口,HeadObject 与 GetObject 用
+	Images   ImageDeleter           // 引用删除口,DeleteObject 用
+	Audit    *audit.Recorder        // 审计记录器,删除留痕
 	Settings func() config.Settings // 运营配置快照读取口(逐请求取值,热生效)
 	Logger   *slog.Logger           // 结构化日志
 }
@@ -307,13 +326,16 @@ func (h *Handlers) writeError(w http.ResponseWriter, r *http.Request, err error)
 	}
 }
 
-// writeStatus 写一个 S3 风格的 XML 错误响应。
+// writeStatus 写一个 S3 风格的 XML 错误响应;HEAD 请求只写状态码,HTTP 不允许其携带响应体。
 // @param status HTTP 状态码
 // @param code S3 错误码
 // @param message 人读文案
 func (h *Handlers) writeStatus(w http.ResponseWriter, r *http.Request, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(status)
+	if r.Method == http.MethodHead {
+		return
+	}
 	body := errorResponse{Code: code, Message: message, Key: strings.TrimPrefix(r.URL.Path, "/")}
 	if err := xml.NewEncoder(w).Encode(body); err != nil {
 		h.cfg.Logger.Debug("写 S3 错误响应失败", "err", err)

@@ -171,4 +171,8 @@ func mountS3(s3 chi.Router, cfg Config, guards uploadGuards) {
 	s3.Use(guards.gate, cfg.S3.Authenticate)
 	s3.With(guards.rate).Put("/{bucket}/*", cfg.S3.HandlePutObject)
 	s3.Head("/{bucket}", cfg.S3.HandleHeadBucket)
+	// 读与删不是上传,不过上传频控;并发闸与验签照过。
+	s3.Head("/{bucket}/*", cfg.S3.HandleHeadObject)
+	s3.Get("/{bucket}/*", cfg.S3.HandleGetObject)
+	s3.Delete("/{bucket}/*", cfg.S3.HandleDeleteObject)
 }

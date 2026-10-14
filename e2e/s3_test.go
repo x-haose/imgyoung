@@ -7,6 +7,8 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -286,5 +288,149 @@ func TestS3RejectsNonImage(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("非图片内容应被拒")
+	}
+}
+
+// s3Status 取 SDK 错误里的 HTTP 状态码;不是 HTTP 响应错误时为 0。
+func s3Status(err error) int {
+	var respErr *awshttp.ResponseError
+	if errors.As(err, &respErr) {
+		return respErr.HTTPStatusCode()
+	}
+	return 0
+}
+
+// TestS3HeadAndGetObject HEAD/GET 闭环:上传后 HEAD 给出长度、类型、内容哈希 ETag 与上传时刻;GET 字节一致、
+// ETag 与 HEAD 相同;If-None-Match 命中 304;不存在的键 404。
+func TestS3HeadAndGetObject(t *testing.T) {
+	t.Parallel()
+	env := s3Setup(t, nil)
+	cred := env.cred
+	s3c := newS3Client(t, cred)
+	payload := pngBytes(t)
+	const objectKey = "album/head.png"
+	if _, err := s3c.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey), Body: bytes.NewReader(payload),
+	}); err != nil {
+		t.Fatalf("S3 上传失败: %v", err)
+	}
+
+	head, err := s3c.HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey),
+	})
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+	sum := sha256.Sum256(payload)
+	wantETag := `"` + hex.EncodeToString(sum[:]) + `"`
+	if head.ContentLength == nil || *head.ContentLength != int64(len(payload)) {
+		t.Errorf("HEAD Content-Length = %v, 期望 %d", head.ContentLength, len(payload))
+	}
+	if head.ContentType == nil || *head.ContentType != "image/png" {
+		t.Errorf("HEAD Content-Type = %v, 期望 image/png", head.ContentType)
+	}
+	if head.ETag == nil || *head.ETag != wantETag {
+		t.Errorf("HEAD ETag = %v, 期望 %s", head.ETag, wantETag)
+	}
+	if head.LastModified == nil || time.Since(*head.LastModified) > time.Hour {
+		t.Errorf("HEAD Last-Modified = %v, 期望为刚才的上传时刻", head.LastModified)
+	}
+
+	got, err := s3c.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey),
+	})
+	if err != nil {
+		t.Fatalf("GetObject: %v", err)
+	}
+	body, err := io.ReadAll(got.Body)
+	_ = got.Body.Close()
+	if err != nil || !bytes.Equal(body, payload) {
+		t.Fatalf("GET 字节与上传不一致: err=%v", err)
+	}
+	if got.ETag == nil || *got.ETag != wantETag {
+		t.Errorf("GET ETag = %v, 期望与 HEAD 一致 %s", got.ETag, wantETag)
+	}
+
+	_, err = s3c.GetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey), IfNoneMatch: head.ETag,
+	})
+	if s3Status(err) != http.StatusNotModified {
+		t.Errorf("If-None-Match 命中状态码 = %d, 期望 304 (err=%v)", s3Status(err), err)
+	}
+	_, err = s3c.HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String("album/missing.png"),
+	})
+	if s3Status(err) != http.StatusNotFound {
+		t.Errorf("不存在的键 HEAD 状态码 = %d, 期望 404 (err=%v)", s3Status(err), err)
+	}
+}
+
+// TestS3DeleteObject 删除:DELETE 后 HEAD 与公开对象键地址都 404、再 DELETE 仍成功;
+// 他人的对象 DELETE 同样成功但不删;坏凭证一律 403。
+func TestS3DeleteObject(t *testing.T) {
+	t.Parallel()
+	env := s3Setup(t, nil)
+	inst, cred := env.inst, env.cred
+	s3c := newS3Client(t, cred)
+	const objectKey = "del.png"
+	if _, err := s3c.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey), Body: bytes.NewReader(pngBytes(t)),
+	}); err != nil {
+		t.Fatalf("S3 上传失败: %v", err)
+	}
+	headStatus := func(c *s3.Client) int {
+		t.Helper()
+		_, err := c.HeadObject(context.Background(), &s3.HeadObjectInput{
+			Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey),
+		})
+		if err == nil {
+			return http.StatusOK
+		}
+		return s3Status(err)
+	}
+	del := func(c *s3.Client) error {
+		_, err := c.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+			Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey),
+		})
+		return err
+	}
+
+	// 另一个用户拿自己的凭证删这个键:成功但不动管理员的对象。
+	createUser(t, inst, env.client, env.csrf, "bob", "bob-secret-1", 0)
+	bob, bobCSRF := loginUser(t, inst, "bob", "bob-secret-1")
+	bobTokenID, _ := issueToken(t, inst, bob, bobCSRF, "bob-s3")
+	bobS3 := newS3Client(t, fetchS3Credential(t, inst, bob, bobCSRF, bobTokenID))
+	if err := del(bobS3); err != nil {
+		t.Fatalf("他人删除应按不存在处理而成功: %v", err)
+	}
+	if code := headStatus(s3c); code != http.StatusOK {
+		t.Fatalf("他人删除后对象 HEAD 状态码 = %d, 期望仍为 200", code)
+	}
+
+	if err := del(s3c); err != nil {
+		t.Fatalf("DeleteObject: %v", err)
+	}
+	if code := headStatus(s3c); code != http.StatusNotFound {
+		t.Errorf("删除后 HEAD 状态码 = %d, 期望 404", code)
+	}
+	pub := fetch(t, inst, objectPath(inst, cred, objectKey), "")
+	pubCode := pub.StatusCode
+	_ = pub.Body.Close()
+	if pubCode != http.StatusNotFound {
+		t.Errorf("删除后公开对象键地址状态码 = %d, 期望 404", pubCode)
+	}
+	if err := del(s3c); err != nil {
+		t.Errorf("再次删除应幂等成功: %v", err)
+	}
+
+	forged := cred
+	forged.AccessKeyID = "imgy_forged1"
+	assertS3Denied(t, del(newS3Client(t, forged)), "伪造 access key 删除")
+	// HEAD 没有响应体,客户端拿不到错误码,只能按状态码断言。
+	_, err := newS3Client(t, forged).HeadObject(context.Background(), &s3.HeadObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey),
+	})
+	if s3Status(err) != http.StatusForbidden {
+		t.Errorf("伪造 access key HEAD 状态码 = %d, 期望 403 (err=%v)", s3Status(err), err)
 	}
 }

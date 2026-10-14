@@ -43,8 +43,8 @@ open http://localhost:8721/i/R0RjUyP1UW
 客户端自取的对象键会成为访问别名,`/o/<用户 id>/<对象键>` 与短链 `/i/<短ID>` 指向同一张图,
 所以客户端贴出来的 Markdown 链接直接可用。同键重传按 S3 语义覆盖:别名指向新图,旧图短链仍有效。
 
-S3 面只收图:实现了上传所需的 `PutObject` 与 `HeadBucket`,列桶、读对象、删除等其他操作不提供;
-图片的访问与管理走 `/i/`、`/o/` 与后台。
+S3 面实现 `PutObject`、`HeadBucket`、`HeadObject`、`GetObject`、`DeleteObject` 五个操作,够上传、校验、取回与删除
+自己的对象;列桶、分段上传、ACL 等不提供。公开访问与管理仍走 `/i/`、`/o/` 与后台。
 
 ## 管理后台
 

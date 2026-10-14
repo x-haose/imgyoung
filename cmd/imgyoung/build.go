@@ -271,7 +271,8 @@ func buildHTTP(in infra, s services, logger *slog.Logger) *http.Server {
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{
-		Auth: s.auth, Upload: s.upload, Settings: in.store.Current, Logger: logger,
+		Auth: s.auth, Upload: s.upload, Queries: in.queries, Objects: pub, Images: s.sweeper, Audit: s.audit,
+		Settings: in.store.Current, Logger: logger,
 	})
 	handler := router.New(router.Config{
 		Public: pub, Admin: adm, S3: s3, Auth: s.auth, Settings: in.store.Current,

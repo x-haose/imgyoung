@@ -13,7 +13,7 @@ SET object_key = NULL
 WHERE user_id = @user_id AND object_key = @object_key;
 
 -- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size, b.sha256
+SELECT i.id, i.file_name, i.blob_id, i.created_at, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?;

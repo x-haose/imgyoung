@@ -223,7 +223,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 }
 
 const getImageBlob = `-- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, b.storage_key, b.mime, b.size, b.sha256
+SELECT i.id, i.file_name, i.blob_id, i.created_at, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?
@@ -233,6 +233,7 @@ type GetImageBlobRow struct {
 	ID         string
 	FileName   string
 	BlobID     int64
+	CreatedAt  string
 	StorageKey string
 	Mime       string
 	Size       int64
@@ -246,6 +247,7 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 		&i.ID,
 		&i.FileName,
 		&i.BlobID,
+		&i.CreatedAt,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
