@@ -2,69 +2,52 @@ package reliability_test
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/db"
-	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
-	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/store/driver"
 )
 
-// testEnv 备份测试环境。
+// testEnv 备份测试环境:共用装配之上的备份服务。
 type testEnv struct {
-	svc     *reliability.Service
-	queries *sqlc.Queries
-	mgr     *channel.Manager
-	dataDir string
+	*testenv.Env
+	svc *reliability.Service // 被测备份服务,保留 2 份
 }
 
 // newTestEnv 建库、写入一条引用记录、装配备份服务(keep=2)。
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	dir := t.TempDir()
-	conn, queries := dbtest.New(t)
-	master, err := secret.NewMasterKey()
-	if err != nil {
-		t.Fatalf("生成主密钥: %v", err)
-	}
-	mgr, err := channel.NewManager(t.Context(), channel.ManagerConfig{
-		Conn: conn, Queries: queries, Master: master, DataDir: dir,
-		Logger: slog.New(slog.DiscardHandler),
-	})
-	if err != nil {
-		t.Fatalf("创建渠道管理器: %v", err)
-	}
+	env := testenv.New(t)
 
 	// 造一条可供恢复校验的记录。
-	blobID, err := queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
+	blobID, err := env.Queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: "backuphash", Phash: 1, StorageKey: "k_00000000",
 		Mime: "image/png", Size: 1, Width: 1, Height: 1,
 	})
 	if err != nil {
 		t.Fatalf("创建 blob: %v", err)
 	}
-	if err := queries.CreateImage(t.Context(), sqlc.CreateImageParams{
+	if err := env.Queries.CreateImage(t.Context(), sqlc.CreateImageParams{
 		ID: "restoreme01", BlobID: blobID, UserID: sqlc.DefaultUserID, FileName: "a.png",
 	}); err != nil {
 		t.Fatalf("创建引用: %v", err)
 	}
 
 	svc := reliability.New(reliability.Config{
-		Conn:     conn,
-		Channels: mgr,
-		DataDir:  dir,
+		Conn:     env.Conn,
+		Channels: env.Manager,
+		DataDir:  env.DataDir,
 		Keep:     func() int { return 2 },
 		Interval: func() time.Duration { return time.Hour },
-		Logger:   slog.New(slog.DiscardHandler),
+		Logger:   env.Logger,
 	})
-	return &testEnv{svc: svc, queries: queries, mgr: mgr, dataDir: dir}
+	return &testEnv{Env: env, svc: svc}
 }
 
 // runStartupOnly 以立即收敛的周期闸调用 Run,只执行其启动阶段。
@@ -76,7 +59,7 @@ func runStartupOnly(t *testing.T, env *testEnv) {
 // listBackups 列出主渠道上的备份对象键。
 func listBackups(t *testing.T, env *testEnv) []driver.ObjectInfo {
 	t.Helper()
-	primary, err := env.mgr.Primary()
+	primary, err := env.Manager.Primary()
 	if err != nil {
 		t.Fatalf("取主渠道: %v", err)
 	}
@@ -101,7 +84,7 @@ func TestRunOnceUploadsSnapshot(t *testing.T) {
 	}
 
 	// 恢复演练:快照(local 渠道即 dataDir/blobs 下的文件)直接作为 DB 打开。
-	snapshotPath := filepath.Join(env.dataDir, "blobs", objs[0].Key)
+	snapshotPath := filepath.Join(env.DataDir, "blobs", objs[0].Key)
 	if _, err := os.Stat(snapshotPath); err != nil {
 		t.Fatalf("快照文件缺失: %v", err)
 	}
@@ -148,9 +131,9 @@ func TestRunSkipsStartupBackupWhenRecent(t *testing.T) {
 	}
 
 	// local 渠道即 dataDir/blobs 下的文件:把唯一快照改名成一天前的时间戳。
-	backupDir := filepath.Join(env.dataDir, "blobs", reliability.Dir)
+	backupDir := filepath.Join(env.DataDir, "blobs", reliability.Dir)
 	old := filepath.Join(backupDir, "imgyoung-"+time.Now().Add(-24*time.Hour).UTC().Format("20060102-150405.000")+".db")
-	if err := os.Rename(filepath.Join(env.dataDir, "blobs", listBackups(t, env)[0].Key), old); err != nil {
+	if err := os.Rename(filepath.Join(env.DataDir, "blobs", listBackups(t, env)[0].Key), old); err != nil {
 		t.Fatalf("改名快照: %v", err)
 	}
 	runStartupOnly(t, env)

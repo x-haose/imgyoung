@@ -9,24 +9,25 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // TestManagerUpdateChannel 验证编辑渠道:名称/优先级/配置整体替换生效,
 // 驱动实例重建(fs 缓存失效),并且编辑后深探测结果落库。
 func TestManagerUpdateChannel(t *testing.T) {
-	env := newTestEnv(t)
-	id, oldDir := addChannel(t, env, "edit-me", 50, false)
+	env := testenv.New(t)
+	id, oldDir := env.AddLocalChannel(t, "edit-me", 50, false)
 
 	newDir := t.TempDir()
-	if err := env.mgr.Update(t.Context(), id, channel.UpdateParams{
+	if err := env.Manager.Update(t.Context(), id, channel.UpdateParams{
 		Name: "edited", Driver: "local",
 		Config: map[string]string{"path": newDir}, Priority: 300,
 	}); err != nil {
 		t.Fatalf("Update 返回错误: %v", err)
 	}
 
-	list, err := env.mgr.List(t.Context())
+	list, err := env.Manager.List(t.Context())
 	if err != nil {
 		t.Fatalf("List 返回错误: %v", err)
 	}
@@ -44,7 +45,7 @@ func TestManagerUpdateChannel(t *testing.T) {
 	}
 
 	// 驱动已重建:主渠道(优先级 300)写入应落到新目录而非旧目录。
-	primary, err := env.mgr.Primary()
+	primary, err := env.Manager.Primary()
 	if err != nil || primary.ID != id {
 		t.Fatalf("主渠道 = %+v/%v, 期望编辑后的渠道", primary, err)
 	}
@@ -63,17 +64,17 @@ func TestManagerUpdateChannel(t *testing.T) {
 
 // TestManagerUpdateGuards 验证编辑守卫:渠道不存在与加密属性翻转分别被明确拒绝。
 func TestManagerUpdateGuards(t *testing.T) {
-	env := newTestEnv(t)
-	id, dir := addChannel(t, env, "guard", 50, false)
+	env := testenv.New(t)
+	id, dir := env.AddLocalChannel(t, "guard", 50, false)
 
-	if err := env.mgr.Update(t.Context(), 99999, channel.UpdateParams{
+	if err := env.Manager.Update(t.Context(), 99999, channel.UpdateParams{
 		Name: "x", Driver: "local", Config: map[string]string{"path": dir},
 	}); !errors.Is(err, channel.ErrChannelNotFound) {
 		t.Fatalf("编辑不存在渠道错误 = %v, 期望 ErrChannelNotFound", err)
 	}
 
 	flip := true
-	if err := env.mgr.Update(t.Context(), id, channel.UpdateParams{
+	if err := env.Manager.Update(t.Context(), id, channel.UpdateParams{
 		Name: "guard", Driver: "local", Config: map[string]string{"path": dir}, Encrypted: &flip,
 	}); !errors.Is(err, channel.ErrEncryptedImmutable) {
 		t.Fatalf("翻转加密属性错误 = %v, 期望 ErrEncryptedImmutable", err)
@@ -81,7 +82,7 @@ func TestManagerUpdateGuards(t *testing.T) {
 
 	// 显式回传与现状一致的 encrypted 应放行。
 	same := false
-	if err := env.mgr.Update(t.Context(), id, channel.UpdateParams{
+	if err := env.Manager.Update(t.Context(), id, channel.UpdateParams{
 		Name: "guard", Driver: "local", Config: map[string]string{"path": dir}, Encrypted: &same,
 	}); err != nil {
 		t.Fatalf("回传一致 encrypted 应放行: %v", err)
@@ -91,10 +92,10 @@ func TestManagerUpdateGuards(t *testing.T) {
 // TestManagerTestConfig 验证测试连接:好配置探测通过且不残留探测对象;
 // 坏配置返回人话化错误且凭证绝不回显。
 func TestManagerTestConfig(t *testing.T) {
-	env := newTestEnv(t)
+	env := testenv.New(t)
 
 	dir := t.TempDir()
-	if err := env.mgr.TestConfig(t.Context(), "local", map[string]string{"path": dir}); err != nil {
+	if err := env.Manager.TestConfig(t.Context(), "local", map[string]string{"path": dir}); err != nil {
 		t.Fatalf("好配置探测失败: %v", err)
 	}
 	entries, err := os.ReadDir(dir)
@@ -106,7 +107,7 @@ func TestManagerTestConfig(t *testing.T) {
 	}
 
 	const secret = "SUPERSECRETVALUE0123"
-	err = env.mgr.TestConfig(t.Context(), "s3", map[string]string{
+	err = env.Manager.TestConfig(t.Context(), "s3", map[string]string{
 		"provider": "Minio", "endpoint": "http://127.0.0.1:1",
 		"access_key_id": "AK", "secret_access_key": secret, "path": "bkt",
 	})
@@ -121,10 +122,11 @@ func TestManagerTestConfig(t *testing.T) {
 // TestManagerCheckAllPersistsProbeResult 验证轻探测落库:每轮更新 last_checked_at,
 // 失败存人话化 last_error,恢复后清空。
 func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
-	env := newTestEnv(t)
-	id, dir := addChannel(t, env, "flaky", 300, false)
+	testenv.SkipIfRoot(t)
+	env := testenv.New(t)
+	id, dir := env.AddLocalChannel(t, "flaky", 300, false)
 
-	if _, err := env.mgr.CheckAll(t.Context()); err != nil {
+	if _, err := env.Manager.CheckAll(t.Context()); err != nil {
 		t.Fatalf("初始探测: %v", err)
 	}
 	row := mustGetChannel(t, env, id)
@@ -140,7 +142,7 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 			t.Errorf("恢复目录权限: %v", cerr)
 		}
 	}()
-	if _, err := env.mgr.CheckAll(t.Context()); err != nil {
+	if _, err := env.Manager.CheckAll(t.Context()); err != nil {
 		t.Fatalf("故障探测: %v", err)
 	}
 	row = mustGetChannel(t, env, id)
@@ -151,7 +153,7 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
 		t.Fatalf("恢复渠道: %v", err)
 	}
-	if _, err := env.mgr.CheckAll(t.Context()); err != nil {
+	if _, err := env.Manager.CheckAll(t.Context()); err != nil {
 		t.Fatalf("恢复探测: %v", err)
 	}
 	row = mustGetChannel(t, env, id)
@@ -163,8 +165,9 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 // TestManagerCheckAllKeepsDeepProbeFailure 验证轻探测只降不升:深探测判定的
 // 失败(可读不可写)不被只读轻探测推翻,恢复写权限后经深探测确认才翻回健康。
 func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
-	env := newTestEnv(t)
-	id, dir := addChannel(t, env, "readonly", 300, false)
+	testenv.SkipIfRoot(t)
+	env := testenv.New(t)
+	id, dir := env.AddLocalChannel(t, "readonly", 300, false)
 
 	// 目录只读:轻探测(只读 Stat)通过,深探测(写)失败。
 	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // 需保留读与执行位,只去掉写位才能构造可读不可写
@@ -175,7 +178,7 @@ func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
 			t.Errorf("恢复目录权限: %v", cerr)
 		}
 	}()
-	if err := env.mgr.ProbeChannel(t.Context(), id); err != nil {
+	if err := env.Manager.ProbeChannel(t.Context(), id); err != nil {
 		t.Fatalf("深探测: %v", err)
 	}
 	row := mustGetChannel(t, env, id)
@@ -184,7 +187,7 @@ func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
 	}
 
 	// 周期轻探测不得复活假健康。
-	if _, err := env.mgr.CheckAll(t.Context()); err != nil {
+	if _, err := env.Manager.CheckAll(t.Context()); err != nil {
 		t.Fatalf("轻探测轮询: %v", err)
 	}
 	row = mustGetChannel(t, env, id)
@@ -196,7 +199,7 @@ func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
 		t.Fatalf("恢复渠道: %v", err)
 	}
-	changed, err := env.mgr.CheckAll(t.Context())
+	changed, err := env.Manager.CheckAll(t.Context())
 	if err != nil || len(changed) != 1 || changed[0] != "readonly" {
 		t.Fatalf("恢复探测 = %v/%v, 期望 readonly 回归", changed, err)
 	}
@@ -209,17 +212,17 @@ func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
 // TestManagerCreateSeedsAndProbes 验证创建渠道:立即深探测落库,并为存量 blob
 // 播种 pending 副本行(排除 pending_delete 的 blob)。
 func TestManagerCreateSeedsAndProbes(t *testing.T) {
-	env := newTestEnv(t)
+	env := testenv.New(t)
 
 	keepID := mustCreateBlob(t, env, "keep-hash", "keep_00000000")
 	goneID := mustCreateBlob(t, env, "gone-hash", "gone_00000000")
-	if err := env.queries.MarkBlobMergedAway(t.Context(), sqlc.MarkBlobMergedAwayParams{
+	if err := env.Queries.MarkBlobMergedAway(t.Context(), sqlc.MarkBlobMergedAwayParams{
 		DeleteAfter: sql.NullString{String: "2026-01-01 00:00:00", Valid: true}, ID: goneID,
 	}); err != nil {
 		t.Fatalf("标记 blob 待删: %v", err)
 	}
 
-	id, err := env.mgr.Create(t.Context(), channel.CreateParams{
+	id, err := env.Manager.Create(t.Context(), channel.CreateParams{
 		Name: "seeded", Driver: "local",
 		Config: map[string]string{"path": t.TempDir()}, Priority: 10,
 	})
@@ -232,14 +235,14 @@ func TestManagerCreateSeedsAndProbes(t *testing.T) {
 		t.Fatalf("创建后未立即探测落库: %+v", row)
 	}
 
-	bc, err := env.queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{BlobID: keepID, ChannelID: id})
+	bc, err := env.Queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{BlobID: keepID, ChannelID: id})
 	if err != nil {
 		t.Fatalf("存量 blob 未播种副本行: %v", err)
 	}
 	if bc.State != channel.StatePending {
 		t.Fatalf("播种状态 = %q, 期望 pending", bc.State)
 	}
-	if _, err := env.queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{
+	if _, err := env.Queries.GetBlobChannel(t.Context(), sqlc.GetBlobChannelParams{
 		BlobID: goneID, ChannelID: id,
 	}); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("pending_delete 的 blob 不应播种: %v", err)
@@ -247,9 +250,9 @@ func TestManagerCreateSeedsAndProbes(t *testing.T) {
 }
 
 // mustGetChannel 读取渠道行,失败即终止测试。
-func mustGetChannel(t *testing.T, env *testEnv, id int64) sqlc.Channel {
+func mustGetChannel(t *testing.T, env *testenv.Env, id int64) sqlc.Channel {
 	t.Helper()
-	row, err := env.queries.GetChannel(t.Context(), id)
+	row, err := env.Queries.GetChannel(t.Context(), id)
 	if err != nil {
 		t.Fatalf("读取渠道 %d: %v", id, err)
 	}
@@ -258,9 +261,9 @@ func mustGetChannel(t *testing.T, env *testEnv, id int64) sqlc.Channel {
 
 // mustCreateBlob 创建一条最小 blob 记录,失败即终止测试。
 // @return blob 主键
-func mustCreateBlob(t *testing.T, env *testEnv, sha, key string) int64 {
+func mustCreateBlob(t *testing.T, env *testenv.Env, sha, key string) int64 {
 	t.Helper()
-	id, err := env.queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
+	id, err := env.Queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
 		Sha256: sha, Phash: 1, StorageKey: key, Mime: "image/png", Size: 1, Width: 1, Height: 1,
 	})
 	if err != nil {

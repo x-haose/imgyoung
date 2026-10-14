@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 )
 
 // minioTestInputs minio 模板的一组完整表单输入(端点指向必然拒连的本地端口,
@@ -20,13 +21,13 @@ func minioTestInputs() map[string]string {
 
 // createMinioChannel 以 minio 模板创建一条 s3 渠道(深探测失败不影响创建)。
 // @return 渠道 ID
-func createMinioChannel(t *testing.T, env *testEnv) int64 {
+func createMinioChannel(t *testing.T, env *testenv.Env) int64 {
 	t.Helper()
 	drv, cfg, err := channel.BuildTemplateConfig("minio", minioTestInputs())
 	if err != nil {
 		t.Fatalf("合并模板配置: %v", err)
 	}
-	id, err := env.mgr.Create(t.Context(), channel.CreateParams{
+	id, err := env.Manager.Create(t.Context(), channel.CreateParams{
 		Name: "minio-edit", Driver: drv, Config: cfg, Template: "minio", Priority: 10,
 	})
 	if err != nil {
@@ -38,10 +39,10 @@ func createMinioChannel(t *testing.T, env *testEnv) int64 {
 // TestManagerConfigForEdit 验证配置回读:模板 id 持久化、敏感值哨兵掩码、
 // 非敏感值明文预填,模板表单字段可还原。
 func TestManagerConfigForEdit(t *testing.T) {
-	env := newTestEnv(t)
+	env := testenv.New(t)
 	id := createMinioChannel(t, env)
 
-	ec, err := env.mgr.ConfigForEdit(t.Context(), id)
+	ec, err := env.Manager.ConfigForEdit(t.Context(), id)
 	if err != nil {
 		t.Fatalf("ConfigForEdit 返回错误: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestManagerConfigForEdit(t *testing.T) {
 		t.Fatalf("模板表单字段未还原: %+v", ec.Inputs)
 	}
 
-	if _, err := env.mgr.ConfigForEdit(t.Context(), 99999); !errors.Is(err, channel.ErrChannelNotFound) {
+	if _, err := env.Manager.ConfigForEdit(t.Context(), 99999); !errors.Is(err, channel.ErrChannelNotFound) {
 		t.Fatalf("回读不存在渠道错误 = %v, 期望 ErrChannelNotFound", err)
 	}
 }
@@ -70,7 +71,7 @@ func TestManagerConfigForEdit(t *testing.T) {
 // TestManagerUpdateKeepsSecretSentinel 验证编辑保留凭证:提交哨兵值时沿用已存
 // 原值,非敏感字段照常替换;哨兵无原值可还原时明确拒绝。
 func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
-	env := newTestEnv(t)
+	env := testenv.New(t)
 	id := createMinioChannel(t, env)
 
 	drv, cfg, err := channel.BuildTemplateConfig("minio", map[string]string{
@@ -82,12 +83,12 @@ func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("合并模板配置: %v", err)
 	}
-	if err := env.mgr.Update(t.Context(), id, channel.UpdateParams{
+	if err := env.Manager.Update(t.Context(), id, channel.UpdateParams{
 		Name: "minio-edit", Driver: drv, Config: cfg, Template: "minio", Priority: 20,
 	}); err != nil {
 		t.Fatalf("哨兵编辑返回错误: %v", err)
 	}
-	restored, err := env.mgr.RestoreSecrets(t.Context(), id, map[string]string{
+	restored, err := env.Manager.RestoreSecrets(t.Context(), id, map[string]string{
 		"secret_access_key": channel.SecretPlaceholder,
 	})
 	if err != nil {
@@ -96,7 +97,7 @@ func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 	if restored["secret_access_key"] != "SECRET-ORIGINAL-0123" {
 		t.Fatalf("原凭证未保留: %q", restored["secret_access_key"])
 	}
-	ec, err := env.mgr.ConfigForEdit(t.Context(), id)
+	ec, err := env.Manager.ConfigForEdit(t.Context(), id)
 	if err != nil {
 		t.Fatalf("回读编辑结果: %v", err)
 	}
@@ -107,13 +108,13 @@ func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 	// 哨兵值指向不存在的原值:只能重新填写,不能静默落一个哨兵字面量。
 	bad := map[string]string{"access_key_id": "AKTEST", "secret_access_key": channel.SecretPlaceholder,
 		"endpoint": "http://127.0.0.1:2", "path": "bkt2", "session_token": channel.SecretPlaceholder}
-	if err := env.mgr.Update(t.Context(), id, channel.UpdateParams{
+	if err := env.Manager.Update(t.Context(), id, channel.UpdateParams{
 		Name: "minio-edit", Driver: "s3", Config: bad, Template: "",
 	}); !errors.Is(err, channel.ErrInvalidChannel) {
 		t.Fatalf("无原值哨兵错误 = %v, 期望 ErrInvalidChannel", err)
 	}
 
-	if _, err := env.mgr.RestoreSecrets(t.Context(), 99999, nil); !errors.Is(err, channel.ErrChannelNotFound) {
+	if _, err := env.Manager.RestoreSecrets(t.Context(), 99999, nil); !errors.Is(err, channel.ErrChannelNotFound) {
 		t.Fatalf("还原不存在渠道错误 = %v, 期望 ErrChannelNotFound", err)
 	}
 }
