@@ -90,7 +90,7 @@ async function readErrorMessage(resp: Response): Promise<string> {
   }
 }
 
-/** 发起 API 请求;非 2xx 一律抛 ApiError(消息取后端 error 字段),204 返回 undefined。 */
+/** 发起 API 请求;非 2xx 一律抛 ApiError(消息取后端 error 字段),空响应体(204、202 等)返回 undefined。 */
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit
@@ -114,8 +114,8 @@ export async function apiFetch<T>(
     unauthorizedHandler()
   }
   if (!resp.ok) throw new ApiError(resp.status, message)
-  if (resp.status === 204) return undefined as T
-  return (await resp.json()) as T
+  const text = await resp.text()
+  return (text === '' ? undefined : JSON.parse(text)) as T
 }
 
 /** 查询参数值;undefined、null 与空串不进入查询串。 */

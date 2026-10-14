@@ -6,6 +6,7 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
+import { getLocale, loadLocale } from '@/i18n'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-sans/400.css'
 import '@fontsource/ibm-plex-sans/500.css'
@@ -69,6 +70,9 @@ declare module '@tanstack/react-router' {
     router: typeof router
   }
 }
+
+// 首屏只打包简体中文词典,检测到其它语言时先把它下载下来再渲染。
+await loadLocale(getLocale())
 
 const rootElement = document.getElementById('root')
 if (!rootElement) throw new Error('缺少 #root 挂载点')

@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 import {
   getLocale,
+  loadLocale,
   type Locale,
   type Messages,
   messages,
@@ -28,8 +29,10 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
       locale,
       m: messages(),
       setLocale: (next) => {
-        setCurrentLocale(next)
-        setLocaleState(next)
+        void loadLocale(next).then(() => {
+          setCurrentLocale(next)
+          setLocaleState(next)
+        })
       },
     }),
     [locale]

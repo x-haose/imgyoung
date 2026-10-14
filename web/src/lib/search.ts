@@ -53,11 +53,13 @@ export function searchSchema<S extends Spec>(spec: S): SearchSchema<S> {
   }
 }
 
-/** 非空字符串;缺省为 undefined,序列化时不出现在地址栏。 */
+/** 非空字符串;路由会把纯数字串与 true / false 解析成 number / boolean,这里一律还原成字符串。缺省为 undefined,序列化时不出现在地址栏。 */
 export const str =
   (fallback?: string): Parser<string | undefined> =>
-  (raw) =>
-    typeof raw === 'string' && raw !== '' ? raw : fallback
+  (raw) => {
+    if (typeof raw === 'number' || typeof raw === 'boolean') return String(raw)
+    return typeof raw === 'string' && raw !== '' ? raw : fallback
+  }
 
 /** [min, max] 内的整数;路由把纯数字串解析成 number,字符串形式也接受。 */
 export const int =
@@ -71,16 +73,30 @@ export const int =
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback
   }
 
-/** 枚举值之一;不在集合内回缺省。 */
-export const oneOf =
-  <const V extends readonly string[]>(
-    values: V,
-    fallback: V[number] | undefined
-  ): Parser<V[number] | undefined> =>
-  (raw) =>
+/** 枚举值之一;不在集合内回缺省,给了缺省值则结果必有值。 */
+export function oneOf<const V extends readonly string[]>(
+  values: V,
+  fallback: V[number]
+): Parser<V[number]>
+export function oneOf<const V extends readonly string[]>(
+  values: V,
+  fallback?: undefined
+): Parser<V[number] | undefined>
+export function oneOf<const V extends readonly string[]>(
+  values: V,
+  fallback?: V[number]
+): Parser<V[number] | undefined> {
+  return (raw) =>
     typeof raw === 'string' && (values as readonly string[]).includes(raw)
       ? (raw as V[number])
       : fallback
+}
+
+/** 本地日期 YYYY-MM-DD(日界由页面按本地时区展开);其余视为未设置。 */
+export const day = (): Parser<string | undefined> => (raw) => {
+  const v = str()(raw)
+  return v !== undefined && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined
+}
 
 /** 布尔;路由把 true / false 解析成 boolean,字符串形式也接受。 */
 export const bool =

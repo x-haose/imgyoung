@@ -16,10 +16,11 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
+    // 图片路径用正则:前缀 '/i' 会把 /images 这类前端路由也代理走。
     proxy: {
       '/api': 'http://127.0.0.1:8721',
-      '/i': 'http://127.0.0.1:8721',
-      '/o': 'http://127.0.0.1:8721',
+      '^/i/': 'http://127.0.0.1:8721',
+      '^/o/': 'http://127.0.0.1:8721',
     },
   },
   build: { outDir: 'dist', emptyOutDir: true },

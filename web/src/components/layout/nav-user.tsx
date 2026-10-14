@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { ChevronsUpDown, KeyRound, LogOut } from 'lucide-react'
 import { useSession } from '@/lib/session'
 import { useMessages } from '@/context/locale-provider'
@@ -24,8 +24,15 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from '@/components/ui/sidebar'
+import { Skeleton } from '@/components/ui/skeleton'
 import { SignOutDialog } from '@/components/sign-out-dialog'
-import { ChangePasswordForm } from '@/features/auth/change-password-form'
+
+// 改密表单带表单库与校验库,只在打开对话框时才加载,不进每页首屏。
+const ChangePasswordForm = lazy(() =>
+  import('@/features/auth/change-password-form').then((mod) => ({
+    default: mod.ChangePasswordForm,
+  }))
+)
 
 export function NavUser() {
   const { isMobile } = useSidebar()
@@ -99,10 +106,12 @@ export function NavUser() {
             <DialogTitle>{m.auth.changePassword}</DialogTitle>
             <DialogDescription>{m.auth.changePasswordNote}</DialogDescription>
           </DialogHeader>
-          <ChangePasswordForm
-            submitText={m.auth.changePassword}
-            successMessage={m.auth.passwordChanged}
-          />
+          <Suspense fallback={<Skeleton className='h-56 w-full' />}>
+            <ChangePasswordForm
+              submitText={m.auth.changePassword}
+              successMessage={m.auth.passwordChanged}
+            />
+          </Suspense>
         </DialogContent>
       </Dialog>
     </>

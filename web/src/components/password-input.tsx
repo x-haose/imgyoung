@@ -24,7 +24,7 @@ export function PasswordInput({
     <div className={cn('relative rounded-md', className)}>
       <input
         type={showPassword ? 'text' : 'password'}
-        className='flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive'
+        className='flex h-9 w-full rounded-md border border-input bg-transparent py-1 ps-3 pe-9 text-sm shadow-xs transition-colors placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive'
         ref={ref}
         disabled={disabled}
         {...props}
