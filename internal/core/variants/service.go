@@ -55,6 +55,9 @@ func (s *resizableSem) channel(want int) chan struct{} {
 	return s.ch
 }
 
+// SourceFunc 源图字节拉取器:惰性调用,接处理专用 ctx(与触发请求解耦)。
+type SourceFunc = func(context.Context) ([]byte, error)
+
 // result 单次处理产物,经 singleflight 在并发调用间共享。
 type result struct {
 	data []byte // 衍生图字节
@@ -84,15 +87,16 @@ func NewService(cfg ServiceConfig) *Service {
 // @return 衍生图字节
 // @return 目标 MIME
 // @return 错误(ErrBusy 表示应回退原图)
-func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.ProcessParams, srcFn func(context.Context) ([]byte, error)) ([]byte, string, error) {
+func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.ProcessParams,
+	srcFn SourceFunc) ([]byte, string, error) {
 	set := s.set()
 	quality, tuning := encodeParams(set, p.Format)
 	key := Key(blobID, p.Width, p.Format, quality, tuning)
 
-	if data, format, ok, err := s.store.Get(ctx, blobID, key); err != nil {
+	if hit, ok, err := s.store.Get(ctx, blobID, key); err != nil {
 		return nil, "", err
 	} else if ok {
-		return data, imaging.MIME(format), nil
+		return hit.Data, imaging.MIME(hit.Format), nil
 	}
 
 	v, err, _ := s.sf.Do(key, func() (any, error) {
@@ -100,17 +104,20 @@ func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.Proc
 		// 否则迟到的首请求会把同一张图再编码一遍。查缓存与调用方连接解耦,同处理一样。
 		getCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cachePutTimeout)
 		defer cancel()
-		if data, format, ok, gerr := s.store.Get(getCtx, blobID, key); gerr != nil {
+		if hit, ok, gerr := s.store.Get(getCtx, blobID, key); gerr != nil {
 			return result{}, gerr
 		} else if ok {
-			return result{data: data, mime: imaging.MIME(format)}, nil
+			return result{data: hit.Data, mime: imaging.MIME(hit.Format)}, nil
 		}
 		return s.process(set, blobID, key, p, srcFn)
 	})
 	if err != nil {
 		return nil, "", err
 	}
-	r := v.(result)
+	r, ok := v.(result)
+	if !ok {
+		return nil, "", fmt.Errorf("处理结果类型异常: %T", v)
+	}
 	return r.data, r.mime, nil
 }
 
@@ -125,7 +132,8 @@ func (s *Service) GetOrProcess(ctx context.Context, blobID int64, p imaging.Proc
 // @param srcFn 源图字节拉取器
 // @return 处理产物
 // @return 错误
-func (s *Service) process(set config.Settings, blobID int64, key string, p imaging.ProcessParams, srcFn func(context.Context) ([]byte, error)) (result, error) {
+func (s *Service) process(set config.Settings, blobID int64, key string, p imaging.ProcessParams,
+	srcFn SourceFunc) (result, error) {
 	// 用 Background 而非调用方 ctx:处理结果供所有并发首请求共享,不因某调用方断开而取消。
 	pctx, cancel := context.WithTimeout(context.Background(), time.Duration(set.ProcessTimeoutMS)*time.Millisecond)
 	defer cancel()

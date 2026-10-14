@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"strings"
 )
 
 const deleteVariant = `-- name: DeleteVariant :exec
@@ -178,14 +179,24 @@ func (q *Queries) SumVariantsSize(ctx context.Context) (int64, error) {
 	return column_1, err
 }
 
-const touchVariant = `-- name: TouchVariant :exec
+const touchVariants = `-- name: TouchVariants :exec
 UPDATE variants
 SET last_access = datetime('now')
-WHERE id = ?
+WHERE id IN (/*SLICE:ids*/?)
 `
 
-func (q *Queries) TouchVariant(ctx context.Context, id int64) error {
-	_, err := q.db.ExecContext(ctx, touchVariant, id)
+func (q *Queries) TouchVariants(ctx context.Context, ids []int64) error {
+	query := touchVariants
+	var queryParams []interface{}
+	if len(ids) > 0 {
+		for _, v := range ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	_, err := q.db.ExecContext(ctx, query, queryParams...)
 	return err
 }
 

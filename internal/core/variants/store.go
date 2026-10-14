@@ -9,15 +9,25 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // evictBatch 单轮淘汰的最多条数;分批循环直到降到容量以下,避免一次性拉全表。
 const evictBatch = 32
+
+// touchChunkSize 单条 TouchVariants 语句携带的 id 数上限;SQLite 绑定变量上限远高于此值,
+// 分片让批量大小与该上限解耦。
+const touchChunkSize = 500
+
+// flushStopTimeout 停机前最后一次访问时间落库的超时预算。
+const flushStopTimeout = 5 * time.Second
 
 // Config 缓存存储依赖。
 type Config struct {
@@ -28,15 +38,25 @@ type Config struct {
 }
 
 // Store 衍生图磁盘缓存:文件按缓存键分片存放,DB 表为索引与 LRU 依据。
+// @Description: 命中只在内存记下变体 id,访问时间由 Flush 周期批量落库——逐命中 UPDATE
+// 会让读热路径与 SQLite 单写者争锁。
 type Store struct {
 	cfg     Config
-	evictMu sync.Mutex // 串行化 LRU 淘汰的"读总量→选最旧→删"临界区,避免并发 Put 触发的重复/过度淘汰
+	evictMu sync.Mutex         // 串行化 LRU 淘汰的"读总量→选最旧→删"临界区,避免并发 Put 触发的重复/过度淘汰
+	touchMu sync.Mutex         // 保护 touched
+	touched map[int64]struct{} // 自上次 Flush 以来命中过的变体 id
+}
+
+// Entry 一次缓存命中的内容。
+type Entry struct {
+	Data   []byte // 衍生图字节
+	Format string // 目标格式(供定 Content-Type)
 }
 
 // New 构造缓存存储。
 // @param cfg 依赖配置
 // @return 存储
-func New(cfg Config) *Store { return &Store{cfg: cfg} }
+func New(cfg Config) *Store { return &Store{cfg: cfg, touched: map[int64]struct{}{}} }
 
 // Key 计算某物理图在给定处理参数下的缓存键(兼本地文件名)。
 // @Description: 覆盖影响输出字节的全部维度(blob 身份+宽度+格式+质量+编码调参);
@@ -52,22 +72,21 @@ func Key(blobID int64, width int, format string, quality, tuning int) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Get 按缓存键取衍生图字节;命中则刷新访问时间。
+// Get 按缓存键取衍生图字节;命中记入待刷新集合,访问时间由 Flush 批量落库。
 // @Description: 索引存在但文件缺失(手工删/坏盘)视为未命中,交由上层重建、不报错。
 // @param ctx 上下文
 // @param blobID 源物理图主键
 // @param key 缓存键
-// @return 衍生图字节
-// @return 目标格式(供定 Content-Type)
+// @return 命中内容
 // @return 是否命中
 // @return 错误
-func (s *Store) Get(ctx context.Context, blobID int64, key string) ([]byte, string, bool, error) {
+func (s *Store) Get(ctx context.Context, blobID int64, key string) (Entry, bool, error) {
 	v, err := s.cfg.Queries.GetVariant(ctx, sqlc.GetVariantParams{BlobID: blobID, ParamsHash: key})
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, "", false, nil
+		return Entry{}, false, nil
 	}
 	if err != nil {
-		return nil, "", false, fmt.Errorf("查缓存索引: %w", err)
+		return Entry{}, false, fmt.Errorf("查缓存索引: %w", err)
 	}
 	data, err := os.ReadFile(s.pathFor(key))
 	if err != nil {
@@ -76,14 +95,64 @@ func (s *Store) Get(ctx context.Context, blobID int64, key string) ([]byte, stri
 			if derr := s.cfg.Queries.DeleteVariant(ctx, v.ID); derr != nil {
 				s.cfg.Logger.Warn("清理残留 variant 索引失败", "id", v.ID, "err", derr)
 			}
-			return nil, "", false, nil
+			return Entry{}, false, nil
 		}
-		return nil, "", false, fmt.Errorf("读缓存文件: %w", err)
+		return Entry{}, false, fmt.Errorf("读缓存文件: %w", err)
 	}
-	if terr := s.cfg.Queries.TouchVariant(ctx, v.ID); terr != nil {
-		s.cfg.Logger.Warn("刷新 variant 访问时间失败", "id", v.ID, "err", terr)
+	s.touchMu.Lock()
+	s.touched[v.ID] = struct{}{}
+	s.touchMu.Unlock()
+	return Entry{Data: data, Format: v.Format}, true, nil
+}
+
+// Flush 把累积的命中批量落库为访问时间;失败的分片放回,留待下次重试。
+// @Description: 访问时间只决定 LRU 淘汰顺序,一批丢失只降淘汰精度,不影响正确性。
+// @param ctx 上下文
+// @return 落库失败时的错误
+func (s *Store) Flush(ctx context.Context) error {
+	s.touchMu.Lock()
+	if len(s.touched) == 0 {
+		s.touchMu.Unlock()
+		return nil
 	}
-	return data, v.Format, true, nil
+	ids := slices.Collect(maps.Keys(s.touched))
+	s.touched = map[int64]struct{}{}
+	s.touchMu.Unlock()
+
+	for start := 0; start < len(ids); start += touchChunkSize {
+		end := min(start+touchChunkSize, len(ids))
+		if err := s.cfg.Queries.TouchVariants(ctx, ids[start:end]); err != nil {
+			s.requeue(ids[start:])
+			return fmt.Errorf("刷新变体访问时间: %w", err)
+		}
+	}
+	return nil
+}
+
+// requeue 把尚未落库的变体 id 放回待刷新集合。
+// @param ids 待放回的 id
+func (s *Store) requeue(ids []int64) {
+	s.touchMu.Lock()
+	for _, id := range ids {
+		s.touched[id] = struct{}{}
+	}
+	s.touchMu.Unlock()
+}
+
+// Run 周期 Flush 直至 ctx 取消;停机前做最后一次 Flush 不丢累积。
+// @param ctx 控制循环生命周期
+// @param wait 周期闸,到点放行、ctx 取消即收敛
+func (s *Store) Run(ctx context.Context, wait func(context.Context) bool) {
+	for wait(ctx) {
+		if err := s.Flush(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			s.cfg.Logger.Warn("变体访问时间 flush 未完成", "err", err)
+		}
+	}
+	flushCtx, cancel := context.WithTimeout(context.Background(), flushStopTimeout)
+	defer cancel()
+	if err := s.Flush(flushCtx); err != nil {
+		s.cfg.Logger.Warn("停机变体访问时间 flush 未完成", "err", err)
+	}
 }
 
 // Put 落盘衍生图并写索引,随后按需触发容量淘汰。
@@ -137,12 +206,16 @@ func (s *Store) DeleteByBlob(ctx context.Context, blobID int64) error {
 
 // evict 在总量超上限时按 last_access 由旧到新淘汰,直到降回容量以下。
 // @Description: evictMu 串行化本临界区——Put 由多 worker 并发调用,无锁会让并发 evict 各读到超容量、
-// 各删一批而过度淘汰。DeleteVariant 持续失败时(如磁盘满/DB 锁),用"整批零进展即止"守卫防死循环。
+// 各删一批而过度淘汰。先把内存里的命中落成访问时间,淘汰顺序才反映真实冷热。
+// DeleteVariant 持续失败时(如磁盘满/DB 锁),用"整批零进展即止"守卫防死循环。
 // @param ctx 上下文
 func (s *Store) evict(ctx context.Context) {
 	s.evictMu.Lock()
 	defer s.evictMu.Unlock()
 
+	if err := s.Flush(ctx); err != nil {
+		s.cfg.Logger.Warn("淘汰前刷新访问时间失败,按已落库顺序淘汰", "err", err)
+	}
 	total, err := s.cfg.Queries.SumVariantsSize(ctx)
 	if err != nil {
 		s.cfg.Logger.Warn("统计缓存用量失败,跳过本次淘汰", "err", err)
@@ -158,24 +231,34 @@ func (s *Store) evict(ctx context.Context) {
 		if len(batch) == 0 {
 			return
 		}
-		progressed := false
-		for _, v := range batch {
-			if rmErr := os.Remove(s.pathFor(v.ParamsHash)); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-				s.cfg.Logger.Warn("删淘汰缓存文件失败", "key", v.ParamsHash, "err", rmErr)
-			}
-			if delErr := s.cfg.Queries.DeleteVariant(ctx, v.ID); delErr != nil {
-				s.cfg.Logger.Warn("删淘汰缓存索引失败", "id", v.ID, "err", delErr)
-				continue
-			}
-			total -= v.Size
-			progressed = true
-		}
-		if !progressed {
+		freed, deleted := s.reclaim(ctx, batch)
+		if deleted == 0 {
 			// 整批都删不掉(索引删除持续失败):再循环只会拿到同一批、无限空转,让位下次触发。
 			s.cfg.Logger.Warn("淘汰整批零进展,暂止本轮以防空转", "total", total, "capacity", capacity)
 			return
 		}
+		total -= freed
 	}
+}
+
+// reclaim 删除一批淘汰候选的文件与索引;索引删不掉的项不计入。
+// @param ctx 上下文
+// @param batch 待淘汰变体,由旧到新
+// @return freed 释放的字节数
+// @return deleted 索引已删除的条数
+func (s *Store) reclaim(ctx context.Context, batch []sqlc.ListVariantsLRURow) (freed int64, deleted int) {
+	for _, v := range batch {
+		if rmErr := os.Remove(s.pathFor(v.ParamsHash)); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			s.cfg.Logger.Warn("删淘汰缓存文件失败", "key", v.ParamsHash, "err", rmErr)
+		}
+		if delErr := s.cfg.Queries.DeleteVariant(ctx, v.ID); delErr != nil {
+			s.cfg.Logger.Warn("删淘汰缓存索引失败", "id", v.ID, "err", delErr)
+			continue
+		}
+		freed += v.Size
+		deleted++
+	}
+	return freed, deleted
 }
 
 // pathFor 返回缓存键对应的本地文件路径;按键前两位分片,避免单目录文件过多。

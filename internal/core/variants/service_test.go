@@ -49,15 +49,15 @@ func pngBytes(t *testing.T) []byte {
 // newService 基于 newStore 构造一个按需处理服务,并发上限与超时按参数覆写默认配置。
 func newService(t *testing.T, workers int, timeout time.Duration) (*variants.Service, int64) {
 	t.Helper()
-	store, blobID, _ := newStore(t, 1<<30)
+	env := newStore(t, 1<<30)
 	settings := testSettings(t, func(s *config.Settings) {
 		s.ProcessWorkers = workers
 		s.ProcessTimeoutMS = int(timeout / time.Millisecond)
 	})
 	svc := variants.NewService(variants.ServiceConfig{
-		Store: store, Settings: settings, Logger: slog.New(slog.DiscardHandler),
+		Store: env.store, Settings: settings, Logger: slog.New(slog.DiscardHandler),
 	})
-	return svc, blobID
+	return svc, env.blobID
 }
 
 func TestServiceProcessesThenCaches(t *testing.T) {
@@ -102,12 +102,10 @@ func TestServiceSingleFlightMergesConcurrent(t *testing.T) {
 
 	const n = 8
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			_, _, _ = svc.GetOrProcess(ctx, blobID, params, srcFn)
-		}()
+		})
 	}
 	time.Sleep(50 * time.Millisecond) // 让并发调用都进入 singleflight
 	close(release)
@@ -130,11 +128,10 @@ func TestServiceBusyReturnsErrBusy(t *testing.T) {
 	//nolint:unparam // 须匹配 srcFn 回调签名 func(ctx)([]byte,error);测试替身不产生错误
 	blockingSrc := func(context.Context) ([]byte, error) { close(entered); <-hold; return src, nil }
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_, _, _ = svc.GetOrProcess(ctx, blobID, imaging.ProcessParams{Width: 32, Format: imaging.FormatWebP}, blockingSrc)
-	}()
+	wg.Go(func() {
+		_, _, _ = svc.GetOrProcess(ctx, blobID, imaging.ProcessParams{Width: 32, Format: imaging.FormatWebP},
+			blockingSrc)
+	})
 	<-entered
 
 	_, _, err := svc.GetOrProcess(ctx, blobID, imaging.ProcessParams{Width: 64, Format: imaging.FormatWebP},

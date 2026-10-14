@@ -11,10 +11,10 @@ ON CONFLICT (blob_id, params_hash) DO UPDATE SET
     size = excluded.size,
     last_access = datetime('now');
 
--- name: TouchVariant :exec
+-- name: TouchVariants :exec
 UPDATE variants
 SET last_access = datetime('now')
-WHERE id = ?;
+WHERE id IN (sqlc.slice('ids'));
 
 -- name: SumVariantsSize :one
 SELECT CAST(COALESCE(SUM(size), 0) AS INTEGER)
