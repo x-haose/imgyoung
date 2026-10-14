@@ -52,7 +52,7 @@ type OAuthFlow struct {
 // @param ctx 控制取配置阶段的取消
 // @param driver rclone 后端名
 // @param params 后端参数
-// @param redirectURI 授权回调地址
+// @param redirectURI 授权回调地址;空则沿用后端内置地址(指向本机 53682 端口)
 // @return 授权流
 // @return 后端不存在、无需授权或取配置失败时的错误
 func NewOAuthFlow(ctx context.Context, driver string, params map[string]string,
@@ -64,7 +64,10 @@ func NewOAuthFlow(ctx context.Context, driver string, params map[string]string,
 	}
 	merged, _ := oauthutil.OverrideCredentials(oauthConfigName, m, opt.OAuth2Config)
 	conf := merged.MakeOauth2Config()
-	conf.RedirectURL = redirectURI
+	// 内置应用标识只登记了本机回调地址,自建应用才需覆盖成本站地址。
+	if redirectURI != "" {
+		conf.RedirectURL = redirectURI
+	}
 
 	// 不带离线授权则拿不到刷新令牌,进程重启后无法续期。
 	codeOpts := opt.OAuth2Opts

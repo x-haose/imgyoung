@@ -7,6 +7,34 @@ export interface ReplicaStats {
   failed: number; // 补齐失败副本数
 }
 
+/** FieldOption select 字段的一个选项。 */
+export interface FieldOption {
+  label: string;
+  value: string;
+}
+
+/** TemplateField 模板的一个用户输入字段。 */
+export interface TemplateField {
+  key: string;
+  label: string;
+  type: "text" | "password" | "select" | "oauth";
+  required: boolean;
+  placeholder?: string;
+  help?: string;
+  options?: FieldOption[];
+}
+
+/** ChannelTemplate 渠道模板(后端下发,不含 provider 等预设)。 */
+export interface ChannelTemplate {
+  id: string;
+  name: string;
+  description: string;
+  driver: string;
+  category: string; // 分类,与后端 channel.Category* 常量对齐
+  requires_oauth: boolean;
+  fields: TemplateField[];
+}
+
 /** ChannelItem 渠道列表项(凭证与配置不出库)。 */
 export interface ChannelItem {
   id: number;

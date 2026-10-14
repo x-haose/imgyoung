@@ -248,3 +248,14 @@ func TestOAuthTokenNeverLeavesInPlaintext(t *testing.T) {
 		t.Errorf("path = %q, 期望原样回读", inputs["path"])
 	}
 }
+
+// TestEveryTemplateHasCategory 验证每个模板都归入已知分类。
+// @Description: 分类驱动前端分组,漏标的模板会整组消失而非降级显示。
+func TestEveryTemplateHasCategory(t *testing.T) {
+	known := map[string]bool{CategoryObjectStorage: true, CategoryDrive: true}
+	for _, tpl := range Templates() {
+		if !known[tpl.Category] {
+			t.Errorf("模板 %q 的分类 %q 不在已知分类内", tpl.ID, tpl.Category)
+		}
+	}
+}

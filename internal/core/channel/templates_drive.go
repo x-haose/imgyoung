@@ -5,7 +5,7 @@ package channel
 var driveTemplates = []Template{
 	{
 		ID: "webdav", Name: "WebDAV", Description: "坚果云、Nextcloud、群晖、Alist 等",
-		Driver: "webdav",
+		Category: CategoryDrive, Driver: "webdav",
 		Fields: []TemplateField{
 			{Key: "url", Label: "服务地址", Type: FieldText, Required: true, configKey: "url",
 				Placeholder: "https://dav.jianguoyun.com/dav/",
@@ -23,7 +23,7 @@ var driveTemplates = []Template{
 	},
 	{
 		ID: "onedrive", Name: "OneDrive", Description: "微软 OneDrive 与 SharePoint",
-		Driver: "onedrive", RequiresOAuth: true,
+		Category: CategoryDrive, Driver: "onedrive", RequiresOAuth: true,
 		Fields: []TemplateField{
 			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, configKey: "region",
 				Options: onedriveRegions, Help: "决定授权与接口端点,须与账号所属区域一致"},
@@ -32,17 +32,17 @@ var driveTemplates = []Template{
 	},
 	{
 		ID: "googledrive", Name: "Google Drive", Description: "谷歌云端硬盘",
-		Driver: "drive", RequiresOAuth: true,
+		Category: CategoryDrive, Driver: "drive", RequiresOAuth: true,
 		Fields: []TemplateField{oauthTokenField(), drivePathField()},
 	},
 	{
 		ID: "dropbox", Name: "Dropbox", Description: "Dropbox 网盘",
-		Driver: "dropbox", RequiresOAuth: true,
+		Category: CategoryDrive, Driver: "dropbox", RequiresOAuth: true,
 		Fields: []TemplateField{oauthTokenField(), drivePathField()},
 	},
 	{
 		ID: "pcloud", Name: "pCloud", Description: "pCloud 网盘",
-		Driver: "pcloud", RequiresOAuth: true,
+		Category: CategoryDrive, Driver: "pcloud", RequiresOAuth: true,
 		Fields: []TemplateField{
 			{Key: "hostname", Label: "数据区域", Type: FieldSelect, Required: true, configKey: "hostname",
 				Options: pcloudHosts, Help: "须与注册账号时所选区域一致,否则换取令牌失败"},
@@ -51,12 +51,12 @@ var driveTemplates = []Template{
 	},
 	{
 		ID: "box", Name: "Box", Description: "Box 企业网盘",
-		Driver: "box", RequiresOAuth: true,
+		Category: CategoryDrive, Driver: "box", RequiresOAuth: true,
 		Fields: []TemplateField{oauthTokenField(), drivePathField()},
 	},
 	{
 		ID: "yandex", Name: "Yandex Disk", Description: "Yandex 网盘",
-		Driver: "yandex", RequiresOAuth: true,
+		Category: CategoryDrive, Driver: "yandex", RequiresOAuth: true,
 		Fields: []TemplateField{oauthTokenField(), drivePathField()},
 	},
 }

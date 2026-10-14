@@ -4,7 +4,6 @@ import {
   Alert,
   App as AntdApp,
   Button,
-  Card,
   Divider,
   Flex,
   Form,
@@ -18,40 +17,13 @@ import {
   Tag,
   Tooltip,
   Typography,
-  theme,
 } from "antd";
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "../../api/http";
 import { OAuthField } from "./OAuthField";
-import type { ChannelItem } from "./types";
-
-/** select 字段的一个选项。 */
-interface FieldOption {
-  label: string;
-  value: string;
-}
-
-/** 模板的一个用户输入字段。 */
-interface TemplateField {
-  key: string;
-  label: string;
-  type: "text" | "password" | "select" | "oauth";
-  required: boolean;
-  placeholder?: string;
-  help?: string;
-  options?: FieldOption[];
-}
-
-/** 渠道模板(后端下发,不含 provider 等预设)。 */
-interface ChannelTemplate {
-  id: string;
-  name: string;
-  description: string;
-  driver: string;
-  requires_oauth: boolean;
-  fields: TemplateField[];
-}
+import { CUSTOM, TemplatePicker, TypeBadge } from "./TemplatePicker";
+import type { ChannelItem, ChannelTemplate, TemplateField } from "./types";
 
 /** 单渠道配置的编辑视图(敏感值已哨兵掩码)。 */
 interface EditConfig {
@@ -96,59 +68,8 @@ interface ChannelFormModalProps {
   onSaved: () => void; // 保存成功回调(触发列表刷新)
 }
 
-/** 自定义模式的哨兵模板 id。 */
-const CUSTOM = "custom";
-
 /** 敏感配置值的回读哨兵:原样回传表示保留原凭证,与后端 channel.SecretPlaceholder 一致。 */
 const SECRET_PLACEHOLDER = "__imgyoung_secret_keep__";
-
-/** 各存储类型的辨识徽标:短标 + 品牌色;纯 CSS 方块渲染,不引外部图(守 CSP 与体积预算)。 */
-const TYPE_BADGES: Record<string, { text: string; color: string }> = {
-  "aws-s3": { text: "S3", color: "#FF9900" },
-  r2: { text: "R2", color: "#5B6EF5" },
-  cos: { text: "COS", color: "#00A4FF" },
-  oss: { text: "OSS", color: "#FF6A00" },
-  b2: { text: "B2", color: "#E21E29" },
-  minio: { text: "M", color: "#C7264B" },
-  "s3-compatible": { text: "S3", color: "#8C8C8C" },
-  webdav: { text: "DAV", color: "#0082C9" },
-  onedrive: { text: "OD", color: "#0078D4" },
-  googledrive: { text: "GD", color: "#1A73E8" },
-  dropbox: { text: "DB", color: "#0061FF" },
-  pcloud: { text: "PC", color: "#00A3E0" },
-  box: { text: "BOX", color: "#0061D5" },
-  yandex: { text: "YA", color: "#FC3F1D" },
-  [CUSTOM]: { text: "⚙", color: "#8C8C8C" },
-};
-
-/** 兜底徽标:未登记的模板 id 用中性灰 S3 标。 */
-const FALLBACK_BADGE = { text: "S3", color: "#8C8C8C" };
-
-/** TypeBadge 存储类型的品牌徽标方块;size 控制边长,三字符短标自动缩字号保持居中。 */
-function TypeBadge({ id, size }: { id: string; size: number }) {
-  const badge = TYPE_BADGES[id] ?? FALLBACK_BADGE;
-  const dense = badge.text.length >= 3;
-  return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        flex: "0 0 auto",
-        borderRadius: size * 0.28,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: badge.color,
-        background: `${badge.color}1F`,
-        fontWeight: 700,
-        fontSize: dense ? size * 0.32 : size * 0.44,
-        letterSpacing: dense ? 0 : 0.5,
-      }}
-    >
-      {badge.text}
-    </div>
-  );
-}
 
 /** 创建模式的表单初值;编辑模式的预填在 Form 挂载后以 setFieldsValue 覆盖。 */
 const CREATE_DEFAULTS: FormValues = {
@@ -167,14 +88,12 @@ const CREATE_DEFAULTS: FormValues = {
 export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFormModalProps) {
   const isEdit = channel !== null;
   const [tplId, setTplId] = useState("");
-  const [hoverId, setHoverId] = useState(""); // 选类型网格的 hover 高亮项;仅驱动描边过渡
   const [prefill, setPrefill] = useState<FormValues | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const { message } = AntdApp.useApp();
-  const { token } = theme.useToken();
   const [form] = Form.useForm<FormValues>();
   const encryptChoice = Form.useWatch("encrypted", form);
   const allowDirectLink = Form.useWatch("allow_direct_link", form);
@@ -190,6 +109,8 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
   });
   const tpls = templates.result?.data ?? [];
   const selected = tpls.find((t) => t.id === tplId);
+  // 网盘没有桶的概念,也给不出稳定公开直链(恒走代理),两个开关对其无意义。
+  const isDrive = selected?.category === "drive";
 
   // 加密与 302 直链互斥(密文不能直出):创建模式看三态选择,编辑模式看渠道固有属性。
   const encryptedOn = isEdit ? channel.encrypted : encryptChoice === "on";
@@ -250,7 +171,6 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
   const reset = () => {
     form.resetFields();
     setTplId("");
-    setHoverId("");
     setPrefill(null);
     setLoadingConfig(false); // 配置加载中关闭弹窗时,落定回调被 cancelled 拦截,这里兜底复位
     setTestResult(null);
@@ -409,58 +329,7 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
       {loadingConfig ? (
         <Skeleton active paragraph={{ rows: 5 }} />
       ) : tplId === "" ? (
-        // 选类型步:品牌徽标网格,点选后整屏切到配置步
-        <div style={{ paddingTop: 4 }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            选择存储类型
-          </Typography.Text>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              gap: 10,
-              marginTop: 12,
-            }}
-          >
-            {[...tpls, { id: CUSTOM, name: "自定义", description: "手动填 rclone 参数" } as ChannelTemplate].map(
-              (t) => {
-                const hovered = hoverId === t.id;
-                return (
-                  <Card
-                    key={t.id}
-                    size="small"
-                    hoverable
-                    onClick={() => switchTpl(t.id)}
-                    onMouseEnter={() => setHoverId(t.id)}
-                    onMouseLeave={() => setHoverId((cur) => (cur === t.id ? "" : cur))}
-                    styles={{ body: { padding: 12 } }}
-                    style={{
-                      cursor: "pointer",
-                      transition: "border-color .2s",
-                      borderColor: hovered ? token.colorPrimary : token.colorBorderSecondary,
-                    }}
-                  >
-                    <Flex gap={10} align="center">
-                      <TypeBadge id={t.id} size={36} />
-                      <div style={{ minWidth: 0 }}>
-                        <Typography.Text strong style={{ display: "block", fontSize: 13 }}>
-                          {t.name}
-                        </Typography.Text>
-                        <Typography.Text
-                          type="secondary"
-                          ellipsis={{ tooltip: t.description }}
-                          style={{ fontSize: 11, display: "block" }}
-                        >
-                          {t.description}
-                        </Typography.Text>
-                      </div>
-                    </Flex>
-                  </Card>
-                );
-              },
-            )}
-          </div>
-        </div>
+        <TemplatePicker templates={tpls} onSelect={switchTpl} />
       ) : (
         // 配置步:返回头(徽标 + 类型名)+ 专属表单
         <>
@@ -554,16 +423,18 @@ export function ChannelFormModal({ open, channel, onClose, onSaved }: ChannelFor
                       />
                     </Form.Item>
                   )}
-                  <Form.Item
-                    name="allow_direct_link"
-                    label="允许 302 直链"
-                    valuePropName="checked"
-                    extra={directLinkExtra}
-                  >
-                    <Switch disabled={encryptedOn} />
-                  </Form.Item>
+                  {!isDrive && (
+                    <Form.Item
+                      name="allow_direct_link"
+                      label="允许 302 直链"
+                      valuePropName="checked"
+                      extra={directLinkExtra}
+                    >
+                      <Switch disabled={encryptedOn} />
+                    </Form.Item>
+                  )}
                 </Flex>
-                {!isEdit && (
+                {!isEdit && !isDrive && (
                   <Form.Item
                     name="auto_create_bucket"
                     label="自动创建存储桶"

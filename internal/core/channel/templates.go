@@ -15,6 +15,12 @@ const (
 	FieldOAuth    = "oauth"    // 授权令牌,由授权流写入而非手工录入
 )
 
+// 渠道模板分类,前端据此分组展示。
+const (
+	CategoryObjectStorage = "object_storage" // 对象存储
+	CategoryDrive         = "drive"          // 网盘
+)
+
 // FieldOption select 字段的一个选项。
 type FieldOption struct {
 	Label string `json:"label"` // 展示名(如 "美国东部(弗吉尼亚北部) us-east-1")
@@ -39,6 +45,7 @@ type Template struct {
 	Name          string          `json:"name"`           // 展示名
 	Description   string          `json:"description"`    // 一句话说明
 	Driver        string          `json:"driver"`         // rclone 后端名
+	Category      string          `json:"category"`       // 分类,见 Category* 常量
 	RequiresOAuth bool            `json:"requires_oauth"` // 是否须先完成授权才能保存
 	Fields        []TemplateField `json:"fields"`         // 用户输入字段
 	// 以下为后端合并逻辑所需,不下发前端。
@@ -58,7 +65,7 @@ var templates = slices.Concat(s3Templates, driveTemplates)
 var s3Templates = []Template{
 	{
 		ID: "aws-s3", Name: "Amazon S3", Description: "AWS 官方对象存储",
-		Driver: "s3", preset: map[string]string{"provider": "AWS"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "AWS"},
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
 			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, configKey: "region", Options: awsRegions},
@@ -67,7 +74,7 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "r2", Name: "Cloudflare R2", Description: "Cloudflare 对象存储,零出口流量费",
-		Driver: "s3", preset: map[string]string{"provider": "Cloudflare", "region": "auto"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "Cloudflare", "region": "auto"},
 		endpointPattern: "https://{account_id}.r2.cloudflarestorage.com",
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
@@ -78,7 +85,7 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "cos", Name: "腾讯云 COS", Description: "腾讯云对象存储",
-		Driver: "s3", preset: map[string]string{"provider": "TencentCOS"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "TencentCOS"},
 		endpointPattern: "cos.{region}.myqcloud.com",
 		Fields: []TemplateField{
 			{Key: "access_key_id", Label: "SecretId", Type: FieldText, Required: true, configKey: "access_key_id"},
@@ -89,7 +96,7 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "oss", Name: "阿里云 OSS", Description: "阿里云对象存储",
-		Driver: "s3", preset: map[string]string{"provider": "Alibaba"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "Alibaba"},
 		endpointPattern: "{region}.aliyuncs.com",
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
@@ -99,7 +106,7 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "b2", Name: "Backblaze B2", Description: "Backblaze B2(S3 兼容接口)",
-		Driver: "s3", preset: map[string]string{"provider": "Other"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "Other"},
 		endpointPattern: "https://s3.{region}.backblazeb2.com",
 		Fields: []TemplateField{
 			{Key: "access_key_id", Label: "Key ID", Type: FieldText, Required: true, configKey: "access_key_id"},
@@ -111,7 +118,7 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "minio", Name: "MinIO / 自建", Description: "MinIO 或其他自建 S3 服务",
-		Driver: "s3", preset: map[string]string{"provider": "Minio"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "Minio"},
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
 			{Key: "endpoint", Label: "服务端点", Type: FieldText, Required: true, configKey: "endpoint",
@@ -121,7 +128,7 @@ var s3Templates = []Template{
 	},
 	{
 		ID: "s3-compatible", Name: "S3 兼容(通用)", Description: "任意兼容 S3 协议的服务",
-		Driver: "s3", preset: map[string]string{"provider": "Other"},
+		Category: CategoryObjectStorage, Driver: "s3", preset: map[string]string{"provider": "Other"},
 		Fields: []TemplateField{
 			accessKeyField(), secretKeyField(),
 			{Key: "endpoint", Label: "S3 API 端点", Type: FieldText, Required: true, configKey: "endpoint",
