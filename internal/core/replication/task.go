@@ -83,8 +83,8 @@ type Runner struct {
 // @return 就绪的 Runner(尚未启动)
 // @return 迁移或客户端初始化失败时的错误
 func NewRunner(cfg RunnerConfig) (*Runner, error) {
-	driver := riversqlite.New(cfg.Conn)
-	migrator, err := rivermigrate.New(driver, nil)
+	riverDriver := riversqlite.New(cfg.Conn)
+	migrator, err := rivermigrate.New(riverDriver, nil)
 	if err != nil {
 		return nil, fmt.Errorf("初始化 River 迁移器: %w", err)
 	}
@@ -99,7 +99,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	// 无条件注册:purge 配置关停后,历史遗留的 cdn_purge 任务仍能被认领并
 	// 安静消化(Work 内空操作成功),不产生 unknown kind 噪音。
 	river.AddWorker(workers, &cdnPurgeWorker{cfg: cfg})
-	client, err := river.NewClient(driver, &river.Config{
+	client, err := river.NewClient(riverDriver, &river.Config{
 		Logger: cfg.Logger,
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: replicateQueueWorkers},
@@ -112,7 +112,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	return &Runner{cfg: cfg, client: client}, nil
 }
 
-// Start 启动 worker、执行一次恢复扫描,并开启定期对账循环。
+// Start 启动 worker、执行一次恢复扫描,并开启定期对账与 GC 循环。
 // @Description: ctx 应为独立于请求信号的生命周期上下文,由 Stop 流程收敛。
 // @return 启动或首次扫描失败时的错误
 func (r *Runner) Start(ctx context.Context) error {
@@ -122,27 +122,31 @@ func (r *Runner) Start(ctx context.Context) error {
 	if err := r.Reconcile(ctx); err != nil {
 		return err
 	}
-	go func() {
-		reconcileTicker := time.NewTicker(ReconcileInterval)
-		defer reconcileTicker.Stop()
-		gcTicker := time.NewTicker(gcInterval)
-		defer gcTicker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-reconcileTicker.C:
-				if err := r.Reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					r.cfg.Logger.Warn("定期对账未完成", "err", err)
-				}
-			case <-gcTicker.C:
-				if _, err := r.RunGC(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					r.cfg.Logger.Warn("对账 GC 未完成", "err", err)
-				}
+	go r.runPeriodic(ctx)
+	return nil
+}
+
+// runPeriodic 按各自周期执行对账与 GC,直到 ctx 取消;单轮失败只告警,下一轮照常执行。
+// @param ctx 生命周期上下文
+func (r *Runner) runPeriodic(ctx context.Context) {
+	reconcileTicker := time.NewTicker(ReconcileInterval)
+	defer reconcileTicker.Stop()
+	gcTicker := time.NewTicker(gcInterval)
+	defer gcTicker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-reconcileTicker.C:
+			if err := r.Reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				r.cfg.Logger.Warn("定期对账未完成", "err", err)
+			}
+		case <-gcTicker.C:
+			if _, err := r.RunGC(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				r.cfg.Logger.Warn("对账 GC 未完成", "err", err)
 			}
 		}
-	}()
-	return nil
+	}
 }
 
 // Stop 优雅停止 worker(等待进行中的任务完成)。
@@ -179,29 +183,62 @@ func (r *Runner) EnqueueDelete(ctx context.Context, channelID int64, storageKey 
 	return nil
 }
 
-// Reconcile 对账兜底:补种缺失的副本行,重置已恢复渠道的 failed 副本,为清理中渠道补入
-// 排空任务,再分页扫描全部未完成副本重新入队(启动恢复与定期对账共用;入队按参数去重,重复无害)。
-// @return 播种、扫描或入队失败时的错误
+// Reconcile 对账兜底:为清理中渠道补入排空任务,补种缺失的副本行,重置已恢复渠道的 failed 副本,
+// 再分页扫描全部未完成副本重新入队(启动恢复与定期对账共用;入队按参数去重,重复无害)。
+// @return 任一步失败时的错误
 func (r *Runner) Reconcile(ctx context.Context) error {
-	// 清理中的渠道由业务表标记驱动:标记后入队失败或进程崩溃,这里补上排空任务。
+	if err := r.requeueDrains(ctx); err != nil {
+		return err
+	}
+	if err := r.seedMissingRows(ctx); err != nil {
+		return err
+	}
+	if err := r.resetFailedReplicas(ctx); err != nil {
+		return err
+	}
+	return r.requeuePending(ctx)
+}
+
+// requeueDrains 为每个清理中渠道补入排空任务。
+// @Description: 清理中由业务表标记驱动:打标记后入队失败或进程崩溃,排空任务在这里补上。
+// @return 入队失败时的错误
+func (r *Runner) requeueDrains(ctx context.Context) error {
 	for _, h := range r.cfg.Manager.Draining() {
 		if err := r.EnqueueChannelDrain(ctx, h.ID); err != nil {
 			return err
 		}
 	}
-	// 收敛播种:上传以开始时的渠道快照落副本行,与渠道创建并发时新渠道可能
-	// 漏掉在途 blob 的行;按 NOT EXISTS 周期补齐使缺行自愈(已收敛时近似只读)。
+	return nil
+}
+
+// seedMissingRows 为每个渠道补种缺失的副本行。
+// @Description: 上传以开始时的渠道快照落副本行,与渠道创建并发时新渠道会漏掉在途 blob 的行;
+// 按 NOT EXISTS 周期补齐使缺行自愈,已收敛时近似只读。
+// @return 补种失败时的错误
+func (r *Runner) seedMissingRows(ctx context.Context) error {
 	for _, h := range r.cfg.Manager.All() {
 		if _, err := r.cfg.Queries.SeedBlobChannelsForChannel(ctx, h.ID); err != nil {
 			return fmt.Errorf("补种渠道 %q 缺失副本行: %w", h.Name, err)
 		}
 	}
-	// failed 不是永久终态:渠道恢复健康后给它的失败副本重来的机会。
+	return nil
+}
+
+// resetFailedReplicas 把健康渠道上的 failed 副本复位为 pending。
+// @Description: failed 不是永久终态,渠道恢复健康后它的失败副本应得到重来的机会。
+// @return 复位失败时的错误
+func (r *Runner) resetFailedReplicas(ctx context.Context) error {
 	for _, h := range r.cfg.Manager.Healthy() {
 		if err := r.cfg.Queries.ResetFailedBlobChannels(ctx, h.ID); err != nil {
 			return fmt.Errorf("重置渠道 %q 的失败副本: %w", h.Name, err)
 		}
 	}
+	return nil
+}
+
+// requeuePending 分页扫描全部未完成副本,逐页批量入队补齐任务。
+// @return 扫描或入队失败时的错误
+func (r *Runner) requeuePending(ctx context.Context) error {
 	total := 0
 	for offset := int64(0); ; offset += reconcileBatch {
 		rows, err := r.cfg.Queries.ListPendingBlobChannelsPage(ctx, sqlc.ListPendingBlobChannelsPageParams{
@@ -210,10 +247,8 @@ func (r *Runner) Reconcile(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("扫描未完成副本: %w", err)
 		}
-		for _, row := range rows {
-			if _, err := r.client.Insert(ctx, ReplicateArgs{BlobID: row.BlobID, ChannelID: row.ChannelID}, nil); err != nil {
-				return fmt.Errorf("重建任务(blob %d → 渠道 %d): %w", row.BlobID, row.ChannelID, err)
-			}
+		if err := r.insertReplications(ctx, rows); err != nil {
+			return err
 		}
 		total += len(rows)
 		if len(rows) < reconcileBatch {
@@ -226,6 +261,26 @@ func (r *Runner) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// insertReplications 把一页未完成副本在一个事务内批量入队补齐任务;空页为空操作。
+// @Description: 入队按参数去重,已在队列中的任务被跳过,重复扫描无害。
+// @param rows 一页 (blob, channel) 对
+// @return 入队失败时的错误
+func (r *Runner) insertReplications(ctx context.Context, rows []sqlc.ListPendingBlobChannelsPageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	params := make([]river.InsertManyParams, 0, len(rows))
+	for _, row := range rows {
+		params = append(params, river.InsertManyParams{
+			Args: ReplicateArgs{BlobID: row.BlobID, ChannelID: row.ChannelID},
+		})
+	}
+	if _, err := r.client.InsertMany(ctx, params); err != nil {
+		return fmt.Errorf("批量重建 %d 个补齐任务: %w", len(params), err)
+	}
+	return nil
+}
+
 // replicateWorker 单份副本的复制执行器。
 type replicateWorker struct {
 	river.WorkerDefaults[ReplicateArgs]
@@ -233,7 +288,7 @@ type replicateWorker struct {
 }
 
 // Timeout 单任务执行超时(River 到时中断,防慢渠道占死 worker)。
-func (w *replicateWorker) Timeout(*river.Job[ReplicateArgs]) time.Duration {
+func (*replicateWorker) Timeout(*river.Job[ReplicateArgs]) time.Duration {
 	return replicateJobTimeout
 }
 
@@ -316,7 +371,8 @@ func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target c
 
 // markState 写回副本状态,失败仅告警(业务表兜底,不阻断任务流转)。
 // @param attemptsDelta 尝试计数增量(仅置 uploading 时为 1,保证计数=实际尝试次数)
-func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, state, lastError string, attemptsDelta int64) {
+func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, state, lastError string,
+	attemptsDelta int64) {
 	if err := w.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
 		State: state, LastError: lastError, Attempts: attemptsDelta,
 		BlobID: args.BlobID, ChannelID: args.ChannelID,
@@ -332,7 +388,7 @@ type deleteObjectWorker struct {
 }
 
 // Timeout 单任务执行超时。
-func (w *deleteObjectWorker) Timeout(*river.Job[DeleteObjectArgs]) time.Duration {
+func (*deleteObjectWorker) Timeout(*river.Job[DeleteObjectArgs]) time.Duration {
 	return replicateJobTimeout
 }
 

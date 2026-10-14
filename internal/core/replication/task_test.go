@@ -244,7 +244,7 @@ func TestBackfillNewChannel(t *testing.T) {
 
 	third, ok := env.mgr.Get(thirdID)
 	if !ok {
-		t.Fatalf("第三渠道句柄缺失")
+		t.Fatal("第三渠道句柄缺失")
 	}
 	if _, err := third.Driver.Stat(t.Context(), key); err != nil {
 		t.Fatalf("回填副本未真实写入: %v", err)
