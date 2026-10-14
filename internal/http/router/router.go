@@ -119,8 +119,8 @@ func New(cfg Config) http.Handler {
 				ad.Get("/dedup", cfg.Admin.HandleDedupCandidates)
 				ad.Post("/dedup/{id}/merge", cfg.Admin.HandleDedupMerge)
 				ad.Post("/dedup/{id}/dismiss", cfg.Admin.HandleDedupDismiss)
+				// 冷图裁决没有专用写端点:保留走 PATCH /images/{id} 置清理豁免,删除走 DELETE /images/{id}。
 				ad.Get("/cleanup", cfg.Admin.HandleCleanupList)
-				ad.Post("/cleanup/{id}/keep", cfg.Admin.HandleCleanupKeep)
 			})
 		})
 	})

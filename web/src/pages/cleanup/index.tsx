@@ -65,7 +65,10 @@ export function CleanupPage() {
 
   const keep = async (id: string) => {
     try {
-      await apiFetch(`/api/admin/cleanup/${id}/keep`, { method: "POST" });
+      await apiFetch(`/api/admin/images/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ cleanup_exempt: true }),
+      });
       message.success("已保留,该图不再参与冷图打标");
       refresh();
     } catch (err) {
@@ -83,14 +86,17 @@ export function CleanupPage() {
     }
   };
 
-  /** batchKeep 逐条保留已选(保留是单条端点,顺序循环;失败条目计数后继续)。 */
+  /** batchKeep 逐条保留已选(豁免是单图 PATCH,顺序循环;失败条目计数后继续)。 */
   const batchKeep = async () => {
     setBatching(true);
     let kept = 0;
     let failed = 0;
     for (const id of selected) {
       try {
-        await apiFetch(`/api/admin/cleanup/${String(id)}/keep`, { method: "POST" });
+        await apiFetch(`/api/admin/images/${String(id)}`, {
+          method: "PATCH",
+          body: JSON.stringify({ cleanup_exempt: true }),
+        });
         kept++;
       } catch {
         failed++;

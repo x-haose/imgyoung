@@ -147,7 +147,7 @@ type cleanupItem struct {
 	CreatedAt    string  `json:"created_at"`     // 上传时刻
 }
 
-// HandleCleanupList 分页列出冷图待清理引用(仅管理员路由);"删除"裁决走图片删除接口。
+// HandleCleanupList 分页列出冷图待清理引用(仅管理员路由);裁决走图片接口:保留为 PATCH 置清理豁免,删除为 DELETE。
 func (h *Handlers) HandleCleanupList(w http.ResponseWriter, r *http.Request) {
 	limit, offset := pagination(r)
 	rows, err := h.cfg.Queries.ListPendingCleanupImages(r.Context(),
@@ -172,21 +172,4 @@ func (h *Handlers) HandleCleanupList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: items, Total: total})
-}
-
-// HandleCleanupKeep 裁决保留:置清理豁免,该引用不再参与冷图打标(仅管理员路由)。
-func (h *Handlers) HandleCleanupKeep(w http.ResponseWriter, r *http.Request) {
-	imageID := chi.URLParam(r, "id")
-	n, err := h.cfg.Queries.SetImageCleanupExempt(r.Context(), sqlc.SetImageCleanupExemptParams{Exempt: 1, ID: imageID})
-	if err != nil {
-		h.cfg.Logger.Error("清理豁免失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
-		return
-	}
-	if n == 0 {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "图片不存在")
-		return
-	}
-	h.recordAudit(r.Context(), audit.ActionCleanupKeep, imageID, "")
-	w.WriteHeader(http.StatusNoContent)
 }
