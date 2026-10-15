@@ -2,6 +2,8 @@
  * 设计令牌:深邃工具感,双主题(暗色默认)。
  * 主色翡翠绿贯穿品牌,语义为「就绪 / 健康」;暗色以近黑分层(框架 < 内容 < 卡片 < 浮层)表达深度,
  * 亮色以低饱和灰阶保持同一气质。语义色 success / warning / info 供状态徽标与图表使用。
+ * aurora-a / aurora-b 是未登录页面极光背景的两道光色:暗色取主色与信息色,亮色取同色相的浅色
+ * (浅底上叠比底色暗的饱和色会显脏)。
  */
 :root {
   color-scheme: light;
@@ -27,6 +29,8 @@
   --success: #059669;
   --warning: #d97706;
   --info: #0284c7;
+  --aurora-a: #6ee7b7;
+  --aurora-b: #7dd3fc;
   --chart-1: #059669;
   --chart-2: #0284c7;
   --chart-3: #d97706;
@@ -65,6 +69,8 @@
   --success: #10b981;
   --warning: #f59e0b;
   --info: #38bdf8;
+  --aurora-a: #10b981;
+  --aurora-b: #38bdf8;
   --chart-1: #10b981;
   --chart-2: #38bdf8;
   --chart-3: #f59e0b;
