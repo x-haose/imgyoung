@@ -17,6 +17,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/config"
@@ -295,6 +296,10 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, r *http.Request, set 
 			fmt.Sprintf("图片分辨率超出限制(像素预算 %d 百万像素)", set.MaxPixelsMP))
 	case errors.Is(err, upload.ErrQuotaExceeded):
 		h.writeStatus(w, r, http.StatusForbidden, "QuotaExceeded", "存储配额已满")
+	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
+		// 渠道故障可重试:与 HTTP 上传接口同为 503,S3 客户端据此退避重试而非当作服务端缺陷
+		h.cfg.Logger.Error("渠道不可用,S3 上传失败", "err", err)
+		h.writeStatus(w, r, http.StatusServiceUnavailable, "ServiceUnavailable", "存储渠道暂不可用,请稍后重试")
 	default:
 		h.cfg.Logger.Error("S3 上传处理失败", "err", err)
 		h.writeStatus(w, r, http.StatusInternalServerError, "InternalError", "服务内部错误")
