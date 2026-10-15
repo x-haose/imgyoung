@@ -16,6 +16,7 @@ Each image can have a lifetime after which it is deleted automatically. The life
 - An explicit `0` or `never` on an upload overrides both the user and the global default, so that image never expires.
 - S3 uploads cannot set a lifetime per request and use the user default, then the global default.
 - The expiry time is computed and stored at upload. Changing the user or global default later does not affect existing images.
+- To make an image temporary, give it a short lifetime; there is no separate temporary folder or temporary upload type.
 - Per-upload lifetimes, per-user defaults and the global default are all capped at 876000 hours (100 years); larger values are rejected. Every other runtime setting that converts to a duration (sweep intervals, the delete grace period, retention periods, timeouts and so on) is capped at 100 years in its own unit as well.
 
 The lifetime of an existing image is changed in its details (by the image's owner or an administrator):
@@ -81,6 +82,7 @@ The delete confirmations in the console tell you roughly when the physical file 
 ## Cold images [#cold-images]
 
 Images nobody has accessed for a long time are tagged for cleanup and wait on the **Cleanup** page for an administrator's decision. **They are never deleted automatically.**
+Deletion cannot be undone, so the machine only finds candidates and a person decides; merging near-duplicates follows the same principle.
 
 - The threshold is **Cold image threshold** (`cold_cleanup_days`), 90 days out of the box; 0 stops tagging.
 - Tagging: on each cleanup sweep, images whose last public access (or upload time, if never accessed) is older than the threshold and which are not exempt get tagged.
@@ -99,7 +101,7 @@ The **Cleanup** page (administrators only) lists images from the longest-unacces
 - **Keep**: sets the cleanup exemption on the image, so it is never tagged as cold again; its lifetime and renewal are unaffected. The exemption can be removed in the image details.
 - **Delete**: runs the delete flow above.
 
-Only administrators can set cleanup exemptions. The **Cleanup exempt** switch in the image details can be turned on before an image ever goes cold; regular users see the state but cannot change it.
+Only administrators can set cleanup exemptions, as part of the same authority as cold-image decisions, so an image's owner cannot exempt their own images to dodge cleanup. The **Cleanup exempt** switch in the image details can be turned on before an image ever goes cold; regular users see the state but cannot change it.
 The **Exempt only** filter on the **Images** page lists every exempt image.
 
 ## Deduplication
@@ -121,7 +123,7 @@ Every physical file gets a 64-bit perceptual hash (pHash) at upload. When two fi
 
 - A higher threshold is looser and produces more false positives; 0 turns similarity scanning off. The console notes that distances of 0–2 are near identical.
 - Even a distance of 0 only makes a candidate and is never merged automatically: equal perceptual hashes do not mean equal bytes.
-- Scanning is incremental: each round compares only new files against the existing ones. After a restart everything is rescanned once, and dismissed pairs do not come back.
+- Scanning is incremental: each round compares only new files against the existing ones, computing distances one by one in memory; at self-hosted scale no index structure is needed. After a restart everything is rescanned once, and dismissed pairs do not come back.
 
 ### Deciding, and which image to keep
 

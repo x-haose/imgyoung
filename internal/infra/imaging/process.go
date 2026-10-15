@@ -36,7 +36,8 @@ type EncodeSettings struct {
 	MaxPixels   int64 // 源图像素预算(w×h 上限)
 }
 
-// Processor 按需图像处理引擎;设计定稿的"升级缝一",纯 Go 实现,日后可从此缝切 libvips。
+// Processor 按需图像处理引擎,纯 Go 实现。
+// @Description: 图像处理引擎的替换点(两条升级缝之一):接入 libvips 等引擎时在此抽出接口,调用方不变。
 type Processor struct {
 	set EncodeSettings // 编码档位,构造时注入、运行期只读
 }

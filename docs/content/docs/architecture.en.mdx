@@ -20,7 +20,7 @@ As a result, ImgYoung does not support several processes sharing one data direct
 to high availability is replacing the database with PostgreSQL (River supports PostgreSQL itself, so the task queue
 moves along with it) and moving the in-process shared state out at that point; the current code only implements SQLite.
 
-## Layers and dependency direction
+## Layers and dependency direction [#layers]
 
 ```text
 http ──→ core ──→ infra
@@ -59,7 +59,7 @@ Two more conventions:
 HTTP handlers and River workers are thin adapters that translate an external trigger into a service call. Periodic
 tasks are `Run(ctx, wait)` loops owned by each service and orchestrated by the composition root; there is no separate scheduler layer.
 
-## Data model
+## Data model [#data-model]
 
 At the heart of the data model is the **separation of physical images from upload references**:
 
@@ -226,7 +226,7 @@ parameters for variants), and a request whose `If-None-Match` matches it gets a 
 format was negotiated via `Accept` carry `Vary: Accept`; a fallback original is `no-store` and never answered with a 304.
 If a database lookup fails, the response is a plain-text 500 that can be retried.
 
-## The outbox fence: business tables are the single source of truth
+## The outbox fence: business tables are the single source of truth [#outbox]
 
 Asynchronous replication runs on River, but River jobs are only **idempotent triggers**. The single source of truth for
 replica state is the business table `blob_channels`:
@@ -299,20 +299,82 @@ timeout, and the sample configurations under `deploy/` leave extra headroom (`st
 `TimeoutStopSec=15s` for systemd). Cancelled replication jobs keep their state in the business table and are queued
 again by reconciliation on the next start.
 
-## Two upgrade seams
+## Technology choices [#tech-stack]
 
-Only two technology choices are expected to be replaced; everything else is fixed, with no replacement points reserved:
+Every choice serves the same premise: a single instance, a single static binary, and no external services needed to
+deploy apart from the storage channels. Exact dependency versions are whatever the repository's `go.mod` says.
+
+### Language and build
+
+- **Go**: compiles to a single static binary with a small Docker image; I/O orchestration such as multi-channel writes,
+  asynchronous replication, health checks, and the task queue is straightforward with goroutines; the ecosystem for
+  object storage, HTTP, and metrics is mature, and simple syntax and fast builds keep the bar for contributors low. The
+  deciding factor is that rclone itself is written in Go, and only Go can call its backends directly in-process; see
+  [Why rclone is integrated in-process](#rclone).
+- **`CGO_ENABLED=0` throughout**: without a C toolchain or system libraries, the release archives can be cross-compiled
+  for Linux, macOS, and Windows on two architectures each, and shipped in a distroless image holding nothing but the
+  binary. Every dependency below is pure Go or works without cgo. All builds use `-tags nodynamic`: by default the WebP
+  library tries to load the system libwebp at runtime, and only with that path switched off is the Linux binary free of
+  the dynamic linker.
+
+### Dependencies
+
+| Area | Choice | Why |
+|---|---|---|
+| HTTP routing | chi | Handlers are plain standard-library `http.Handler`s with no private concepts; uploads (streaming request reads) and image proxying (streaming response writes) both work directly with `io.Reader` / `io.Writer`, so a thin router fits best |
+| SQLite driver | `modernc.org/sqlite` | A pure-Go implementation; no cgo |
+| Database access | sqlc | Queries are written in SQL and compiled into type-safe Go code. No ORM: an image host's queries are all simple, exact lookups, so an ORM's abstraction buys nothing |
+| Migrations | Atlas | The declarative schema is the single source of truth; during development Atlas diffs it into versioned migrations, and at runtime its pure-Go executor applies them on startup, so deployments need no migration tool |
+| Task queue | River | A persistent task queue with retries, backoff, and concurrency control built in; on its SQLite driver the job tables share a database with the business tables, so there is no extra service. Jobs are only idempotent triggers and state lives in the business tables; see [the outbox fence](#outbox) |
+| Periodic tasks | A `Run(ctx, wait)` loop owned by each service | Periodic tasks only need "run every so often", with the interval taken from runtime settings and rescheduled the moment it changes; no cron library |
+| Wiring | Assembled by hand in `cmd/imgyoung/build.go` | The set of components is fixed and their dependencies are static, so calling constructors in order is enough: searchable, navigable, with no reflection or runtime container. No DI framework |
+| Lifecycle | oklog/run | HTTP, River, and each background loop are actors; when any of them exits, the whole group shuts down in order. Harder to get wrong than hand-rolled `WaitGroup`s and channels |
+| Architecture guard | depguard (built into golangci-lint) | The direction of dependencies between layers is a lint rule enforced by CI, not a matter of discipline; see [Layers and dependency direction](#layers) |
+| Perceptual hash | goimagehash | Pure Go; takes the decoded `image.Image`, so it plugs straight into the upload's decode step |
+| Image codecs | Standard library, `golang.org/x/image`, gen2brain/webp | None needs cgo; gen2brain/webp encodes WebP by running libwebp in a pure-Go WebAssembly runtime |
+| Cryptography | Standard-library AES-256-GCM and HKDF; argon2id from `golang.org/x/crypto` | Encrypting channel configuration and credentials, deriving channel keys and S3 secrets, and hashing login passwords respectively. Encryption of channel data itself is left to rclone crypt |
+| Rate limiting | `golang.org/x/time/rate` | Upload rate limits and login throttling are both in-process token buckets |
+| Logging and metrics | `log/slog`, Prometheus client_golang | The de facto standards in their areas |
+| Short IDs | jaevor/go-nanoid | Public short IDs come from a mature implementation; internal primary keys are SQLite auto-increment rowids and never exposed |
+
+The project is released under the MIT license: the same as rclone, with the lowest barrier for contributors, and a
+self-hosted tool has no realistic concern about cloud vendors reselling it as a hosted service.
+
+### What is deliberately left out
+
+- **Redis**: it has no place in a single instance. What needs atomicity, such as idempotency keys and reference counts,
+  relies on SQLite constraints and atomic updates; rate limits are in-process token buckets; the variant cache lives on
+  local disk. In a single instance the in-process versions are strictly better than Redis: no network round trips, no
+  serialization, no extra service to run. It only becomes worth reconsidering when moving to multiple instances.
+- **Configuration files and configuration libraries**: environment variables only get the process started; all other
+  runtime settings live in the database's `settings` table and are edited in the admin console, so "where does this
+  value come from" always has exactly one answer. See [Configuration](./configuration.mdx).
+- **ORMs, DI frameworks, cron libraries**: see the table above for why.
+
+### SQLite and versioned migrations
+
+SQLite is a single file with no external dependencies, and a consistent snapshot is just one more file, which suits
+self-hosting best and fits the single-instance design. Versioned migrations have been there from day one: a
+long-running self-hosted instance goes through many version upgrades, and without versioned migrations the schema would
+quickly get out of hand. Migrations only go forward; see [Data model](#data-model).
+
+### Two upgrade seams
+
+Only two choices are expected to be replaced; everything else is fixed. Go's thin libraries all follow the shape of the
+standard library, so replacing one would be mechanical work, and reserving flexibility for it would buy nothing.
 
 - **Image processing engine**: the single entry point for on-demand processing is `Processor.Process(src, params)` in
   `internal/infra/imaging`. The current implementation is pure Go: the standard library decodes JPEG / PNG / GIF,
-  `gen2brain/webp` encodes and decodes WebP, output is limited to WebP, JPEG, and PNG, and GIFs are stored and served
-  as-is without processing. More formats or faster processing would mean replacing this processor.
+  gen2brain/webp encodes WebP, output is limited to WebP, JPEG, and PNG, and GIFs are stored and served as-is without
+  processing. AVIF and HEIF are not included: they see little use, and their encoders (libaom and the like) are heavy.
+  More formats or faster processing (an implementation based on libvips, for example) would mean replacing this processor.
 - **Database**: currently SQLite. The schema is defined in declarative SQL, migrations are generated by Atlas, and query
-  code is generated by sqlc; moving to PostgreSQL means replacing this layer along with River's driver.
+  code is generated by sqlc; moving to PostgreSQL means regenerating the query code and migrations for that dialect and
+  switching River to its PostgreSQL driver.
 
 Each seam currently has a single implementation, and no interface type has been defined for either in advance.
 
-## Why rclone is integrated in-process
+## Why rclone is integrated in-process [#rclone]
 
 The storage layer follows one rule: rclone only stores bytes in some backend, retrieves, inspects, lists, and deletes
 them. Primary/backup switching, replication, reference counting, deduplication, TTL, and health decisions are all
@@ -339,5 +401,7 @@ Registering every rclone backend (`backend/all`) means any storage rclone suppor
 and rclone upgrades bring new backends with them; the cost is a binary on the order of 100 MB. This relies on rclone's
 internal APIs, which make no stability promise, so `go.mod` pins the rclone version and upgrades are done by hand with the full test suite.
 
-Splitting the `Driver` interface and the rclone implementation into separate packages also lets Go projects outside the
-application reuse this storage engine on its own; see [Using it as a Go library](./library/index.mdx).
+The `Driver` interface does not assume rclone exists, which is also the way out if rclone's internal APIs change:
+swap in another `Driver` implementation and the business code stays the same. Splitting the interface and the rclone
+implementation into separate packages also lets Go projects outside the application reuse this storage engine on its
+own; see [Using it as a Go library](./library/index.mdx).

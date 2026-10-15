@@ -97,6 +97,8 @@ The periodic loop follows one rule: **a light check can only mark a channel down
 - Unhealthy channels get a light check first; if it passes, a deep check follows, and only a full write–read–delete pass restores them.
 - A read-only success never overrides a failed deep check. Read-only credentials, for example, pass the light check but cannot write; such a channel is not revived by light checks.
 
+The periodic loop uses only the read-only light check because, on pay-per-request storage, writing and deleting a probe object every minute is a pointless expense; problems on the write path are caught by the event-driven deep checks and the confirmation before recovery.
+
 Channels are checked in parallel with independent timeouts, so one slow channel never drags the others down. Draining channels are not checked. A round in progress at shutdown is discarded rather than recorded.
 
 Results are written back to the database and shown in the **Status** column of the Storage channels page: **Healthy**, **Unhealthy** or **Draining**. Hovering **Unhealthy** shows the failure reason (translated into a troubleshooting hint, never containing credentials); the small text below shows when the last check ran, or **Not probed yet**. Common reasons are listed under "Common errors" in [Object storage and WebDAV](./object-storage.mdx).

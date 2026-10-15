@@ -14,6 +14,8 @@ ImgYoung has exactly two kinds of settings. There is no configuration file, and 
 | Changing | Change the variable and restart the process | Edit under **Settings** in the admin console; takes effect on save, no restart |
 | Where to see them | The read-only **Bootstrap configuration** card at the bottom of **Settings → Runtime settings** | **Settings** in the admin console |
 
+The split exists so that "where does this value come from" always has exactly one answer: environment variables only get the process started, and some of them also set trust boundaries; runtime settings have a single writer, the admin console, with no seeding from environment variables and no configuration file.
+
 Runtime settings live in the metadata database, so they are included in metadata snapshots and restored with them. Configure a new instance once in the admin console; settings added by an upgrade are filled in with their factory defaults by the database migration.
 
 ## Bootstrap settings

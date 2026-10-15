@@ -65,7 +65,7 @@ Errors come back as `{"error": "…"}`; see [Status codes](#status-codes). The f
 
 On a flaky network a client may send the same upload twice. Sending an `Idempotency-Key` header keeps the retry from creating a second image:
 
-- Keys are scoped per user; two users can use the same key without affecting each other.
+- Keys are scoped per user; two users can use the same key without affecting each other, so nobody can use an idempotency key to probe for or retrieve someone else's image.
 - Within the retention period, a request from the same user with the same key returns the `id` and `url` of the first successful upload and writes nothing to the channels. The retention period is `idempotency_key_ttl_hours`, 24 hours out of the box, counted from that first success.
 - A hit does not compare the request content: if you reuse a key with a different file, you still get the first image back. Use a different key for every distinct image.
 - Only successful uploads record their key, so a failed request can safely be retried with the same key.
@@ -76,7 +76,7 @@ Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3 entry po
 
 ## Fetching from a URL
 
-Give the server an image address and it downloads and stores the image for you, which is handy for pulling images back from other image hosts:
+Give the server an image address and it downloads and stores the image for you, which is handy for pulling images back from other image hosts. The fetched bytes go through the same upload pipeline as a direct upload, so the format allowlist, pixel budget, EXIF handling and quota all apply; the server never copies a remote file straight into a channel.
 
 ```bash title="Terminal"
 curl -H "Authorization: Bearer imgy_xxxxxxxx" \
@@ -149,6 +149,7 @@ Only JPEG, PNG, GIF and WebP are accepted. The format is determined from the fil
 | Storage quota | Set per user | Unlimited | 403 |
 
 - The **concurrency gate** is a single global gate shared by data plane uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once. Uploads of any size are processed in memory and never written to temporary files, so this number bounds the peak memory of uploading. When it is full, requests get 429 immediately instead of queueing.
+- The **pixel budget** guards decoded memory, which depends on resolution rather than file size: a 20-megapixel image decodes to about 80 MB of RGBA. That is why only the header is read first, and an oversized image never reaches the decoder.
 - The **rate limit** is per user, and uploads by the same user through tokens, the console and S3 PutObject share one allowance. It is a token bucket: up to N uploads can go through back to back (N being the per-minute allowance), after which one more is allowed every 60/N seconds. The buckets live in process memory and reset on restart.
 - The **quota** counts every reference in full: each image record counts the full size of its physical file against its owner, and background deduplication does not reduce usage. The pre-check uses the size of the uploaded bytes.
 
@@ -176,6 +177,8 @@ All of these are changed under **Settings → Runtime settings** and take effect
 | `passthrough` | Stored byte for byte; no metadata is touched. The global default out of the box |
 | `strip` | Metadata is removed before storing, as listed below |
 
+The default is `passthrough`: keeping storage providers from seeing the original is the job of [channel encryption](../channels/encryption.mdx), while whether to strip metadata from what visitors with the link can see is the uploader's own choice, so by default the original is left untouched.
+
 The policy for an upload is the form (or JSON) field if given, otherwise the global default `exif_policy`. S3 uploads skip EXIF processing and are stored byte for byte: S3 clients check the upload by size and ETag, so the stored bytes must match what was sent.
 `spoof` (fake metadata) is not available yet; sending it returns 400, and it cannot be the global default either.
 
@@ -192,9 +195,28 @@ The policy for an upload is the form (or JSON) field if given, otherwise the glo
 - With `passthrough`, GPS and other metadata in the original can be read by anyone who has the link and fetches the original bytes.
   The variants produced by [on-demand processing](./access.mdx#on-demand-processing) are re-encoded and carry no metadata, but the original itself stays reachable.
 
+### Why processing happens at upload time [#why-on-upload]
+
+The EXIF policy takes effect at the moment of upload, and the processed bytes are what gets stored; the original is not
+reprocessed on access according to whatever the current setting is.
+
+The reason is that caching on the access side rests on "the bytes behind a given `/i/` link never change": responses
+carry `Cache-Control: immutable`, and browsers and CDNs can safely cache them for a year. If processing happened on
+access instead, changing the global policy would change the bytes served by the same link: the CDN cache would have to
+be purged wholesale, and old bytes already cached in visitors' browsers could not be invalidated at all.
+
+The main benefit of processing on access would be keeping the original untouched in the channel and sanitizing only on
+the way out. Privacy towards storage providers is already handled by channel encryption, and processing at upload with
+`passthrough` as the default covers that need, so it is not worth giving up immutable caching for.
+
 ## Uploading the same image more than once
 
 Uploads are not deduplicated on the way in: uploading the same file twice gives two short IDs, and two copies are written to the channels at first.
+
+This is deliberate: the upload path has no branch such as "instant upload of a known file"; every upload goes fully
+through validation, channel writes and recording, which keeps the surface for failures as small as possible.
+Deduplication only needs the hashes computed during upload, so in the background it is a pure database operation with no
+need to decode images again.
 
 The background deduplication loop (every 300 seconds out of the box, `dedup_scan_seconds`) merges physical files whose stored bytes are identical into one, and removes the extra copy after the delete grace period. After a merge:
 

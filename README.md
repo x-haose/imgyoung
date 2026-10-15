@@ -52,7 +52,7 @@ curl -H "Authorization: Bearer <Token>" -F "file=@a.png" http://localhost:8721/a
 | [Go 库](https://imgyoung.x-haose.com/zh/docs/library) | 存储驱动与多存储容灾原语 |
 | [接口参考](https://imgyoung.x-haose.com/zh/docs/api) | 由 [api/openapi.yaml](./api/openapi.yaml) 生成 |
 
-示例配置(Compose、Caddy、Nginx、systemd)在 [deploy/](./deploy/);设计蓝图见 [图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md)。
+示例配置(Compose、Caddy、Nginx、systemd)在 [deploy/](./deploy/);设计与技术选型见[架构](https://imgyoung.x-haose.com/zh/docs/architecture);后续计划见带 [`roadmap`](https://github.com/x-haose/imgyoung/issues?q=label%3Aroadmap) 标签的 issue。
 
 ## 作为 Go 库使用
 

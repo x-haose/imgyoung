@@ -1,6 +1,6 @@
 # 参与贡献
 
-感谢你愿意为 ImgYoung 出力。这份文档讲清楚怎样搭环境、改动怎样才算完成、怎样提交。设计上的「为什么」在 [图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md),改动涉及设计时先改它;日常约定在 [AGENTS.md](./AGENTS.md)。
+感谢你愿意为 ImgYoung 出力。这份文档讲清楚怎样搭环境、改动怎样才算完成、怎样提交。设计上的「为什么」在文档站:[架构](https://imgyoung.x-haose.com/zh/docs/architecture)页是总览与技术选型,各功能页写行为与取舍(源文件在 `docs/content/docs`),改动涉及设计时先改对应页面;日常约定在 [AGENTS.md](./AGENTS.md)。
 
 ## 环境
 
@@ -30,7 +30,7 @@ cd web && pnpm dev  # 前端热更新,/api 与图片路径代理到 8721
 2. 前端:`cd web && pnpm lint && pnpm build`,两条都干净。
 3. 改了 HTTP 接口:同步改 `api/openapi.yaml`。e2e 会按文档校验每条响应;前端类型由 `pnpm gen:api` 生成(`pnpm build` 自动执行),生成文件 `web/src/lib/api.gen.ts` 要一起提交。
 4. 改了数据库:`internal/infra/db/schema/` 是唯一真相,`atlas migrate diff <名称> --env local` 生成迁移,`task generate` 重生 sqlc 代码。
-5. 改了设计:先改定稿,再改代码。
+5. 改了设计或对外行为:先改文档站对应页面(`docs/content/docs`,中英两份),再改代码;`cd docs && pnpm lint && pnpm build` 通过。
 
 ## 代码约定(摘要)
 

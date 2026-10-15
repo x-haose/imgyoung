@@ -54,7 +54,7 @@ https://img.example.com/i/R0RjUyP1UW?format=jpeg
 | `w` | A value in **Width tiers** (`process_widths`), `100,200,400,800,1600` out of the box | Shrinks proportionally to that width; any other width returns 400. If the target is not smaller than the original width, nothing is enlarged and the image is only re-encoded to the target format |
 | `format` | A value in **Target formats** (`process_formats`; `webp`, `jpeg`, `png` out of the box), or `auto` | Forces the output format; values not in the list return 400 |
 
-Widths and formats are allowlists: accepting arbitrary values would let anyone saturate the CPU and the disk cache, so only a few presets are offered. Change them in the **On-demand processing** group under **Settings → Runtime settings**; changes apply immediately.
+Widths and formats are allowlists: accepting arbitrary values would let anyone saturate the CPU and the disk cache, so only a few presets are offered; with fixed presets, the result for a given set of parameters can also be served from the cache again and again. Change them in the **On-demand processing** group under **Settings → Runtime settings**; changes apply immediately.
 
 ### WebP negotiation
 
@@ -87,6 +87,12 @@ When processing fails (no slot within the timeout, a decoding error and so on), 
 - **proxy** (default): ImgYoung reads the image from the healthy channels holding a ready replica, in priority order, and relays it; if a read fails it moves straight on to the next channel.
 - **redirect**: for channels that allow direct links, ImgYoung answers with a 302 and visitors download straight from the channel's public address, bypassing this host.
 
+Proxy is the default because only when the image bytes pass through this host do all of the following hold at once:
+hotlink protection applies to every request, on-demand processing and WebP negotiation work, a failed channel read
+switches to another channel instantly, access counts are accurate, and channels' direct links are never exposed. The
+traffic load is meant to be carried by a CDN in front; see [CDN](../operations/cdn.mdx). Redirect is for small VPSes
+with limited bandwidth and no CDN; the trade-offs are in the table below.
+
 In redirect mode, ImgYoung goes through the healthy channels holding a ready replica in priority order and picks the first one that:
 
 - has **Allow 302 direct links** turned on in its channel settings;
@@ -110,7 +116,7 @@ Even in redirect mode, these requests are still proxied by this host:
 | Hotlink protection | Checked on every access | Only the 302 step is checked; the channel's public address itself is unprotected |
 | Encrypted channels | Work | Cannot be linked directly; requests fall back to the proxy |
 
-302 responses carry `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect: its target changes with channel health, priority and direct-link settings, and deleting or expiring an image must take effect immediately. Every visit reaches this host first, and access counting works as usual.
+302 responses carry `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect: its target changes with channel health, priority and direct-link settings, and deleting or expiring an image must take effect immediately. The redirect itself carries no image bytes, so each visit back to this host costs only a few database queries. Every visit reaches this host first, and access counting works as usual.
 
 Object keys in channels have no file extension, so each write hands the content-sniffed `Content-Type` to the storage backend along with the bytes; object storage channels keep it, and opening a 302 link directly in a browser displays the image normally.
 
@@ -148,6 +154,17 @@ A `Referer` can be forged or left out, and with **Allow empty referer** on, ever
 When images go through a CDN, cache hits never reach this host, so its rules cannot see them and you need equivalent rules on the CDN; in redirect mode, channel public addresses are outside its reach as well.
 </Callout>
 
+## No private images [#no-private-images]
+
+Every image link is public: anyone who knows the link can fetch the image, without logging in; there are no signed links
+or other access checks. A short ID is just a random identifier, not a secret: privacy never depends on its length, and
+it does not matter if a link is guessed or enumerated, because the image is public to begin with.
+
+Truly private images would need short-lived signed links, checked by this host on every access: no year-long caching
+and no 302 to a channel's direct link. That conflicts with an access path designed around "public, immutable,
+cacheable for a long time", so ImgYoung does not offer private images. Do not upload images that must not be public;
+if you only want to limit which sites can embed your images, use [hotlink protection](#hotlink-protection).
+
 ## Browsing in the console is not counted [#console-browsing]
 
 Thumbnails and previews in the admin console are served from `/api/admin/images/<short ID>/thumb`, which:
@@ -162,7 +179,7 @@ So administrators browsing images do not skew access statistics or cold-image de
 
 An access is counted for every `/i/` or `/o/` GET request that reaches an image (after passing hotlink protection, with valid processing parameters), including 304 and 302 responses. Not counted: HEAD requests, requests rejected with 400 for an invalid `w` or `format`, console thumbnails and previews, S3 GetObject, and requests rejected by hotlink protection.
 
-Counts are kept in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box). However often an image is accessed within one window, it gains 1, so **Accesses** reflects the number of windows with at least one access, not exact page views.
+Counts are kept in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box). However often an image is accessed within one window, it gains 1, so **Accesses** reflects the number of windows with at least one access, not exact page views. Accesses are not written one request at a time because SQLite allows only one writer at a time, and per-request updates would compete with uploads and cleanup for the write lock; the cold-image threshold is measured in days and the counts feed trends and rankings, so this precision is enough.
 Each batch write also:
 
 - updates the **Last access** time;

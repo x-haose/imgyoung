@@ -41,7 +41,7 @@ The module's `go.mod` declares Go 1.26.9; your toolchain must be at least that v
 ## One module, only the packages you use get compiled
 
 `store/` lives in the same module as the application, `github.com/x-haose/imgyoung`; it is not split into a separate
-module. Go compiles only imported packages: if you import just `store/driver` and `store/failover`, neither rclone nor
+module, because a separate module would need `replace` directives to tie the two together during development in the repository. Go compiles only imported packages: if you import just `store/driver` and `store/failover`, neither rclone nor
 any application code ends up in your binary.
 
 The size difference is substantial. A minimal program that prints one line, built on darwin/arm64 (not stripped):

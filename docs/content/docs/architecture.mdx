@@ -15,7 +15,7 @@ ImgYoung 明确按单实例设计:一个进程、一个数据目录。
 因此 ImgYoung 不支持多个进程共享同一个数据目录,也不支持水平扩展。需要高可用时,升级路径是把数据库换成 PostgreSQL
 (River 本身支持 PostgreSQL,任务队列随之迁过去),进程内的共享状态届时再外置;当前代码只有 SQLite 实现。
 
-## 分层与依赖方向
+## 分层与依赖方向 [#layers]
 
 ```text
 http ──→ core ──→ infra
@@ -49,7 +49,7 @@ http ──→ core ──→ infra
 
 HTTP handler 与 River worker 都只是把外部触发翻译成服务调用的薄适配;周期任务是各服务自带的 `Run(ctx, wait)` 循环,由装配根统一编排,没有单独的调度层。
 
-## 数据模型
+## 数据模型 [#data-model]
 
 数据模型的核心是**物理图与上传引用两层分离**:
 
@@ -178,7 +178,7 @@ JPEG 剥离后补回一个只含方向(Orientation)的最小 Exif 段,靠方向�
 304 带上 200 响应会有的 `ETag`、`Cache-Control` 与 `Vary`,缓存据此续用已存的副本。格式经 `Accept` 协商的响应带 `Vary: Accept`;
 降级输出的原图为 `no-store`,不走 304。数据库查询失败时返回纯文本 500,可以重试。
 
-## outbox 围栏:业务表是唯一真相
+## outbox 围栏:业务表是唯一真相 [#outbox]
 
 异步补齐由 River 执行,但 River 的任务只是**幂等的触发器**,副本状态的唯一真相是业务表 `blob_channels`:
 
@@ -230,17 +230,67 @@ JPEG 剥离后补回一个只含方向(Orientation)的最小 Exif 段,靠方向�
 两段合计 8 秒,在 Docker 默认 10 秒的强制终止时限之内,`deploy/` 下的示例配置还另留了余量(compose 的 `stop_grace_period: 15s`、
 systemd 的 `TimeoutStopSec=15s`)。被取消的补齐任务状态留在业务表里,下次启动由对账重新入队。
 
-## 两条升级缝
+## 技术选型 [#tech-stack]
 
-技术选型里只有两处预期会被替换,其余都是定死的,不预留替换点:
+选型围绕同一个前提:单实例、单个静态二进制,除了存储渠道,部署时不需要任何外部服务。依赖的具体版本以仓库的 `go.mod` 为准。
+
+### 语言与构建
+
+- **Go**:静态编译成单个二进制,Docker 镜像小;多渠道写入、异步补齐、健康探测、任务队列这类 I/O 编排用 goroutine 写起来直接;
+  对象存储、HTTP、指标监控的生态成熟,语法简单、编译快,参与贡献的门槛低。决定性的一条是 rclone 本身用 Go 编写,
+  只有 Go 能在进程内直接调用它的后端,见[为什么在进程内集成 rclone](#rclone)。
+- **全程 `CGO_ENABLED=0`**:不依赖 C 工具链与系统库,才能交叉编译出 Linux、macOS、Windows 各两种架构的发布包,
+  并放进只有一个二进制的 distroless 镜像。下面每一项依赖都是纯 Go 或不需要 cgo。构建一律带 `-tags nodynamic`:
+  WebP 库默认会在运行期尝试加载系统的 libwebp,关掉这条路径后,Linux 二进制才不依赖动态链接器。
+
+### 依赖
+
+| 领域 | 选择 | 为什么 |
+|---|---|---|
+| HTTP 路由 | chi | handler 就是标准库的 `http.Handler`,没有私有概念;上传(流式读请求体)与图片代理(流式写响应)都直接面对 `io.Reader` / `io.Writer`,薄路由最合适 |
+| SQLite 驱动 | `modernc.org/sqlite` | 纯 Go 实现,不需要 cgo |
+| 数据库访问 | sqlc | 查询写成 SQL,生成类型安全的 Go 代码。不用 ORM:图床的查询都是简单的精确查询,ORM 的抽象没有收益 |
+| 迁移 | Atlas | 声明式 schema 是唯一依据,开发期由 Atlas 计算差异生成版本化迁移;运行期用它的纯 Go 执行器在启动时应用,部署方不需要安装迁移工具 |
+| 任务队列 | River | 持久化任务队列,重试、退避与并发控制现成;用 SQLite 驱动,任务表与业务表在同一个库里,不多一个服务。任务只是幂等触发器,状态以业务表为准,见[outbox 围栏](#outbox) |
+| 周期任务 | 各服务自带的 `Run(ctx, wait)` 循环 | 周期任务只需要「每隔多久执行一次」,间隔取自运营配置、修改后立即重新计时;不引入 cron 库 |
+| 依赖装配 | 在 `cmd/imgyoung/build.go` 里手工装配 | 组件集合固定、依赖关系静态,按顺序调用构造函数即可,能搜索、能跳转,没有反射与运行时容器。不用 DI 框架 |
+| 生命周期编排 | oklog/run | HTTP、River 与各后台循环各是一个 actor,任何一个退出即触发整组按序停机;比手写 `WaitGroup` 加通道更不容易写错 |
+| 架构守卫 | depguard(golangci-lint 内置) | 层间依赖方向写成 lint 规则由 CI 强制,边界不靠自觉,见[分层与依赖方向](#layers) |
+| 感知哈希 | goimagehash | 纯 Go,输入是解码后的 `image.Image`,直接接在上传的解码步骤后面 |
+| 图像编解码 | 标准库、`golang.org/x/image`、gen2brain/webp | 都不需要 cgo;WebP 编码由 gen2brain/webp 在纯 Go 的 WebAssembly 运行时里执行 libwebp |
+| 加密 | 标准库 AES-256-GCM 与 HKDF;`golang.org/x/crypto` 的 argon2id | 分别用于加密渠道配置与凭证、派生渠道密钥与 S3 secret、哈希登录密码。渠道数据本身的加密交给 rclone crypt |
+| 限流 | `golang.org/x/time/rate` | 上传频控与登录限速都是进程内的令牌桶 |
+| 日志与指标 | `log/slog`、Prometheus 的 client_golang | 各自领域的事实标准 |
+| 短 ID | jaevor/go-nanoid | 对外短 ID 用成熟实现;内部主键用 SQLite 自增 rowid,不对外暴露 |
+
+项目以 MIT 许可发布:与 rclone 一致,贡献门槛最低;自部署工具不存在被云厂商拿去托管转售的现实顾虑。
+
+### 不引入的东西
+
+- **Redis**:单实例下没有它的位置。幂等键、引用计数这类需要原子性的地方交给 SQLite 的约束与原子更新,限流是进程内令牌桶,
+  衍生图缓存在本地磁盘。单实例下进程内的实现严格优于 Redis:没有网络往返与序列化,也不多运维一个服务。走向多实例时才需要重新考虑。
+- **配置文件与配置库**:环境变量只负责把进程启动起来,其余运营配置以数据库里的 `settings` 表为唯一依据、在后台修改,
+  「这个值从哪来」永远只有一个答案,见[配置](./configuration.mdx)。
+- **ORM、DI 框架、cron 库**:理由见上表。
+
+### SQLite 与版本化迁移
+
+SQLite 是单个文件、没有外部依赖,一致性快照也就是一个文件,最贴合自部署,也与单实例设计相配。
+版本化迁移从第一天起就有:长期运行的自部署实例会跨很多个版本升级,没有版本化迁移,表结构很快失控。迁移只有升级方向,见[数据模型](#data-model)。
+
+### 两条升级缝
+
+只有两处预期会被替换,其余选型都是定死的:Go 生态的薄库都贴着标准库的形状,真要替换也是机械劳动,为此预留灵活性没有收益。
 
 - **图像处理引擎**:按需处理的唯一入口是 `internal/infra/imaging` 的 `Processor.Process(src, params)`。当前是纯 Go 实现:标准库解码
-  JPEG / PNG / GIF,WebP 编解码用 `gen2brain/webp`,只输出 WebP、JPEG、PNG,GIF 只收发原图不处理。需要更多格式或更快的处理时,替换的是这个处理器。
-- **数据库**:当前是 SQLite。表结构以声明式 SQL 为准,迁移由 Atlas 生成,查询代码由 sqlc 生成;换 PostgreSQL 时替换的是这一层与 River 的驱动。
+  JPEG / PNG / GIF,WebP 编码用 gen2brain/webp,只输出 WebP、JPEG、PNG,GIF 只收发原图不处理。AVIF、HEIF 不在其列:使用率低,
+  编码器(如 libaom)又重。需要更多格式或更快的处理时(例如基于 libvips 的实现),替换的是这个处理器。
+- **数据库**:当前是 SQLite。表结构以声明式 SQL 为准,迁移由 Atlas 生成,查询代码由 sqlc 生成;换 PostgreSQL 时,
+  按目标方言重新生成查询代码与迁移,并换上 River 的 PostgreSQL 驱动。
 
 两处目前都只有一个实现,没有为它们预先定义接口类型。
 
-## 为什么在进程内集成 rclone
+## 为什么在进程内集成 rclone [#rclone]
 
 存储层的原则是:rclone 只负责「把字节存到某个后端、取回、查询、列举、删除」,主备切换、补齐、引用计数、查重、TTL、健康判断全部由 ImgYoung 自己实现,
 两者之间隔着 `store/driver.Driver` 接口。
@@ -257,4 +307,5 @@ systemd 的 `TimeoutStopSec=15s`)。被取消的补齐任务状态留在业务�
 注册全部 rclone 后端(`backend/all`)意味着任何 rclone 支持的存储都能直接作为渠道使用,rclone 升级即带来新后端;代价是二进制体积达到百 MB 量级。
 这里用的是 rclone 的内部 API,它不承诺稳定,所以 `go.mod` 固定了 rclone 版本,升级由人工进行并跑完整测试。
 
-把 `Driver` 接口与 rclone 实现拆成两个包,也让应用之外的 Go 项目可以单独复用这套存储引擎,见 [作为 Go 库使用](./library/index.mdx)。
+`Driver` 接口不假设 rclone 存在,这也是 rclone 内部 API 变动时的退路:换一个 `Driver` 实现即可,业务代码不动。
+接口与 rclone 实现拆成两个包,也让应用之外的 Go 项目可以单独复用这套存储引擎,见 [作为 Go 库使用](./library/index.mdx)。

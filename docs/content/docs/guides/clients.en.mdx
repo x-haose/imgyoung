@@ -46,6 +46,7 @@ To set a lifetime or EXIF policy, add `ttl` and `exif_policy` as extra form fiel
 ## S3 protocol
 
 ImgYoung implements a subset of the S3 protocol under `/s3`, and the credential is your upload token: revoke the token and this route stops working too.
+The protocol lives under the `/s3` prefix because S3 bucket paths are single segments at the site root, and mounting them at the root would take over the admin console's top-level routes.
 
 ### Getting the S3 settings
 
@@ -118,7 +119,7 @@ An image uploaded over S3 has, besides its short ID, an address based on its obj
 https://img.example.com/o/<user id>/<object key>
 ```
 
-- The user id is the immutable account identifier, not the username: `default` for the built-in administrator, and a random 10-character string for every other account. You can find it in the ID column of the **Users** page or in the **Custom domain** field of the S3 settings dialog. Object keys are only unique within a user, which is why the link needs it.
+- The user id is the immutable account identifier, not the username: `default` for the built-in administrator, and a random 10-character string for every other account. You can find it in the ID column of the **Users** page or in the **Custom domain** field of the S3 settings dialog. Object keys are only unique within a user, which is why the link needs it. It is the immutable ID rather than the username because usernames can change: after a rename, someone else could take the old name, and links shared earlier would then point at their images.
 - `/o/` and `/i/<short ID>` are two entrances to the same image, with identical on-demand processing, format negotiation, hotlink protection and access counting; only caching differs, see below and [Accessing images](./access.mdx#caching).
 - The short ID is in the `x-amz-meta-image-id` header of the PutObject response, and the image also shows up on the **Images** page.
 
@@ -127,7 +128,7 @@ https://img.example.com/o/<user id>/<object key>
 A second PutObject to the same object key overwrites it, S3 style:
 
 - The object key now points to the newly uploaded image, and the `/o/` link shows the new image.
-- The old image is not deleted. Its short ID link keeps working, and it keeps using storage and quota; delete it on the **Images** page if you no longer need it.
+- The old image is not deleted, since its short ID may already have been shared: the short ID link keeps working, and it keeps using storage and quota; delete it on the **Images** page if you no longer need it.
 - DeleteObject only deletes the image the key currently points to.
 
 Because object keys can be overwritten, responses for `/o/` links (and S3 GetObject) carry `Cache-Control: public, no-cache` with a strong `ETag`: browsers and CDNs may cache them but must check with this server, sending the `ETag`, before each use, and get a 304 when nothing changed.

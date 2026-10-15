@@ -54,7 +54,7 @@ The full documentation lives at <https://imgyoung.x-haose.com>:
 | [Go library](https://imgyoung.x-haose.com/en/docs/library) | Storage drivers and failover primitives |
 | [API reference](https://imgyoung.x-haose.com/en/docs/api) | Generated from [api/openapi.yaml](./api/openapi.yaml) |
 
-Example configurations (Compose, Caddy, Nginx, systemd) are in [deploy/](./deploy/); the design blueprint (Chinese) is [图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md).
+Example configurations (Compose, Caddy, Nginx, systemd) are in [deploy/](./deploy/); design and technology choices are on the [Architecture](https://imgyoung.x-haose.com/en/docs/architecture) page; planned work is tracked in issues labeled [`roadmap`](https://github.com/x-haose/imgyoung/issues?q=label%3Aroadmap).
 
 ## Using it as a Go library
 

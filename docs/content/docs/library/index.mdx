@@ -38,7 +38,7 @@ go get github.com/x-haose/imgyoung/store/rclone@latest
 
 ## 同一个 module,只编译用到的包
 
-`store/` 与应用位于同一个 module `github.com/x-haose/imgyoung`,没有拆成独立 module。
+`store/` 与应用位于同一个 module `github.com/x-haose/imgyoung`,没有拆成独立 module:拆开之后,仓库内的开发要靠 `replace` 指令把两个 module 接起来。
 Go 只编译被 import 的包:只导入 `store/driver` 与 `store/failover` 时,rclone 和应用代码都不会进入你的二进制。
 
 两种导入方式的体积差别很大。在 darwin/arm64 上构建只打印一行的最小程序(未 strip):

@@ -45,7 +45,7 @@ Not a good fit:
 
 - **Horizontal scaling or an HA cluster.** ImgYoung is a single-instance design (SQLite plus an in-process job queue); several processes cannot share one data set.
 - **A public image hosting service.** There is no open sign-up, payment or billing; only admins can create accounts.
-- **Private images.** Image links are public: anyone with the link can view the image. There are no signed URLs or per-image access control, and hotlink protection is only a light barrier.
+- **Private images.** Image links are public: anyone with the link can view the image. There are no signed URLs or per-image access control, and hotlink protection is only a light barrier. See [No private images](./guides/access.mdx#no-private-images).
 - **Albums, tags and similar organization.** The console offers a list, search, and filters by user, token and time.
 - **Formats beyond the common four.** Only JPEG, PNG, GIF and WebP are accepted (detected from file content, not the extension); SVG, HEIC, AVIF and others are rejected.
 
