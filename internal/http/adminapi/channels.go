@@ -249,33 +249,22 @@ func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	config := spec.config
-	if req.ChannelID > 0 {
-		restored, err := h.cfg.Admin.RestoreSecrets(r.Context(), req.ChannelID, config)
-		switch {
-		case errors.Is(err, channel.ErrChannelNotFound):
-			httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
-			return
-		case errors.Is(err, channel.ErrInvalidChannel):
-			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
-			return
-		case err != nil:
-			h.cfg.Logger.Error("还原测试配置凭证失败", "id", req.ChannelID, "err", err)
-			httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
-			return
-		}
-		config = restored
-	}
-	err := h.cfg.Admin.TestConfig(r.Context(), spec.driver, config)
-	if errors.Is(err, channel.ErrInvalidChannel) {
+	failure, err := h.cfg.Admin.TestConfig(r.Context(), channel.TestParams{
+		ChannelID: req.ChannelID, Template: spec.template, Driver: spec.driver, Config: spec.config,
+	})
+	switch {
+	case errors.Is(err, channel.ErrChannelNotFound):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		return
+	case errors.Is(err, channel.ErrInvalidChannel):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
 		return
+	case err != nil:
+		h.cfg.Logger.Error("测试连接失败", "id", req.ChannelID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
 	}
-	resp := channelTestResponse{OK: err == nil}
-	if err != nil {
-		resp.Error = err.Error()
-	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, resp)
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, channelTestResponse{OK: failure == "", Error: failure})
 }
 
 // HandleChannelConfig 回读单渠道配置的编辑视图(敏感值哨兵掩码,供编辑表单预填)。

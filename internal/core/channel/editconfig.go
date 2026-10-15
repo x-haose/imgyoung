@@ -46,29 +46,6 @@ func (m *Manager) ConfigForEdit(ctx context.Context, channelID int64) (EditConfi
 	return out, nil
 }
 
-// RestoreSecrets 把配置中的哨兵值还原为指定渠道已存配置的同键原值。
-// @Description: 供编辑场景"先测后存"复用——表单回传的掩码凭证在探测前还原,
-// 与 Update 的还原规则一致。
-// @param channelID 渠道主键
-// @param config 待还原的配置
-// @return 还原后的新配置(不修改入参)
-// @return ErrChannelNotFound、解密失败或哨兵无原值可还原时的错误
-func (m *Manager) RestoreSecrets(ctx context.Context, channelID int64,
-	config map[string]string) (map[string]string, error) {
-	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrChannelNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("读取渠道 %d: %w", channelID, err)
-	}
-	old, err := m.unsealConfigMap(row.ConfigSealed)
-	if err != nil {
-		return nil, err
-	}
-	return restoreSecrets(config, old)
-}
-
 // maskSecrets 返回把敏感键值替换为 SecretPlaceholder 的配置副本。
 // @param config 明文配置
 // @return 掩码后的新配置(不修改入参)
@@ -82,25 +59,4 @@ func maskSecrets(config map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-// restoreSecrets 把 config 中等于 SecretPlaceholder 的值替换为 old 的同键原值。
-// @param config 提交的配置,可为 nil
-// @param old 渠道已存的明文配置
-// @return 还原后的新配置(不修改入参)
-// @return 哨兵键在 old 中无原值时的 ErrInvalidChannel(此时只能重新填写)
-func restoreSecrets(config, old map[string]string) (map[string]string, error) {
-	out := make(map[string]string, len(config))
-	for k, v := range config {
-		if v != SecretPlaceholder {
-			out[k] = v
-			continue
-		}
-		ov, ok := old[k]
-		if !ok || ov == "" {
-			return nil, fmt.Errorf("%w: 字段 %q 无已存原值可保留,请重新填写", ErrInvalidChannel, k)
-		}
-		out[k] = ov
-	}
-	return out, nil
 }

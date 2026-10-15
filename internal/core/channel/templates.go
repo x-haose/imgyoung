@@ -5,8 +5,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-
-	"github.com/x-haose/imgyoung/store/rclone"
 )
 
 // 字段输入类型,前端据此渲染控件。
@@ -193,7 +191,7 @@ func TemplateByID(templateID string) (Template, bool) {
 // BuildTemplateConfig 按模板与用户输入合并出渠道 config,并做必填校验。
 // @Description: 合并顺序为固定预设 → 字段值(按 configKey 落位)→ endpoint 拼接;
 // 参与拼接的中间字段(region/account_id)若 configKey 为空则不直接进 config。
-// 表单字段的密码一律按明文编码;漏编码会被后端当作已编码值解出乱码,凭证正确却认证失败。
+// 密码类值保持明文、哨兵值原样保留,由渠道管理器还原哨兵后再编码。
 // @param templateID 模板标识
 // @param inputs 用户填写的字段值(键为 TemplateField.Key)
 // @return rclone 后端名
@@ -219,9 +217,6 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 	}
 	if tpl.endpointPattern != "" {
 		config["endpoint"] = renderEndpoint(tpl, inputs)
-	}
-	if err := rclone.ObscureSecrets(tpl.Driver, config); err != nil {
-		return "", nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 	return tpl.Driver, config, nil
 }

@@ -190,33 +190,46 @@ func TestTemplatesDownloadShape(t *testing.T) {
 	}
 }
 
-// TestWebDAVTemplateObscuresPassword 验证 WebDAV 密码按 rclone 要求编码后入库。
-// @Description: 漏编码时后端会把明文当作已编码值解出乱码,表现为凭证正确却认证失败。
-func TestWebDAVTemplateObscuresPassword(t *testing.T) {
+// TestWebDAVTemplatePasswordEncoding 验证 WebDAV 模板的密码入库形态:新填的明文按 rclone 要求编码,
+// 编辑时提交的哨兵还原为已存的编码值、不再二次编码。
+// @Description: 漏编码时后端会把明文当作已编码值解出乱码;把哨兵当明文编码则原密码被替换成乱码。
+// 两者都表现为凭证正确却认证失败。
+func TestWebDAVTemplatePasswordEncoding(t *testing.T) {
 	const plain = "明文密码"
-	drv, cfg, err := BuildTemplateConfig("webdav", map[string]string{
+	inputs := map[string]string{
 		"url": "https://dav.jianguoyun.com/dav/", "vendor": "other",
 		"user": "u@example.com", "pass": plain, "path": "imgyoung",
-	})
+	}
+	drv, submitted, err := BuildTemplateConfig("webdav", inputs)
 	if err != nil {
 		t.Fatalf("BuildTemplateConfig 报错: %v", err)
 	}
-	if drv != "webdav" {
-		t.Errorf("driver = %q, 期望 webdav", drv)
-	}
-	if cfg["pass"] == "明文密码" {
-		t.Fatal("密码未编码即入库")
-	}
-	got, err := obscure.Reveal(cfg["pass"])
+	created, err := prepareConfig(drv, submitted, nil, true)
 	if err != nil {
-		t.Fatalf("编码结果无法还原: %v", err)
+		t.Fatalf("整理创建配置: %v", err)
 	}
-	if got != "明文密码" {
-		t.Errorf("还原得 %q, 期望原密码", got)
+	if got, err := obscure.Reveal(created["pass"]); err != nil || got != plain {
+		t.Fatalf("新密码未按明文编码: %q(err=%v)", got, err)
 	}
-	// 非密码字段不应被编码。
-	if cfg["user"] != "u@example.com" {
-		t.Errorf("user 被误编码: %q", cfg["user"])
+	if created["user"] != "u@example.com" {
+		t.Errorf("user 被误编码: %q", created["user"])
+	}
+
+	inputs["pass"] = SecretPlaceholder
+	inputs["path"] = "imgyoung-2"
+	_, submitted, err = BuildTemplateConfig("webdav", inputs)
+	if err != nil {
+		t.Fatalf("BuildTemplateConfig 报错: %v", err)
+	}
+	edited, err := prepareConfig(drv, submitted, created, true)
+	if err != nil {
+		t.Fatalf("整理编辑配置: %v", err)
+	}
+	if edited["pass"] != created["pass"] {
+		t.Fatalf("哨兵未还原为已存编码值: %q, 期望 %q", edited["pass"], created["pass"])
+	}
+	if edited["path"] != "imgyoung-2" {
+		t.Errorf("非敏感字段未替换: %q", edited["path"])
 	}
 }
 

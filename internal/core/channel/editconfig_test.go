@@ -68,8 +68,8 @@ func TestManagerConfigForEdit(t *testing.T) {
 	}
 }
 
-// TestManagerUpdateKeepsSecretSentinel 验证编辑保留凭证:提交哨兵值时沿用已存
-// 原值,非敏感字段照常替换;哨兵无原值可还原时明确拒绝。
+// TestManagerUpdateKeepsSecretSentinel 验证编辑可只改非敏感字段:提交哨兵值即可保存,
+// 非敏感字段照常替换;哨兵无原值可还原时明确拒绝。
 func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 	env := testenv.New(t)
 	id := createMinioChannel(t, env)
@@ -88,15 +88,6 @@ func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("哨兵编辑返回错误: %v", err)
 	}
-	restored, err := env.Manager.RestoreSecrets(t.Context(), id, map[string]string{
-		"secret_access_key": channel.SecretPlaceholder,
-	})
-	if err != nil {
-		t.Fatalf("RestoreSecrets 返回错误: %v", err)
-	}
-	if restored["secret_access_key"] != "SECRET-ORIGINAL-0123" {
-		t.Fatalf("原凭证未保留: %q", restored["secret_access_key"])
-	}
 	ec, err := env.Manager.ConfigForEdit(t.Context(), id)
 	if err != nil {
 		t.Fatalf("回读编辑结果: %v", err)
@@ -112,9 +103,5 @@ func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 		Name: "minio-edit", Driver: "s3", Config: bad, Template: "",
 	}); !errors.Is(err, channel.ErrInvalidChannel) {
 		t.Fatalf("无原值哨兵错误 = %v, 期望 ErrInvalidChannel", err)
-	}
-
-	if _, err := env.Manager.RestoreSecrets(t.Context(), 99999, nil); !errors.Is(err, channel.ErrChannelNotFound) {
-		t.Fatalf("还原不存在渠道错误 = %v, 期望 ErrChannelNotFound", err)
 	}
 }

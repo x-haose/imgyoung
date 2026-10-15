@@ -72,33 +72,50 @@ func (m *Manager) probeUnloaded(ctx context.Context, row sqlc.Channel) error {
 	return deepProbe(ctx, d)
 }
 
+// TestParams 测试连接的参数。
+type TestParams struct {
+	ChannelID int64             // 编辑场景的渠道主键,配置中的哨兵值还原为该渠道的已存原值;0 = 创建场景
+	Template  string            // 配置所用模板 id,空 = 自定义;模板表单的密码类值按明文编码
+	Driver    string            // rclone 后端名
+	Config    map[string]string // 渠道配置(含约定键 path / public_base_url),可为 nil
+}
+
 // TestConfig 用一份未落库的渠道配置执行深探测(测试连接)。
-// @Description: 不创建渠道、不写任何库表;加密属性不参与——crypt 密钥派生
-// 依赖渠道 ID,本方法验证的是后端连通性与写读删权限。返回的错误文案已
-// 人话化并抹除凭证(用户提交的明文与其编码产物都抹),可直接展示给用户。
-// @param driverName rclone 后端名
-// @param config 渠道配置(含约定键 path / public_base_url),可为 nil
-// @return ErrInvalidChannel(参数非法)或人话化的探测失败错误;nil 表示连接可用
-func (m *Manager) TestConfig(ctx context.Context, driverName string, config map[string]string) error {
+// @Description: 不创建渠道、不写任何库表;配置整理规则与 Create / Update 相同。加密属性不参与——
+// crypt 密钥派生依赖渠道 ID,本方法验证的是后端连通性与写读删权限。探测失败不算方法失败。
+// @param p 测试参数
+// @return 探测失败的原因,已人话化并抹除凭证(提交的明文与其编码产物都抹),可直接展示;空串表示连接可用
+// @return ErrInvalidChannel(参数非法)、ErrChannelNotFound 或读取渠道失败时的错误
+func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) {
 	if err := validateCreateParams(CreateParams{
-		Name: "connectivity-test", Driver: driverName, Config: config,
+		Name: "connectivity-test", Driver: p.Driver, Config: p.Config,
 	}); err != nil {
-		return err
+		return "", err
 	}
-	prepared, err := prepareConfig(driverName, config)
-	if err != nil {
-		return err
+	var stored map[string]string
+	if p.ChannelID > 0 {
+		row, err := m.cfg.Queries.GetChannel(ctx, p.ChannelID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrChannelNotFound
+		}
+		if err != nil {
+			return "", fmt.Errorf("读取渠道 %d: %w", p.ChannelID, err)
+		}
+		if stored, err = m.unsealConfigMap(row.ConfigSealed); err != nil {
+			return "", err
+		}
 	}
-	redact := func(msg string) string { return redactSecrets(redactSecrets(msg, config), prepared) }
-	d, err := m.openTrial(ctx, driverName, prepared)
+	prepared, err := prepareConfig(p.Driver, p.Config, stored, p.Template != "")
 	if err != nil {
-		return errors.New(redact(humanizeProbeError(err)))
+		return "", err
+	}
+	redact := func(msg string) string { return redactSecrets(redactSecrets(msg, p.Config), prepared) }
+	d, err := m.openTrial(ctx, p.Driver, prepared)
+	if err != nil {
+		return redact(humanizeProbeError(err)), nil
 	}
 	defer m.closeTrial(ctx, d, "测试连接")
-	if perr := deepProbe(ctx, d); perr != nil {
-		return errors.New(redact(humanizeProbeError(perr)))
-	}
-	return nil
+	return redact(humanizeProbeError(deepProbe(ctx, d))), nil
 }
 
 // recordProbe 把一次探测结果写入渠道行(healthy / last_checked_at / last_error)

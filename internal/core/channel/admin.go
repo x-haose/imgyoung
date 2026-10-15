@@ -36,7 +36,7 @@ type CreateParams struct {
 	Name             string            // 渠道名(唯一)
 	Driver           string            // rclone 后端名
 	Config           map[string]string // 后端参数(含约定键 path / public_base_url),可为 nil;密码类值明文或 rclone 编码产物皆可
-	Template         string            // 配置所用模板 id,空 = 自定义;仅供编辑表单还原,不参与驱动构造
+	Template         string            // 配置所用模板 id,空 = 自定义;模板表单的密码类值按明文编码,并供编辑表单还原
 	Priority         int64             // 优先级,越大越优先
 	Encrypted        bool              // 是否为加密渠道;创建时固化,建后不可变
 	AllowDirectLink  bool              // 是否允许 302 直链
@@ -74,19 +74,37 @@ func validateCreateParams(p CreateParams) error {
 	return nil
 }
 
-// prepareConfig 把提交的配置整理成可入库形态:复制一份(不改入参),密码类值按 rclone 要求编码。
+// prepareConfig 把提交的配置整理成可入库形态:哨兵值还原为已存原值,本次提交的密码类值按 rclone 要求编码。
+// @Description: 还原出的值取自已入库配置,本就是编码产物,不再编码;只编码本次提交的值——模板表单的值
+// 确定是明文,一律编码;自定义参数来源不明,已是编码产物的值原样保留(见 rclone.ObscurePlainSecrets)。
 // @param driverName rclone 后端名
-// @param config 提交的配置,可为 nil
+// @param submitted 提交的配置,可为 nil;不修改
+// @param stored 渠道已存的配置;创建场景为 nil
+// @param fromTemplate 配置是否由模板表单合并而来
 // @return 整理后的新配置
-// @return 后端不存在时的 ErrInvalidChannel
-func prepareConfig(driverName string, config map[string]string) (map[string]string, error) {
-	out := maps.Clone(config)
-	if out == nil {
-		out = map[string]string{}
+// @return 哨兵无原值可还原或后端不存在时的 ErrInvalidChannel
+func prepareConfig(driverName string, submitted, stored map[string]string,
+	fromTemplate bool) (map[string]string, error) {
+	out := make(map[string]string, len(submitted))
+	kept := make(map[string]string)
+	for k, v := range submitted {
+		if v != SecretPlaceholder {
+			out[k] = v
+			continue
+		}
+		if stored[k] == "" {
+			return nil, fmt.Errorf("%w: 字段 %q 无已存原值可保留,请重新填写", ErrInvalidChannel, k)
+		}
+		kept[k] = stored[k]
 	}
-	if err := rclone.ObscurePlainSecrets(driverName, out); err != nil {
+	encode := rclone.ObscurePlainSecrets
+	if fromTemplate {
+		encode = rclone.ObscureSecrets
+	}
+	if err := encode(driverName, out); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
+	maps.Copy(out, kept)
 	return out, nil
 }
 
@@ -130,7 +148,7 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if err := validateCreateParams(p); err != nil {
 		return 0, err
 	}
-	config, err := prepareConfig(p.Driver, p.Config)
+	config, err := prepareConfig(p.Driver, p.Config, nil, p.Template != "")
 	if err != nil {
 		return 0, err
 	}
@@ -219,7 +237,7 @@ type UpdateParams struct {
 	Name            string            // 渠道名(唯一)
 	Driver          string            // rclone 后端名
 	Config          map[string]string // 后端参数(含约定键 path / public_base_url),整体替换;值为 SecretPlaceholder 表示保留原值
-	Template        string            // 配置所用模板 id,空 = 自定义;仅供编辑表单还原,不参与驱动构造
+	Template        string            // 配置所用模板 id,空 = 自定义;模板表单的密码类值按明文编码,并供编辑表单还原
 	Priority        int64             // 优先级,越大越优先
 	Encrypted       *bool             // 期望的加密属性;nil 表示不动,与现状不一致时拒绝
 	AllowDirectLink bool              // 是否允许 302 直链
@@ -265,21 +283,17 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	if p.Encrypted != nil && *p.Encrypted != encrypted {
 		return ErrEncryptedImmutable
 	}
-	old, err := m.unsealConfigMap(row.ConfigSealed)
-	if err != nil {
-		return err
-	}
-	restored, err := restoreSecrets(p.Config, old)
-	if err != nil {
-		return err
-	}
 	if err := validateCreateParams(CreateParams{
-		Name: p.Name, Driver: p.Driver, Config: restored,
+		Name: p.Name, Driver: p.Driver, Config: p.Config,
 		Encrypted: encrypted, AllowDirectLink: p.AllowDirectLink,
 	}); err != nil {
 		return err
 	}
-	config, err := prepareConfig(p.Driver, restored)
+	old, err := m.unsealConfigMap(row.ConfigSealed)
+	if err != nil {
+		return err
+	}
+	config, err := prepareConfig(p.Driver, p.Config, old, p.Template != "")
 	if err != nil {
 		return err
 	}

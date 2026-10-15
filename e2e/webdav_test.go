@@ -5,6 +5,7 @@ package e2e
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -135,6 +136,61 @@ func TestWebDAVChannelRejectsWrongPassword(t *testing.T) {
 	}
 	if containsAny(tr.Error, davPass, davWrongPass) {
 		t.Errorf("失败原因回显了凭证: %q", tr.Error)
+	}
+}
+
+// maskedValue 配置回读的凭证掩码哨兵,原样提交表示保留已存凭证。
+const maskedValue = "__imgyoung_secret_keep__"
+
+// TestWebDAVChannelEditKeepsPassword 编辑 WebDAV 模板渠道时不改密码:回读的哨兵原样提交,
+// 编辑表单里的测试连接与保存后的探测都通过,证明已存密码没有被哨兵替换。
+func TestWebDAVChannelEditKeepsPassword(t *testing.T) {
+	t.Parallel()
+	davURL := startWebDAVServer(t)
+	inst := startInstance(t, nil)
+	client, csrf := adminSession(t, inst)
+	created, err := json.Marshal(map[string]any{
+		"name": "dav-edit", "template": "webdav",
+		"inputs": map[string]string{
+			"url": davURL + "/", "vendor": "other", "user": davUser, "pass": davPass, "path": "imgyoung",
+		},
+	})
+	if err != nil {
+		t.Fatalf("编码请求体: %v", err)
+	}
+	id := createChannel(t, inst, string(created))
+
+	resp := adminReq(t, client, csrf, http.MethodGet,
+		fmt.Sprintf("%s/api/admin/channels/%d/config", inst.baseURL, id), "")
+	var view struct {
+		Inputs map[string]string `json:"inputs"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&view)
+	_ = resp.Body.Close()
+	if err != nil || view.Inputs["pass"] != maskedValue {
+		t.Fatalf("编辑视图的密码 = %q(err=%v), 期望哨兵", view.Inputs["pass"], err)
+	}
+	view.Inputs["path"] = "imgyoung-edited"
+
+	test, err := json.Marshal(map[string]any{
+		"name": "dav-edit", "template": "webdav", "inputs": view.Inputs, "channel_id": id,
+	})
+	if err != nil {
+		t.Fatalf("编码请求体: %v", err)
+	}
+	if got, raw := testConnection(t, inst, client, csrf, string(test)); !got.OK {
+		t.Fatalf("编辑场景测试连接失败: %s", raw)
+	}
+	update, err := json.Marshal(map[string]any{
+		"name": "dav-edit", "template": "webdav", "priority": 0, "allow_direct_link": false, "inputs": view.Inputs,
+	})
+	if err != nil {
+		t.Fatalf("编码请求体: %v", err)
+	}
+	put := adminReq(t, client, csrf, http.MethodPut, fmt.Sprintf("%s/api/admin/channels/%d", inst.baseURL, id),
+		string(update))
+	if info := decodeChannelInfo(t, put, http.StatusOK); !info.Healthy || info.LastError != "" {
+		t.Fatalf("不改密码保存后探测失败: %+v", info)
 	}
 }
 
