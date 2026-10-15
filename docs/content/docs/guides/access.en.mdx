@@ -12,31 +12,32 @@ description: The two forms of image links, caching and conditional requests, on-
 
 Both links are public and need no sign-in. They share one serving pipeline: hotlink protection, access counting, on-demand processing and failover reads across channels are identical.
 
-- A missing or deleted image returns 404 (plain text). Links stop working as soon as an image is deleted.
-- An image with a lifetime is deleted on the next cleanup sweep after it expires (every 60 seconds out of the box); until then the link still works. See [Lifecycle and deduplication](./lifecycle.mdx).
+- A missing, deleted or expired image returns 404 (plain text). Links stop working as soon as an image is deleted, and an image with a lifetime returns 404 the moment it expires, without waiting for the cleanup sweep to reclaim it; see [Lifecycle and deduplication](./lifecycle.mdx).
 - If no healthy channel holds a usable replica, or every candidate channel fails to read, the response is 503 (plain text).
-- Only GET requests are accepted.
+- If looking up the image metadata fails (a database fault), the response is 500 (plain text) and can be retried later.
+- GET and HEAD are supported. HEAD returns the same status and headers as GET without a body and is not counted as an access; when no on-demand processing is needed it does not read the object from the channel, while a HEAD request that needs processing still produces the variant.
 
 The full API definition is in [API reference: image access](../api/image-access.mdx).
 
-## Caching and conditional requests
+## Caching and conditional requests [#caching]
 
-The content behind a short ID never changes, so normal responses may be cached for a long time:
+The image behind a short link never changes and may be cached for a long time; an `/o/` alias can be overwritten to point at a new image, so caches must check before each use:
 
-| Header | Original | Variant (on-demand processing result) |
+| Header | Short link `/i/` | Alias `/o/` |
 |---|---|---|
-| `Cache-Control` | `public, max-age=31536000, immutable` | Same |
-| `ETag` | `"<SHA-256>"` | `"<SHA-256>-<width>-<format>"` |
-| `Last-Modified` | Upload time | Not set |
-| `Content-Type` | The type detected from the content at upload | The type of the target format |
+| `Cache-Control` | `public, max-age=31536000, immutable` | `public, no-cache` |
+| `ETag` | `"<SHA-256>"` for the original, `"<SHA-256>-<width>-<format>"` for a variant | Same |
+| `Vary` | `Accept` when the output format comes from `Accept` negotiation, see [WebP negotiation](#webp-negotiation) | Same |
+| `Last-Modified` | Upload time for the original; not set for variants | Same |
+| `Content-Type` | The type detected from the content at upload for the original; the target format's type for variants | Same |
 | `X-Content-Type-Options` | `nosniff` | `nosniff` |
 
-A request whose `If-None-Match` exactly equals the current `ETag` gets 304. Only `If-None-Match` is evaluated; `If-Modified-Since` is ignored.
+A request whose `If-None-Match` exactly equals the current `ETag` gets 304, which also carries `Cache-Control`, `ETag` and, where applicable, `Vary`. Only `If-None-Match` is evaluated; `If-Modified-Since` is ignored.
+`public, no-cache` lets browsers and CDNs store the response, but they must check with this server, sending the `ETag`, before each use, and get only a 304 when nothing changed; after an overwrite, the next check returns the new image.
 
-Two things can change what a link serves without browser and CDN caches noticing until they expire:
+Two kinds of response are never cached and carry `Cache-Control: no-store`: the fallback after an on-demand processing failure, and 302 direct-link redirects; both are described below.
 
-- The object key behind an `/o/` alias is overwritten, see [Upload clients](./clients.mdx).
-- An administrator merges a near-duplicate pair, and the links of the merged image start serving the kept image's content; see [Lifecycle and deduplication](./lifecycle.mdx#deduplication).
+The content behind a short link changes in only one case: an administrator merges a near-duplicate pair, and the links of the merged image start serving the kept image's content, while browsers and CDNs keep the old content until their cache expires. See [Lifecycle and deduplication](./lifecycle.mdx#deduplication).
 
 ## On-demand resizing and formats [#on-demand-processing]
 
@@ -61,7 +62,7 @@ Without `format`, or with `format=auto`, the output format follows the request's
 
 - If `Accept` contains `image/webp` and `webp` is among the target formats, the output is WebP.
 - Otherwise the original format is kept. Negotiation only ever upgrades to WebP; a WebP original is never converted for older clients.
-- Processed responses whose format came from negotiation carry `Vary: Accept`; responses with an explicit `format`, and originals served unprocessed after negotiation, do not.
+- Every negotiated response carries `Vary: Accept`, including originals served unprocessed after negotiation and 304 responses; responses with an explicit `format` do not. GIFs take no part in negotiation and do not carry it either.
 
 Every modern browser lists `image/webp` in `Accept`, so opening the `/i/` link of a JPEG or PNG in a browser yields WebP by default.
 To get the original bytes, ask for the original's own format, for example `?format=jpeg` on a JPEG: when the target format equals the original format and there is no resizing, the original is served without re-encoding.
@@ -109,7 +110,9 @@ Even in redirect mode, these requests are still proxied by this host:
 | Hotlink protection | Checked on every access | Only the 302 step is checked; the channel's public address itself is unprotected |
 | Encrypted channels | Work | Cannot be linked directly; requests fall back to the proxy |
 
-302 responses carry no cache headers, so every visit reaches this host first and access counting works as usual.
+302 responses carry `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect: its target changes with channel health, priority and direct-link settings, and deleting or expiring an image must take effect immediately. Every visit reaches this host first, and access counting works as usual.
+
+Object keys in channels have no file extension, so each write hands the content-sniffed `Content-Type` to the storage backend along with the bytes; object storage channels keep it, and opening a 302 link directly in a browser displays the image normally.
 
 ## Hotlink protection [#hotlink-protection]
 
@@ -157,14 +160,14 @@ So administrators browsing images do not skew access statistics or cold-image de
 
 ## Access counts and top images
 
-An access is counted for every `/i/` or `/o/` request that reaches an image (after passing hotlink protection), including 304 and 302 responses. Console thumbnails and previews, S3 GetObject and requests rejected by hotlink protection are not counted.
+An access is counted for every `/i/` or `/o/` GET request that reaches an image (after passing hotlink protection, with valid processing parameters), including 304 and 302 responses. Not counted: HEAD requests, requests rejected with 400 for an invalid `w` or `format`, console thumbnails and previews, S3 GetObject, and requests rejected by hotlink protection.
 
 Counts are kept in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box). However often an image is accessed within one window, it gains 1, so **Accesses** reflects the number of windows with at least one access, not exact page views.
 Each batch write also:
 
 - updates the **Last access** time;
 - removes the pending-cleanup mark;
-- with **Renew on access** on, pushes back the expiry of images that have a lifetime; see [Lifecycle and deduplication](./lifecycle.mdx).
+- with **Renew on access** on, pushes back the expiry of images that have a lifetime and have not yet expired; see [Lifecycle and deduplication](./lifecycle.mdx).
 
 In the console you can see:
 

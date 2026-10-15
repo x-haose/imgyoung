@@ -100,6 +100,17 @@ Fields of `rclone.Options`:
 
 Errors returned by `Open` never carry the parameter map, so credentials in it cannot leak into logs through error messages.
 
+### Content-Type on write
+
+`Put` streams the data; the driver itself never buffers the whole object. It first reads up to 512 bytes from the start of the
+data, determines the Content-Type with `net/http.DetectContentType` (the WHATWG content sniffing algorithm), hands it to
+the backend along with the object, and then writes the remaining bytes. Object keys need no file extension: objects in
+S3 and other object stores get their real type (such as `image/png`) instead of `application/octet-stream`, so opening
+the store's public link directly in a browser displays the image instead of downloading it.
+
+- Encrypted drivers do not pass the type on to the store: rclone's crypt layer deliberately hides the plaintext type, and the stored object is ciphertext.
+- Backends that do not record a Content-Type (such as `local`) ignore it.
+
 ### s3 skips the bucket check by default
 
 When `Backend` is `s3` and `Params` has no `no_check_bucket`, the driver adds `no_check_bucket=true`. An explicit value is never overridden.
@@ -179,11 +190,15 @@ d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Pat
 
 Cloud drive backends such as Google Drive, OneDrive, and Dropbox use OAuth. The library has no authorization flow: run
 `rclone authorize "drive"` on your machine (substituting the backend name), and put the resulting JSON token in
-`Params["token"]`.
+`Params["token"]`. If you authorized with your own app, put its `client_id` and `client_secret` in `Params` as well:
+a token can only be renewed by the app that issued it.
 
-When the token is about to expire, rclone refreshes it itself and writes the new value back as a parameter; OneDrive
-also writes back parameters such as `drive_id` while it is being constructed. On a write-back, the driver first updates
-its in-memory parameters and then calls `OnChange(key, value)`.
+`Open` only constructs the backend; it does not run the configuration steps `rclone config` performs after
+authorization. Some backends need parameters written by those steps — OneDrive, for example, needs `drive_id` and
+`drive_type`. Configure the remote once with `rclone config` on your machine, then copy those values from rclone.conf into `Params`.
+
+When the token is about to expire, rclone refreshes it itself and writes the new value back as a parameter. On a
+write-back, the driver first updates its in-memory parameters and then calls `OnChange(key, value)`.
 
 - With a nil `OnChange`, the new value lives only in memory, and after a restart the process starts again from the old
   token. For providers that rotate the refresh token on every refresh, the old token is already void by then, so

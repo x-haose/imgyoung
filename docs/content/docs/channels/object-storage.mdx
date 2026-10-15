@@ -59,6 +59,8 @@ ImgYoung 给所有 `s3` 渠道默认加上 `no_check_bucket=true`:rclone 上传�
 
 任一条件不满足就走代理。打开「允许 302 直链」却没填公开访问地址时,表单提示「未配置 public_base_url,302 直链不会生效,访问将回落代理」。
 
+302 响应带 `Cache-Control: no-store`,浏览器与 CDN 都不缓存这次跳转,渠道切换、下线或图片到期后立即生效。对象写入渠道时按内容识别图片类型并设好 `Content-Type`,对象键虽然不带扩展名,浏览器直接打开直链也能正常显示。
+
 存储桶的公开读权限要在存储商处自行开启,ImgYoung 不做检查。公开可读意味着拿到直链的人可以绕过 ImgYoung 直接访问对象,防盗链只对经过 ImgYoung 的请求生效。访问模式的完整说明见[访问与链接](../guides/access.mdx)。
 
 ## 自定义模式
@@ -106,17 +108,17 @@ rclone 驱动   sftp
 
 WebDAV 渠道没有公开访问地址,表单里也不显示「允许 302 直链」与「自动创建存储桶」,访问始终走代理。阿里云盘、百度网盘等国内网盘也通过 WebDAV 接入,做法见[网盘与 OAuth](./cloud-drives.mdx)。
 
-<Callout type="warn" title="编辑 WebDAV 渠道时重新填写密码">
-编辑 WebDAV 模板渠道时,「密码」一栏保持掩码不动,保存后已存的密码会被替换成无效值,渠道随即认证失败;编辑表单里的「测试连接」同样会失败。编辑时请重新填写密码。
-</Callout>
-
 ## 常见报错与排查
 
-「测试连接」的失败原因,以及渠道状态列「异常」的悬停原因,都按底层错误的特征翻译成下表的提示(不区分大小写,自上而下匹配第一条);无法归类的错误显示原文的前 200 个字符,「测试连接」还会抹掉表单里填的凭证。
+「测试连接」的失败原因,以及渠道状态列「异常」的悬停原因,都按底层错误的特征翻译成下表的提示(不区分大小写,自上而下匹配第一条);无法归类的错误显示原文的前 200 个字符,「测试连接」还会抹掉其中的凭证(rclone 标记为密码或敏感信息的参数值)。
 
 | 提示 | 底层错误特征 | 排查 |
 |---|---|---|
-| 认证失败(403):检查 Access Key / Secret Key 及其权限 | `InvalidAccessKeyId`、`SignatureDoesNotMatch`、`AccessDenied`、`access denied`、`StatusCode: 403`、`401 Unauthorized` | 核对密钥是否抄错、是否已吊销,以及是否对这个桶有读、写、删权限。只读密钥会在深探测的写入环节失败 |
+| 认证失败(403):检查 Access Key / Secret Key 及其权限 | `InvalidAccessKeyId`、`SignatureDoesNotMatch`、`StatusCode: 403`(只出现在 S3 类后端) | 核对密钥是否抄错、是否已吊销,以及是否对这个桶有读、写、删权限。只读密钥会在深探测的写入环节失败 |
+| 应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致 | `invalid_client`、`unauthorized_client` | 网盘渠道的「应用 Client ID」「应用 Client Secret」填错,或与签发令牌的应用不是同一个 |
+| 授权已失效:刷新令牌被拒绝,请重新授权 | `invalid_grant` | 令牌被吊销或已过期太久,在编辑表单里点「重新授权」 |
+| 认证失败(401):检查用户名、密码或授权令牌是否有效 | `401 Unauthorized`、`unauthenticated`、`InvalidAuthenticationToken` | WebDAV 的用户名或密码(坚果云要用应用密码),或网盘的授权令牌 |
+| 无访问权限(403):检查账号对存储位置的权限 | `AccessDenied`、`access denied`、`403 Forbidden` | 非 S3 后端的账号对存储目录没有读、写或删权限 |
 | 存储桶不存在或无权访问:检查桶名与凭证权限 | `NoSuchBucket`、`no such bucket`、`BucketRegionError` | 核对桶名(COS 带 APPID 后缀);确认桶已建好 |
 | 区域不匹配:检查所选区域与存储桶实际所在区域 | `PermanentRedirect`、`AuthorizationHeaderMalformed` | 区域或端点与桶的实际区域不一致 |
 | 无法解析服务端点域名:检查 endpoint 配置 | `no such host`、`server misbehaving` | 端点拼写错误,或服务器 DNS 不通 |
@@ -135,5 +137,8 @@ WebDAV 渠道没有公开访问地址,表单里也不显示「允许 302 直链�
 | `渠道参数非法: 未知的 rclone 后端 "…"` | 自定义模式的驱动名拼错 |
 | `渠道参数非法: 配置键 "…" 非法(仅允许字母数字下划线)` | 自定义参数的键含其他字符(如 `-`) |
 | `渠道参数非法: 自动创建存储桶失败(…)` | 打开了「自动创建存储桶」,但凭证没有建桶权限 |
+| `渠道参数非法: 后端 "onedrive" 授权后的配置失败: …` | 新授权的 OneDrive 渠道选定驱动器时向服务商查询失败 |
+| `渠道参数非法: 字段 "…" 不是凭证,不能沿用已存值` | 掩码值 `__imgyoung_secret_keep__` 填在了不属于凭证的参数上 |
+| `渠道参数非法: 字段 "…" 无已存原值可保留,请重新填写` | 提交了掩码值,但该参数在已存配置里没有值 |
 
 渠道已建好但状态为「异常」时,改好配置后在行菜单点「重新探测」,它会立即做一次深探测并刷新状态。探测与状态的规则见[渠道与容灾](./index.mdx)。

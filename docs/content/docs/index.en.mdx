@@ -29,7 +29,7 @@ ImgYoung is designed to keep image links working for the long run:
 | Background deduplication | Byte-identical images are merged into one physical file automatically; near-duplicates (by perceptual hash) go to a review list. Deduplication runs in the background and never slows down uploads. See [Admin console](./guides/admin.mdx) |
 | On-demand processing | Append `?w=400` to resize to a preset width; browsers that accept WebP get WebP automatically. Results are cached on local disk. See [Access and links](./guides/access.mdx) |
 | Multiple users and quotas | Admins create accounts; each user has their own images, upload tokens and storage quota, and regular users cannot see each other's data. See [Admin console](./guides/admin.mdx) |
-| Many ways to upload | Drag-and-drop or paste in the console, the HTTP upload API, fetch from URL, the S3 protocol (the built-in Amazon S3 uploader of PicGo, PicList, Typora and others works as is), and PicGo / PicList custom uploaders. See [Uploading](./guides/upload.mdx) and [Clients](./guides/clients.mdx) |
+| Many ways to upload | Drag-and-drop or paste in the console, the HTTP upload API, fetch from URL, the S3 protocol (PicList's built-in AWS S3 uploader works as is; PicGo works once its S3 plugin is installed), and PicGo / PicList custom uploaders. See [Uploading](./guides/upload.mdx) and [Clients](./guides/clients.mdx) |
 
 There is also hotlink protection (a Referer allowlist), proxy or 302 redirect access modes, Cloudflare CDN cache purging, an audit log, alert webhooks and Prometheus metrics.
 

@@ -13,7 +13,7 @@ Requests to `/healthz` and `/metrics` themselves are not counted in the HTTP met
 
 `GET /metrics` serves metrics in the Prometheus text format on the same port as everything else.
 
-**Access control**: only clients whose address is inside `IMGYOUNG_METRICS_ALLOW` (loopback and private ranges by default) are allowed; everyone else gets 403. The client address is resolved by the rules in [Reverse proxy & HTTPS](./reverse-proxy.mdx). Metrics expose route templates, channel names and usage and should not be public:
+**Access control**: only clients whose address is inside `IMGYOUNG_METRICS_ALLOW` (loopback and private ranges when the variable is unset) are allowed; everyone else gets 403. Setting the variable to an empty string (or only whitespace) closes `/metrics` to everyone. The client address is resolved by the rules in [Reverse proxy & HTTPS](./reverse-proxy.mdx). Metrics expose route templates, channel names and usage and should not be public:
 
 - the public entry point (the reverse proxy) must never forward `/metrics`; the Caddy and Nginx examples in `deploy/` answer it with 404;
 - let Prometheus reach ImgYoung's listen address directly over the internal network;
@@ -71,10 +71,10 @@ Alerts come from an evaluation loop that runs once at startup and then every **H
 
 | Kind | UI label | Target | Condition |
 |---|---|---|---|
-| `channel_unhealthy` | Channel unhealthy | Channel name | The latest health check of an in-service channel failed; details give the reason |
+| `channel_unhealthy` | Channel unhealthy | Channel name | The latest health check of an in-service channel failed, or the channel failed to load; details give the reason |
 | `replication_failed` | Replication failed | Channel name | The channel has replicas whose replication failed; details give the count. Failed replicas are retried once the channel is healthy again |
 | `channel_quota_exceeded` | Channel over quota | Channel name | A **Channel usage alert threshold** is set and the channel's usage exceeds it |
-| `drain_failed` | Channel drain failed | Channel name | The job removing objects from a channel being deleted failed and stopped retrying |
+| `drain_failed` | Channel drain failed | Channel name | Opens on the first failure to delete an object while a channel is being deleted with **Delete and purge**; details give the reason (the job's own timeout or a shutdown interruption does not count). Draining keeps retrying with backoff; once the channel is empty it is removed and the alert resolves. If the credentials are revoked or the bucket is gone, use **Remove now** on **Storage channels**; the remote objects are left as they are |
 | `backup_failed` | Backup failed | Empty | The most recent metadata backup failed; details give the reason |
 
 `backup_failed` reflects the most recent backup in the current process, so after a restart it does not reappear until a backup fails again.
@@ -134,9 +134,11 @@ Log lines worth knowing when troubleshooting:
 | Message | Meaning |
 |---|---|
 | `ImgYoung 已启动` | Startup finished; includes version, commit, actual listen address and data directory |
-| `已生成主密钥文件,请立即备份……` | A new `master.key` was generated on this start; outside a first deployment this means the original master key is gone |
+| `已生成主密钥文件,请立即备份……` | The data directory holds a brand-new database and no master key, so a new `master.key` was generated. Outside a first deployment this usually means the data directory path is wrong or the volume is not mounted |
+| `启动失败` with `err` containing 主密钥与数据库不符 or 找不到主密钥 | The database records a master key fingerprint and the current key does not match it, or `IMGYOUNG_MASTER_KEY` is unset and `master.key` does not exist. Put the original master key back and start again |
 | `CDN purge 已启用(Cloudflare)` / `CDN purge 未启用……` | Whether CDN cache purging was configured at startup |
-| `渠道配置无法解密,本渠道跳过` | The master key differs from the one the channel configuration was written with |
+| `渠道装载失败,本渠道跳过,健康检查时重试` | A channel's configuration could not be decrypted or its driver could not be built; the channel shows as unhealthy with a reason starting with 装载失败, and loading is retried on every health check |
 | `告警开启` / `告警恢复` | An alert opened or resolved |
+| `渠道对账完成` | Result of the daily reconciliation GC, with fields `objects`, `bytes`, `foreign` (objects with no record that this database did not write; counted, never deleted), `orphans_deleted` and `phantoms_requeued`; see [Backup & restore](./backup.mdx) |
 | `收到停机请求,优雅停机后由进程管理器拉起` | A restore from snapshot was triggered in the admin console |
 | `已用暂存快照换入元数据库,原库留存` | The snapshot was swapped in; includes where the previous database was kept |

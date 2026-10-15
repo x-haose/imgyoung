@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 </Tab>
 <Tab value="Docker">
 
-Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume.
+Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume. If you pass the master key with `-e IMGYOUNG_MASTER_KEY=…`, do not leave it out when recreating the container: the database records a fingerprint of the master key, and the process refuses to start without it.
 
 ```bash title="Terminal"
 docker pull ghcr.io/x-haose/imgyoung:latest
@@ -77,6 +77,8 @@ Replace the running binary with the newly built `./imgyoung` and restart.
 </Tab>
 </Tabs>
 
+When the old process is stopped, ImgYoung first stops accepting new requests and waits up to 6 seconds for in-flight requests (cutting them off after that), then stops the background loops and in-flight replication jobs, waiting up to 2 more seconds, and finally closes the database and exits. Interrupted replication jobs are queued again by reconciliation on the next start. Docker's default 10-second stop timeout and the `stop_grace_period: 15s` (Compose) and `TimeoutStopSec=15s` (systemd) in the `deploy/` examples are all enough.
+
 ## Database migrations
 
 Migrations are embedded in the binary and run automatically on every start, right after the database is opened:
@@ -84,15 +86,16 @@ Migrations are embedded in the binary and run automatically on every start, righ
 - the migration files are first checked against their checksum list, then every migration not yet applied runs in version order; when skipping several versions, all intermediate migrations are applied in turn. Applied versions are recorded in the `schema_revisions` table.
 - the replication subsystem's job queue tables are migrated at startup as well.
 - runtime settings added by a migration are filled in with their factory defaults; existing values are untouched.
-- if a migration fails, the process exits with an error naming the failing migration file. Roll back using your pre-upgrade copy (see below).
+- if the database records a migration version this binary does not know (it was migrated by a newer version), startup is refused; see [Rolling back](#rolling-back) below.
+- if a migration fails, the process exits with an error naming the failing migration file. Roll back using your pre-upgrade snapshot (see below).
 
 There is no separate migration command, and none is needed.
 
 ## Rolling back
 
-Migrations only go forward; there are no down migrations. A database migrated by a newer version must **not** be handed to an older version: the older version will not refuse it (it sees no pending migrations), but the schema has changed — some migrations drop columns or rebuild tables — and errors will follow at runtime.
+Downgrades are not supported: migrations only go forward, and some of them drop columns or rebuild tables. An older binary refuses to start on a database migrated by a newer version; the error names the newest migration version in the database and the newest one the binary knows.
 
-To roll back to an older version:
+Rolling back therefore takes exactly one thing: **the older binary plus your pre-upgrade snapshot**. Without a pre-upgrade snapshot, you have to stay on the new version.
 
 <Steps>
 <Step>
@@ -107,7 +110,7 @@ Switch back to the older binary or image tag.
 </Step>
 <Step>
 
-Replace the metadata database with your pre-upgrade copy: move `<data dir>/imgyoung.db` and any `imgyoung.db-wal` / `imgyoung.db-shm` out of the way, then put the copy in place as `imgyoung.db`. For Docker the file must be owned by `65532:65532`; use the throwaway-container approach shown in [Backup & restore](./backup.mdx).
+Replace the metadata database with your pre-upgrade snapshot (or the database copied while the service was stopped): move `<data dir>/imgyoung.db` and any `imgyoung.db-wal` / `imgyoung.db-shm` out of the way, then put the snapshot in place as `imgyoung.db`. For Docker the file must be owned by `65532:65532`; use the throwaway-container approach shown in [Backup & restore](./backup.mdx).
 
 </Step>
 <Step>

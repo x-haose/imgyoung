@@ -16,7 +16,7 @@ Each image can have a lifetime after which it is deleted automatically. The life
 - An explicit `0` or `never` on an upload overrides both the user and the global default, so that image never expires.
 - S3 uploads cannot set a lifetime per request and use the user default, then the global default.
 - The expiry time is computed and stored at upload. Changing the user or global default later does not affect existing images.
-- Per-upload lifetimes and per-user defaults are capped at 876000 hours (100 years).
+- Per-upload lifetimes, per-user defaults and the global default are all capped at 876000 hours (100 years); larger values are rejected. Every other runtime setting that converts to a duration (sweep intervals, the delete grace period, retention periods, timeouts and so on) is capped at 100 years in its own unit as well.
 
 The lifetime of an existing image is changed in its details (by the image's owner or an administrator):
 
@@ -28,7 +28,7 @@ The lifetime of an existing image is changed in its details (by the image's owne
 **Renew on access** (`ttl_renew_on_access`) is on out of the box. With it on, every public access to an image that has a lifetime pushes its expiry back to "the time the access was recorded + its lifetime".
 In effect the lifetime turns into "expires after this long without a single access": images in use stay, images nobody looks at get cleaned up. With it off, the expiry time stays fixed.
 
-- Accesses are collected in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box); renewal happens at that write.
+- Accesses are collected in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box); renewal happens at that write. An image that has already expired at the moment of the write is not renewed: expiry is final.
 - Only public accesses through `/i/` and `/o/` count; console thumbnails and previews and S3 GetObject do not. See [Browsing in the console is not counted](./access.mdx#console-browsing).
 - Images without a lifetime are unaffected.
 
@@ -42,7 +42,7 @@ The cleanup sweep runs once when the process starts and then every `cleanup_swee
 4. reclaims upload idempotency keys past their retention period;
 5. reclaims old audit log entries if a retention period is set (`audit_retention_days`; 0, the default, keeps them forever).
 
-Between expiring and being swept, an image's link still works. Images that expire while the process is down are deleted in the first sweeps after it restarts.
+As soon as an image expires, its public links return 404 and it can no longer be renewed by access; the cleanup sweep reclaims the record and the file afterwards. Until then it shows as **Expired** on the **Images** page and can still be deleted by hand. Images that expire while the process is down are deleted in the sweeps after it restarts.
 
 ## The delete flow
 

@@ -31,7 +31,7 @@ There are exactly two authentication surfaces, and their credentials are not int
 | Credential | An upload token in the `Authorization: Bearer <token>` header | The session cookie `imgyoung_session`; state-changing requests also send an `X-CSRF-Token` header |
 | How to obtain | Issue one on the admin console's "Upload tokens" page; the plaintext is shown only once | `POST /api/admin/auth/login` |
 | Not authenticated | 401: the token is invalid, expired, or revoked | 401: not logged in, or the session expired |
-| Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; administrator required |
+| Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; still on the factory default password; administrator required |
 
 Upload tokens look like `imgy_…`. They only authorize the data plane; no admin console endpoint accepts them. The image
 access endpoints (`/i/…`, `/o/…`), `/healthz`, and `/api/openapi.yaml` need no authentication.
@@ -80,6 +80,11 @@ Session details:
 - A session lasts 30 days from login and is not extended by use; after that you must log in again.
 - Changing a user's password invalidates all of that user's sessions.
 - Too many login attempts return 429.
+- While an account still has the factory default password, its session can use only three endpoints: log out
+  (`POST /api/admin/auth/logout`), view itself (`GET /api/admin/me`, where `must_change_password` is true), and change
+  the password (`PUT /api/admin/me/password`). Every other admin endpoint, including admin console uploads and issuing
+  tokens, returns 403 ("须先修改出厂默认密码", i.e. change the factory default password first) until the password is
+  changed and you log in again.
 
 Channels, users, hotlink protection, audit log, alerts, backups, export, and moderation endpoints, as well as reading
 the full runtime settings and changing them, are for administrators only; a regular user gets 403.
@@ -95,10 +100,21 @@ Apart from the exception below, every error response is a JSON envelope:
 `error` is a user-facing description (in Chinese) with no internal details or credentials. Programs should branch on
 the HTTP status code, not parse this text.
 
-**The exception is the image access endpoints** (`/i/{id}` and `/o/{user_id}/{object_key}`): apart from 400 for
-invalid processing parameters, which is still a JSON envelope, their error responses are plain text — for example 403
-when hotlink protection rejects the request, 404 when the image does not exist (including images that expired and were reclaimed, or were deleted), and 503 when no channel
-can currently serve it.
+**The exception is the image access endpoints** (`/i/{id}`, `/o/{user_id}/{object_key}`, and the admin console
+preview `/api/admin/images/{id}/thumb`): apart from 400 for invalid processing parameters, which is still a JSON
+envelope, their error responses are plain text:
+
+| Status | Meaning |
+|---|---|
+| 403 | Rejected by hotlink protection (`/i/` and `/o/` only) |
+| 404 | The image does not exist, has expired, or was deleted |
+| 500 | Looking up the image metadata failed (database error); retry later |
+| 503 | No healthy channel can currently read the image |
+
+The admin console preview enters this pipeline only after session authentication, so authentication errors such as
+not being logged in are still JSON envelopes. In `redirect` access mode, the 302 redirect from an image access
+endpoint carries `Cache-Control: no-store`: the redirect target changes with channel health and configuration, so it
+stays out of CDN and browser caches.
 
 Common status codes:
 
@@ -106,13 +122,14 @@ Common status codes:
 |---|---|
 | 400 | Invalid request body or parameters |
 | 401 | Not authenticated: invalid token, or not logged in / session expired |
-| 403 | Not permitted: CSRF check failed, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
+| 403 | Not permitted: CSRF check failed, still on the factory default password, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
 | 404 | The target does not exist or is not visible to the current user |
 | 409 | Conflicts with existing state, such as a duplicate name, or a channel that holds the only copy of some images |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
 | 415 | Not a supported image format (judged by file content) |
 | 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`) |
 | 429 | Upload concurrency is full, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
+| 500 | Internal server error |
 | 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |
 
 The group pages list the status codes each endpoint can actually return.
@@ -131,7 +148,9 @@ The group pages list the status codes each endpoint can actually return.
 - **Idempotent uploads**: uploads may send an `Idempotency-Key` header. Within the retention period (runtime setting
   `idempotency_key_ttl_hours`, default 24 hours), retries with the same key by the same user return the same image.
   Keys are scoped per user.
-- **Request bodies**: JSON endpoints use `application/json`; file uploads use `multipart/form-data` with the file in the `file` field.
+- **Request bodies**: JSON endpoints use `application/json`; file uploads use `multipart/form-data` with the file in
+  the `file` field, and the optional `exif_policy` and `ttl` are read only from form fields (never from URL query
+  parameters), at most 1 KiB each.
 - **Base URL**: the API shares the site's origin, with the path prefixes shown above and no version segment.
 
 ## Groups

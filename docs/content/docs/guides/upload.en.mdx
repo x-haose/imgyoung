@@ -38,10 +38,11 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 
 | Form field | Required | Meaning |
 |---|---|---|
-| `file` | Yes | The image file. The file name is metadata only (shown and searchable in the console); control characters are removed and it is truncated to 255 bytes |
+| `file` | Yes | The image file. The file name is metadata only (shown and searchable in the console); control characters are removed and it is truncated to 255 bytes. Only the first `file` part with a file name is used |
 | `ttl` | No | Lifetime in whole seconds (0 to 3153600000) or `never`. Both `0` and `never` mean the image never expires. When omitted, the per-user default applies, then the global default; see [Lifecycle and deduplication](./lifecycle.mdx) |
 | `exif_policy` | No | `strip` or `passthrough`. When omitted, the global default applies (`passthrough` out of the box); see [EXIF handling](#exif-handling) |
 
+`ttl` and `exif_policy` are read only from multipart form fields; putting them in the URL query string has no effect. Each field is at most 1 KiB, and a longer one returns 400. Any other form fields are ignored.
 The `Idempotency-Key` request header is optional, see [Idempotency keys](#idempotency-keys).
 
 A successful upload returns 200:
@@ -141,13 +142,13 @@ Only JPEG, PNG, GIF and WebP are accepted. The format is determined from the fil
 
 | Limit | Setting | Default | When exceeded |
 |---|---|---|---|
-| Image size | `max_upload_mb` | 50 MB | 413. Measured over the whole request body, so multipart boundaries and other fields count too |
+| Image size | `max_upload_mb` | 50 MB | 413. Only the file itself counts, so a file exactly at the limit is accepted; the request body as a whole is capped separately at the limit + 64 KiB, and exceeding that is also 413 |
 | Pixel budget | `max_pixels_mp` | 50 megapixels (width × height) | 422. Judged from the image header alone, so an oversized image is never fully decoded |
 | Concurrent uploads | `max_concurrent_uploads` | 8 | 429 with `Retry-After: 1` |
 | Upload rate | `upload_rate_per_min` | 0 (off) | 429 with `Retry-After: 60` |
 | Storage quota | Set per user | Unlimited | 403 |
 
-- The **concurrency gate** is a single global gate shared by data plane uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once, which bounds the peak memory of decoding; when it is full, requests get 429 immediately instead of queueing.
+- The **concurrency gate** is a single global gate shared by data plane uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once. Uploads of any size are processed in memory and never written to temporary files, so this number bounds the peak memory of uploading. When it is full, requests get 429 immediately instead of queueing.
 - The **rate limit** is per user, and uploads by the same user through tokens, the console and S3 PutObject share one allowance. It is a token bucket: up to N uploads can go through back to back (N being the per-minute allowance), after which one more is allowed every 60/N seconds. The buckets live in process memory and reset on restart.
 - The **quota** counts every reference in full: each image record counts the full size of its physical file against its owner, and background deduplication does not reduce usage. The pre-check uses the size of the uploaded bytes.
 
@@ -158,10 +159,10 @@ All of these are changed under **Settings → Runtime settings** and take effect
 | Status | Meaning |
 |---|---|
 | 200 | Success (an idempotency key hit is also 200) |
-| 400 | Missing `file` field or unreadable body; image content cannot be decoded (including animated WebP); invalid `ttl` or `exif_policy`; for URL fetches, an invalid body, a scheme other than http/https, or a destination that is not a public address |
+| 400 | Missing `file` field or unreadable body; image content cannot be decoded (including animated WebP); an invalid `ttl` or `exif_policy`, or one longer than 1 KiB; for URL fetches, an invalid body, a scheme other than http/https, or a destination that is not a public address |
 | 401 | Token missing, invalid, revoked or expired, or its owner is disabled |
 | 403 | Token lacks the upload scope, or the storage quota is full |
-| 413 | Over the per-image size limit (for URL fetches, the remote content is too large) |
+| 413 | The file is over the per-image size limit, or the request body is over the limit + 64 KiB (for URL fetches, the remote content is too large) |
 | 415 | Not a supported image format |
 | 422 | Resolution exceeds the pixel budget |
 | 429 | The concurrency gate is full or the user is uploading too fast; retry after `Retry-After` |
@@ -182,16 +183,10 @@ The policy for an upload is the form (or JSON) field if given, otherwise the glo
 
 | Format | Removed | Kept |
 |---|---|---|
-| JPEG | Every APPn segment except APP0 (JFIF), APP2 (ICC color profile) and APP14 (Adobe), which covers EXIF, XMP, IPTC and vendor segments; COM comment segments; any data after EOI (such as the video in a Motion Photo) | Entropy-coded data is kept untouched. Segments between the scans of a progressive JPEG are not inspected |
+| JPEG | Every APPn segment except APP0 (JFIF), APP2 (ICC color profile) and APP14 (Adobe), which covers EXIF (GPS, camera model, capture time and so on), XMP, IPTC and vendor segments; COM comment segments; any data after EOI (such as the video in a Motion Photo) | Entropy-coded data is kept untouched. If the original has a non-default orientation tag (Orientation), a minimal EXIF segment holding only the orientation is added back, so the photo still displays upright. Segments between the scans of a progressive JPEG are not inspected |
 | PNG | `eXIf`, `tEXt`, `zTXt` and `iTXt` chunks; any data after IEND | `gAMA`, `iCCP` and other chunks that affect color rendering |
 | WebP | `EXIF` and `XMP` chunks, clearing the matching flags in the VP8X header and fixing the RIFF length; any data beyond the declared RIFF length | Pixel chunks (including animation frames) |
 | GIF | Nothing | GIF has no standard container for EXIF / XMP |
-
-<Callout type="warn" title="strip removes the JPEG orientation tag">
-JPEGs from phones often rely on the EXIF Orientation tag to tell the browser how to rotate the picture, while the pixels stay in the sensor's native orientation.
-`strip` removes this tag along with the rest and does not rotate the pixels, so such photos display in their native orientation (often sideways) after stripping.
-If you need stripping and care about orientation, rotate the photo upright and save it before uploading.
-</Callout>
 
 - An image's SHA-256 (the hash shown in the console and the basis of deduplication) is computed over the bytes actually stored, after stripping.
 - With `passthrough`, GPS and other metadata in the original can be read by anyone who has the link and fetches the original bytes.

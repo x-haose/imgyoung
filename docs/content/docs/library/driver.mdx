@@ -100,6 +100,15 @@ defer func() { _ = d.Close(ctx) }()
 
 `Open` 返回的错误不携带参数映射,参数里的凭证不会经错误消息泄露到日志。
 
+### 写入时的 Content-Type
+
+`Put` 流式写入,驱动本身不缓存整个对象。它先读出数据开头的最多 512 字节,用 `net/http.DetectContentType`(WHATWG 内容嗅探算法)
+判定 Content-Type,随对象一并交给后端,再接着写完其余字节。对象键不必带扩展名:S3 等对象存储里的对象带上真实类型(如 `image/png`),
+而不是 `application/octet-stream`,浏览器直接打开存储的公开链接时能正常显示,不会变成下载。
+
+- 加密驱动不把类型交给存储:rclone 的 crypt 层有意不暴露明文的类型,存储里的对象是密文。
+- 不记录 Content-Type 的后端(如 `local`)忽略这一信息。
+
 ### s3 默认跳过桶检查
 
 `Backend` 为 `s3` 且 `Params` 里没有 `no_check_bucket` 时,驱动自动补上 `no_check_bucket=true`;显式给出的值不会被覆盖。
@@ -169,10 +178,13 @@ d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Pat
 ### OAuth 令牌写回与 OnChange
 
 Google Drive、OneDrive、Dropbox 等网盘后端用 OAuth 授权。库不包含授权流程:在本机执行 `rclone authorize "drive"`
-(后端名按实际替换)取得 JSON 令牌,放进 `Params["token"]`。
+(后端名按实际替换)取得 JSON 令牌,放进 `Params["token"]`。授权用的是自建应用时,把 `client_id` 与 `client_secret` 一并放进
+`Params`:令牌续期必须用签发它的同一个应用。
 
-令牌临近过期时,rclone 自己刷新,并把新值写回参数;OneDrive 在构造时还会写回 `drive_id` 等参数。驱动收到写回后先更新内存中的参数,
-再调用 `OnChange(key, value)`。
+`Open` 只构造后端,不执行 `rclone config` 在授权之后的配置步骤。有的后端还要这些步骤写下的参数,例如 OneDrive 需要 `drive_id`
+与 `drive_type`:先在本机用 `rclone config` 配好,再从 rclone.conf 把它们抄进 `Params`。
+
+令牌临近过期时,rclone 自己刷新,并把新值写回参数。驱动收到写回后先更新内存中的参数,再调用 `OnChange(key, value)`。
 
 - `OnChange` 为 nil 时,新值只活在内存里,进程重启后又从旧令牌开始。对刷新时会轮换刷新令牌的服务商,旧令牌此时已经作废,
   重启后授权随之失效。用网盘后端时应当提供 `OnChange` 并把值持久化。

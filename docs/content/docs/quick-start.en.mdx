@@ -39,7 +39,7 @@ Open `http://<server address>:8721/` in a browser (`http://localhost:8721/` on t
 |---|---|
 | `admin` | `imgyoung123` |
 
-The factory password is public. After the first sign-in you land on the "Set the admin password" page, and no other page opens until the password is changed. The new password needs at least 8 characters; click "Save and sign in again", then sign in with the new password.
+The factory password is public. After the first sign-in you land on the "Set the admin password" page. Until the password is changed no other console page opens, and the server rejects every console API call other than signing out, reading your own account and changing the password (with 403). The new password needs at least 8 characters; click "Save and sign in again", then sign in with the new password.
 
 </Step>
 <Step>
@@ -107,7 +107,7 @@ Paste it into your blog or notes and the image shows up.
 </Callout>
 
 - [Storage channels](./channels/index.mdx): add an off-site channel, set priority and encryption.
-- [Backup and restore](./operations/backup.mdx): back up the master key `master.key` separately. It is not part of the snapshots, and without it the channel credentials and encrypted data cannot be recovered.
+- [Backup and restore](./operations/backup.mdx): back up the master key `master.key` separately. It is not part of the snapshots; without it the service refuses to start, and the channel credentials and encrypted data cannot be recovered.
 - [Reverse proxy](./operations/reverse-proxy.mdx): serve it over HTTPS on your own domain.
 - [Clients](./guides/clients.mdx): set up PicGo, PicList, Typora and other clients.
 - [Docker image](./install/docker.mdx): image tags, the data volume and environment variables in full.

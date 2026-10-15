@@ -146,4 +146,4 @@ For long-running use, do not just leave it open in a terminal. A supervisor star
 
 ## Upgrading
 
-Download and verify the new archive, stop the service, replace the old binary with the new one, and start it again. Leave the data directory as is; the database schema is migrated automatically when the new version starts. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for more.
+Download and verify the new archive, stop the service, replace the old binary with the new one, and start it again. Leave the data directory as is; the database schema is migrated automatically when the new version starts. Putting the old binary back is not a downgrade: the older version refuses to start on a database migrated by a newer one, so rolling back takes the older version plus a snapshot taken before the upgrade. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for the rollback steps and more.

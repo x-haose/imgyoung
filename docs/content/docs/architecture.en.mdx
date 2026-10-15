@@ -99,11 +99,17 @@ The remaining tables:
 | `idempotency_keys` | Upload idempotency keys, scoped per user |
 | `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
 | `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records |
+| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. See [Master key](./configuration.mdx#master-key) |
 
 The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
 table and every column. Versioned migrations are generated from it by Atlas, embedded in the binary, and applied in
 order at startup; applied versions are recorded in the `schema_revisions` table, so upgrading across several versions
 also applies every migration in between.
+
+Migrations cannot be downgraded: if the database records a migration version this binary does not know (meaning a newer
+binary has already migrated it), the process refuses to start, and the error names the latest migration version in the
+database and the latest one this binary knows. The only way back is "old binary + a snapshot taken before the
+upgrade"; see [Upgrading](./operations/upgrade.mdx).
 
 ## Upload data flow
 
@@ -116,7 +122,11 @@ creates a new blob and deduplication happens in the background, which keeps the 
 
 **Entry and guards**: authenticate (upload token, session, or S3 signature) and pass two gates: the per-user upload
 rate limit (`upload_rate_per_min`) and the global upload concurrency gate (`max_concurrent_uploads`, which returns 429
-immediately when full). The image bytes are then read fully into memory, and anything over `max_upload_mb` is rejected.
+immediately when full). The image bytes are then read fully into memory; no upload of any size is written to a
+temporary file. The per-image limit `max_upload_mb` applies to the image itself: a file exactly at the limit is
+accepted, and anything larger returns 413. A multipart request body is additionally capped at "per-image limit + 64 KiB",
+and only three parts are read — `file`, `exif_policy`, and `ttl`. `exif_policy` and `ttl` are taken only from form
+fields (never from URL query parameters), at most 1 KiB each, or the request gets a 400.
 
 </Step>
 <Step>
@@ -140,6 +150,9 @@ Decoded memory depends on resolution, not on file size, so this gate has to come
 <Step>
 
 **Sanitizing**: with the EXIF policy `strip`, metadata is removed (JPEG, PNG, WebP; GIF has no standard metadata segment and passes through unchanged).
+For JPEG, a minimal Exif segment holding only the orientation is added back, so photos that rely on the orientation
+tag to display upright do not end up rotated; GPS, camera model, timestamps, and every other field are still removed,
+and nothing is added back when the orientation is the default.
 
 </Step>
 <Step>
@@ -177,22 +190,41 @@ channel write is never rolled back.
 
 ## Access data flow
 
-`GET /i/{id}` (and the S3 object key alias `/o/{user_id}/{key}`):
+`GET` / `HEAD /i/{id}` (and the S3 object key alias `/o/{user_id}/{key}`; the admin console preview
+`/api/admin/images/{id}/thumb` uses the same pipeline but is never counted as an access):
 
-1. Hotlink protection middleware allows the request or returns 403 based on the Referer allowlist.
-2. The reference is looked up; if it cannot be found, 404 is returned (an expired reference can no longer be found
-   once the cleanup task reclaims it). Public access is counted in memory and flushed to the database in batches every
-   `activity_flush_seconds`.
-3. On-demand processing kicks in when the image needs resizing or converting: a `w` parameter, an explicit `format`, or
+1. Hotlink protection middleware allows the request or returns 403 based on the Referer allowlist (admin console previews skip this step).
+2. The reference is looked up; if it cannot be found, 404 is returned. A reference past its expiry time is treated as
+   missing right away, without waiting for the cleanup task to reclaim it, and an access never renews it.
+3. Processing parameters are validated: a `w` outside the width presets or an explicit `format` outside the allowed
+   formats returns 400 (GIF originals are never processed, so both parameters are ignored for them).
+4. Access is counted: only GET requests on the public endpoints add to the in-memory activity, flushed to the database
+   in batches every `activity_flush_seconds`; HEAD requests, requests with invalid parameters, and admin console previews are not counted.
+5. On-demand processing kicks in when the image needs resizing or converting: a `w` parameter, an explicit `format`, or
    no format with a browser that accepts WebP, WebP allowed by the settings, and an original that is not WebP already.
    GIFs are always served as originals. A variant cache hit is returned directly; on a miss the image is processed
    within the `process_workers` concurrency limit and cached, with concurrent requests for the same parameters merged
    into one processing run. When processing is busy or fails, the original is served instead, with `Cache-Control: no-store`.
-4. Otherwise the original is served. Candidate channels are those that are healthy, not being cleaned up, and hold a
+   A HEAD request fetches or generates the variant the same way; it just returns no body.
+6. Otherwise the original is served. Candidate channels are those that are healthy, not being cleaned up, and hold a
    `done` replica of the image, in priority order. In `redirect` access mode, if a candidate allows direct links, is not
-   encrypted, and has a public URL configured, the response is a 302 to that channel; otherwise `failover.Open` proxies
-   the read, switching to the next channel as soon as one cannot be read.
-5. Originals and variants are immutable and carry a strong ETag and `Cache-Control: public, max-age=31536000, immutable`.
+   encrypted, and has a public URL configured, the response is a 302 to that channel, sent with
+   `Cache-Control: no-store` (the target changes with channel health and configuration, so it must not be cached). A
+   HEAD request gets the response headers only and no channel object is read; otherwise `failover.Open` proxies the
+   read, switching to the next channel as soon as one cannot be read.
+
+Caching depends on the endpoint:
+
+| Endpoint | Cache-Control | Why |
+|---|---|---|
+| `/i/{id}` | `public, max-age=31536000, immutable` | Content behind a short ID never changes; the URL is the version |
+| `/o/{user_id}/{key}` | `public, no-cache` | Re-uploading the same key repoints the alias at a new image; caches may store the response but must revalidate with the ETag before each use, getting 304 when unchanged |
+
+On both endpoints originals and variants carry a strong ETag (the content hash for originals, the hash plus processing
+parameters for variants), and a request whose `If-None-Match` matches it gets a 304. The 304 carries the `ETag`,
+`Cache-Control`, and `Vary` the 200 response would have, so caches can keep using their stored copy. Responses whose
+format was negotiated via `Accept` carry `Vary: Accept`; a fallback original is `no-store` and never answered with a 304.
+If a database lookup fails, the response is a plain-text 500 that can be retried.
 
 ## The outbox fence: business tables are the single source of truth
 
@@ -205,7 +237,8 @@ replica state is the business table `blob_channels`:
 - Jobs are deduplicated by (blob, channel), counting only unfinished jobs, so the same replica never appears in the queue twice.
 - **Reconciliation** runs at startup and every 10 minutes after that: it queues drain jobs for channels being cleaned
   up, seeds missing replica rows for every channel, resets `failed` replicas on healthy channels to `pending`, and then
-  pages through every `pending` / `uploading` replica and queues it again.
+  pages through every `pending` / `uploading` replica with a primary-key cursor and queues it again; replicas turning
+  `done` during the scan cannot shift later pages and cause rows to be skipped.
 
 So even if River's job tables are lost or corrupted, the queue can be rebuilt completely from the business table; a job
 that was running when the process was killed is rescheduled by River once it has been stuck in the running state for
@@ -215,8 +248,11 @@ machinery brings them in line, with no separate backfill logic.
 The other asynchronous jobs follow the same principle: deleting objects from a channel (`delete_object`), draining a
 channel being cleaned up (`drain_channel`, whose progress is simply the remaining replica rows), and purging CDN caches
 (`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
-finally fails are reclaimed by reconciliation GC; drain jobs are queued again on every reconciliation for channels
-still being cleaned up; when a CDN purge finally fails, the edge cache expires once the CDN's own cache lifetime runs out.
+finally fails are reclaimed by reconciliation GC; the first time a drain job cannot delete an object, it writes the
+reason into the channel's check result and raises a `drain_failed` alert, then keeps retrying with backoff — once its
+attempts run out, reconciliation queues it again, so it never stops (the job's own timeout or a shutdown cancellation
+does not count as a failure); the way out is **Remove now** on the channel in the admin console (remote objects are kept). When a CDN purge finally
+fails, the edge cache expires once the CDN's own cache lifetime runs out.
 
 ## Periodic tasks
 
@@ -225,7 +261,7 @@ from runtime settings, a change in the admin console reschedules the current wai
 
 | Task | Interval | What it does |
 |---|---|---|
-| Health check | `health_check_seconds` (default 60 seconds) | Light checks on all channels in parallel; an unhealthy channel whose light check passes recovers only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
+| Health check | `health_check_seconds` (default 60 seconds) | Retry loading channels that previously failed to load, then light checks on all channels in parallel; an unhealthy channel whose light check passes recovers only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
 | Alert evaluation | Same as the health check | Unhealthy channels, failed replication, channel usage over the threshold, failed drains, failed backups; can be pushed to a webhook |
 | Lifecycle cleanup | `cleanup_sweep_seconds` (default 60 seconds) | Reclaim expired references → physically delete blobs past their grace period → label cold images → reclaim expired idempotency keys → reclaim audit entries past retention |
 | Activity flush | `activity_flush_seconds` (default 60 seconds) | Write public access times and counts to the database in batches; variants' last-access times are flushed on the same interval |
@@ -234,12 +270,34 @@ from runtime settings, a change in the admin console reschedules the current wai
 | Metadata database backup | `backup_interval_hours` (default 24 hours) | Take a consistent snapshot with `VACUUM INTO`, upload it to `_imgyoung/backup/` on the primary channel, and keep `backup_keep` copies. See [Backup and restore](./operations/backup.mdx) |
 | Auth maintenance | 1 minute / 1 hour (fixed) | Write back token last-used times in batches / reclaim expired sessions |
 | Replication reconciliation | 10 minutes (fixed) | See the previous section |
-| Reconciliation GC | 24 hours (fixed) | List every healthy channel and compare with its `done` replicas in both directions: objects on the channel but not in the database, with a modification time over 48 hours ago, are deleted as orphans; replicas recorded as `done` but missing from the channel are phantoms, reset to `pending` and replicated again. The system directory `_imgyoung/` and the light check key are excluded |
+| Reconciliation GC | 24 hours (fixed) | List every healthy channel and compare with the replica records in the database in both directions: reclaim orphan objects, and reset phantom replicas to `pending` to be replicated again. Criteria below |
 
-On shutdown (SIGINT / SIGTERM, or a restart requested after restoring a backup snapshot in the admin console) the
-components wind down in turn: the loops write out any data still held in memory, River waits for in-flight jobs, and
-HTTP stops accepting new requests and waits for in-flight ones. River and HTTP each wait at most 30 seconds; then the
-channel drivers and the database are closed.
+What reconciliation GC handles (the system directory `_imgyoung/` and the light check key are excluded from the comparison):
+
+- **Orphans**: an object is reclaimed only if all of these hold — its key has this service's object key format
+  `{short_id}_{first 8 hex chars of sha256}`; the database has no replica record of it on that channel in any state;
+  its modification time is not earlier than the channel record's creation time; and it is past the 48-hour grace period
+  (which covers uploads already written to the channel but not yet recorded). Every other object without a record —
+  files written by other programs, or objects in an old bucket attached by a new instance during disaster recovery
+  before the metadata is restored — is only counted, never reclaimed, and appears as `foreign` in the reconciliation log.
+- **Deep check leftovers**: `.imgyoung-probe-` temporary objects left when a deep check fails to delete them are
+  deleted once past the 48-hour grace period, regardless of when they were written, and are not counted in the
+  reconciliation's object and byte totals.
+- **Phantoms**: replicas recorded as `done` but missing from the channel are reset to `pending` and queued for replication again.
+
+<Callout type="warn" title="Two instances must not share a channel path">
+Reconciliation only trusts this database's replica records: objects another instance writes to the same path have the
+right key format but no record here, so once past the grace period they are deleted as orphans.
+</Callout>
+
+Shutdown (on SIGINT / SIGTERM, or a restart requested after restoring a backup snapshot in the admin console) happens
+in order: new requests stop being accepted first, and in-flight requests get at most 6 seconds before the remaining
+connections are closed; then the background loops and in-flight replication jobs are cancelled and the replication
+subsystem gets at most 2 seconds, while each loop writes out data still held in memory before it exits; finally the
+channel drivers and the database are closed. The two stages total 8 seconds, within Docker's default 10-second kill
+timeout, and the sample configurations under `deploy/` leave extra headroom (`stop_grace_period: 15s` in compose,
+`TimeoutStopSec=15s` for systemd). Cancelled replication jobs keep their state in the business table and are queued
+again by reconciliation on the next start.
 
 ## Two upgrade seams
 

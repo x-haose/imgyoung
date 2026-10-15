@@ -16,7 +16,7 @@ Pass options to the script through `sh -s --`:
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sudo sh -s -- --service
 
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh -s -- --version 1.0.0
 ```
 
 To read the script before running it:
@@ -34,23 +34,23 @@ The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`; `
 | Option | Default | Description |
 |---|---|---|
 | `--version X.Y.Z` | Latest stable release | Install a specific version; the `v` prefix is optional |
-| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable. With `--service` it must be an absolute path outside `/home` and `/root` |
+| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable. With `--service` it must be an absolute path outside `/home`, `/root` and `/run/user` |
 | `--service` | Not installed | Linux only, needs root: also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung` |
 
 | Environment variable | Default | Description |
 |---|---|---|
 | `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | The releases address. Set it to use a mirror or internal distribution; the layout must match GitHub Releases (see "Mirrors and internal distribution" below) |
 
-An unknown option makes the script exit with an error before it changes anything.
+An unknown option or a malformed version makes the script exit with an error right away, before it changes anything.
 
 ## What the script does
 
-1. **Checks prerequisites.** Confirms `curl`, `tar` and `install` exist; with `--service` it also checks for Linux, root and `systemctl`. If anything is missing it exits before downloading and leaves the system untouched.
+1. **Checks prerequisites.** Confirms `curl`, `tar` and `install` exist; with `--service` it also checks for Linux, root, `systemctl`, and that any `--dir` given is an absolute path outside the home directories. If anything is missing it exits before downloading and leaves the system untouched.
 2. **Detects the platform.** `uname -s` must be Linux or Darwin, `uname -m` must be x86_64 / amd64 or aarch64 / arm64; anything else is an error (on Windows, use a [release archive](./binary.mdx)).
 3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect and takes the last path segment of the final URL as the tag. GitHub's latest release never points at a pre-release.
 4. **Downloads and verifies.** Downloads `imgyoung_<version>_<os>_<arch>.tar.gz` and that release's `checksums.txt` into a temporary directory and checks the sha256. On a mismatch it aborts without installing anything. The temporary directory is removed when the script exits.
 5. **Installs the binary.** Installs `imgyoung` into the target directory with mode 0755 and prints its version.
-6. **Installs the service** (`--service` only). Writes the archive's `deploy/imgyoung.service` to `/etc/systemd/system/imgyoung.service` with `ExecStart` pointing at the actual install path, runs `systemctl daemon-reload` and enables it. If the service is already running it is restarted onto the new version; otherwise it is started.
+6. **Installs the service** (`--service` only). Writes the archive's `deploy/imgyoung.service` to `/etc/systemd/system/imgyoung.service` with `ExecStart` pointing at the actual install path, saying so if the content differs from the existing file, then runs `systemctl daemon-reload` and enables it. If the service is already running it is restarted onto the new version; otherwise it is started.
 7. **Prints next steps.** Warns if the target directory is not on `PATH`, and prints the sign-in address and factory account.
 
 Without `--service` the script only installs the binary and does not start it. Run `imgyoung` yourself; data goes to `data/` under the current directory (or `IMGYOUNG_DATA_DIR`). For long-running use, put it under a process supervisor; see [Installation](./index.mdx) for why.
@@ -66,7 +66,7 @@ The settings that matter:
 - **Data directory.** `IMGYOUNG_DATA_DIR=%S/imgyoung` resolves to `/var/lib/imgyoung`, which `StateDirectory=imgyoung` makes systemd create and hand to the service user. With `DynamicUser` the real directory is `/var/lib/private/imgyoung` and `/var/lib/imgyoung` is a symlink to it. It holds `imgyoung.db`, `master.key`, the local channel's `blobs/` and the variant cache `variants/`.
 - **DynamicUser=yes.** systemd allocates a transient system user on every start, so no user has to be created in advance. Together with sandboxing such as `ProtectSystem=strict` and `ProtectHome=yes`, the process can write only its own data directory: if you point the local channel somewhere else, open that directory with `ReadWritePaths=`; and the binary must not live under `/home` or `/root`, or the service cannot start; the script rejects such a `--dir`.
 - **Restart=always.** Restoring a snapshot in the console makes the service exit cleanly; systemd starts it again 3 seconds later and the snapshot is swapped in before the database is opened. `Restart=on-failure` does not restart a clean exit, so the restore would only complete once someone starts the service by hand.
-- **TimeoutStopSec=75s.** On stop, the service drains replication jobs and then HTTP connections, up to 30 seconds each, so it gets enough time before being killed.
+- **TimeoutStopSec=15s.** On stop, the service first stops accepting new requests and waits up to 6 seconds for in-flight ones (forcibly closing what remains), then cancels background loops and in-flight replication jobs and waits up to 2 seconds, then closes the database and exits. That is about 8 seconds in total; 15 leaves headroom. Cancelled replication jobs are re-queued by reconciliation on the next start.
 - **UMask=0077.** New files, `master.key` included, are readable and writable only by the service user.
 - **RCLONE_CONFIG=** (empty). ImgYoung hands channel parameters to rclone directly and never reads an rclone config file.
 
@@ -102,7 +102,9 @@ Run the same command you installed with:
 - Installed with `--service`: the binary is replaced, the unit file is rewritten and the service is restarted onto the new version. You must pass `--service` again; otherwise only the file on disk changes and the running process stays on the old version.
 - Installed without `--service`: only the binary is replaced; restart the process yourself.
 
-Use `--version` to stay on a particular version. The database schema is migrated automatically when the new version starts. See [Upgrading](../operations/upgrade.mdx) for what to check beforehand.
+Use `--version` to stay on a particular version. The database schema is migrated automatically when the new version starts.
+
+`--version` can also install an older version, but that is not a downgrade: an older version refuses to start on a database migrated by a newer one, and the error names the latest migration in the database and in the binary. Rolling back takes the older version plus a snapshot taken before the upgrade; see [Upgrading](../operations/upgrade.mdx) for the steps and what to prepare beforehand.
 
 ## Uninstalling
 

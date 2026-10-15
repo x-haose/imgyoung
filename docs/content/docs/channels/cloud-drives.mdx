@@ -7,25 +7,28 @@ description: 需要授权的网盘有哪些、两条授权路径怎么走、令�
 
 「新建渠道」选类型时,「网盘」分组里除了通用 [WebDAV](./object-storage.mdx) 之外,还有 6 个需要 OAuth 授权的模板:
 
-| 模板 | rclone 后端 | 需要填写 |
+| 模板 | rclone 后端 | 专属字段 |
 |---|---|---|
-| OneDrive | `onedrive` | 区域、授权、存储目录 |
-| Google Drive | `drive` | 授权、存储目录 |
-| Dropbox | `dropbox` | 授权、存储目录 |
-| pCloud | `pcloud` | 数据区域、授权、存储目录 |
-| Box | `box` | 授权、存储目录 |
-| Yandex Disk | `yandex` | 授权、存储目录 |
+| OneDrive | `onedrive` | 区域 |
+| Google Drive | `drive` | — |
+| Dropbox | `dropbox` | — |
+| pCloud | `pcloud` | 数据区域 |
+| Box | `box` | — |
+| Yandex Disk | `yandex` | — |
+
+专属字段之后,6 个模板都依次是「应用 Client ID」「应用 Client Secret」「授权」「存储目录」:
 
 - **区域**(OneDrive):「国际版」「美国政府云」「德国云」「中国世纪互联」,决定授权与接口端点,要与账号所属区域一致。
 - **数据区域**(pCloud):「美国」或「欧洲」,要与注册账号时所选区域一致,否则换取令牌失败。
-- **存储目录**:网盘里存放图片的目录,默认提示 `imgyoung`;留空存放在根目录。
+- **应用 Client ID / 应用 Client Secret**:在服务商开放平台自建的 OAuth 应用的标识与密钥。一键授权必须先填 Client ID;粘贴令牌时,令牌若是用自建应用取得的,也要填这两栏;用 rclone 内置应用取得的令牌两栏留空。令牌续期用的就是这两项,必须与签发令牌的应用一致。两者随渠道配置加密保存,编辑时显示为掩码。
 - **授权**:令牌,由下面两条授权路径之一填入,未授权不能保存。
+- **存储目录**:网盘里存放图片的目录,默认提示 `imgyoung`;留空存放在根目录。
 
 授权所需的端点、权限范围与 rclone 内置的应用标识都取自 rclone 后端自身的注册信息,ImgYoung 不为各家单独编码。
 
-<Callout type="warn" title="OneDrive 与 pCloud 用自定义模式接入">
-rclone 的 `onedrive` 后端还要求 `drive_id` 与 `drive_type` 两个参数,OneDrive 模板不收集它们,保存时报错 `unable to get drive_id and drive_type`。pCloud 签发的令牌不带刷新令牌,而模板要求令牌必须带刷新令牌,保存时报错「缺少刷新令牌」。这两家改用[自定义模式](#onedrive-与-pcloud-的自定义配置)。
-</Callout>
+**OneDrive 的驱动器**:拿到新的授权后,保存或测试连接时,ImgYoung 按 rclone 自身的配置流程走完授权之后的步骤,每一问都取默认答案:选定账号的默认驱动器,写下 `drive_id` 与 `drive_type`,与 `rclone config` 逐题取默认值时的选择一致。向服务商查询失败时,保存返回 400,测试连接显示原因。编辑时沿用已存授权,不会重新选择。要用 SharePoint 文档库或其他驱动器,见[OneDrive 的其他驱动器](#onedrive-的其他驱动器)。
+
+**pCloud 的令牌**:pCloud 的令牌永不过期(到期时刻为零值),不带刷新令牌,照常可以保存。
 
 ## 授权方式一:粘贴令牌
 
@@ -58,8 +61,9 @@ Paste the following into your remote machine --->
 </Steps>
 
 - 令牌 JSON 与 rclone 编码后的配置串(`rclone authorize` 带配置串参数时的输出)都能识别,ImgYoung 从中取出令牌。
-- 令牌必须带刷新令牌,否则访问令牌过期后无法续期,保存时提示「渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段「授权」)」;内容无法解析时提示「令牌格式非法」。
-- 这样取得的令牌由 rclone 的内置应用签发,之后 rclone 也用内置应用刷新,两者一致。
+- 会过期的令牌必须带刷新令牌,否则访问令牌过期后无法续期,保存时提示「渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段「授权」)」;永不过期的令牌(如 pCloud)不需要。内容无法解析时提示「令牌格式非法」。
+- `rclone authorize "<后端名>"` 取得的令牌由 rclone 内置应用签发,「应用 Client ID」「应用 Client Secret」留空,rclone 续期时同样用内置应用。
+- 想用自建应用,执行 `rclone authorize "<后端名>" <Client ID> <Client Secret>`(自建应用要登记 rclone 的本机回调地址 `http://127.0.0.1:53682/`),再把同一个应用的 Client ID 与 Client Secret 填进表单。
 
 ## 授权方式二:后台一键授权
 
@@ -79,7 +83,7 @@ https://img.example.com/api/admin/channel-oauth/callback
 两边必须逐字符一致(协议、域名、端口、路径都算)。
 </Step>
 <Step>
-在「授权」一栏的「一键授权」里填「应用 Client ID」与「应用 Client Secret」,点「前往授权 …」。浏览器新开一页进入服务商授权页。
+在表单里「授权」一栏上方的「应用 Client ID」「应用 Client Secret」填好自建应用的凭证,再在「授权」一栏的「一键授权」里点「前往授权 …」。没填 Client ID 时这个按钮不可用。浏览器会新开一页进入服务商授权页。
 </Step>
 <Step>
 授权完成后回调页显示「授权成功,请回到后台继续。」,表单的「授权」一栏变为「已授权」,保存即可。
@@ -90,29 +94,25 @@ https://img.example.com/api/admin/channel-oauth/callback
 - 一次授权会话 10 分钟内有效,表单最多等待约 11 分钟,超时提示「等待授权超时,请重新发起」。
 - 令牌不写进回调页面,由表单凭一次性标识领取,只能领取一次。
 - 换取令牌失败时提示「换取令牌失败,请核对应用凭证与回调地址」;在服务商页面拒绝或取消时提示「授权被拒绝或取消」加服务商返回的原因。
-
-<Callout type="warn" title="一键授权的令牌续期">
-渠道配置只保存令牌,不保存一键授权时填写的 Client ID 与 Client Secret。访问令牌到期后,rclone 用内置应用刷新,与签发令牌的自建应用不一致,刷新会被服务商拒绝,渠道随之转为「异常」。需要长期使用的网盘渠道,用粘贴令牌方式授权。
-</Callout>
+- 编辑已有渠道时重新授权,应用凭证两栏保持掩码即沿用已存的值。
+- Client ID 与 Client Secret 随渠道保存,令牌到期后 rclone 用同一个应用续期。
 
 ## 令牌续期与落库
 
 - 后端参数以映射直接交给 rclone,映射上挂了写回回调。访问令牌临近过期时,rclone 自己刷新,并通过回调写回新令牌;ImgYoung 立即用主密钥加密并存入渠道配置。rclone 在运行中写回的其他参数也走同一条路径。
 - 落库失败只记日志(`后端写回参数无法落库`),内存里继续使用新令牌;进程重启后会退回元数据库里的旧令牌。
+- 保存渠道、以及编辑表单里测试连接时临时构造的后端,如果刷新了令牌,新令牌也会落库:创建与编辑时随配置一起保存;编辑表单里测试连接时,沿用的已存令牌被刷新会写回该渠道。
 - **只有一个刷新者**:ImgYoung 不另设刷新循环。有些服务商每次刷新都会作废旧的刷新令牌,两个刷新者会互相作废对方的令牌。周期轻探测(默认每 60 秒)发出的只读请求足以让 rclone 按时刷新。
 - 编辑网盘渠道时,「授权」一栏显示「已授权 · 沿用已存令牌」,保持不动即沿用;点「重新授权」可以换一个令牌。
 
-## OneDrive 与 pCloud 的自定义配置
+## OneDrive 的其他驱动器
 
-两者都在「新建渠道 → 高级 → 自定义」里填写,「rclone 驱动」填后端名,后端参数按下表。令牌在自定义模式里原样保存,需要重新授权时替换 `token` 的值。
+模板只会选定账号的默认驱动器。要用 SharePoint 文档库或其他驱动器,在「新建渠道 → 高级 → 自定义」里手填 `drive_id` 与 `drive_type`。
 
-<Tabs items={['OneDrive', 'pCloud']}>
-<Tab value="OneDrive">
-
-先在有浏览器的电脑上用 rclone 建一个临时的 OneDrive remote。rclone 完成授权后会选定账号的默认驱动器,写出 `drive_id` 与 `drive_type`。非国际版账号在命令末尾加 `region=us`、`region=de` 或 `region=cn`:
+先在有浏览器的电脑上用 `rclone config` 交互地新建一个 OneDrive remote,在选择驱动器的步骤里选中目标驱动器,再查看它写下的参数:
 
 ```bash title="终端"
-rclone config create onedrive-tmp onedrive
+rclone config
 rclone config show onedrive-tmp
 ```
 
@@ -124,33 +124,15 @@ rclone config show onedrive-tmp
 | `token` | `rclone config show` 输出的 `token` |
 | `drive_id` | 同上 |
 | `drive_type` | 同上(`personal`、`business` 或 `documentLibrary`) |
-| `region` | 非国际版账号才需要,与上一步相同 |
+| `region` | 非国际版账号才需要:`us`、`de` 或 `cn` |
+| `client_id`、`client_secret` | 只在 rclone 里用了自建应用时需要 |
 | `path` | 存放图片的目录,如 `imgyoung` |
 
-保存后删除本机的临时 remote,避免两处同时刷新同一个令牌:
+自定义模式里令牌原样保存,需要重新授权时替换 `token` 的值。保存后删除本机的临时 remote,避免两处同时刷新同一个令牌:
 
 ```bash title="终端"
 rclone config delete onedrive-tmp
 ```
-
-</Tab>
-<Tab value="pCloud">
-
-```bash title="终端"
-rclone authorize "pcloud"
-```
-
-| 键 | 值 |
-|---|---|
-| rclone 驱动 | `pcloud` |
-| `token` | `rclone authorize` 输出的令牌 JSON |
-| `hostname` | 美国区 `api.pcloud.com`,欧洲区 `eapi.pcloud.com` |
-| `path` | 存放图片的目录,如 `imgyoung` |
-
-pCloud 的令牌不会过期,不需要刷新。
-
-</Tab>
-</Tabs>
 
 ## 国内网盘:经自部署的聚合服务以 WebDAV 接入
 

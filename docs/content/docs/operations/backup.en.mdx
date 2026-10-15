@@ -5,7 +5,7 @@ description: Automatic metadata snapshots, restoring from a snapshot, disaster r
 
 ## What to back up
 
-Objects in channels are named by content hash; which image belongs to which short link, user and token lives only in the metadata database. Lose the metadata database and the images in your channels can no longer be matched up. Lose the master key and channel credentials and encrypted channel data can no longer be decrypted.
+Objects in channels are named by content hash; which image belongs to which short link, user and token lives only in the metadata database. Lose the metadata database and the images in your channels can no longer be matched up. Lose the master key and the instance refuses to start, and channel credentials and encrypted channel data can no longer be decrypted.
 
 | What | Where | How |
 |---|---|---|
@@ -51,7 +51,7 @@ A live SQLite file cannot be replaced safely, so a restore happens in two steps:
 <Steps>
 <Step>
 
-**Stage and shut down**: click **Restore** on a snapshot row and confirm with **Restore and restart**. The service downloads the snapshot to `<data dir>/imgyoung.db.restore` (via a temporary file renamed once complete), writes a `backup.restore` audit entry, responds, and shuts down gracefully: HTTP connections and replication jobs each get up to 30 seconds to finish.
+**Stage and shut down**: click **Restore** on a snapshot row and confirm with **Restore and restart**. The service downloads the snapshot to `<data dir>/imgyoung.db.restore` (via a temporary file renamed once complete), writes a `backup.restore` audit entry, responds, and shuts down gracefully: it stops accepting new requests, waits up to 6 seconds for in-flight requests, then stops the background loops and replication jobs, waiting up to 2 more seconds.
 
 </Step>
 <Step>
@@ -81,12 +81,12 @@ A restore takes the metadata back to snapshot time, so anything that happened af
 
 ## Disaster recovery after losing the host
 
-Prerequisites: a backup of `master.key`, and a snapshot file — either one you downloaded, or one fetched straight from an **unencrypted** channel (use the provider's console or rclone to download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path).
+Prerequisites: a backup of the `master.key` of the instance the snapshot came from, and a snapshot file — either one you downloaded, or one fetched straight from an **unencrypted** channel (use the provider's console or rclone to download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path).
 
 <Steps>
 <Step>
 
-**Install the same or a newer version on the new machine**; see [Installation](../install/index.mdx). It does not matter if it has already started once: the fresh instance's database is renamed and kept when the snapshot is swapped in. The `master.key` it generated on first start, however, must be replaced with the original in the next step.
+**Install the same or a newer version on the new machine**; see [Installation](../install/index.mdx). It does not matter if it has already started once: the fresh instance's database is renamed and kept when the snapshot is swapped in. The `master.key` it generated on first start, however, must be replaced with the original in the next step. The metadata database records a fingerprint of the master key; once the snapshot is swapped in, a missing master key or one that does not match the snapshot makes the process refuse to start rather than generate a new key.
 
 </Step>
 <Step>
@@ -157,13 +157,17 @@ If you provide the master key through `IMGYOUNG_MASTER_KEY`, set the variable in
 
 **Start and check**: for the binary, start `imgyoung` now. The log line 已用暂存快照换入元数据库,原库留存 confirms the swap. Sign in with the credentials from snapshot time and check on **Storage channels** that the channels are healthy again.
 
+If startup fails saying the master key does not match the database, or that no master key can be found, the key you put in place is not the one from the snapshot's instance, or there is none. The snapshot has already been swapped in at that point; put the right master key in place and start again — there is no need to stage the snapshot again.
+
 </Step>
 </Steps>
 
 Images that existed only on the local channel are gone with the old host. Images with replicas on other channels load as usual, and the missing local replicas are detected by reconciliation GC and copied back from the other channels.
 
-<Callout type="warn" title="Do not leave a fresh instance attached to old channels">
-Another route is to start a fresh instance, add the channel holding the snapshots in the admin console with its original parameters and the highest priority, and restore from **Metadata snapshots**. But the fresh instance's metadata contains no images: reconciliation GC first runs 24 hours after process start and treats every object on the channel older than the grace period as an orphan and deletes it. If you go this way, restore immediately after adding the channel, and do not click **Back up now** before restoring.
+If the snapshots are on an unencrypted channel, you can also skip fetching the file by hand: start a fresh instance, add the channel holding the snapshots in the admin console with its original parameters and the highest priority, and restore from **Metadata snapshots**. The fresh instance must use the original master key from its very first start (put `master.key` in place or set `IMGYOUNG_MASTER_KEY` beforehand); otherwise, when it restarts after the restore, the key does not match the snapshot and the process refuses to start. If it has already started with a generated key, stop it, put the original `master.key` in place, delete the fresh `imgyoung.db` (and its `-wal` and `-shm`) from the data directory, start it again, and only then add the channel. Every object already on the channel predates the new channel record, so reconciliation GC only counts those objects and never deletes them (see below); nothing is lost while you wait.
+
+<Callout type="warn" title="Do not click Back up now before restoring">
+The fresh instance's empty database would be written into the same backup directory and, by the retention count, push out the oldest of your existing snapshots.
 </Callout>
 
 ## Metadata export
@@ -183,11 +187,21 @@ The export is readable and self-contained: even without running ImgYoung you can
 
 ## Reconciliation GC
 
-Every 24 hours (the first run 24 hours after process start), the replication subsystem reconciles each healthy channel in both directions. System objects under the `_imgyoung/` prefix (including snapshots) and health check objects are left alone:
+Every 24 hours (the first run 24 hours after process start), the replication subsystem reconciles each healthy channel in both directions. System objects under the `_imgyoung/` prefix (including snapshots) are left alone:
 
-- **Orphans**: objects on the channel that the metadata database does not record as a completed replica on that channel. Those last modified more than 48 hours ago are deleted, so pay-per-use channels do not bill you for ownerless objects; the grace period covers the normal window between writing to a channel and recording it in the database.
+- **Orphans** are deleted, so pay-per-use channels do not bill you for ownerless objects. An object is an orphan only if all of the following hold:
+  - its key has ImgYoung's object key format `<short ID>_<first 8 hex digits of SHA-256>`;
+  - the metadata database has no replica record of it on that channel, in any state;
+  - it was last modified no earlier than the channel record was created;
+  - it was last modified more than 48 hours ago; the grace period covers the normal window between writing to a channel and recording it in the database.
+- **Deep check leftovers**: the deep health check writes a temporary `.imgyoung-probe-*` object and deletes it right away; one is left behind only when that deletion fails. They are deleted once past the 48-hour grace period regardless of when they were written (leftovers from a connection test predate the channel record), and are not counted in the object count or usage.
+- **Foreign objects** have no record in the database but either a key in another format or a modification time before the channel record was created — files written to the same path by other programs, say, or the objects in an old bucket attached by a fresh instance during disaster recovery before the metadata is restored. They are counted, never deleted.
 - **Phantoms**: replicas the metadata database records as completed but that are missing from the channel. They are reset to pending and queued to be copied from another channel.
 
-Each channel's reconciliation logs a 渠道对账完成 line with the object count, orphans deleted and phantoms requeued.
+Each channel's reconciliation logs a 渠道对账完成 line with the fields `objects` (object count), `bytes`, `foreign` (foreign objects), `orphans_deleted` (deep check leftovers included) and `phantoms_requeued`.
+
+<Callout type="error" title="Two instances must not share a channel path">
+If two ImgYoung instances use the same storage path, objects the other instance writes after this one attached the path are orphans as far as this database is concerned, and are deleted once past the grace period. Give each instance its own bucket or path.
+</Callout>
 
 Separately, replica reconciliation runs every 10 minutes (without listing channel objects): failed replicas on channels that are healthy again are reset to pending, and unfinished replicas are queued again.

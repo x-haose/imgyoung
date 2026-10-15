@@ -30,7 +30,7 @@ None of the `proxy_set_header` lines in the example are optional:
 
 ## Trusted proxies: IMGYOUNG_TRUSTED_PROXIES
 
-ImgYoung derives three things from each request: the **client address** (the login rate limit key and the `/metrics` allow check), **whether the first hop was HTTPS** (the session cookie's `Secure` flag), and the **public host** (for returned links when `base_url` is not set). `X-Forwarded-*` headers are honored only when the TCP peer address is inside `IMGYOUNG_TRUSTED_PROXIES`; the default `127.0.0.0/8,::1/128` trusts a proxy on the same host only.
+ImgYoung derives three things from each request: the **client address** (the login rate limit key and the `/metrics` allow check), **whether the first hop was HTTPS** (the session cookie's `Secure` flag), and the **public host** (for returned links when `base_url` is not set). `X-Forwarded-*` headers are honored only when the TCP peer address is inside `IMGYOUNG_TRUSTED_PROXIES`; when the variable is unset, the default `127.0.0.0/8,::1/128` trusts a proxy on the same host only. Setting it to an empty string (or only whitespace) trusts no proxy at all, so forwarding headers are always ignored; the **Bootstrap configuration** card in the admin console then shows **Empty: forwarded headers are never trusted**.
 
 When the peer is trusted:
 
@@ -108,9 +108,9 @@ With `base_url` (**Settings → Runtime settings → Access & links → Public s
 
 ## Keep the upload size limit in step with the proxy
 
-ImgYoung's max image size (`max_upload_mb`, 50 MB out of the box) applies to the whole request body. Give the proxy a slightly larger body limit to leave room for multipart overhead:
+ImgYoung's max image size (`max_upload_mb`, 50 MB out of the box) applies to the file itself, so a file exactly at the limit is accepted; the whole request body may be up to the max image size plus 64 KiB, which leaves room for multipart boundaries and short fields such as `exif_policy` and `ttl`. The proxy's body limit should be at least that:
 
 - Nginx allows only 1 MB by default; the example sets `client_max_body_size 60m;`.
-- The Caddy example sets no body limit; if you add `request_body` with `max_size`, keep it at or above the max image size.
+- The Caddy example sets no body limit; if you add `request_body` with `max_size`, keep it at or above the max image size plus 64 KiB.
 
 When you raise the max image size in the admin console, raise the proxy limit too, or large images are rejected with 413 by the proxy before they ever reach ImgYoung.

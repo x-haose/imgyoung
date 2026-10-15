@@ -32,7 +32,7 @@ The version shown by `./imgyoung -version` is derived from Git by the Go toolcha
 
 ## Build flags
 
-The Taskfile sets two environment variables for every task:
+The Taskfile sets two environment variables at the top level, and build tasks such as `task build` and `task run` run under them (only the race detector in `task test` turns cgo on, on Linux / Windows):
 
 ```yaml title="Taskfile.yml (excerpt)"
 env:

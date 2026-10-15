@@ -19,7 +19,9 @@ docker compose up -d
 
 浏览器打开 `http://<主机>:8721/`,用 `admin` / `imgyoung123` 登录,首次登录会要求立即改密。
 
-镜像标签、数据卷内容、环境变量与重启策略的含义见 [Docker 镜像](./docker.mdx),这里不重复。
+镜像标签、数据卷内容、环境变量与重启策略的含义见 [Docker 镜像](./docker.mdx),这里不重复。在 `environment:` 里用 `${VAR}` 引用宿主机变量之前,先读那一页「环境变量」一节的提醒:宿主机没设的变量会被代入空串。
+
+示例里的 `stop_grace_period: 15s` 是停止时等待进程退出的上限。ImgYoung 收到停止信号后先停收新请求、等在途请求至多 6 秒,再停后台任务至多 2 秒,然后关库退出;15 秒在这约 8 秒之上留出余量。
 
 ## 日常操作
 
@@ -39,7 +41,7 @@ docker compose up -d
 
 数据卷的实际名字带项目名前缀,项目名默认是目录名:在 `imgyoung` 目录下就是 `imgyoung_imgyoung-data`,可用 `docker volume ls` 确认。
 
-要固定版本,把 `image:` 改成 `ghcr.io/x-haose/imgyoung:1.0` 这样的主次版本标签或具体版本,再执行 `docker compose up -d`。升级前建议先在后台「设置 → 备份与导出」点「立即备份」,更多注意事项见 [升级](../operations/upgrade.mdx)。
+要固定版本,把 `image:` 改成 `ghcr.io/x-haose/imgyoung:1.0` 这样的主次版本标签或具体版本,再执行 `docker compose up -d`。改回更旧的标签不能降级:旧版本遇到被新版本迁移过的数据库会拒绝启动。升级前建议先在后台「设置 → 备份与导出」点「立即备份」,回滚步骤与更多注意事项见 [升级](../operations/upgrade.mdx)。
 
 ## 与 Caddy 组合对外提供 HTTPS
 
@@ -57,6 +59,7 @@ services:
   imgyoung:
     image: ghcr.io/x-haose/imgyoung:latest
     restart: unless-stopped
+    stop_grace_period: 15s
     # 不发布端口:只经 Caddy 对外
     volumes:
       - imgyoung-data:/data
@@ -93,7 +96,7 @@ img.example.com {
 }
 ```
 
-这份 Caddyfile 与仓库 `deploy/Caddyfile` 的区别只在转发目标:Caddy 在容器里,要用服务名 `imgyoung:8721` 而不是 `127.0.0.1:8721`。
+这份 Caddyfile 与仓库 `deploy/Caddyfile` 在配置上的区别只有转发目标:Caddy 在容器里,要用服务名 `imgyoung:8721` 而不是 `127.0.0.1:8721`。
 
 几点说明:
 

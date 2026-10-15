@@ -73,7 +73,7 @@ The endpoint and domain are built from the **Public site address**, or from the 
 | PutObject | `PUT /s3/<bucket>/<object key>` | Runs the upload pipeline. The `ETag` response header is the SHA-256 of the uploaded body, and `x-amz-meta-image-id` carries the image's short ID |
 | HeadBucket | `HEAD /s3/<bucket>` | 200 whenever the credential is valid |
 | HeadObject | `HEAD /s3/<bucket>/<object key>` | The object's metadata headers |
-| GetObject | `GET /s3/<bucket>/<object key>` | The stored original; no on-demand processing, not counted as an access, not subject to hotlink protection |
+| GetObject | `GET /s3/<bucket>/<object key>` | The stored original; no on-demand processing, not counted as an access, not subject to hotlink protection; same cache headers as `/o/` aliases |
 | DeleteObject | `DELETE /s3/<bucket>/<object key>` | Deletes the image the key currently points to; returns 204 even if the object does not exist |
 
 Not supported: listing buckets and objects (`ListBuckets`, `ListObjects`), multipart upload, `CopyObject`, bucket creation, ACLs, presigned URLs (query string signing) and SigV2. These requests get a 4xx error.
@@ -101,9 +101,10 @@ Errors come back as S3-style XML, and clients act on the `Code`:
 | Not a supported image, or over the pixel budget | 400 | `InvalidRequest` |
 | Storage quota full | 403 | `QuotaExceeded` |
 | Object key too long / with invalid characters / missing | 400 | `KeyTooLongError` / `InvalidArgument` / `InvalidRequest` |
-| Object does not exist | 404 | `NoSuchKey` |
+| Object does not exist, or the image it points to has expired | 404 | `NoSuchKey` |
+| No healthy channel to write to during upload, or fewer synchronous copies than the minimum succeeded | 503 | `ServiceUnavailable` |
 | Object temporarily unreadable (GET / HEAD) | 503 | `ServiceUnavailable` |
-| Any other server error, including no channel available for writing | 500 | `InternalError` |
+| Any other server error | 500 | `InternalError` |
 
 When the upload concurrency gate is full or the rate limit is hit, the response is 429 with a JSON body rather than XML.
 
@@ -116,7 +117,7 @@ https://img.example.com/o/<user id>/<object key>
 ```
 
 - The user id is the immutable account identifier, not the username: `default` for the built-in administrator, and a random 10-character string for every other account. You can find it in the ID column of the **Users** page or in the **Custom domain** field of the S3 settings dialog. Object keys are only unique within a user, which is why the link needs it.
-- `/o/` and `/i/<short ID>` are two entrances to the same image, with identical on-demand processing, format negotiation, hotlink protection and access counting; see [Accessing images](./access.mdx).
+- `/o/` and `/i/<short ID>` are two entrances to the same image, with identical on-demand processing, format negotiation, hotlink protection and access counting; only caching differs, see below and [Accessing images](./access.mdx#caching).
 - The short ID is in the `x-amz-meta-image-id` header of the PutObject response, and the image also shows up on the **Images** page.
 
 ### Overwriting a key
@@ -127,10 +128,8 @@ A second PutObject to the same object key overwrites it, S3 style:
 - The old image is not deleted. Its short ID link keeps working, and it keeps using storage and quota; delete it on the **Images** page if you no longer need it.
 - DeleteObject only deletes the image the key currently points to.
 
-<Callout type="warn" title="Browsers and CDNs may keep showing the old image">
-Like `/i/`, responses for `/o/` links carry a one-year `immutable` cache header. After an overwrite, browsers and CDNs that already cached the old content do not ask again until their cache expires.
-To change an image, upload it under a new object key (for example by putting a content hash in the upload path) rather than relying on overwrites.
-</Callout>
+Because object keys can be overwritten, responses for `/o/` links (and S3 GetObject) carry `Cache-Control: public, no-cache` with a strong `ETag`: browsers and CDNs may cache them but must check with this server, sending the `ETag`, before each use, and get a 304 when nothing changed.
+After an overwrite, the next check returns the new image. The short link `/i/<short ID>` always points to the same image and is still cached as immutable for a year.
 
 ## Client configuration examples
 

@@ -67,6 +67,8 @@ An image is redirected only when all of these hold:
 
 Otherwise the image is proxied. With **Allow 302 direct links** on but no public URL, the form warns "public_base_url is not set, so direct links will not take effect and access falls back to proxying".
 
+The 302 response carries `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect, and switching channels, retiring one or an image expiring takes effect immediately. Objects are written with a `Content-Type` sniffed from their content, so even though object keys have no extension, a browser opening a direct link displays the image.
+
 Public read access on the bucket has to be enabled at the provider; ImgYoung does not check it. Public read also means anyone holding a direct link can fetch the object without going through ImgYoung, so hotlink protection only applies to requests that do. See [Access and links](../guides/access.mdx) for the full picture of access modes.
 
 ## Custom mode
@@ -114,17 +116,17 @@ Server type options and the rclone `vendor` value each maps to:
 
 WebDAV channels have no public URL, and the form hides **Allow 302 direct links** and **Create the bucket automatically**; reads are always proxied. Chinese cloud drives such as Aliyun Drive and Baidu Netdisk are also connected over WebDAV, see [Cloud drives and OAuth](./cloud-drives.mdx).
 
-<Callout type="warn" title="Re-enter the password when editing a WebDAV channel">
-When editing a WebDAV template channel, leaving the password field masked replaces the stored password with an invalid value on save, and the channel then fails to authenticate; **Test connection** in the edit form fails the same way. Type the password again whenever you edit.
-</Callout>
-
 ## Common errors
 
-Failure reasons from **Test connection**, and the reason shown when hovering **Unhealthy** in the Status column, are translated from the underlying error into the hints below (case-insensitive, first match from the top). An error that matches nothing is shown as its first 200 characters; **Test connection** additionally scrubs the credentials you typed.
+Failure reasons from **Test connection**, and the reason shown when hovering **Unhealthy** in the Status column, are translated from the underlying error into the hints below (case-insensitive, first match from the top). An error that matches nothing is shown as its first 200 characters; **Test connection** additionally scrubs credentials from it (the values of parameters rclone flags as passwords or sensitive).
 
 | Hint shown | Underlying error contains | What to check |
 |---|---|---|
-| 认证失败(403):检查 Access Key / Secret Key 及其权限 — authentication failed | `InvalidAccessKeyId`, `SignatureDoesNotMatch`, `AccessDenied`, `access denied`, `StatusCode: 403`, `401 Unauthorized` | Mistyped or revoked keys, or missing read, write or delete permission on the bucket. Read-only keys fail at the write step of the deep check |
+| 认证失败(403):检查 Access Key / Secret Key 及其权限 — authentication failed (403) | `InvalidAccessKeyId`, `SignatureDoesNotMatch`, `StatusCode: 403` (S3-type backends only) | Mistyped or revoked keys, or missing read, write or delete permission on the bucket. Read-only keys fail at the write step of the deep check |
+| 应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致 — invalid app credentials | `invalid_client`, `unauthorized_client` | A drive channel's app client ID or secret is wrong, or belongs to a different app than the one that issued the token |
+| 授权已失效:刷新令牌被拒绝,请重新授权 — authorization expired | `invalid_grant` | The token was revoked or has lapsed; use **Authorize again** in the edit form |
+| 认证失败(401):检查用户名、密码或授权令牌是否有效 — authentication failed (401) | `401 Unauthorized`, `unauthenticated`, `InvalidAuthenticationToken` | The WebDAV user name or password (Nutstore needs an app password), or a drive's authorization token |
+| 无访问权限(403):检查账号对存储位置的权限 — access denied (403) | `AccessDenied`, `access denied`, `403 Forbidden` | On non-S3 backends, the account lacks read, write or delete permission on the folder |
 | 存储桶不存在或无权访问:检查桶名与凭证权限 — bucket missing or inaccessible | `NoSuchBucket`, `no such bucket`, `BucketRegionError` | The bucket name (COS needs the APPID suffix); whether the bucket exists |
 | 区域不匹配:检查所选区域与存储桶实际所在区域 — region mismatch | `PermanentRedirect`, `AuthorizationHeaderMalformed` | The region or endpoint does not match the bucket's actual region |
 | 无法解析服务端点域名:检查 endpoint 配置 — cannot resolve the endpoint | `no such host`, `server misbehaving` | A typo in the endpoint, or DNS on the server |
@@ -143,5 +145,8 @@ Common rejections when saving the form (returned immediately; no channel is crea
 | `渠道参数非法: 未知的 rclone 后端 "…"` | A misspelt backend name in custom mode |
 | `渠道参数非法: 配置键 "…" 非法(仅允许字母数字下划线)` | A custom parameter key contains other characters (such as `-`) |
 | `渠道参数非法: 自动创建存储桶失败(…)` | **Create the bucket automatically** is on but the key cannot create buckets |
+| `渠道参数非法: 后端 "onedrive" 授权后的配置失败: …` | Selecting the drive for a newly authorized OneDrive channel failed when querying the provider |
+| `渠道参数非法: 字段 "…" 不是凭证,不能沿用已存值` | The mask value `__imgyoung_secret_keep__` was put on a parameter that is not a credential |
+| `渠道参数非法: 字段 "…" 无已存原值可保留,请重新填写` | The mask value was submitted for a parameter that has no stored value |
 
 Once a channel exists but shows **Unhealthy**, fix its configuration and use **Probe again** in the row menu: it runs a deep check right away and refreshes the status. The probe and status rules are in [Channels and failover](./index.mdx).

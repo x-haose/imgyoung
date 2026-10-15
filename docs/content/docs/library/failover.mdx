@@ -74,21 +74,23 @@ defer func() { _ = rc.Close() }()
 | 情况 | 返回的错误 | 含义 |
 |---|---|---|
 | 每个驱动都报告对象不存在 | 包裹 `driver.ErrNotFound` | 对象确实缺失 |
-| 至少一个驱动的失败不是「不存在」 | 包裹 `ErrUnavailable`,同时包裹每次失败的原因 | 有驱动故障,对象可能还在 |
+| 至少一个驱动的失败不是「不存在」 | 包裹 `ErrUnavailable`;各驱动的失败原因只写进错误文本,不参与包裹 | 有驱动故障,对象可能还在 |
 
 另外,驱动切片为空时返回 `ErrNoDrivers`。
 
-<Callout type="warn" title="先判断 ErrUnavailable">
-`ErrUnavailable` 的错误里包裹了全部失败原因,其中可能有某些驱动报告的 `driver.ErrNotFound`,所以这种情况下
-`errors.Is(err, driver.ErrNotFound)` 同样为 true。要区分「确实缺失」与「暂时读不到」,必须先检查 `ErrUnavailable`:
+两类错误互斥:`errors.Is(err, driver.ErrNotFound)` 为 true 只说明每个驱动都确认对象不存在,有驱动故障时它一定为 false。
+`ErrUnavailable` 的错误不包裹各驱动的原始错误,要逐个判断某个驱动为什么失败,看返回的尝试记录:
 
 ```go
-rc, _, err := failover.Open(ctx, ds, key)
+rc, attempts, err := failover.Open(ctx, ds, key)
 switch {
-case errors.Is(err, failover.ErrUnavailable):
-	// 有驱动故障,对象可能还在:按「暂时不可用」处理,例如 HTTP 503
 case errors.Is(err, driver.ErrNotFound):
 	// 所有驱动都确认对象不存在:例如 HTTP 404
+case errors.Is(err, failover.ErrUnavailable):
+	// 有驱动故障,对象可能还在:按「暂时不可用」处理,例如 HTTP 503
+	for _, a := range attempts {
+		log.Printf("驱动 %d: %v", a.Index, a.Err)
+	}
 case err != nil:
 	// ErrNoDrivers,或 ctx 被取消
 default:
@@ -96,7 +98,6 @@ default:
 	// 读取 rc
 }
 ```
-</Callout>
 
 ## Probe 与 DeepProbe:健康探测
 
@@ -116,7 +117,7 @@ default:
 - 写入与读回受 `ctx` 约束;删除使用脱离 `ctx` 取消的独立 10 秒超时,所以读回失败或 `ctx` 到期后仍会尽力删除。
 - 写入、读回、内容核对任一环节失败都返回对应错误;读回已经失败时,删除的结果不再影响返回值;
   读回成功而删除失败(且不是 `driver.ErrNotFound`)时返回删除错误。
-- 删除失败留下的临时对象是普通的孤儿对象,需要自己按 `.imgyoung-probe-` 前缀清理。
+- 删除失败会留下临时对象。`failover.IsDeepProbeKey(key)` 判断一个键是不是深探测临时对象,清理逻辑可据此认领回收。
 
 只读探测成功不代表能写。一种稳妥的组合是应用采用的「只降不升」:周期轻探测只能把健康的存储判为不健康;
 不健康的存储即使轻探测通过,也要再经深探测确认写读删全通,才恢复为健康。这样只读凭证这类「探测健康却写不进」的情况不会被下一轮轻探测误判为恢复。
@@ -183,7 +184,8 @@ func Replicate(ctx context.Context, holders []driver.Driver, target driver.Drive
 - **持久化副本状态**:`holders` 与 `pending` 要落进你的存储,进程重启后能从中恢复未完成的补齐。
 - **重试与退避**:`Replicate` 失败时稍后重试,多次失败后标记为失败并告警,存储恢复后再重新尝试。
 - **对账**:定期对每个存储 `List`,与记录双向比对:存储里有、记录里没有的是孤儿对象(写入成功但记录落库失败时产生),
-  过了宽限期再删除;记录说有、存储里没有的副本要重新补齐。
+  过了宽限期再删除;记录说有、存储里没有的副本要重新补齐。只回收能确认是自己写出的对象(例如按你自己的键名格式判断),
+  别的程序写进同一存储的文件不要动;深探测残留用 `IsDeepProbeKey` 认领,过宽限期即可删除。
 - **并发控制**:补齐任务与业务读写共用存储的带宽与请求配额,需要限制同时运行的数量。
 
 应用用业务表 `blob_channels` 记录副本状态,用 River 任务队列执行补齐,做法见 [架构](../architecture.mdx)。
@@ -196,8 +198,9 @@ func Replicate(ctx context.Context, holders []driver.Driver, target driver.Drive
 |---|---|---|
 | 上传写入 | `Write` | 驱动为健康渠道,按优先级排序;`Need` 取运营配置 `min_success`(小于 1 时按 1);`AttemptTimeout` 为 10 分钟。成功的渠道记为副本就绪,其余渠道记为待补齐并入队补齐任务;份数不足返回 503 |
 | 访问读取 | `Open` | 驱动为健康、不在清理中、且该图副本已就绪的渠道,按优先级排序;失败的尝试逐条记日志;全部失败返回 503 |
-| 周期健康探测 | `Probe` / `DeepProbe` | 每隔 `health_check_seconds` 秒对各渠道并行轻探测,单个渠道 10 秒超时;不健康的渠道轻探测通过后,再以 20 秒超时深探测确认才恢复 |
+| 周期健康探测 | `Probe` / `DeepProbe` | 每隔 `health_check_seconds` 秒先重试装载此前装载失败的渠道,再对各渠道并行轻探测,单个渠道 10 秒超时;不健康的渠道轻探测通过后,再以 20 秒超时深探测确认才恢复 |
 | 事件深探测 | `DeepProbe` | 创建渠道后、编辑渠道后、手动重检、测试连接,20 秒超时 |
 
 补齐任务从候选源渠道逐个尝试读出、写入目标渠道,与上面的 `Replicate` 思路相同。每日的对账会跳过 `ProbeKey` 与系统目录 `_imgyoung/`,
-深探测残留的临时对象按孤儿对象在 48 小时宽限期后回收。运营配置项见 [配置](../configuration.mdx)。
+只回收键名是应用对象键格式的孤儿(口径见 [架构](../architecture.mdx));深探测残留由 `IsDeepProbeKey` 认领,过 48 小时宽限期即删,
+不看写入时刻。运营配置项见 [配置](../configuration.mdx)。

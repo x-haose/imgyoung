@@ -7,27 +7,28 @@ description: Which drives need authorization, the two ways to authorize, how tok
 
 In the type picker of **New channel**, the **Cloud drives** group holds the generic [WebDAV](./object-storage.mdx) template plus six templates that need OAuth authorization:
 
-| Template | rclone backend | Fields |
+| Template | rclone backend | Backend-specific field |
 |---|---|---|
-| OneDrive | `onedrive` | region, authorization, folder |
-| Google Drive | `drive` | authorization, folder |
-| Dropbox | `dropbox` | authorization, folder |
-| pCloud | `pcloud` | data region, authorization, folder |
-| Box | `box` | authorization, folder |
-| Yandex Disk | `yandex` | authorization, folder |
+| OneDrive | `onedrive` | region |
+| Google Drive | `drive` | — |
+| Dropbox | `dropbox` | — |
+| pCloud | `pcloud` | data region |
+| Box | `box` | — |
+| Yandex Disk | `yandex` | — |
 
-Field labels and options come from the server in Chinese:
+After the backend-specific field, all six templates have app client ID, app client secret, authorization and folder, in that order. Labels and options come from the server in Chinese:
 
 - **Region** (区域, OneDrive): 国际版 (global), 美国政府云 (US government), 德国云 (Germany), 中国世纪互联 (China, 21Vianet). It selects the authorization and API endpoints and must match the account's region.
 - **Data region** (数据区域, pCloud): 美国 (US) or 欧洲 (EU). It must match the region chosen when the account was registered, or the token exchange fails.
-- **Folder** (存储目录): the folder on the drive that holds the images, `imgyoung` suggested; empty means the root.
+- **App client ID / app client secret** (应用 Client ID / 应用 Client Secret): the identity and secret of an OAuth app you registered on the provider's developer platform. One-click authorization requires the client ID. When pasting a token, fill in both if the token was obtained with your own app; leave them empty for tokens from rclone's built-in app. Token renewal uses these two values, so they must belong to the app that issued the token. Both are stored encrypted with the channel and shown masked when editing.
 - **Authorization** (授权): the token, filled in by one of the two authorization paths below; the form cannot be saved without it.
+- **Folder** (存储目录): the folder on the drive that holds the images, `imgyoung` suggested; empty means the root.
 
 The endpoints, scopes and rclone's built-in app identity needed for authorization all come from the rclone backend's own registration; ImgYoung has no per-provider code.
 
-<Callout type="warn" title="Connect OneDrive and pCloud in custom mode">
-rclone's `onedrive` backend also needs `drive_id` and `drive_type`, which the OneDrive template does not collect, so saving fails with `unable to get drive_id and drive_type`. pCloud issues tokens without a refresh token, while the template requires one, so saving fails with "缺少刷新令牌" ("missing refresh token"). Set up both in [custom mode](#onedrive-and-pcloud-in-custom-mode) instead.
-</Callout>
+**OneDrive drives**: when a new authorization comes in, saving or testing the connection runs the rest of rclone's own configuration flow after the authorization step, taking the default answer at every question: it selects the account's default drive and writes `drive_id` and `drive_type`, the same choice `rclone config` makes when you accept every default. If the query to the provider fails, saving returns 400 and Test connection shows the reason. Editing with the stored authorization keeps the existing choice. For a SharePoint document library or another drive, see [Other OneDrive drives](#other-onedrive-drives).
+
+**pCloud tokens**: pCloud tokens never expire (their expiry is the zero time) and carry no refresh token; they save normally.
 
 ## Option 1: paste a token
 
@@ -60,8 +61,9 @@ In the authorization field switch to **Paste a token**, paste it, fill in the re
 </Steps>
 
 - Both a plain token JSON and rclone's encoded config blob (what `rclone authorize` prints when given a config blob argument) are accepted; ImgYoung extracts the token.
-- The token must include a refresh token, otherwise it cannot be renewed once the access token expires. Saving then fails with "渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段「授权」)"; content that cannot be parsed fails with "令牌格式非法" ("malformed token").
-- A token obtained this way is issued to rclone's built-in app, and rclone refreshes it with the same built-in app later, so the two match.
+- A token that expires must include a refresh token, otherwise it cannot be renewed once the access token expires; saving then fails with "渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段「授权」)". Tokens that never expire (such as pCloud's) need none. Content that cannot be parsed fails with "令牌格式非法" ("malformed token").
+- A token from `rclone authorize "<backend>"` is issued to rclone's built-in app: leave the app client ID and secret empty, and rclone renews it with the built-in app as well.
+- To use your own app, run `rclone authorize "<backend>" <client ID> <client secret>` (the app must register rclone's local callback URL `http://127.0.0.1:53682/`), then enter the same app's client ID and secret in the form.
 
 ## Option 2: one-click authorization in the admin console
 
@@ -81,7 +83,7 @@ https://img.example.com/api/admin/channel-oauth/callback
 The two must match character for character (scheme, host, port and path).
 </Step>
 <Step>
-Under **One-click authorization** in the authorization field, enter **App client ID** and **App client secret** and click **Authorize with …**. A new browser tab opens the provider's consent page.
+Enter your app's credentials in the app client ID and app client secret fields above the authorization field, then click **Authorize with …** under **One-click authorization**. The button stays disabled until a client ID is filled in. A new browser tab opens the provider's consent page.
 </Step>
 <Step>
 When it finishes, the callback page reads "授权成功,请回到后台继续。" ("authorized, return to the console"), the authorization field turns **Authorized**, and you can save.
@@ -92,29 +94,25 @@ When it finishes, the callback page reads "授权成功,请回到后台继续。
 - An authorization session is valid for 10 minutes and the form waits for at most about 11 minutes; after that it shows "Timed out waiting for authorization, please start again".
 - The token is never written into the callback page; the form collects it with a one-time identifier, and it can be collected only once.
 - A failed token exchange reports "换取令牌失败,请核对应用凭证与回调地址" ("token exchange failed; check the app credentials and the callback URL"); refusing or cancelling on the provider's page reports "授权被拒绝或取消" plus the reason the provider returned.
-
-<Callout type="warn" title="Token renewal after one-click authorization">
-The channel configuration stores only the token, not the client ID and secret entered for one-click authorization. When the access token expires, rclone refreshes it with its built-in app, which is not the app that issued the token, so the provider rejects the refresh and the channel turns **Unhealthy**. For drive channels you want to keep, authorize by pasting a token.
-</Callout>
+- When re-authorizing an existing channel, leaving the two app credential fields masked keeps the stored values.
+- The client ID and secret are stored with the channel, so rclone renews the token with the same app once it expires.
 
 ## Token renewal and persistence
 
 - Backend parameters are handed to rclone as a map with a write-back hook. When the access token nears expiry, rclone refreshes it itself and writes the new token back through the hook; ImgYoung immediately encrypts it with the master key and stores it in the channel configuration. Any other parameter rclone writes back at runtime takes the same path.
 - If storing fails, only a log line is written (`后端写回参数无法落库`) and the new token stays in use in memory; after a restart the old token from the database is used again.
+- Backends built temporarily while saving a channel, or while testing the connection in the edit form, also persist a refreshed token: creating and editing store it with the configuration, and a stored token refreshed during an edit-form connection test is written back to that channel.
 - **There is exactly one refresher.** ImgYoung runs no refresh loop of its own: some providers invalidate the old refresh token on every refresh, so two refreshers would keep invalidating each other. The read-only requests of the periodic light check (every 60 s by default) are enough for rclone to refresh on time.
 - When editing a drive channel, the authorization field shows **Authorized · using the stored token**; leave it to keep the token, or click **Authorize again** to replace it.
 
-## OneDrive and pCloud in custom mode
+## Other OneDrive drives
 
-Both are entered under **New channel → Advanced → Custom**: put the backend name into **rclone backend** and the parameters from the tables below. Custom mode stores the token as given; to re-authorize, replace the value of `token`.
+The template only ever selects the account's default drive. For a SharePoint document library or another drive, enter `drive_id` and `drive_type` yourself under **New channel → Advanced → Custom**.
 
-<Tabs items={['OneDrive', 'pCloud']}>
-<Tab value="OneDrive">
-
-On a computer with a browser, create a temporary OneDrive remote with rclone. After authorization rclone selects the account's default drive and writes out `drive_id` and `drive_type`. For accounts outside the global cloud, append `region=us`, `region=de` or `region=cn` to the command:
+On a computer with a browser, create a OneDrive remote interactively with `rclone config`, pick the target drive when it asks, then show the parameters it wrote:
 
 ```bash title="Terminal"
-rclone config create onedrive-tmp onedrive
+rclone config
 rclone config show onedrive-tmp
 ```
 
@@ -126,33 +124,15 @@ Copy the values into the custom form:
 | `token` | `token` from the `rclone config show` output |
 | `drive_id` | Same source |
 | `drive_type` | Same source (`personal`, `business` or `documentLibrary`) |
-| `region` | Only outside the global cloud, as in the previous step |
+| `region` | Only outside the global cloud: `us`, `de` or `cn` |
+| `client_id`, `client_secret` | Only if you used your own app in rclone |
 | `path` | Folder for the images, such as `imgyoung` |
 
-After saving, delete the temporary remote on your computer so that two places do not refresh the same token:
+Custom mode stores the token as given; to re-authorize, replace the value of `token`. After saving, delete the temporary remote on your computer so that two places do not refresh the same token:
 
 ```bash title="Terminal"
 rclone config delete onedrive-tmp
 ```
-
-</Tab>
-<Tab value="pCloud">
-
-```bash title="Terminal"
-rclone authorize "pcloud"
-```
-
-| Key | Value |
-|---|---|
-| rclone backend | `pcloud` |
-| `token` | The token JSON printed by `rclone authorize` |
-| `hostname` | US `api.pcloud.com`, EU `eapi.pcloud.com` |
-| `path` | Folder for the images, such as `imgyoung` |
-
-pCloud tokens do not expire and need no refresh.
-
-</Tab>
-</Tabs>
 
 ## Chinese cloud drives: WebDAV through a self-hosted aggregator
 

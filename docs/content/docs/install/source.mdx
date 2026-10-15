@@ -32,7 +32,7 @@ task build
 
 ## 构建参数
 
-Taskfile 为所有任务设置了两个环境变量:
+Taskfile 在顶层设置了两个环境变量,`task build`、`task run` 等构建任务都在这组条件下进行(只有 `task test` 的竞争检测在 Linux / Windows 上会打开 cgo):
 
 ```yaml title="Taskfile.yml(节选)"
 env:

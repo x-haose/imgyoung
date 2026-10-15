@@ -81,22 +81,24 @@ When every driver fails, there are two kinds of error:
 | Situation | Error returned | Meaning |
 |---|---|---|
 | Every driver reports the object does not exist | Wraps `driver.ErrNotFound` | The object really is missing |
-| At least one driver failed for a reason other than "not found" | Wraps `ErrUnavailable`, plus the cause of each failure | Some driver is broken; the object may still exist |
+| At least one driver failed for a reason other than "not found" | Wraps `ErrUnavailable`; each driver's failure appears only in the error text and is not wrapped | Some driver is broken; the object may still exist |
 
 An empty driver slice returns `ErrNoDrivers`.
 
-<Callout type="warn" title="Check ErrUnavailable first">
-An `ErrUnavailable` error wraps every failure cause, which can include `driver.ErrNotFound` reported by some of the
-drivers, so `errors.Is(err, driver.ErrNotFound)` is also true in that case. To tell "really missing" from
-"temporarily unreadable", check `ErrUnavailable` first:
+The two kinds are mutually exclusive: `errors.Is(err, driver.ErrNotFound)` is true only when every driver confirmed
+the object does not exist, and always false when some driver is broken. An `ErrUnavailable` error does not wrap the
+drivers' original errors; to examine why a particular driver failed, look at the returned attempts:
 
 ```go
-rc, _, err := failover.Open(ctx, ds, key)
+rc, attempts, err := failover.Open(ctx, ds, key)
 switch {
-case errors.Is(err, failover.ErrUnavailable):
-	// Some driver is broken and the object may still exist: treat as temporarily unavailable, e.g. HTTP 503
 case errors.Is(err, driver.ErrNotFound):
 	// Every driver confirmed the object does not exist: e.g. HTTP 404
+case errors.Is(err, failover.ErrUnavailable):
+	// Some driver is broken and the object may still exist: treat as temporarily unavailable, e.g. HTTP 503
+	for _, a := range attempts {
+		log.Printf("driver %d: %v", a.Index, a.Err)
+	}
 case err != nil:
 	// ErrNoDrivers, or ctx was cancelled
 default:
@@ -104,7 +106,6 @@ default:
 	// read from rc
 }
 ```
-</Callout>
 
 ## Probe and DeepProbe: health checks
 
@@ -128,7 +129,7 @@ Details of `DeepProbe`:
 - A failure in the write, the read-back, or the content comparison returns the corresponding error. If the read-back
   already failed, the delete result no longer affects the return value; if the read-back succeeded but the delete
   failed (with anything other than `driver.ErrNotFound`), the delete error is returned.
-- A temporary object left behind by a failed delete is an ordinary orphan; clean it up yourself by the `.imgyoung-probe-` prefix.
+- A failed delete leaves a temporary object behind. `failover.IsDeepProbeKey(key)` reports whether a key is a deep check temporary object, so your cleanup logic can claim and reclaim it.
 
 A successful read-only check does not mean the store accepts writes. A safe combination, and the one the application
 uses, is "downgrade only": periodic light checks can only mark a healthy store unhealthy; an unhealthy store whose light
@@ -202,7 +203,9 @@ These two functions only perform the work. To turn them into reliable replicatio
 - **Retries with backoff**: retry a failed `Replicate` later, mark it failed and alert after repeated failures, and try again once the store recovers.
 - **Reconciliation**: periodically `List` every store and compare with your records in both directions. Objects in the
   store but not in your records are orphans (produced when the write succeeded but recording it failed); delete them
-  after a grace period. Copies your records claim but the store lacks need to be replicated again.
+  after a grace period. Copies your records claim but the store lacks need to be replicated again. Only reclaim
+  objects you can tell you wrote yourself (by your own key format, for example), and leave files other programs put
+  in the same store alone; claim deep check leftovers with `IsDeepProbeKey` and delete them once past the grace period.
 - **Concurrency limits**: replication shares the stores' bandwidth and request quotas with regular traffic, so cap how many copies run at once.
 
 The application records replica state in the `blob_channels` table and runs replication on the River task queue; see
@@ -216,9 +219,11 @@ The application's channels are a set of rclone drivers, and upload, image access
 |---|---|---|
 | Upload | `Write` | Drivers are the healthy channels in priority order; `Need` is the runtime setting `min_success` (values below 1 count as 1); `AttemptTimeout` is 10 minutes. Channels that succeeded are recorded as holding a ready replica; the rest are recorded as pending and replication jobs are queued. Too few copies returns 503 |
 | Image access | `Open` | Drivers are the channels that are healthy, not being cleaned up, and hold a ready replica of the image, in priority order; each failed attempt is logged; if all fail, 503 is returned |
-| Periodic health check | `Probe` / `DeepProbe` | Every `health_check_seconds` seconds, all channels get a light check in parallel, with a 10-second timeout per channel; an unhealthy channel whose light check passes is confirmed with a deep check (20-second timeout) before it recovers |
+| Periodic health check | `Probe` / `DeepProbe` | Every `health_check_seconds` seconds, channels that previously failed to load are retried, then all channels get a light check in parallel, with a 10-second timeout per channel; an unhealthy channel whose light check passes is confirmed with a deep check (20-second timeout) before it recovers |
 | Event-driven deep check | `DeepProbe` | After a channel is created or edited, on manual recheck, and on connection test, with a 20-second timeout |
 
 Replication jobs try the source channels one by one and write to the target channel, the same idea as `Replicate`
-above. The daily reconciliation skips `ProbeKey` and the system directory `_imgyoung/`, and temporary objects left by deep
-checks are reclaimed as orphans after a 48-hour grace period. For runtime settings, see [Configuration](../configuration.mdx).
+above. The daily reconciliation skips `ProbeKey` and the system directory `_imgyoung/`, and only reclaims orphans whose
+keys have the application's object key format (criteria in [Architecture](../architecture.mdx)); leftovers from
+deep checks are claimed with `IsDeepProbeKey` and deleted once past the 48-hour grace period, regardless of when they
+were written. For runtime settings, see [Configuration](../configuration.mdx).

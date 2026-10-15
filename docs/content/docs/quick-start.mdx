@@ -39,7 +39,7 @@ docker logs imgyoung
 |---|---|
 | `admin` | `imgyoung123` |
 
-出厂密码是公开的。首次登录后会直接进入「设置管理员密码」页,改掉之前不能进入其他页面。新密码至少 8 位,点「保存并重新登录」后用新密码再登录一次。
+出厂密码是公开的。首次登录后会直接进入「设置管理员密码」页;改掉之前,后台其他页面都打不开,服务端也会拒绝除退出、查看本人信息与改密之外的全部后台接口(返回 403)。新密码至少 8 位,点「保存并重新登录」后用新密码再登录一次。
 
 </Step>
 <Step>
@@ -107,7 +107,7 @@ curl -s -H "Authorization: Bearer imgy_你的Token" -F "file=@screenshot.png" \
 </Callout>
 
 - [存储渠道](./channels/index.mdx):添加异地渠道,设置优先级与加密。
-- [备份与恢复](./operations/backup.mdx):单独备份主密钥 `master.key`,它不在快照里,丢失后渠道凭证与加密数据都无法恢复。
+- [备份与恢复](./operations/backup.mdx):单独备份主密钥 `master.key`,它不在快照里;丢失后服务拒绝启动,渠道凭证与加密数据也无法恢复。
 - [反向代理](./operations/reverse-proxy.mdx):用域名与 HTTPS 对外提供服务。
 - [客户端接入](./guides/clients.mdx):配置 PicGo、PicList、Typora 等客户端。
 - [Docker 镜像](./install/docker.mdx):镜像标签、数据卷与环境变量的完整说明。

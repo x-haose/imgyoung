@@ -46,14 +46,14 @@ The data directory inside the container is `/data` (the image sets `IMGYOUNG_DAT
 | Path | Contents |
 |---|---|
 | `imgyoung.db` | The metadata database (SQLite in WAL mode, so `imgyoung.db-wal` and `imgyoung.db-shm` sit next to it while running): users, image records, channel configuration (credentials encrypted with the master key), runtime settings and the job queue |
-| `master.key` | The master key, generated on first start with mode 0600. When `IMGYOUNG_MASTER_KEY` is set, this file is neither created nor read |
+| `master.key` | The master key, generated with mode 0600 when a brand-new instance first starts without `IMGYOUNG_MASTER_KEY`. When `IMGYOUNG_MASTER_KEY` is set, this file is neither created nor read |
 | `blobs/` | Objects of the built-in local channel. While local is the primary channel, metadata snapshots are stored here too, under `_imgyoung/backup/` |
 | `variants/` | The cache of variants produced by on-demand processing, capped at 10240 MB by default and evicted least-recently-used first |
 
 During a restore from snapshot you may also see the staged file `imgyoung.db.restore`, and afterwards the previous database kept as `imgyoung.db.pre-restore-<time>`.
 
 <Callout type="warn" title="Back up master.key separately">
-  Channel credentials and the data on encrypted channels can only be decrypted with the master key. It is not included in metadata snapshots or data exports, and it cannot be recovered once lost. Copy it somewhere safe right after the first start:
+  Channel credentials and the data on encrypted channels can only be decrypted with the master key. It is not included in metadata snapshots or data exports, and once it is lost that data cannot be recovered. The database records a fingerprint of the master key, so if the key is missing or wrong the service refuses to start and says why, instead of carrying on with a new key. Copy it somewhere safe right after the first start:
 
   ```bash
   docker cp imgyoung:/data/master.key ./imgyoung-master.key
@@ -79,13 +79,20 @@ A named volume inherits the ownership of `/data` from the image the first time i
 
 These are all bootstrap settings. Pass them with `-e`; changes take effect only after the container is recreated. See [Configuration](../configuration.mdx) for the full reference.
 
-| Variable | Default in the image | Description |
-|---|---|---|
-| `IMGYOUNG_DATA_DIR` | `/data` | Set by the image; leave it alone |
-| `IMGYOUNG_LISTEN` | `:8721` | Listening address inside the container; rarely needs changing |
-| `IMGYOUNG_MASTER_KEY` | Empty (uses `/data/master.key`) | A 64-character hex master key, e.g. from `openssl rand -hex 32`. When switching an existing instance to it, use the exact value from its current `master.key` |
-| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Reverse proxy networks whose forwarding headers are trusted; see below |
-| `IMGYOUNG_METRICS_ALLOW` | Loopback and private ranges | Networks allowed to scrape `/metrics` |
+A variable that is not set takes its default. Setting it to an empty string (or only whitespace) explicitly empties it instead of falling back to the default; the "When empty" column says what that means:
+
+| Variable | Default | When empty | Description |
+|---|---|---|---|
+| `IMGYOUNG_DATA_DIR` | `/data` (set by the image) | Startup fails, naming the variable | Leave it alone |
+| `IMGYOUNG_LISTEN` | `:8721` | Startup fails, naming the variable | Listening address inside the container; rarely needs changing |
+| `IMGYOUNG_MASTER_KEY` | Uses `/data/master.key` | Same as not set | A 64-character hex master key, e.g. from `openssl rand -hex 32`. When switching an existing instance to it, use the exact value from its current `master.key`; a wrong value makes startup fail |
+| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Forwarding headers are never trusted | Reverse proxy networks whose forwarding headers are trusted; see below |
+| `IMGYOUNG_METRICS_ALLOW` | Loopback and private ranges | `/metrics` is open to no one | Networks allowed to scrape `/metrics` |
+
+<Callout type="warn" title="Referencing host variables in Compose">
+  With a reference such as `IMGYOUNG_TRUSTED_PROXIES: ${TRUSTED_PROXIES}` in `compose.yaml`, if the host does not set that variable, Compose only prints a warning and substitutes an empty string, which is the "When empty" case above: `IMGYOUNG_LISTEN` and `IMGYOUNG_DATA_DIR` make startup fail, and `IMGYOUNG_TRUSTED_PROXIES` ends up trusting no forwarding headers. An empty `IMGYOUNG_MASTER_KEY` falls back to reading `/data/master.key`; an instance whose master key comes only from that variable, with no `master.key` in the data directory, refuses to start and reports that the master key is missing, without generating a new one.
+  When the host must provide a variable, write `${TRUSTED_PROXIES:?TRUSTED_PROXIES must be set}`, which refuses to start when it is missing or empty; if you want the default, leave the entry out.
+</Callout>
 
 ## Running as nonroot
 
@@ -138,4 +145,8 @@ docker run -d --name imgyoung --restart unless-stopped \
   ghcr.io/x-haose/imgyoung:latest
 ```
 
-Before upgrading, consider clicking "Back up now" under "Settings → Backups & export". See [Upgrading](../operations/upgrade.mdx) for more.
+`docker stop` waits 10 seconds by default before killing the container, which is enough for ImgYoung: on the stop signal it stops accepting new requests and waits up to 6 seconds for in-flight ones, stops background work within 2 more seconds, then closes the database and exits.
+
+Downgrading is not supported: if you switch back to an older tag, the older version refuses to start on a database migrated by a newer one. Rolling back takes the older image plus a snapshot taken before the upgrade.
+
+Before upgrading, consider clicking "Back up now" under "Settings → Backups & export". See [Upgrading](../operations/upgrade.mdx) for the rollback steps and more.

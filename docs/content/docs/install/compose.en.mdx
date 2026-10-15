@@ -19,7 +19,9 @@ docker compose up -d
 
 Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away.
 
-Image tags, the contents of the data volume, environment variables and the restart policy are explained on [Docker image](./docker.mdx) and not repeated here.
+Image tags, the contents of the data volume, environment variables and the restart policy are explained on [Docker image](./docker.mdx) and not repeated here. Before referencing host variables with `${VAR}` under `environment:`, read the warning in the "Environment variables" section there: a variable the host does not set is substituted as an empty string.
+
+`stop_grace_period: 15s` in the sample caps how long Compose waits for the process to exit on stop. On the stop signal ImgYoung stops accepting new requests and waits up to 6 seconds for in-flight ones, stops background work within 2 more seconds, then closes the database and exits; 15 seconds leaves headroom over those roughly 8.
 
 ## Day-to-day operations
 
@@ -39,7 +41,7 @@ Run these in the directory that holds `compose.yaml`:
 
 The volume's real name carries the project name as a prefix, and the project name defaults to the directory name: inside an `imgyoung` directory it is `imgyoung_imgyoung-data`. Check with `docker volume ls`.
 
-To pin a version, change `image:` to a major.minor tag such as `ghcr.io/x-haose/imgyoung:1.0`, or to an exact version, then run `docker compose up -d`. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for more.
+To pin a version, change `image:` to a major.minor tag such as `ghcr.io/x-haose/imgyoung:1.0`, or to an exact version, then run `docker compose up -d`. Switching back to an older tag is not a downgrade: the older version refuses to start on a database migrated by a newer one. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for the rollback steps and more.
 
 ## Serving HTTPS with Caddy
 
@@ -57,6 +59,7 @@ services:
   imgyoung:
     image: ghcr.io/x-haose/imgyoung:latest
     restart: unless-stopped
+    stop_grace_period: 15s
     # No published port: Caddy is the only entry point
     volumes:
       - imgyoung-data:/data
@@ -93,7 +96,7 @@ img.example.com {
 }
 ```
 
-The only difference from `deploy/Caddyfile` in the repository is the upstream: Caddy runs in a container, so it reaches ImgYoung by service name, `imgyoung:8721`, instead of `127.0.0.1:8721`.
+The only configuration difference from `deploy/Caddyfile` in the repository is the upstream: Caddy runs in a container, so it reaches ImgYoung by service name, `imgyoung:8721`, instead of `127.0.0.1:8721`.
 
 Notes:
 

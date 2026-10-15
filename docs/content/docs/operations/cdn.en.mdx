@@ -19,22 +19,21 @@ Responses from the image routes:
 
 | Response | `Cache-Control` | `ETag` | `Vary` |
 |---|---|---|---|
-| Original | `public, max-age=31536000, immutable` | `"<sha256>"` | none |
-| Variant (resized or converted) | same | `"<sha256>-<width>-<format>"`, width `0` when not resized | `Accept` when the target format was negotiated |
+| Original under `/i/<short ID>` | `public, max-age=31536000, immutable` | `"<sha256>"` | `Accept` when a JPEG / PNG / WebP is requested without `format` (or with `format=auto`) |
+| Variant under `/i/<short ID>` (resized or converted) | same | `"<sha256>-<width>-<format>"`, width `0` when not resized | `Accept` when the target format was negotiated |
+| Original or variant under a `/o/` alias | `public, no-cache` | same as above | same as above |
 | Original served as a fallback after processing failed | `no-store` | none | none |
-| `If-None-Match` matches | 304 with the matching `Cache-Control` and `ETag` | | |
-| 302 (`redirect` mode) | none | none | none |
-| Hotlink rejection (403), not found (404) | none | none | none |
+| `If-None-Match` matches | 304 with the matching `Cache-Control`, `ETag` and `Vary` | | |
+| 302 (`redirect` mode) | `no-store` | none | none |
+| Invalid parameters (400), hotlink rejection (403), not found or expired (404), metadata lookup failure (500, retryable) | none | none | none |
 
-Originals also carry `Last-Modified` (the upload time). The content behind `/i/<short ID>` never changes, which is why a one-year immutable lifetime is safe.
+Originals also carry `Last-Modified` (the upload time). The content behind `/i/<short ID>` never changes, which is why it gets a one-year immutable lifetime.
 
-<Callout type="warn" title="/o/ alias links can be overwritten">
-`/o/<user ID>/<object key>` is an alias chosen by an S3 client. Uploading again with the same object key points the alias at the new image, but the response still says one-year `immutable`, so CDNs and browsers keep the old image, and cache purging does not cover `/o/` links. Behind a CDN, prefer sharing `/i/` links; if you rely on `/o/` links, give `/o/*` a short edge cache lifetime on the CDN.
-</Callout>
+`/o/<user ID>/<object key>` is an alias chosen by an S3 client, and uploading again with the same object key points it at the new image. Its responses may therefore be cached but must be revalidated with the ETag before each use: an unchanged image gets 304, a re-pointed alias gets the new image, a deleted one gets 404. Behind a CDN, `/i/` links cache better.
 
 ## WebP negotiation and Vary
 
-When a JPEG / PNG image is requested without a `format` parameter (or with `format=auto`), and the `Accept` header contains `image/webp` and `webp` is among the target formats, the response is a WebP variant with `Vary: Accept`. In other words, **the same URL returns different formats depending on `Accept`**.
+When a JPEG / PNG image is requested without a `format` parameter (or with `format=auto`), and the `Accept` header contains `image/webp` and `webp` is among the target formats, the response is a WebP variant; otherwise it is the original format. In other words, **the same URL returns different formats depending on `Accept`**, and both responses (304s included) carry `Vary: Accept`.
 
 The CDN must cache separately per `Accept` (by honoring `Vary: Accept` or adding `Accept` to the cache key); otherwise a cached WebP may be sent to clients that cannot display it. Cloudflare lets you configure `Vary` handling in Cache Rules; for other CDNs, check their documentation. If your CDN cannot do this, remove `webp` under **On-demand processing → Target formats** in the admin console: negotiation stops, at the cost of `?format=webp` no longer being accepted.
 
@@ -46,7 +45,7 @@ The CDN must cache separately per `Accept` (by honoring `Vary: Accept` or adding
 
 ## Cloudflare cache purging
 
-After an image is deleted, CDN edges keep serving it under the one-year cache lifetime. With Cloudflare cache purging configured, ImgYoung clears the edge cache when an image is deleted.
+After an image is deleted, CDN edges keep serving its `/i/` links under the one-year cache lifetime. With Cloudflare cache purging configured, ImgYoung clears the edge cache when an image is deleted.
 
 Configure three settings under **Settings → Runtime settings**:
 
@@ -62,15 +61,15 @@ With all three set, the group shows **Purge enabled**; if any is missing, nothin
 
 **What gets purged**: `<base_url>/i/<short ID>`, plus for every variant that was actually generated for the image either `?w=<width>` and `?w=<width>&format=<format>` (resized variants) or `?format=<format>` (format-only variants).
 
-**How**: as an asynchronous background job, at most 30 URLs per API call. Failures are retried with backoff by the job queue and never block the deletion itself.
+**How**: as an asynchronous background job calling Cloudflare's purge-by-URL endpoint `POST /zones/<Zone ID>/purge_cache`, at most 100 URLs per call. Failures are retried with backoff by the job queue and never block the deletion itself.
 
-**Not covered**: `/o/` alias links, `format=auto` forms, and URLs with other query parameters or a different parameter order. These only go away when the CDN's own cache expires.
+**Not covered**: `format=auto` forms and URLs with other query parameters or a different parameter order; these only go away when the CDN's own cache expires. `/o/` alias links need no purging, since they are revalidated with the origin every time.
 
 ## Redirect mode and CDNs
 
 In `redirect` access mode, a request for an original gets a 302 to a channel that allows direct links, is not encrypted and has a public address configured. The bytes then come from the channel (or its own domain or CDN) and do not pass through the CDN in front of ImgYoung. Without such a channel ImgYoung falls back to proxying.
 
-- The 302 carries no `Cache-Control`, so whether the CDN caches it depends on the CDN's defaults; once cached, a failure of the target channel cannot be routed around until the cached redirect expires.
+- Every 302 carries `Cache-Control: no-store`, so neither the CDN nor browsers cache the redirect itself: every request comes back to ImgYoung, and channel switches, deletions and expiry take effect immediately.
 - Requests that need processing (`w` / `format` parameters, or WebP negotiation) are still processed and served by ImgYoung, not redirected. To make browsers' original-image requests redirect as well, remove `webp` from the target formats.
 
 If you already have a CDN in front of ImgYoung, use `proxy` mode: the CDN already carries the traffic. `redirect` is meant for servers without a CDN and with little upstream bandwidth, or for channels that come with their own public CDN domain (such as a custom domain bound to an object storage bucket).

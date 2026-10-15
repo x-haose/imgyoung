@@ -79,10 +79,16 @@ Each encrypted channel's password and salt are derived from the **master key** a
 - The creation time is part of the input because SQLite reuses IDs of deleted channels; binding to the ID alone would let a new channel derive the same keys as a deleted one.
 - Keys of different channels are independent; leaking one channel's keys does not expose the others.
 
-The **master key** comes from the environment variable `IMGYOUNG_MASTER_KEY` (64 hex characters) or, when that is unset, from `<data dir>/master.key` (generated on first start with permissions 0600). It encrypts the channel configurations as well as deriving the channel keys. It is not part of the data export or of metadata snapshots.
+The **master key** comes from the environment variable `IMGYOUNG_MASTER_KEY` (64 hex characters) or, when that is unset or empty, from `<data dir>/master.key`. It encrypts the channel configurations as well as deriving the channel keys. It is not part of the data export or of metadata snapshots.
+
+The first start with a given master key records a fingerprint derived from it in the metadata database (the key cannot be recovered from it), and every later start checks it:
+
+- `master.key` is generated (with permissions 0600) only when a brand-new metadata database finds no master key.
+- Once a fingerprint is recorded, a missing master key (no environment variable and no `master.key`) or one that does not match makes startup fail with an explanation; no new key is generated.
+- When restoring a snapshot from another instance, switch to that instance's master key as well.
 
 <Callout type="error" title="Losing the master key loses encrypted channels for good">
-Without the master key no encrypted channel's password can be derived, so the ciphertext stays unreadable, and the stored channel configurations cannot be decrypted either. Keep a copy of the master key somewhere separate from the server. Configuration is covered in the [configuration reference](../configuration.mdx), backup strategy in [Metadata backups](../operations/backup.mdx).
+Without the master key no encrypted channel's password can be derived, so the ciphertext stays unreadable; the stored channel configurations cannot be decrypted either, and ImgYoung refuses to start. Keep a copy of the master key somewhere separate from the server. Configuration is covered in the [configuration reference](../configuration.mdx), backup strategy in [Metadata backups](../operations/backup.mdx).
 </Callout>
 
 ## Self-rescue: decrypting a channel with stock rclone

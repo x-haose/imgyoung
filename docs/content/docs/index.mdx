@@ -29,7 +29,7 @@ ImgYoung 的设计目标是让图片链接长期可用:
 | 后台查重 | 字节完全相同的图自动合并为一份物理文件;感知哈希相近的进入「疑似重复」列表人工裁决。查重在后台进行,不拖慢上传。见 [管理后台](./guides/admin.mdx) |
 | 按需处理 | 链接加 `?w=400` 按预设宽度档缩放,浏览器支持时自动输出 WebP;处理结果缓存在本地磁盘。见 [访问与链接](./guides/access.mdx) |
 | 多用户与配额 | 管理员建号,每个用户有自己的图片、上传 Token 与存储配额,普通用户之间互相不可见。见 [管理后台](./guides/admin.mdx) |
-| 多种上传入口 | 后台拖拽或粘贴、HTTP 上传接口、URL 转存、S3 协议(PicGo、PicList、Typora 等内置的 Amazon S3 上传选项直接可用)、PicGo / PicList 自定义图床。见 [上传](./guides/upload.mdx) 与 [客户端接入](./guides/clients.mdx) |
+| 多种上传入口 | 后台拖拽或粘贴、HTTP 上传接口、URL 转存、S3 协议(PicList 内置的 AWS S3 图床直接可用,PicGo 装上 S3 插件后同样可用)、PicGo / PicList 自定义图床。见 [上传](./guides/upload.mdx) 与 [客户端接入](./guides/clients.mdx) |
 
 此外还有防盗链(Referer 白名单)、代理 / 302 两种访问模式、Cloudflare CDN 缓存清理、审计日志、告警 Webhook 与 Prometheus 指标。
 
