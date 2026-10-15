@@ -215,8 +215,7 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 		return Result{}, err
 	}
 	shortID := id.New()
-	// 对象键嵌入 short_id 前缀,作为元数据库全损时反向重建的最后手段。
-	key := shortID + "_" + prep.sha256[:8]
+	key := id.StorageKey(shortID, prep.sha256)
 	doneIDs, err := s.writeReplicas(ctx, key, prep.data, minSuccess(set))
 	if err != nil {
 		return Result{}, err

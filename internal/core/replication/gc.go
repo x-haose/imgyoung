@@ -8,6 +8,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/store/driver"
 	"github.com/x-haose/imgyoung/store/failover"
 )
@@ -28,15 +29,15 @@ type GCResult struct {
 	Channel          string // 渠道名
 	Objects          int    // 渠道对象总数(不含系统对象)
 	Bytes            int64  // 渠道对象总字节(不含系统对象)
-	Preexisting      int    // 库里没有记录、修改时间早于渠道记录创建的对象数;不是本库写出的,不回收
+	Foreign          int    // 库里没有记录、不是本库写出的对象数(键名不是本服务格式,或修改时间早于渠道记录创建);不回收
 	OrphansDeleted   int    // 回收的孤儿对象数
 	PhantomsRequeued int    // 重置补齐的幻影副本数
 }
 
 // RunGC 对全部健康渠道执行一轮双向对账。
-// @Description: 孤儿 = 渠道有、库里没有任何状态的副本记录、修改时间不早于渠道记录创建且已过宽限期,
-// 回收(按量付费渠道防烧钱)。本库只可能在渠道记录创建之后往渠道写对象,更早的对象来自别的库
-// (灾备时新实例接入旧桶而元数据尚未恢复、接入的桶里原有其它文件),只计数不回收。
+// @Description: 孤儿 = 渠道有、库里没有任何状态的副本记录、键名是本服务的对象键格式、修改时间不早于
+// 渠道记录创建且已过宽限期,回收(按量付费渠道防烧钱)。本库只以该格式命名对象,且只可能在渠道记录创建
+// 之后写入;其余对象(别的程序写的文件、灾备时新实例接入旧桶而元数据尚未恢复)只计数不回收。
 // 幻影 = DB 记为就绪、渠道实际缺失(回退 pending 并重新入队补齐)。
 // 顺带产出各渠道用量统计。单渠道失败跳过,不中断其余渠道。
 // @return 各渠道对账结果
@@ -51,7 +52,7 @@ func (r *Runner) RunGC(ctx context.Context) ([]GCResult, error) {
 		}
 		results = append(results, res)
 		r.cfg.Logger.Info("渠道对账完成",
-			"channel", res.Channel, "objects", res.Objects, "bytes", res.Bytes, "preexisting", res.Preexisting,
+			"channel", res.Channel, "objects", res.Objects, "bytes", res.Bytes, "foreign", res.Foreign,
 			"orphans_deleted", res.OrphansDeleted, "phantoms_requeued", res.PhantomsRequeued)
 	}
 	return results, nil
@@ -59,10 +60,10 @@ func (r *Runner) RunGC(ctx context.Context) ([]GCResult, error) {
 
 // inventory 渠道上业务对象与库内副本记录的对照结果,系统目录与健康探测对象已排除。
 type inventory struct {
-	sizes       map[string]int64 // 对象键 → 字节数
-	bytes       int64            // 对象总字节
-	orphans     []string         // 可回收的孤儿对象键
-	preexisting int              // 库里没有记录、修改时间早于渠道记录创建的对象数
+	sizes   map[string]int64 // 对象键 → 字节数
+	bytes   int64            // 对象总字节
+	orphans []string         // 可回收的孤儿对象键
+	foreign int              // 库里没有记录、不是本库写出的对象数
 }
 
 // gcChannel 对单个渠道做双向对账。
@@ -96,7 +97,7 @@ func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, err
 		}
 	}
 	inv := takeInventory(objs, known, createdAt, time.Now())
-	res.Objects, res.Bytes, res.Preexisting = len(inv.sizes), inv.bytes, inv.preexisting
+	res.Objects, res.Bytes, res.Foreign = len(inv.sizes), inv.bytes, inv.foreign
 	res.OrphansDeleted = r.reclaimOrphans(ctx, h, inv.orphans)
 	res.PhantomsRequeued = r.requeuePhantoms(ctx, h, done, inv.sizes)
 	return res, nil
@@ -120,8 +121,8 @@ func takeInventory(objs []driver.ObjectInfo, known map[string]struct{}, createdA
 			continue
 		}
 		switch {
-		case o.ModTime.Before(createdAt):
-			inv.preexisting++
+		case !id.IsStorageKey(o.Key) || o.ModTime.Before(createdAt):
+			inv.foreign++
 		case now.Sub(o.ModTime) > orphanGrace:
 			inv.orphans = append(inv.orphans, o.Key)
 		default:

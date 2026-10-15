@@ -1,4 +1,4 @@
-// Package id 生成对外短 ID(NanoID:crypto/rand + 拒绝采样,均匀无偏)。
+// Package id 生成对外短 ID(NanoID:crypto/rand + 拒绝采样,均匀无偏),并定义嵌入短 ID 的渠道内对象键格式。
 package id
 
 import (
