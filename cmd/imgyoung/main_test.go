@@ -7,12 +7,16 @@ import (
 	"testing"
 )
 
-// clearBootEnv 置空 IMGYOUNG_ 环境变量,避免开发机残留影响装配。
+// clearBootEnv 移除 IMGYOUNG_ 环境变量(测试结束恢复),避免开发机残留影响装配;
+// 设为空串是显式置空,与未设置语义不同,只能移除。
 func clearBootEnv(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
 		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "IMGYOUNG_") {
-			t.Setenv(k, "")
+			t.Setenv(k, "") // 登记测试结束时恢复原值
+			if err := os.Unsetenv(k); err != nil {
+				t.Fatalf("移除环境变量 %s: %v", k, err)
+			}
 		}
 	}
 }

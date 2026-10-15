@@ -19,8 +19,8 @@ export function BootstrapCard({ config }: { config: FullConfig }) {
   const rows: [string, string][] = [
     [b.listen, bootstrap.listen],
     [b.data_dir, bootstrap.data_dir],
-    [b.trusted_proxies, bootstrap.trusted_proxies || b.unset],
-    [b.metrics_allow, bootstrap.metrics_allow || b.unset],
+    [b.trusted_proxies, bootstrap.trusted_proxies || b.trustNone],
+    [b.metrics_allow, bootstrap.metrics_allow || b.metricsNone],
     [b.version, build?.version ?? b.unset],
     [b.commit, build?.commit || b.unset],
     [b.builtAt, build?.built_at ? formatInstant(build.built_at) : b.unset],

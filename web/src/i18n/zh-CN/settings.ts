@@ -209,6 +209,8 @@ export const settings = {
       commit: '构建提交',
       builtAt: '构建时刻',
       unset: '未设置',
+      trustNone: '空:不采信任何转发头',
+      metricsNone: '空:不对任何地址开放',
       builtin: '内置策略',
       loginRate:
         '登录限速:每个 IP / 用户名突发 {burst} 次,之后每 {seconds} 秒恢复 1 次',

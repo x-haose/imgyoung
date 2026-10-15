@@ -16,12 +16,15 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
-// clearEnv 置空当前环境里全部 IMGYOUNG_ 变量,保证用例间隔离。
+// clearEnv 移除当前环境里全部 IMGYOUNG_ 变量(测试结束恢复),保证用例间隔离;设为空串另有语义,只能移除。
 func clearEnv(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
 		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, envPrefix) {
-			t.Setenv(k, "")
+			t.Setenv(k, "") // 登记测试结束时恢复原值
+			if err := os.Unsetenv(k); err != nil {
+				t.Fatalf("移除环境变量 %s: %v", k, err)
+			}
 		}
 	}
 }
@@ -110,6 +113,27 @@ func TestLoadBootstrapEnv(t *testing.T) {
 	}
 	if got := FormatPrefixes(b.MetricsAllow); got != "10.0.0.0/8" {
 		t.Errorf("/metrics 放行网段 = %q, 期望主机位清零", got)
+	}
+}
+
+// TestLoadBootstrapExplicitEmpty 验证设为空串是显式置空而非取默认:网段清单为空(一概不信转发头、
+// /metrics 对谁都不开放),主密钥为空(用文件);监听地址与数据目录不接受空值,错误指出变量名。
+func TestLoadBootstrapExplicitEmpty(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("IMGYOUNG_TRUSTED_PROXIES", "")
+	t.Setenv("IMGYOUNG_METRICS_ALLOW", " ")
+	t.Setenv("IMGYOUNG_MASTER_KEY", "")
+	b := mustBootstrap(t)
+	if len(b.TrustedProxies) != 0 || len(b.MetricsAllow) != 0 || b.MasterKey != "" {
+		t.Fatalf("显式置空未生效: %+v", b)
+	}
+	for _, key := range []string{"IMGYOUNG_LISTEN", "IMGYOUNG_DATA_DIR"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, "")
+			if _, err := LoadBootstrap(); err == nil || !strings.Contains(err.Error(), key) {
+				t.Fatalf("%s 置空的错误 = %v, 期望启动失败并指出变量名", key, err)
+			}
+		})
 	}
 }
 

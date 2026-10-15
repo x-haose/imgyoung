@@ -1238,9 +1238,9 @@ export interface components {
             listen: string;
             /** @description 数据目录 */
             data_dir: string;
-            /** @description 信任其转发头的反向代理网段,逗号分隔 */
+            /** @description 信任其转发头的反向代理网段,逗号分隔;空串表示一概不信转发头 */
             trusted_proxies: string;
-            /** @description 允许抓取 /metrics 的网段,逗号分隔 */
+            /** @description 允许抓取 /metrics 的网段,逗号分隔;空串表示对谁都不开放 */
             metrics_allow: string;
         };
         /** @description 派生状态与内置策略 */

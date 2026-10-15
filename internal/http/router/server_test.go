@@ -57,12 +57,16 @@ type testConfig struct {
 	Router router.Config    // 路由级配置(Public/Admin 字段由助手最终填充)
 }
 
-// clearTestEnv 置空当前环境里全部 IMGYOUNG_ 变量,防止开发机残留影响配置播种。
+// clearTestEnv 移除当前环境里全部 IMGYOUNG_ 变量(测试结束恢复),防止开发机残留影响引导配置;
+// 设为空串是显式置空,与未设置语义不同,只能移除。
 func clearTestEnv(t *testing.T) {
 	t.Helper()
 	for _, kv := range os.Environ() {
 		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "IMGYOUNG_") {
-			t.Setenv(k, "")
+			t.Setenv(k, "") // 登记测试结束时恢复原值
+			if err := os.Unsetenv(k); err != nil {
+				t.Fatalf("移除环境变量 %s: %v", k, err)
+			}
 		}
 	}
 }

@@ -242,6 +242,8 @@ export const settings = {
       commit: 'Build commit',
       builtAt: 'Built at',
       unset: 'Not set',
+      trustNone: 'Empty: forwarded headers are never trusted',
+      metricsNone: 'Empty: open to no one',
       builtin: 'Built-in policies',
       loginRate:
         'Login rate limit: a burst of {burst} attempts per IP / username, then one more every {seconds} s',

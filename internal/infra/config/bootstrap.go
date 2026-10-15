@@ -34,15 +34,16 @@ type Bootstrap struct {
 	Listen         string         // HTTP 监听地址
 	DataDir        string         // 数据目录(SQLite、本地渠道与主密钥文件)
 	MasterKey      string         // 主密钥(64 位 hex);空则用数据目录下的 master.key 文件
-	TrustedProxies []netip.Prefix // 连接对端落在这些网段时才采信 X-Forwarded-For / X-Forwarded-Proto / X-Forwarded-Host
-	MetricsAllow   []netip.Prefix // 客户端地址落在这些网段时才放行 /metrics
+	TrustedProxies []netip.Prefix // 连接对端落在这些网段时才采信 X-Forwarded-For / X-Forwarded-Proto / X-Forwarded-Host;空表示一概不信
+	MetricsAllow   []netip.Prefix // 客户端地址落在这些网段时才放行 /metrics;空表示对谁都不开放
 }
 
-// LoadBootstrap 从环境变量装配引导配置;空值取默认。
-// @Description: 网段清单在此解析,写错一项即启动失败并指出变量名与条目;监听地址与密钥
-// 格式的合法性由绑定端口 / 解析密钥的使用点快速失败,错误信息更贴近现场。
+// LoadBootstrap 从环境变量装配引导配置:未设置的变量取默认值,设为空串(或只有空白)即为空值。
+// @Description: 网段清单为空即一概不信转发头 / 对谁都不开放 /metrics,主密钥为空即用 master.key 文件,
+// 监听地址与数据目录不接受空值。网段清单在此解析,写错一项即启动失败并指出变量名与条目;监听地址与
+// 密钥格式的合法性由绑定端口 / 解析密钥的使用点快速失败,错误信息更贴近现场。
 // @return 引导配置
-// @return 网段清单无法解析时的错误
+// @return 网段清单无法解析、监听地址或数据目录设为空值时的错误
 func LoadBootstrap() (Bootstrap, error) {
 	trusted, err := ParsePrefixes(envOrDefault(envTrustedProxies, defaultTrustedProxies))
 	if err != nil {
@@ -52,10 +53,18 @@ func LoadBootstrap() (Bootstrap, error) {
 	if err != nil {
 		return Bootstrap{}, fmt.Errorf("%s: %w", envMetricsAllow, err)
 	}
+	listen, err := requiredEnv(envListen, defaultListen)
+	if err != nil {
+		return Bootstrap{}, err
+	}
+	dataDir, err := requiredEnv(envDataDir, defaultDataDir)
+	if err != nil {
+		return Bootstrap{}, err
+	}
 	return Bootstrap{
-		Listen:         envOrDefault(envListen, defaultListen),
-		DataDir:        envOrDefault(envDataDir, defaultDataDir),
-		MasterKey:      os.Getenv(envMasterKey),
+		Listen:         listen,
+		DataDir:        dataDir,
+		MasterKey:      envOrDefault(envMasterKey, ""),
 		TrustedProxies: trusted,
 		MetricsAllow:   metrics,
 	}, nil
@@ -96,13 +105,27 @@ func FormatPrefixes(prefixes []netip.Prefix) string {
 	return strings.Join(items, ", ")
 }
 
-// envOrDefault 读取环境变量,空(未设置或置空)时返回默认值。
+// envOrDefault 读取环境变量并去掉首尾空白;未设置时返回默认值,设为空串时返回空串。
 // @param key 环境变量名
 // @param def 默认值
 // @return 生效值
 func envOrDefault(key, def string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+	v, ok := os.LookupEnv(key)
+	if !ok {
+		return def
 	}
-	return def
+	return strings.TrimSpace(v)
+}
+
+// requiredEnv 读取不接受空值的环境变量:未设置时返回默认值,设为空串即报错。
+// @param key 环境变量名
+// @param def 默认值
+// @return 生效值
+// @return 设为空串时的错误
+func requiredEnv(key, def string) (string, error) {
+	v := envOrDefault(key, def)
+	if v == "" {
+		return "", fmt.Errorf("%s 不能为空值;要用默认值 %q 请不设置该变量", key, def)
+	}
+	return v, nil
 }
