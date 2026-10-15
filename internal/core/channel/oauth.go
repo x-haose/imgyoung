@@ -99,10 +99,10 @@ func (f *OAuthFlow) Exchange(ctx context.Context, code string) (string, error) {
 
 // ParsePastedToken 归一化用户粘贴的 rclone 授权结果。
 // @Description: 兼容 rclone authorize 的两种输出——参数映射编码与裸令牌 JSON;
-// 校验刷新令牌存在,缺失则该渠道在访问令牌过期后无法续期。
+// 会过期的令牌须带刷新令牌,否则该渠道在访问令牌过期后无法续期。
 // @param pasted 用户粘贴的原文
 // @return 可直接写入渠道配置的令牌 JSON
-// @return ErrInvalidToken 或缺少刷新令牌时的错误
+// @return ErrInvalidToken 或会过期却缺少刷新令牌时的错误
 func ParsePastedToken(pasted string) (string, error) {
 	pasted = strings.TrimSpace(pasted)
 	if pasted == "" {
@@ -186,9 +186,10 @@ func oauthStep(driver string, out *fs.ConfigOut) (*oauthutil.Options, fs.ConfigI
 }
 
 // validateToken 校验令牌 JSON 并归一化。
+// @Description: 到期时刻为零值的令牌永不过期(如 pCloud),不需要刷新令牌。
 // @param raw 令牌 JSON 原文
 // @return 归一化后的令牌 JSON
-// @return ErrInvalidToken
+// @return ErrInvalidToken,或会过期却缺少刷新令牌时的 ErrInvalidChannel
 func validateToken(raw string) (string, error) {
 	var tok oauth2.Token
 	if err := json.Unmarshal([]byte(raw), &tok); err != nil {
@@ -197,7 +198,7 @@ func validateToken(raw string) (string, error) {
 	if tok.AccessToken == "" {
 		return "", ErrInvalidToken
 	}
-	if tok.RefreshToken == "" {
+	if tok.RefreshToken == "" && !tok.Expiry.IsZero() {
 		return "", fmt.Errorf("%w: 缺少刷新令牌,访问令牌过期后无法续期", ErrInvalidChannel)
 	}
 	return marshalToken(&tok)

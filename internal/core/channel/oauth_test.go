@@ -38,8 +38,23 @@ func TestParsePastedTokenAcceptsBothFormats(t *testing.T) {
 	}
 }
 
+// TestParsePastedTokenAcceptsNonExpiring 验证永不过期的令牌(到期时刻为零值,如 pCloud)不要求刷新令牌。
+func TestParsePastedTokenAcceptsNonExpiring(t *testing.T) {
+	got, err := ParsePastedToken(`{"access_token":"AT","token_type":"bearer","expiry":"0001-01-01T00:00:00Z"}`)
+	if err != nil {
+		t.Fatalf("永不过期的令牌被拒: %v", err)
+	}
+	var tok oauth2.Token
+	if err := json.Unmarshal([]byte(got), &tok); err != nil {
+		t.Fatalf("结果不是合法令牌 JSON: %v", err)
+	}
+	if tok.AccessToken != "AT" || !tok.Expiry.IsZero() {
+		t.Errorf("令牌内容错位: access=%q expiry=%v", tok.AccessToken, tok.Expiry)
+	}
+}
+
 // TestParsePastedTokenRejects 验证非法令牌被拒。
-// @Description: 缺刷新令牌必须拒——访问令牌过期后该渠道会静默失效,建时不拦到运行期才炸。
+// @Description: 会过期却缺刷新令牌必须拒——访问令牌过期后该渠道会静默失效,建时不拦到运行期才炸。
 func TestParsePastedTokenRejects(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -48,7 +63,7 @@ func TestParsePastedTokenRejects(t *testing.T) {
 		{"空串", "   "},
 		{"非 JSON", "这不是令牌"},
 		{"缺访问令牌", `{"refresh_token":"RT"}`},
-		{"缺刷新令牌", `{"access_token":"AT","token_type":"bearer"}`},
+		{"会过期却缺刷新令牌", `{"access_token":"AT","token_type":"bearer","expiry":"2030-01-02T15:04:05Z"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
