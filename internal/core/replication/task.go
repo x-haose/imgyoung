@@ -264,14 +264,14 @@ func (r *Runner) resetFailedReplicas(ctx context.Context) error {
 	return nil
 }
 
-// requeuePending 分页扫描全部未完成副本,逐页批量入队补齐任务。
+// requeuePending 按主键游标分页扫描全部未完成副本,逐页批量入队补齐任务。
+// @Description: 扫描期间 worker 会把行改成 done;游标按主键前进,行退出结果集不会让后面的页错位漏行。
 // @return 扫描或入队失败时的错误
 func (r *Runner) requeuePending(ctx context.Context) error {
 	total := 0
-	for offset := int64(0); ; offset += reconcileBatch {
-		rows, err := r.cfg.Queries.ListPendingBlobChannelsPage(ctx, sqlc.ListPendingBlobChannelsPageParams{
-			Limit: reconcileBatch, Offset: offset,
-		})
+	page := sqlc.ListPendingBlobChannelsAfterParams{PageSize: reconcileBatch}
+	for {
+		rows, err := r.cfg.Queries.ListPendingBlobChannelsAfter(ctx, page)
 		if err != nil {
 			return fmt.Errorf("扫描未完成副本: %w", err)
 		}
@@ -282,6 +282,8 @@ func (r *Runner) requeuePending(ctx context.Context) error {
 		if len(rows) < reconcileBatch {
 			break
 		}
+		last := rows[len(rows)-1]
+		page.AfterBlobID, page.AfterChannelID = last.BlobID, last.ChannelID
 	}
 	if total > 0 {
 		r.cfg.Logger.Info("对账扫描完成", "requeued", total)
@@ -293,7 +295,7 @@ func (r *Runner) requeuePending(ctx context.Context) error {
 // @Description: 入队按参数去重,已在队列中的任务被跳过,重复扫描无害。
 // @param rows 一页 (blob, channel) 对
 // @return 入队失败时的错误
-func (r *Runner) insertReplications(ctx context.Context, rows []sqlc.ListPendingBlobChannelsPageRow) error {
+func (r *Runner) insertReplications(ctx context.Context, rows []sqlc.ListPendingBlobChannelsAfterRow) error {
 	if len(rows) == 0 {
 		return nil
 	}

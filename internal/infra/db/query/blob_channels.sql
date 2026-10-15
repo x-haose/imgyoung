@@ -53,12 +53,13 @@ JOIN channels c ON c.id = bc.channel_id
 WHERE bc.blob_id = ?
 ORDER BY c.priority DESC, c.id ASC;
 
--- name: ListPendingBlobChannelsPage :many
+-- name: ListPendingBlobChannelsAfter :many
 SELECT blob_id, channel_id
 FROM blob_channels
 WHERE state IN ('pending', 'uploading')
+  AND (blob_id, channel_id) > (sqlc.arg(after_blob_id), sqlc.arg(after_channel_id))
 ORDER BY blob_id ASC, channel_id ASC
-LIMIT ? OFFSET ?;
+LIMIT sqlc.arg(page_size);
 
 -- name: ListBlobChannelKeysForChannel :many
 SELECT bc.blob_id, b.storage_key, bc.state

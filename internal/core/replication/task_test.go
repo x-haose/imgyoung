@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -158,6 +159,49 @@ func TestReconcileRequeuesPending(t *testing.T) {
 		t.Fatalf("恢复扫描: %v", err)
 	}
 	waitDone(t, env, blobID, env.backup.ID)
+}
+
+// TestPendingScanCursorSkipsNothing 验证未完成副本的游标分页:扫描途中上一页的行被 worker 改成 done、
+// 退出结果集,下一页仍从游标之后接着取,不漏行(按偏移量分页时结果集整体前移,会跳过若干行)。
+func TestPendingScanCursorSkipsNothing(t *testing.T) {
+	env := testenv.New(t)
+	ctx := t.Context()
+	chID := env.Manager.All()[0].ID
+	ids := make([]int64, 0, 5)
+	for i := range 5 {
+		id, err := env.Queries.CreateBlob(ctx, sqlc.CreateBlobParams{
+			Sha256: fmt.Sprintf("hash%d", i), Phash: 1, StorageKey: fmt.Sprintf("key%d", i), Mime: "image/png",
+			Size: 1, Width: 1, Height: 1,
+		})
+		if err != nil {
+			t.Fatalf("创建 blob 记录: %v", err)
+		}
+		if err := env.Queries.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
+			BlobID: id, ChannelID: chID, State: channel.StatePending,
+		}); err != nil {
+			t.Fatalf("写副本状态: %v", err)
+		}
+		ids = append(ids, id)
+	}
+
+	page := sqlc.ListPendingBlobChannelsAfterParams{PageSize: 2}
+	first, err := env.Queries.ListPendingBlobChannelsAfter(ctx, page)
+	if err != nil || len(first) != 2 {
+		t.Fatalf("第一页 = %+v (err=%v), 期望 2 行", first, err)
+	}
+	for _, row := range first {
+		if err := env.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
+			State: channel.StateDone, BlobID: row.BlobID, ChannelID: row.ChannelID,
+		}); err != nil {
+			t.Fatalf("模拟 worker 完成副本: %v", err)
+		}
+	}
+	last := first[len(first)-1]
+	page.AfterBlobID, page.AfterChannelID = last.BlobID, last.ChannelID
+	second, err := env.Queries.ListPendingBlobChannelsAfter(ctx, page)
+	if err != nil || len(second) != 2 || second[0].BlobID != ids[2] || second[1].BlobID != ids[3] {
+		t.Fatalf("第二页 = %+v (err=%v), 期望 blob %d、%d", second, err, ids[2], ids[3])
+	}
 }
 
 // TestReconcileSeedsMissingRows 验证对账收敛播种:blob 在某渠道完全缺

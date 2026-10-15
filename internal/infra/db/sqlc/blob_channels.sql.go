@@ -370,33 +370,35 @@ func (q *Queries) ListImageReplicas(ctx context.Context, id string) ([]ListImage
 	return items, nil
 }
 
-const listPendingBlobChannelsPage = `-- name: ListPendingBlobChannelsPage :many
+const listPendingBlobChannelsAfter = `-- name: ListPendingBlobChannelsAfter :many
 SELECT blob_id, channel_id
 FROM blob_channels
 WHERE state IN ('pending', 'uploading')
+  AND (blob_id, channel_id) > (?1, ?2)
 ORDER BY blob_id ASC, channel_id ASC
-LIMIT ? OFFSET ?
+LIMIT ?3
 `
 
-type ListPendingBlobChannelsPageParams struct {
-	Limit  int64
-	Offset int64
+type ListPendingBlobChannelsAfterParams struct {
+	AfterBlobID    int64
+	AfterChannelID int64
+	PageSize       int64
 }
 
-type ListPendingBlobChannelsPageRow struct {
+type ListPendingBlobChannelsAfterRow struct {
 	BlobID    int64
 	ChannelID int64
 }
 
-func (q *Queries) ListPendingBlobChannelsPage(ctx context.Context, arg ListPendingBlobChannelsPageParams) ([]ListPendingBlobChannelsPageRow, error) {
-	rows, err := q.db.QueryContext(ctx, listPendingBlobChannelsPage, arg.Limit, arg.Offset)
+func (q *Queries) ListPendingBlobChannelsAfter(ctx context.Context, arg ListPendingBlobChannelsAfterParams) ([]ListPendingBlobChannelsAfterRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingBlobChannelsAfter, arg.AfterBlobID, arg.AfterChannelID, arg.PageSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListPendingBlobChannelsPageRow
+	var items []ListPendingBlobChannelsAfterRow
 	for rows.Next() {
-		var i ListPendingBlobChannelsPageRow
+		var i ListPendingBlobChannelsAfterRow
 		if err := rows.Scan(&i.BlobID, &i.ChannelID); err != nil {
 			return nil, err
 		}
