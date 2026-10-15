@@ -14,6 +14,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/infra/db/dbtest"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
@@ -223,18 +224,33 @@ func TestStoreUpdateRejectsInvalid(t *testing.T) {
 		map[string]json.RawMessage{"listen": rawPatch(t, ":9999")}); !errors.Is(err, ErrUnknownKey) {
 		t.Fatalf("未知键 err = %v, 期望 ErrUnknownKey", err)
 	}
-	for name, patch := range map[string]map[string]json.RawMessage{
-		"取值越界":  {"access_mode": rawPatch(t, "cdn")},
-		"类型不符":  {"max_upload_mb": rawPatch(t, "abc")},
-		"档位清空":  {"process_formats": rawPatch(t, []string{})},
-		"档位含非法": {"process_widths": rawPatch(t, []int{0})},
-		"时长溢出":  {"default_ttl_hours": rawPatch(t, MaxDurationHours+1)},
+	for name, tc := range map[string]struct {
+		key   string
+		value any
+		code  errcode.Code
+	}{
+		"取值越界":           {"access_mode", "cdn", errcode.SettingOption},
+		"类型不符":           {"max_upload_mb", "abc", errcode.SettingType},
+		"档位清空":           {"process_formats", []string{}, errcode.SettingEmpty},
+		"档位含非法":          {"process_widths", []int{0}, errcode.SettingPositive},
+		"时长溢出":           {"default_ttl_hours", MaxDurationHours + 1, errcode.SettingTooLarge},
+		"站点地址缺协议":        {"base_url", "img.example.com", errcode.SettingSiteRoot},
+		"站点地址带路径":        {"base_url", "https://img.example.com/sub", errcode.SettingSiteRoot},
+		"Webhook 非 HTTP": {"alert_webhook_url", "ftp://x", errcode.SettingURL},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := store.Update(context.Background(), patch); !errors.Is(err, ErrInvalidSetting) {
+			_, err := store.Update(context.Background(), map[string]json.RawMessage{tc.key: rawPatch(t, tc.value)})
+			if !errors.Is(err, ErrInvalidSetting) {
 				t.Fatalf("err = %v, 期望 ErrInvalidSetting", err)
 			}
+			if e, ok := errcode.From(err); !ok || e.Code != tc.code {
+				t.Fatalf("err = %v, 期望错误码 %s", err, tc.code)
+			}
 		})
+	}
+	if _, err := store.Update(context.Background(),
+		map[string]json.RawMessage{"base_url": rawPatch(t, "https://img.example.com/")}); err != nil {
+		t.Fatalf("站点根地址带尾斜杠应接受: %v", err)
 	}
 	if s := store.Current(); s.AccessMode != "proxy" || s.MaxUploadMB != 50 {
 		t.Fatalf("被拒修改不应影响快照: %+v", s)

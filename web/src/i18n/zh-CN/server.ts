@@ -62,6 +62,8 @@ export const server = {
     setting_range: '{key}={value} 非法：需要 {min} 到 {max} 之间的整数',
     setting_option: '{key}={value} 非法：可选 {options}',
     setting_url: '{key}={value} 非法：需要 http/https 地址',
+    setting_site_root:
+      '{key}={value} 非法：需要站点根地址，形如 https://img.example.com（不带路径与查询参数）',
     setting_empty: '{key} 不可为空',
     channel_id_invalid: '渠道 ID 非法',
     channel_not_found: '渠道不存在',

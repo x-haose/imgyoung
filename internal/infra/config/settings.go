@@ -169,7 +169,27 @@ func (s Settings) validate() error {
 	if err := s.validateDurationCaps(); err != nil {
 		return err
 	}
+	if err := validateBaseURL(s.BaseURL); err != nil {
+		return err
+	}
 	return validateWebhookURL(s.AlertWebhookURL)
+}
+
+// validateBaseURL 校验对外站点地址:空表示按请求推导,否则须为 http/https 的站点根地址。
+// @Description: 上传返回的链接、CDN 清除地址与网盘授权回调都由它拼出路径,带路径、查询参数或账号信息的值
+// 拼出的地址不可用;末尾的 / 已由 normalized 去掉。
+// @param raw 归一后的配置值
+// @return 非法地址的错误;合法或为空时为 nil
+func validateBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+		u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return errcode.New(errcode.SettingSiteRoot, "key", "base_url", "value", raw)
+	}
+	return nil
 }
 
 // validateDurationCaps 校验换算成时长的配置不超过 MaxDurationHours(100 年)折算后的上限。

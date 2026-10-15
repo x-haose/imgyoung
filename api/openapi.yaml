@@ -9,7 +9,7 @@ info:
 
     认证面只有两个：数据面用具名上传 Token（`Authorization: Bearer <token>`，在后台签发）；
     管理后台用会话 cookie，状态变更请求须以 `X-CSRF-Token` 头回传登录或 `GET /api/admin/me` 下发的 CSRF 令牌。
-    错误响应一律为 `{"error": "<面向用户的描述>"}` 信封；图片访问入口的 403 / 404 / 500 / 503 例外，为纯文本。
+    错误响应一律为 `{"code": "<错误码>", "error": "<中文文案>", "params": {…}}` 信封（见 Error）；图片访问入口的 403 / 404 / 500 / 503 例外，为纯文本。
     时刻字段除特别说明外均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`。
 
     本文档随二进制内嵌，运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本。
@@ -2245,6 +2245,7 @@ components:
         - setting_range
         - setting_option
         - setting_url
+        - setting_site_root
         - setting_empty
         - channel_id_invalid
         - channel_not_found

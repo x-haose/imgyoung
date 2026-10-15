@@ -35,7 +35,7 @@ export const CONFIG_GROUPS: FieldGroup[] = [
     key: 'access',
     fields: [
       { key: 'access_mode', kind: 'select', options: ['proxy', 'redirect'] },
-      { key: 'base_url', kind: 'text' },
+      { key: 'base_url', kind: 'url' },
       { key: 'min_success', kind: 'int', min: 1, unit: 'replicas' },
       { key: 'encrypt_new_channels', kind: 'bool' },
     ],

@@ -66,6 +66,8 @@ export const server = {
       '{key}={value} is invalid: an integer from {min} to {max} is required',
     setting_option: '{key}={value} is invalid: allowed values are {options}',
     setting_url: '{key}={value} is invalid: an http/https address is required',
+    setting_site_root:
+      '{key}={value} is invalid: a site root address like https://img.example.com is required (no path or query)',
     setting_empty: '{key} cannot be empty',
     channel_id_invalid: 'Invalid channel ID',
     channel_not_found: 'Channel not found',

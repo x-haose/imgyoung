@@ -81,6 +81,7 @@ var (
 	SettingRange        = define("setting_range", "{key}={value} 非法: 需要 {min} 到 {max} 之间的整数")
 	SettingOption       = define("setting_option", "{key}={value} 非法: 可选 {options}")
 	SettingURL          = define("setting_url", "{key}={value} 非法: 需要 http/https 地址")
+	SettingSiteRoot     = define("setting_site_root", "{key}={value} 非法: 需要站点根地址,形如 https://img.example.com(不带路径与查询参数)")
 	SettingEmpty        = define("setting_empty", "{key} 不可为空")
 )
 
