@@ -68,8 +68,16 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: docs/pnpm-lock.yaml
+      # Next.js 的增量构建缓存:依赖不变时沿用上次的编译结果,源文件变了按前缀回退到同一依赖下最近的一份
+      - uses: actions/cache@v6
+        with:
+          path: docs/.next/cache
+          key: docs-next-${{ hashFiles('docs/pnpm-lock.yaml') }}-${{ hashFiles('docs/**/*.ts', 'docs/**/*.tsx', 'docs/**/*.mdx', 'docs/**/*.css', 'api/openapi.yaml') }}
+          restore-keys: docs-next-${{ hashFiles('docs/pnpm-lock.yaml') }}-
       - name: Docs
         working-directory: docs
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
         run: |
           pnpm install --frozen-lockfile
           pnpm lint
