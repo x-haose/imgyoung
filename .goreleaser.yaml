@@ -18,6 +18,9 @@ builds:
       - CGO_ENABLED=0
     flags:
       - -trimpath
+    # webp 库默认在运行期 dlopen 系统 libwebp,会让 linux 二进制带上动态链接器;关掉后才是真正的静态二进制
+    tags:
+      - nodynamic
     # 版本号保留 v 前缀,与 Go 模块版本及源码构建推导出的形式一致
     ldflags:
       - -s -w

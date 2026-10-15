@@ -1,9 +1,11 @@
 # ImgYoung 开发入口:task <name>(https://taskfile.dev)
 version: '3'
 
-# 全程纯 Go:构建、测试、lint 都在 CGO_ENABLED=0 下进行,与发布二进制保持同一套构建条件
+# 全程纯 Go:构建、测试、lint 都在 CGO_ENABLED=0 下进行,与发布二进制保持同一套构建条件。
+# nodynamic 关掉 webp 库运行期 dlopen 系统 libwebp 的路径,linux 二进制才是真正静态的(distroless/static 才能起)。
 env:
   CGO_ENABLED: '0'
+  GOFLAGS: -tags=nodynamic
 
 tasks:
   web:

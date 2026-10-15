@@ -12,6 +12,7 @@ permissions:
 
 env:
   CGO_ENABLED: "0"
+  GOFLAGS: -tags=nodynamic
 
 jobs:
   release:

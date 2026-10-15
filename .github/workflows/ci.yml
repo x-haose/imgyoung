@@ -8,6 +8,8 @@ on:
 
 env:
   CGO_ENABLED: "0"
+  # 与 Taskfile 同一套构建条件:关掉 webp 库运行期 dlopen,二进制保持静态
+  GOFLAGS: -tags=nodynamic
 
 jobs:
   ci:
@@ -53,6 +55,9 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build image
         run: docker build -t imgyoung:ci .
+      # 镜像不只要能构建,还要能起:distroless/static 里没有动态链接器,二进制一旦非静态在此就暴露
+      - name: Image starts
+        run: docker run --rm imgyoung:ci -version
 
   release-config:
     runs-on: ubuntu-latest

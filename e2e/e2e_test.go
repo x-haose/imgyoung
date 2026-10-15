@@ -57,11 +57,11 @@ func TestMain(m *testing.M) {
 	_ = os.RemoveAll(dir)
 }
 
-// buildBinary 以纯 Go 方式编译服务二进制到指定路径。
+// buildBinary 以发布同款条件编译服务二进制到指定路径:纯 Go、带 nodynamic 标签。
 // @param out 产物路径
 // @return 编译失败时携带编译器输出的错误
 func buildBinary(out string) error {
-	build := exec.Command("go", "build", "-o", out, "github.com/x-haose/imgyoung/cmd/imgyoung")
+	build := exec.Command("go", "build", "-tags", "nodynamic", "-o", out, "github.com/x-haose/imgyoung/cmd/imgyoung")
 	build.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := build.CombinedOutput(); err != nil {
 		return fmt.Errorf("编译二进制失败: %w\n%s", err, output)

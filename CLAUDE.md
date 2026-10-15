@@ -33,7 +33,7 @@
 
 ## 架构原则
 
-- 按定稿执行,`CGO_ENABLED=0` 全程纯 Go。
+- 按定稿执行,`CGO_ENABLED=0` 全程纯 Go;所有二进制构建带 `-tags nodynamic`(Taskfile 与 CI 经 `GOFLAGS` 设置),否则 webp 库会让 linux 二进制依赖系统动态链接器,distroless/static 镜像起不来。
 - **升级缝只有两条**(图像处理引擎、数据库),不新增投机抽象:一个实现不提前抽接口(定稿点名的 StorageDriver 等除外)、无单一产品的工厂、无"以后可能用到"的配置项。
 - 文件 < 800 行,函数 < 50 行,嵌套 ≤ 4 层,优先提前返回。
 - 业务表是唯一真相(outbox),River 任务只是幂等触发器。
