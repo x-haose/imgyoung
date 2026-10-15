@@ -101,13 +101,22 @@ func (s *configSection) writeTo(cf *goconfig.ConfigFile) error {
 
 // verifyReadBack 按 rclone 读配置文件的方式回读文本,核对每段写出的参数都读回原值。
 // @Description: rclone 的 INI 库读值时去首尾空白、按行切分、展开 %(name)s 引用,这些值写得进却读不回原样。
+// 含换行的值会让整个文件解析失败,而解析错误带着出错那一行的原文(可能是凭证),故先逐值查出换行;
+// 解析失败时也不带解析错误的原文。
 // @param text 配置文件文本
 // @param sections 写入的段
 // @return 解析失败或某参数读不回原值(ErrUnrepresentable,只带段名与键名,不带值)时的错误
 func verifyReadBack(text string, sections []configSection) error {
+	for i := range sections {
+		for k, v := range sections[i].written() {
+			if strings.ContainsAny(v, "\r\n") {
+				return fmt.Errorf("%w: 远端 %q 的参数 %q 含换行", ErrUnrepresentable, sections[i].name, k)
+			}
+		}
+	}
 	cf, err := goconfig.LoadFromReader(strings.NewReader(text))
 	if err != nil {
-		return fmt.Errorf("%w: 回读失败: %w", ErrUnrepresentable, err)
+		return fmt.Errorf("%w: 生成的文本按 rclone 的读法无法解析", ErrUnrepresentable)
 	}
 	for i := range sections {
 		for k, v := range sections[i].written() {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -272,6 +273,23 @@ func TestNewNameIsValidConfigName(t *testing.T) {
 	}
 	if a == b {
 		t.Fatalf("两次生成的远端名相同: %q", a)
+	}
+}
+
+// TestConfigFileUnrepresentableHidesValue 参数值含换行时导出被拒,错误只指出远端与参数键,不带参数值的任何片段。
+func TestConfigFileUnrepresentableHidesValue(t *testing.T) {
+	const tail = "secret-after-newline"
+	_, err := ConfigFile(Options{Backend: "local", Path: "/data", Params: map[string]string{
+		"links": "https://x\n" + tail,
+	}}, "imgyoung-1", "imgyoung-1-crypt")
+	if !errors.Is(err, ErrUnrepresentable) {
+		t.Fatalf("期望 ErrUnrepresentable,得到 %v", err)
+	}
+	if strings.Contains(err.Error(), tail) || strings.Contains(err.Error(), "https://x") {
+		t.Fatalf("错误里带出了参数值: %v", err)
+	}
+	if !strings.Contains(err.Error(), `"links"`) {
+		t.Fatalf("错误应指出参数键: %v", err)
 	}
 }
 
