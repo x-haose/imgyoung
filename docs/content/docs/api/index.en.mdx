@@ -133,7 +133,7 @@ envelope, their error responses are plain text:
 | 503 | No healthy channel can currently read the image |
 
 The admin console preview enters this pipeline only after session authentication, so authentication errors such as
-not being logged in are still JSON envelopes. In `redirect` access mode, the 302 redirect from an image access
+not being logged in are still JSON envelopes; likewise, a 500 from a database failure while checking the session is a JSON envelope, while a 500 from looking up the image metadata is plain text, and the contract declares both. In `redirect` access mode, the 302 redirect from an image access
 endpoint carries `Cache-Control: no-store`: the redirect target changes with channel health and configuration, so it
 stays out of CDN and browser caches.
 
@@ -148,7 +148,7 @@ Common status codes:
 | 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, or a channel configuration that changed while saving |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
 | 415 | Not a supported image format (judged by file content) |
-| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`) |
+| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file (`snapshot_corrupt`) |
 | 429 | Upload concurrency is full, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
 | 500 | Internal server error, including database faults; error code `internal`, retry later. Every endpoint that touches the database declares 500 in the contract |
 | 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |

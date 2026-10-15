@@ -53,7 +53,7 @@ docker run --rm ghcr.io/x-haose/imgyoung:latest -version
 从快照恢复时，数据目录里还会出现暂存文件 `imgyoung.db.restore`，以及换入后留存的原库 `imgyoung.db.pre-restore-<时刻>`。
 
 <Callout type="warn" title="单独备份 master.key">
-  渠道凭证和加密渠道里的数据都靠主密钥解开。它不包含在元数据库快照与数据导出里，丢失后这些数据无法恢复。数据库里记着主密钥的指纹，主密钥缺失或换错时服务拒绝启动并说明原因，不会换一把新密钥继续运行。启动后立即复制一份到别处保存：
+  渠道凭证和加密渠道里的数据都靠主密钥解开，上传 Token 的 S3 凭证也由它派生。它不包含在元数据库快照与数据导出里，丢失后这些都无法恢复。数据库里记着主密钥的指纹，主密钥缺失或换错时服务拒绝启动并说明原因，不会换一把新密钥继续运行。启动后立即复制一份到别处保存：
 
   ```bash
   docker cp imgyoung:/data/master.key ./imgyoung-master.key

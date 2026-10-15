@@ -134,7 +134,7 @@ WebDAV 渠道没有公开访问地址，表单里也不显示「允许 302 直�
 | `dns` | 「无法解析服务端点域名：检查 endpoint 配置」| `no such host`、`server misbehaving` | 端点拼写错误，或服务器 DNS 不通 |
 | `connect` | 「无法连接服务端点：检查 endpoint 地址与端口」| `connection refused`、`connection reset` | 端口、协议或防火墙问题 |
 | `tls` | 「TLS 证书校验失败：检查端点证书或改用正确协议」| `certificate`、`x509`、`tls handshake`（握手超时 `TLS handshake timeout` 除外，归为 `timeout`）| 自签证书，或把 `http` 服务写成了 `https` |
-| `timeout` | 「连接超时：检查端点地址与网络连通性」| 超时，含 `TLS handshake timeout`、探测自身的 10 / 20 秒超时与装载的 30 秒超时 | 网络不通或服务过慢 |
+| `timeout` | 「连接超时：检查端点地址与网络连通性」| 超时，含 `TLS handshake timeout`、探测自身的 10 / 20 秒超时与装载的 30 秒超时（原文 `构造后端未在时限内完成: context deadline exceeded`）| 网络不通或服务过慢 |
 | `permission` | 「存储路径无写入权限：检查目录权限」| `permission denied`、`read-only file system` | `local` 渠道的目录权限；容器内以 uid 65532 运行时，挂载目录要对它可写 |
 | `probe_mismatch` | 「探测对象读回内容不一致：存储端改写或截断了对象」| 深探测读回的内容与写入的不同 | 存储服务在静默改写或截断对象，检查它的设置，或换一个存储服务 |
 | `config_unreadable` | 「渠道配置无法解密：主密钥与写入配置时的不同」| 装载时渠道配置解不开 | 换回写入配置时的主密钥 |

@@ -100,11 +100,14 @@ Fields of `rclone.Options`:
 
 Errors returned by `Open` never carry the parameter map, so credentials in it cannot leak into logs through error messages.
 
-`ctx` only governs construction: if it is cancelled or hits its deadline before construction finishes, `Open` returns an
-error and closes any driver it already built; once construction is done, its cancellation and deadline no longer affect
-the driver. rclone backends keep the context they were constructed with and use it for later requests (such as OAuth
-token refreshes), so passing a `ctx` that belongs to a single request or job is safe; values in the context still reach
-the backend.
+`ctx` only governs construction. If it is cancelled or hits its deadline before construction finishes, `Open` returns an
+error right away without waiting for the backend, even for backends that ignore `ctx` while constructing (such as `ftp`).
+The error wraps `context.Cause(ctx)`, so `errors.Is(err, context.DeadlineExceeded)` holds on a deadline; the text looks
+like `构造后端未在时限内完成: context deadline exceeded`. The abandoned construction finishes in the background on the
+backend's own timeouts, and any driver it produces is closed. Once construction is done, the cancellation and deadline
+of `ctx` no longer affect the driver: rclone backends keep the context they were constructed with and use it for later
+requests (such as OAuth token refreshes), so passing a `ctx` that belongs to a single request or job is safe; values in
+the context still reach the backend.
 
 ### Content-Type on write
 

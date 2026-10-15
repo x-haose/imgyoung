@@ -53,7 +53,7 @@ The data directory inside the container is `/data` (the image sets `IMGYOUNG_DAT
 During a restore from snapshot you may also see the staged file `imgyoung.db.restore`, and afterwards the previous database kept as `imgyoung.db.pre-restore-<time>`.
 
 <Callout type="warn" title="Back up master.key separately">
-  Channel credentials and the data on encrypted channels can only be decrypted with the master key. It is not included in metadata snapshots or data exports, and once it is lost that data cannot be recovered. The database records a fingerprint of the master key, so if the key is missing or wrong the service refuses to start and says why, instead of carrying on with a new key. Copy it somewhere safe right after the first start:
+  Channel credentials and the data on encrypted channels can only be decrypted with the master key, and the S3 credentials of upload tokens are derived from it. It is not included in metadata snapshots or data exports, and once it is lost none of that can be recovered. The database records a fingerprint of the master key, so if the key is missing or wrong the service refuses to start and says why, instead of carrying on with a new key. Copy it somewhere safe right after the first start:
 
   ```bash
   docker cp imgyoung:/data/master.key ./imgyoung-master.key

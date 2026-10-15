@@ -92,14 +92,14 @@ The remaining tables:
 
 | Table | Contents |
 |---|---|
-| `channels` | Channels: an auto-increment primary key that is never reused after deletion (`AUTOINCREMENT`; replication, deletion and drain jobs refer to channels by key only), rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest failure conclusion (stage, classification, and root cause; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
+| `channels` | Channels: an auto-increment primary key that is never reused after deletion (`AUTOINCREMENT`; replication, deletion and drain jobs refer to channels by key only; the one exception is the channel with the highest id among those deleted before migration `b21`, whose id the first channel created after the upgrade may receive), rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest failure conclusion (stage, classification, and root cause; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
 | `variants` | Index of the variant cache: one row per blob and processing parameter set; the bytes live on local disk and are evicted LRU by last access |
 | `settings` | Runtime settings in a single-row wide table; each column's DEFAULT is the factory value. See [Configuration](./configuration.mdx) |
 | `users`, `tokens`, `sessions` | Users and quotas, upload tokens (hashes only), admin sessions (only a hash of the session id plus its bound CSRF token) |
 | `idempotency_keys` | Upload idempotency keys, scoped per user |
 | `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
 | `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records (kind, target, Chinese description, and description parameters) |
-| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. When there is no fingerprint yet but the database already holds data encrypted with a master key (written by an older version, or restored from an older snapshot), the key is checked by whether it can decrypt that data, and the fingerprint is recorded only if it can. See [Master key](./configuration.mdx#master-key) |
+| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. When there is no fingerprint yet (a database written by an older version, or restored from an older snapshot), it looks for data that depends on the master key: ciphertext (channel configurations, the CDN token) or derived data (upload tokens' S3 credentials, encrypted channels' crypt keys). If either exists, no new key is generated and a missing key refuses to start; with ciphertext present, decrypting any one piece counts as a match and failing on all of it refuses to start; with only derived data there is nothing to check against and the given key is used. The fingerprint is recorded once the check passes. See [Master key](./configuration.mdx#master-key) |
 
 The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
 table and every column. Versioned migrations are generated from it by Atlas, embedded in the binary, and applied in
@@ -175,7 +175,7 @@ the next channel on failure.
 ones written, `pending` for the rest), and the idempotency key; only then are the write leases released. A channel
 marked as draining during the write still gets its replica row (so the drain deletes the object) but does not count as
 a valid replica; if fewer than `min_success` synchronous replicas are still on active channels at that moment, the
-upload fails (503) and the objects already written are deleted.
+upload fails (503).
 
 </Step>
 <Step>
@@ -187,9 +187,11 @@ fails, it is only logged; reconciliation picks it up.
 </Steps>
 
 The whole upload happens in memory without temporary files. Peak memory is roughly "concurrency × max(per-image size
-limit, decoded memory at the pixel budget)", so lowering these settings adapts ImgYoung to small machines. If the
-channel write succeeds but recording fails for another reason (a database error, say), an orphan object is left behind; reconciliation GC reclaims it, and the
-channel write is never rolled back.
+limit, decoded memory at the pixel budget)", so lowering these settings adapts ImgYoung to small machines. Whenever an
+upload is not recorded — it fails before enough copies are written, recording fails (including the shortfall above), or it
+loses an idempotency-key race to another request — the objects it wrote to channels are deleted; the object key carries
+this upload's short ID, so no other upload's objects are touched. Objects left behind because deletion failed or the
+process stopped midway are reclaimed by reconciliation GC as orphans.
 
 ## Access data flow
 
@@ -250,8 +252,9 @@ there for longer than both 16 minutes and the job's own timeout: a drain job (`d
 is rescheduled after about an hour, every other job after 16 minutes. When a channel is created, `pending` replica rows are seeded for every existing blob, and the same
 machinery brings them in line, with no separate backfill logic.
 
-**Write lease**: uploads, replication, metadata snapshots and deep checks write objects and record them under the
-channel's write lease. Once a channel is marked as draining, new writes are refused; the drain job waits for the writes
+**Write lease**: uploads, replication, metadata snapshots and deep checks (including a connection test against an existing
+channel) write objects and record them under the channel's write lease. Once a channel is marked as draining, new writes
+are refused immediately rather than queued behind the drain; the drain job waits for the writes
 already in progress to finish before it lists objects and records. So a draining channel never ends up with an object
 this service wrote that the drain cannot see.
 
@@ -259,9 +262,9 @@ The other asynchronous jobs follow the same principle: deleting objects from a c
 channel being cleaned up (`drain_channel`: it first waits for writes in progress on the channel to finish, then deletes the replica objects row
 by row, so its progress is simply the remaining replica rows; then deletes the system objects under `_imgyoung/` on that
 channel, metadata snapshots included, along with deep check leftovers, leaving objects written by other programs alone;
-and finally deletes the channel record. Before each batch of replicas and each system object it checks that the channel
-is still draining, so if an administrator chooses **Remove now** midway it stops and the remaining remote objects are left
-as they are), and purging CDN caches
+and finally deletes the channel record. Before deleting each object it checks the channel table to make sure the channel
+is still draining, so if an administrator chooses **Remove now** midway it stops, and apart from the object being deleted at
+that moment the remaining remote objects are left as they are), and purging CDN caches
 (`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
 finally fails are reclaimed by reconciliation GC; only when the same drain job still fails on its 4th attempt (about
 98 seconds after the first failure with River's default backoff) does it write the failure conclusion into the channel
@@ -371,8 +374,9 @@ right key format but no record here, so once past the grace period they are dele
 Shutdown (on SIGINT / SIGTERM, or a restart requested after restoring a backup snapshot in the admin console) happens
 in order: new requests stop being accepted first, and in-flight requests get at most 6 seconds before the remaining
 connections are closed; then the background loops and in-flight replication jobs are cancelled and the replication
-subsystem gets at most 2 seconds, while each loop writes out data still held in memory before it exits; finally the
-channel drivers and the database are closed. The two stages total 8 seconds, within Docker's default 10-second kill
+subsystem gets at most 2 seconds, while each loop writes out data still held in memory before it exits; a backup in progress
+(scheduled or manual) and the snapshot fetch of a restore are stopped too — the storage backend deletes a half-written
+snapshot and the temporary staging file is removed; finally the channel drivers and the database are closed. The two stages total 8 seconds, within Docker's default 10-second kill
 timeout, and the sample configurations under `deploy/` leave extra headroom (`stop_grace_period: 15s` in compose,
 `TimeoutStopSec=15s` for systemd). Cancelled replication jobs keep their state in the business table and are queued
 again by reconciliation on the next start.
@@ -467,10 +471,12 @@ map, instead of calling the rclone command line, librclone's RPC interface, or a
   with the master key and decrypted into a map for the backend at runtime. The parameters contain credentials, so they
   are never logged and never carried in error chains.
 - **One token refresher**: rclone refreshes OAuth tokens itself and hands them to the application through the
-  parameter write-back hook, which encrypts and stores them immediately. Before storing, it checks that the database still
-  holds the value from before the write-back; if the channel configuration was edited in the meantime, the write-back is
-  dropped, so an old driver's write-back never overwrites a token the edit just saved. The application runs no refresh
-  loop of its own.
+  parameter write-back hook, which encrypts and stores them immediately. Before storing, it checks only that the parameter being
+  written back still holds, in the database, the value this driver last confirmed: if that parameter was edited in the
+  meantime, the write-back is dropped, so an old driver's write-back never overwrites a token the edit just saved; an edit
+  that changed only other parameters (priority, path and so on) does not stop the write-back from being merged into the
+  edited configuration. If storing the write-back fails, the driver keeps using the new token it holds and the next
+  write-back stores it; the driver is not rebuilt. The application runs no refresh loop of its own.
 - **One handle for everything**: reads, writes, checks, listing, and deletion all go through the same `fs.Fs`, with
   one set of error mappings (missing objects always become `driver.ErrNotFound`).
 - **Channel encryption with no extra code**: encrypted channels stack rclone's crypt layer on top of the backend, and

@@ -113,7 +113,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 | Key | UI label | Default | Valid values | Notes |
 |---|---|---|---|---|
 | `access_mode` | Access mode | `proxy` | `proxy` / `redirect` | `proxy`: images are read from a channel and served by ImgYoung; a failed read moves on to the next channel immediately. `redirect`: original-image requests get a 302 to a channel that allows direct links, sent with `Cache-Control: no-store`; see [CDN](./operations/cdn.mdx) |
-| `base_url` | Public site address | Empty | Empty, or an `http` / `https` site root such as `https://img.example.com`, with no path, query, fragment or user info, and not ending in a bare `?` or `#`; a trailing `/` is removed before the check | Empty means it is derived from each request; a stored value that does not meet these rules is cleared by a database migration on upgrade. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
+| `base_url` | Public site address | Empty | Empty, or an `http` / `https` site root such as `https://img.example.com`, with no path, query, fragment or user info, a non-empty host name (`http://:8080` is rejected), and not ending in a bare `?` or `#`; a trailing `/` is removed before the check | Empty means it is derived from each request. On upgrade, a database migration keeps a stored value only if it has the form "`http` / `https` + host name (starting with a letter or digit and containing only letters, digits, dots and hyphens) + optional numeric port" and clears everything else; internationalized (non-ASCII) domain names and IPv6 literal addresses are therefore cleared and need to be entered again after upgrading. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
 | `min_success` | Minimum synced replicas | `1` | ≥ 1 | Channels that must be written synchronously before an upload succeeds; if the healthy channels cannot provide that many, the upload fails with 503 |
 | `encrypt_new_channels` | Encrypt new channels by default | Off | On / off | Whether a new channel is encrypted when the form does not choose explicitly; encryption is fixed when the channel is created |
 
@@ -233,15 +233,24 @@ neither read nor created; otherwise it is read from `master.key` in the data dir
 against the **master key fingerprint** recorded in the database. The fingerprint lives in the single-row table
 `master_key_fingerprint`; it is derived from the master key with HKDF-SHA256 and cannot be reversed into the key.
 
-- **No fingerprint and no data encrypted with a master key** (a brand-new database): if neither source has a key,
+- **No fingerprint and no data that depends on a master key** (a brand-new database): if neither source has a key,
   `master.key` is generated in the data directory (64 hex characters plus a newline, mode `0600`, written to a
   temporary file and renamed) and a warning is logged telling you to back it up; the key's fingerprint is then
   written to the database.
-- **No fingerprint, but data encrypted with a master key already exists** (channel configurations or the Cloudflare
-  API token, written by an older version that did not record fingerprints, or restored from such an old snapshot): no
-  new key is generated and the master key must be present. It is checked by whether it can decrypt that existing data;
-  if it cannot, startup is refused (with the same error as a key that does not match the database), and only if it
-  can is the fingerprint written to the database.
+- **No fingerprint, but data that depends on a master key already exists** (a database written by an older version
+  that did not record fingerprints, or restored from such an old snapshot). Such data comes in two kinds: ciphertext
+  (channel configurations, the Cloudflare API token) and derived data (the S3 credentials of upload tokens, the crypt
+  keys of encrypted channels). If either kind exists, no new key is generated, and a missing master key refuses
+  startup with `数据库里已有依赖主密钥的数据,但找不到主密钥:IMGYOUNG_MASTER_KEY 未设置,<path> 也不存在。请恢复原来的主密钥再启动;生成新密钥会让渠道配置、加密渠道的数据与上传 Token 的 S3 凭证全部失效`
+  (data depending on the master key exists but the key cannot be found; restore the original key, because a new key
+  would invalidate channel configurations, encrypted channel data and the S3 credentials of upload tokens). Once a key is found:
+  - With ciphertext present, the key matches if it decrypts any one of them (an old database holding data encrypted
+    with two different keys accepts both); if it decrypts none, startup is refused with
+    `主密钥与数据库不符:…(库里已有的 N 份加密数据都解不开: …)` (the master key does not match the database; none of
+    the N encrypted values could be decrypted).
+  - With only derived data, there is nothing to check against, and the given key is used as is.
+
+  After the check passes, the key's fingerprint is written to the database.
 - **A fingerprint is already recorded**: the master key must be present and must match. If `IMGYOUNG_MASTER_KEY` is
   unset or empty and there is no `master.key` in the data directory, or the key does not match the fingerprint,
   startup is refused with an explanation, and no new key is generated. Only a brand-new database ever gets a generated `master.key`.
@@ -292,7 +301,7 @@ sudo cp /var/lib/imgyoung/master.key ./imgyoung-master.key
 
 ### Losing it, or starting with the wrong one
 
-The master key cannot be rotated. Once the database has recorded the fingerprint (or holds data encrypted with a master key even without a fingerprint), both a wrong key and a missing key are stopped at startup:
+The master key cannot be rotated. Once the database has recorded the fingerprint, both a wrong key and a missing key are stopped at startup (an older database without a fingerprint is checked as described above: a missing key is stopped too, while a wrong key is caught only by failing to decrypt existing ciphertext, and goes unnoticed when there is only derived data):
 
 - A different master key (for example a mistyped `IMGYOUNG_MASTER_KEY`): startup is refused and the error tells you to
   switch back to the original key; with the original key back, the process starts normally.

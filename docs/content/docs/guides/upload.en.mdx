@@ -100,7 +100,7 @@ On a flaky network a client may send the same upload twice. Sending an `Idempote
 - Within the retention period, a request from the same user with the same key returns the `id` and `url` of the first successful upload and writes nothing to the channels. The retention period is `idempotency_key_ttl_hours`, 24 hours out of the box, counted from that first success.
 - A hit does not compare the request content: if you reuse a key with a different file, you still get the first image back. Use a different key for every distinct image.
 - Only successful uploads record their key, so a failed request can safely be retried with the same key.
-- Of several concurrent requests with the same key, only one is stored; the others return the same result.
+- Of several concurrent requests with the same key, only one is stored; the others return the same result, and the objects the losing requests already wrote to channels are deleted right away.
 - Keys past their retention period are reclaimed by the cleanup sweep, and deleting an image also deletes the keys that point to it. After that, the same key is treated as a new upload.
 
 Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3 entry point does not.
@@ -272,7 +272,7 @@ Before returning, an upload writes to healthy channels one after another in prio
 
 1. If a write fails or times out (each write gets at most 10 minutes), the next healthy channel is tried; the first channel that succeeds is the primary channel for this upload.
 2. Once enough copies exist, the record is written to the metadata database and the upload returns. The remaining channels are marked as pending and filled by background replication, which does not slow the upload down.
-3. If there are not enough healthy channels, or not enough writes succeed after trying them all, the upload returns 503. Objects already written become orphans, which reconciliation reclaims after a 48-hour grace period.
+3. If there are not enough healthy channels, or not enough writes succeed after trying them all, the upload returns 503. Whenever an upload fails (too few copies, or the database write fails), the objects it already wrote to channels are deleted right away; object keys contain this upload's short ID, so no other upload's objects are touched. The occasional object that cannot be deleted is reclaimed by reconciliation as an orphan after a 48-hour grace period.
 4. If a target channel is marked as draining during the upload (an administrator chose **Delete and purge**), the copy written to it does not count. If the remaining in-service copies fall short of `min_success`, the upload fails with 503 (`upload_unavailable`, the same as an unavailable channel), and the objects already written are deleted right away.
 
 With `min_success` above 1, an upload waits until several channels have the bytes before returning, in exchange for having multiple replicas from the start; if fewer channels are healthy than that number, every upload returns 503.

@@ -100,7 +100,7 @@ The endpoint and domain are built from the **Public site address**, or from the 
 |---|---|---|
 | PutObject | `PUT /s3/<bucket>/<object key>` | Runs the upload pipeline. The `ETag` response header is the SHA-256 of the uploaded body, and `x-amz-meta-image-id` carries the image's short ID |
 | HeadBucket | `HEAD /s3/<bucket>` | 200 whenever the credential is valid |
-| HeadObject | `HEAD /s3/<bucket>/<object key>` | The object's metadata headers |
+| HeadObject | `HEAD /s3/<bucket>/<object key>` | The object's metadata headers. It confirms, in priority order, that some channel can return the object's metadata (metadata only, the content is not read); if none can, it returns 503 like GetObject |
 | GetObject | `GET /s3/<bucket>/<object key>` | The stored original; no on-demand processing, not counted as an access, not subject to hotlink protection; same cache headers as `/o/` aliases |
 | DeleteObject | `DELETE /s3/<bucket>/<object key>` | Deletes the image the key currently points to; returns 204 even if the object does not exist |
 

@@ -39,7 +39,7 @@ The CDN must cache separately per `Accept` (by honoring `Vary: Accept` or adding
 
 ## Processing parameters and cache keys
 
-- `w` must be one of the width tiers and `format` one of the target formats or `auto`; anything else gets 400. This check comes first and does not depend on the original's format: an original that is never processed, such as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones. The allowlist bounds how many variants an image can have, so arbitrary parameters cannot create unbounded cache entries.
+- `w` must be one of the width tiers and `format` one of the target formats or `auto`; anything else gets 400. This check comes first and does not depend on the original's format: an original that is never processed, such as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones. Widths are accepted only in canonical form (no leading zeros or sign; `?w=0400` gets 400), so each width tier and each target format has exactly one spelling, and the allowlist bounds how many variants an image can have.
 - ImgYoung ignores any other query parameter, but the CDN's default cache key includes it: appending a random parameter bypasses the cache and hits the origin. Restrict the cache key's query string to `w` and `format`.
 - Always write the parameters in the order `?w=…&format=…`. Cache purging only clears URLs in that order (see below); a different order is a different cache entry as far as the CDN is concerned.
 
