@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/x-haose/imgyoung/store/driver"
@@ -99,9 +100,10 @@ func put(ctx context.Context, d driver.Driver, key string, r io.Reader, size int
 }
 
 // Open 按顺序打开对象,返回第一个成功的读取流。
-// @Description: 打开成功即返回,后续驱动不再访问。全部失败时,若每个驱动都报告对象不存在,
+// @Description: 打开成功即返回,后续驱动不再访问。全部失败时两类错误互斥:每个驱动都报告对象不存在,
 // 返回包裹 driver.ErrNotFound 的错误(对象确实缺失);否则返回包裹 ErrUnavailable 的错误
-// (至少一个驱动故障,对象可能仍在)。ctx 取消后不再尝试后续驱动。
+// (至少一个驱动故障,对象可能仍在),此时各驱动的原始错误只以文本出现,要逐个判断请看尝试记录。
+// ctx 取消后不再尝试后续驱动。
 // @param ds 驱动,按优先级降序
 // @param key 对象键
 // @return 读取流,调用方负责 Close;失败时为 nil
@@ -126,20 +128,22 @@ func Open(ctx context.Context, ds []driver.Driver, key string) (io.ReadCloser, [
 }
 
 // unreadable 把全部失败的读取尝试归结为一个错误:全是"不存在"即对象缺失,否则为不可读。
+// @Description: 不可读时各驱动的错误只拼进文本、不参与包裹——其中可能有别的驱动报的"不存在",
+// 包裹进来会让 errors.Is(err, driver.ErrNotFound) 也成立,把"有驱动故障"误判成"对象缺失"。
 // @param key 对象键
 // @param attempts 全部失败的尝试
-// @return 包裹 driver.ErrNotFound 或 ErrUnavailable 的错误
+// @return 包裹 driver.ErrNotFound 或 ErrUnavailable(二者互斥)的错误
 func unreadable(key string, attempts []Attempt) error {
-	failures := make([]error, 0, len(attempts))
+	reasons := make([]string, 0, len(attempts))
 	missing := 0
 	for _, a := range attempts {
 		if errors.Is(a.Err, driver.ErrNotFound) {
 			missing++
 		}
-		failures = append(failures, fmt.Errorf("驱动 %d: %w", a.Index, a.Err))
+		reasons = append(reasons, fmt.Sprintf("驱动 %d: %v", a.Index, a.Err))
 	}
 	if missing == len(attempts) {
 		return fmt.Errorf("对象 %q 在 %d 个驱动上均不存在: %w", key, missing, driver.ErrNotFound)
 	}
-	return fmt.Errorf("%w: 对象 %q: %w", ErrUnavailable, key, errors.Join(failures...))
+	return fmt.Errorf("%w: 对象 %q: %s", ErrUnavailable, key, strings.Join(reasons, "; "))
 }

@@ -57,8 +57,8 @@ func TestOpenFailureKinds(t *testing.T) {
 
 	mixed := []driver.Driver{brokenLocal(t), openLocal(t, t.TempDir())}
 	_, attempts, err := failover.Open(t.Context(), mixed, "missing")
-	if !errors.Is(err, failover.ErrUnavailable) {
-		t.Fatalf("含故障驱动时错误 = %v, 期望 ErrUnavailable", err)
+	if !errors.Is(err, failover.ErrUnavailable) || errors.Is(err, driver.ErrNotFound) {
+		t.Fatalf("含故障驱动时错误 = %v, 期望只命中 ErrUnavailable", err)
 	}
 	if len(attempts) != 2 {
 		t.Fatalf("尝试次数 = %d, 期望 2", len(attempts))
