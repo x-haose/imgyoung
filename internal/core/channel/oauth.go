@@ -77,6 +77,45 @@ func NewOAuthFlow(ctx context.Context, driver string, params map[string]string,
 	return &OAuthFlow{conf: conf, opts: codeOpts}, nil
 }
 
+// OAuthStartParams 汇总发起授权所需的后端参数:模板已填字段按落位键合并,授权令牌除外。
+// @Description: 编辑场景重新授权时,表单回显的哨兵(自建应用的 Client ID / Secret 等)还原为
+// 该渠道的已存原值,整理规则与 Create / Update 相同。
+// @param channelID 编辑场景的渠道主键;0 = 创建场景
+// @param templateID 模板 id,须为需授权的模板
+// @param inputs 已填字段值
+// @return rclone 后端名
+// @return 后端参数
+// @return 模板不存在或无需授权、哨兵无法还原时的 ErrInvalidChannel,ErrChannelNotFound,或读取渠道失败的错误
+func (m *Manager) OAuthStartParams(ctx context.Context, channelID int64, templateID string,
+	inputs map[string]string) (string, map[string]string, error) {
+	tpl := findTemplate(templateID)
+	if tpl == nil {
+		return "", nil, ErrUnknownTemplate
+	}
+	if !tpl.RequiresOAuth {
+		return "", nil, ErrNotOAuthDriver
+	}
+	params, err := mergeTemplate(tpl, inputs, func(f TemplateField) (string, error) {
+		if f.Type == FieldOAuth {
+			return "", nil
+		}
+		return strings.TrimSpace(inputs[f.Key]), nil
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	var stored map[string]string
+	if channelID > 0 {
+		if stored, err = m.storedConfig(ctx, channelID); err != nil {
+			return "", nil, err
+		}
+	}
+	if params, err = prepareConfig(tpl.Driver, params, stored, true); err != nil {
+		return "", nil, err
+	}
+	return tpl.Driver, params, nil
+}
+
 // AuthCodeURL 生成引导用户前往的授权地址。
 // @param state 防跨站请求伪造的一次性串
 // @return 授权地址

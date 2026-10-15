@@ -31,7 +31,7 @@ type oauthResult struct {
 func oauthStart(t *testing.T, inst *instance, client *http.Client, csrf,
 	template string) (int, oauthStartResult) {
 	t.Helper()
-	body := `{"template":"` + template + `","inputs":{},"client_id":"cid-e2e","client_secret":"sec-e2e"}`
+	body := `{"template":"` + template + `","inputs":{"client_id":"cid-e2e","client_secret":"sec-e2e"}}`
 	resp := adminReq(t, client, csrf, http.MethodPost, inst.baseURL+"/api/admin/channel-oauth/start", body)
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
@@ -144,5 +144,11 @@ func TestOAuthFlowEndpoints(t *testing.T) {
 
 	if code, _ := oauthStart(t, inst, admin, csrf, "aws-s3"); code != http.StatusBadRequest {
 		t.Fatalf("对无需授权的模板发起授权状态码 = %d, 期望 400", code)
+	}
+	missing := adminReq(t, admin, csrf, http.MethodPost, inst.baseURL+"/api/admin/channel-oauth/start",
+		`{"template":"googledrive","inputs":{"client_id":"cid-e2e"},"channel_id":99999}`)
+	_ = missing.Body.Close()
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("编辑场景指向不存在的渠道发起授权状态码 = %d, 期望 404", missing.StatusCode)
 	}
 }

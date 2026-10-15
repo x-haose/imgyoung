@@ -662,7 +662,7 @@ export interface paths {
         put?: never;
         /**
          * 发起网盘授权
-         * @description 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致。仅管理员。
+         * @description 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致;自建应用的 Client ID / Secret 是模板字段,随 `inputs` 提交并随渠道保存。编辑场景带 `channel_id`,字段里的哨兵还原为该渠道已存值后再发起。仅管理员。
          */
         post: operations["startChannelOAuth"];
         delete?: never;
@@ -1670,14 +1670,15 @@ export interface components {
         OAuthStartRequest: {
             /** @description 模板 id,须为需要授权的模板 */
             template: string;
-            /** @description 已填字段值,提供区域等影响端点的参数 */
+            /** @description 已填字段值:区域等影响端点的参数与自建应用的 `client_id` / `client_secret`;授权令牌字段不参与 */
             inputs?: {
                 [key: string]: string;
             };
-            /** @description 自建应用标识;留空用模板内置应用 */
-            client_id?: string;
-            /** @description 自建应用密钥 */
-            client_secret?: string;
+            /**
+             * Format: int64
+             * @description 编辑场景传渠道 id,字段中的哨兵还原为该渠道已存值;0 或缺省为创建场景
+             */
+            channel_id?: number;
         };
         OAuthStartResponse: {
             /**
@@ -3382,6 +3383,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     channelOAuthCallback: {

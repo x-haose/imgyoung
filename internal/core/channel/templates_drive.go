@@ -24,40 +24,34 @@ var driveTemplates = []Template{
 	{
 		ID: "onedrive", Name: "OneDrive", Description: "微软 OneDrive 与 SharePoint",
 		Category: CategoryDrive, Driver: "onedrive", RequiresOAuth: true,
-		Fields: []TemplateField{
-			{Key: "region", Label: "区域", Type: FieldSelect, Required: true, configKey: "region",
-				Options: onedriveRegions, Help: "决定授权与接口端点,须与账号所属区域一致"},
-			oauthTokenField(), drivePathField(),
-		},
+		Fields: oauthFields(TemplateField{Key: "region", Label: "区域", Type: FieldSelect, Required: true,
+			configKey: "region", Options: onedriveRegions, Help: "决定授权与接口端点,须与账号所属区域一致"}),
 	},
 	{
 		ID: "googledrive", Name: "Google Drive", Description: "谷歌云端硬盘",
 		Category: CategoryDrive, Driver: "drive", RequiresOAuth: true,
-		Fields: []TemplateField{oauthTokenField(), drivePathField()},
+		Fields: oauthFields(),
 	},
 	{
 		ID: "dropbox", Name: "Dropbox", Description: "Dropbox 网盘",
 		Category: CategoryDrive, Driver: "dropbox", RequiresOAuth: true,
-		Fields: []TemplateField{oauthTokenField(), drivePathField()},
+		Fields: oauthFields(),
 	},
 	{
 		ID: "pcloud", Name: "pCloud", Description: "pCloud 网盘",
 		Category: CategoryDrive, Driver: "pcloud", RequiresOAuth: true,
-		Fields: []TemplateField{
-			{Key: "hostname", Label: "数据区域", Type: FieldSelect, Required: true, configKey: "hostname",
-				Options: pcloudHosts, Help: "须与注册账号时所选区域一致,否则换取令牌失败"},
-			oauthTokenField(), drivePathField(),
-		},
+		Fields: oauthFields(TemplateField{Key: "hostname", Label: "数据区域", Type: FieldSelect, Required: true,
+			configKey: "hostname", Options: pcloudHosts, Help: "须与注册账号时所选区域一致,否则换取令牌失败"}),
 	},
 	{
 		ID: "box", Name: "Box", Description: "Box 企业网盘",
 		Category: CategoryDrive, Driver: "box", RequiresOAuth: true,
-		Fields: []TemplateField{oauthTokenField(), drivePathField()},
+		Fields: oauthFields(),
 	},
 	{
 		ID: "yandex", Name: "Yandex Disk", Description: "Yandex 网盘",
 		Category: CategoryDrive, Driver: "yandex", RequiresOAuth: true,
-		Fields: []TemplateField{oauthTokenField(), drivePathField()},
+		Fields: oauthFields(),
 	},
 }
 
@@ -85,6 +79,28 @@ var onedriveRegions = []FieldOption{
 var pcloudHosts = []FieldOption{
 	{Label: "美国", Value: "api.pcloud.com"},
 	{Label: "欧洲", Value: "eapi.pcloud.com"},
+}
+
+// oauthFields 需授权模板的字段:后端专属字段在前,随后是自建应用凭证、授权令牌与存储目录。
+// @Description: 应用凭证随渠道保存:令牌续期必须用签发它的同一应用。
+// @param lead 排在最前的后端专属字段(区域等)
+// @return 字段列表
+func oauthFields(lead ...TemplateField) []TemplateField {
+	return append(lead, clientIDField(), clientSecretField(), oauthTokenField(), drivePathField())
+}
+
+// clientIDField 自建 OAuth 应用的 Client ID 字段。
+func clientIDField() TemplateField {
+	return TemplateField{Key: ConfigKeyClientID, Label: "应用 Client ID", Type: FieldText,
+		configKey: ConfigKeyClientID,
+		Help: "一键授权必填,填在服务商开放平台自建的应用标识;粘贴令牌时,若授权用的是自建应用也须填写。" +
+			"令牌续期用它,须与签发令牌的应用一致"}
+}
+
+// clientSecretField 自建 OAuth 应用的 Client Secret 字段(密文)。
+func clientSecretField() TemplateField {
+	return TemplateField{Key: ConfigKeyClientSecret, Label: "应用 Client Secret", Type: FieldPassword,
+		configKey: ConfigKeyClientSecret, Help: "与 Client ID 配套的应用密钥"}
 }
 
 // oauthTokenField 授权令牌字段;由授权流写入,不手工录入。

@@ -93,14 +93,8 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) 
 	}
 	var stored map[string]string
 	if p.ChannelID > 0 {
-		row, err := m.cfg.Queries.GetChannel(ctx, p.ChannelID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", ErrChannelNotFound
-		}
-		if err != nil {
-			return "", fmt.Errorf("读取渠道 %d: %w", p.ChannelID, err)
-		}
-		if stored, err = m.unsealConfigMap(row.ConfigSealed); err != nil {
+		var err error
+		if stored, err = m.storedConfig(ctx, p.ChannelID); err != nil {
 			return "", err
 		}
 	}

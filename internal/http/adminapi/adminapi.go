@@ -36,6 +36,9 @@ type ChannelAdmin interface {
 	TestConfig(ctx context.Context, p channel.TestParams) (string, error)
 	// ConfigForEdit 返回渠道配置的编辑视图(敏感值哨兵掩码,含模板表单字段还原)。
 	ConfigForEdit(ctx context.Context, channelID int64) (channel.EditConfig, error)
+	// OAuthStartParams 汇总发起授权所需的后端名与参数;编辑场景还原字段中的哨兵。
+	OAuthStartParams(ctx context.Context, channelID int64, templateID string,
+		inputs map[string]string) (string, map[string]string, error)
 }
 
 // ReplicationKicker 副本补齐管道的唤醒入口(由 replication.Runner 实现)。

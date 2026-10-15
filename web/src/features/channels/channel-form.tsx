@@ -345,6 +345,7 @@ export function ChannelForm({
                 field={f}
                 template={template}
                 inputs={inputs}
+                channelId={channel?.id}
                 kept={prefill?.inputs?.[f.key] === SECRET_PLACEHOLDER}
                 disabled={busy}
               />
@@ -576,6 +577,7 @@ type TemplateFieldInputProps = {
   field: TemplateField
   template: ChannelTemplate
   inputs: Record<string, string>
+  channelId?: number // 编辑目标;创建时缺省
   kept: boolean // 编辑回显为哨兵:后端掩码的敏感值,原样提交即保留
   disabled: boolean
 }
@@ -585,6 +587,7 @@ function TemplateFieldInput({
   field: f,
   template,
   inputs,
+  channelId,
   kept,
   disabled,
 }: TemplateFieldInputProps) {
@@ -604,6 +607,7 @@ function TemplateFieldInput({
             <OAuthField
               template={template}
               inputs={inputs}
+              channelId={channelId}
               value={field.value ?? ''}
               onChange={field.onChange}
               disabled={disabled}

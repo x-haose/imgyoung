@@ -1102,7 +1102,7 @@ paths:
       operationId: startChannelOAuth
       tags: [后台·存储渠道]
       summary: 发起网盘授权
-      description: 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致。仅管理员。
+      description: 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致;自建应用的 Client ID / Secret 是模板字段,随 `inputs` 提交并随渠道保存。编辑场景带 `channel_id`,字段里的哨兵还原为该渠道已存值后再发起。仅管理员。
       security:
         - session: []
       parameters:
@@ -1126,6 +1126,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /api/admin/channel-oauth/callback:
     get:
       operationId: channelOAuthCallback
@@ -3026,13 +3028,11 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: 已填字段值,提供区域等影响端点的参数
-        client_id:
-          type: string
-          description: 自建应用标识;留空用模板内置应用
-        client_secret:
-          type: string
-          description: 自建应用密钥
+          description: 已填字段值:区域等影响端点的参数与自建应用的 `client_id` / `client_secret`;授权令牌字段不参与
+        channel_id:
+          type: integer
+          format: int64
+          description: 编辑场景传渠道 id,字段中的哨兵还原为该渠道已存值;0 或缺省为创建场景
     OAuthStartResponse:
       type: object
       required: [auth_url, state]

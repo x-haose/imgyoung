@@ -105,13 +105,11 @@ export const channels = {
   createdProbeFailed: '渠道已创建,但探测失败:{error}',
   oauthOneClick: '一键授权',
   oauthPaste: '粘贴令牌',
-  oauthClientId: '应用 Client ID',
-  oauthClientSecret: '应用 Client Secret',
   oauthGo: '前往授权 {name}',
   oauthWaiting: '等待授权完成…',
   oauthCancel: '取消等待',
   oauthHint:
-    '需在服务商开放平台自建应用,并把本站的 {path} 登记为回调地址;还需先在设置中填写对外站点地址。',
+    '需在服务商开放平台自建应用、把本站的 {path} 登记为回调地址,并在上方填好应用 Client ID 与 Client Secret;还需先在设置中填写对外站点地址。',
   oauthPastePlaceholder: '粘贴 rclone authorize 的输出',
   oauthPasteHint:
     '在任意有浏览器的机器上执行 {command},完成授权后把整段输出粘贴到此处。此方式不要求本站有公网域名。',

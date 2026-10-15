@@ -14,10 +14,9 @@ const OAuthCallbackPath = "/api/admin/channel-oauth/callback"
 
 // oauthStartRequest 发起授权的请求体。
 type oauthStartRequest struct {
-	Template     string            `json:"template"`      // 模板 id
-	Inputs       map[string]string `json:"inputs"`        // 已填字段值,提供区域等影响端点的参数
-	ClientID     string            `json:"client_id"`     // 自建应用标识
-	ClientSecret string            `json:"client_secret"` // 自建应用密钥
+	Template  string            `json:"template"`   // 模板 id
+	Inputs    map[string]string `json:"inputs"`     // 已填字段值:区域等影响端点的参数与自建应用凭证
+	ChannelID int64             `json:"channel_id"` // 编辑场景的渠道主键,字段中的哨兵还原为该渠道已存值;0 = 创建场景
 }
 
 // oauthStartResponse 发起授权的响应体。
@@ -47,20 +46,27 @@ func (h *Handlers) HandleChannelOAuthStart(w http.ResponseWriter, r *http.Reques
 			"一键授权需先在设置中填写对外站点地址;或改用粘贴令牌方式")
 		return
 	}
-	tpl, ok := channel.TemplateByID(req.Template)
-	if !ok || !tpl.RequiresOAuth {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "该渠道类型无需授权")
+	driver, params, err := h.cfg.Admin.OAuthStartParams(r.Context(), req.ChannelID, req.Template, req.Inputs)
+	switch {
+	case errors.Is(err, channel.ErrChannelNotFound):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		return
+	case errors.Is(err, channel.ErrInvalidChannel):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
+		return
+	case err != nil:
+		h.cfg.Logger.Error("整理授权参数失败", "id", req.ChannelID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
 
-	params := oauthParams(req)
 	redirectURI := base + OAuthCallbackPath
-	flow, err := channel.NewOAuthFlow(r.Context(), tpl.Driver, params, redirectURI)
+	flow, err := channel.NewOAuthFlow(r.Context(), driver, params, redirectURI)
 	if err != nil {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
 		return
 	}
-	state, err := h.cfg.OAuth.Start(tpl.Driver, params, redirectURI)
+	state, err := h.cfg.OAuth.Start(driver, params, redirectURI)
 	if err != nil {
 		h.cfg.Logger.Error("登记授权会话失败", "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
@@ -123,23 +129,6 @@ func (h *Handlers) HandleChannelOAuthResult(w http.ResponseWriter, r *http.Reque
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, oauthResultResponse{
 		Pending: token == "" && failure == "", Token: token, Error: failure,
 	})
-}
-
-// oauthParams 汇总授权所需的后端参数:模板已填字段加自建应用凭证。
-// @param req 发起授权的请求
-// @return 后端参数
-func oauthParams(req oauthStartRequest) map[string]string {
-	params := make(map[string]string, len(req.Inputs)+2)
-	for k, v := range req.Inputs {
-		if k != channel.ConfigKeyToken && v != "" {
-			params[k] = v
-		}
-	}
-	if req.ClientID != "" {
-		params[channel.ConfigKeyClientID] = req.ClientID
-		params[channel.ConfigKeyClientSecret] = req.ClientSecret
-	}
-	return params
 }
 
 // writeOAuthPage 输出回调提示页。

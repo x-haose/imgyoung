@@ -52,6 +52,21 @@ func (m *Manager) ConfigForEdit(ctx context.Context, channelID int64) (EditConfi
 	return out, nil
 }
 
+// storedConfig 读取渠道已存的明文配置,供编辑场景还原哨兵。
+// @param channelID 渠道主键
+// @return 明文配置
+// @return ErrChannelNotFound 或查询、解密失败时的错误
+func (m *Manager) storedConfig(ctx context.Context, channelID int64) (map[string]string, error) {
+	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrChannelNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("读取渠道 %d: %w", channelID, err)
+	}
+	return m.unsealConfigMap(row.ConfigSealed)
+}
+
 // secretKeysOf 返回渠道配置里值须保密的键:后端声明为密码或敏感信息的参数(rclone.SensitiveParams)。
 // @Description: 约定键 path / public_base_url 不交给后端,不属保密范围;OAuth 后端的 client_id、
 // client_secret 与 token 由后端声明为敏感,在其中。

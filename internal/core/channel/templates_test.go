@@ -295,6 +295,31 @@ func TestOAuthTokenNeverLeavesInPlaintext(t *testing.T) {
 	}
 }
 
+// TestOAuthTemplatesKeepClientCredentials 验证需授权的模板把自建应用凭证合并进渠道配置:
+// 令牌续期须用签发它的同一应用,凭证不随渠道保存则到期即掉线。
+func TestOAuthTemplatesKeepClientCredentials(t *testing.T) {
+	const appID, appKey = "app-id", "app-key"
+	authorized := `{"access_token":"AT","token_type":"bearer","refresh_token":"RT","expiry":"2030-01-02T15:04:05Z"}`
+	for _, tpl := range Templates() {
+		if !tpl.RequiresOAuth {
+			continue
+		}
+		inputs := map[string]string{ConfigKeyClientID: appID, ConfigKeyClientSecret: appKey, ConfigKeyToken: authorized}
+		for _, f := range tpl.Fields {
+			if f.Type == FieldSelect {
+				inputs[f.Key] = f.Options[0].Value
+			}
+		}
+		_, cfg, err := BuildTemplateConfig(tpl.ID, inputs)
+		if err != nil {
+			t.Fatalf("模板 %q 合并失败: %v", tpl.ID, err)
+		}
+		if cfg[ConfigKeyClientID] != appID || cfg[ConfigKeyClientSecret] != appKey {
+			t.Errorf("模板 %q 未把应用凭证合并进配置: %v", tpl.ID, cfg)
+		}
+	}
+}
+
 // TestTemplateCredentialFieldsAreSecret 验证模板的密码与授权字段都落在后端声明的敏感键上。
 // @Description: 回读掩码以后端选项元数据为准;凭证字段若落在元数据不认的键上,编辑回读会把明文下发。
 func TestTemplateCredentialFieldsAreSecret(t *testing.T) {

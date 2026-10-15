@@ -118,13 +118,11 @@ export const channels = {
   createdProbeFailed: 'Channel created, but the probe failed: {error}',
   oauthOneClick: 'One-click authorization',
   oauthPaste: 'Paste a token',
-  oauthClientId: 'App client ID',
-  oauthClientSecret: 'App client secret',
   oauthGo: 'Authorize with {name}',
   oauthWaiting: 'Waiting for authorization…',
   oauthCancel: 'Stop waiting',
   oauthHint:
-    'Register your own app with the provider and set {path} on this site as its callback URL; the public site URL must also be configured in Settings.',
+    'Register your own app with the provider, set {path} on this site as its callback URL and fill in the app client ID and secret above; the public site URL must also be configured in Settings.',
   oauthPastePlaceholder: 'Paste the output of rclone authorize',
   oauthPasteHint:
     'Run {command} on any machine with a browser, finish the authorization and paste the whole output here. This does not require a public domain for this site.',

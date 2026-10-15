@@ -202,14 +202,31 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 	if tpl == nil {
 		return "", nil, ErrUnknownTemplate
 	}
+	config, err := mergeTemplate(tpl, inputs, func(f TemplateField) (string, error) {
+		return templateFieldValue(f, inputs)
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	return tpl.Driver, config, nil
+}
+
+// mergeTemplate 按模板合并出后端参数:固定预设 → 字段值(按 configKey 落位)→ endpoint 拼接。
+// @param tpl 模板
+// @param inputs 用户填写的字段值,供 endpoint 拼接
+// @param value 取一个字段的规范值;空串表示该字段不落配置
+// @return 合并后的参数
+// @return value 返回的错误
+func mergeTemplate(tpl *Template, inputs map[string]string,
+	value func(TemplateField) (string, error)) (map[string]string, error) {
 	config := maps.Clone(tpl.preset)
 	if config == nil {
 		config = map[string]string{}
 	}
 	for _, f := range tpl.Fields {
-		v, err := templateFieldValue(f, inputs)
+		v, err := value(f)
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
 		if f.configKey != "" && v != "" {
 			config[f.configKey] = v
@@ -218,7 +235,7 @@ func BuildTemplateConfig(templateID string, inputs map[string]string) (string, m
 	if tpl.endpointPattern != "" {
 		config["endpoint"] = renderEndpoint(tpl, inputs)
 	}
-	return tpl.Driver, config, nil
+	return config, nil
 }
 
 // templateFieldValue 取一个字段的规范值:去首尾空白并做必填校验;授权令牌字段归一化并校验令牌格式。

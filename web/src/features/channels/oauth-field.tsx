@@ -6,13 +6,12 @@ import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { PasswordInput } from '@/components/password-input'
 import { fetchOAuthResult, startOAuth } from './data'
 import {
   type ChannelTemplate,
+  CLIENT_ID_KEY,
   OAUTH_CALLBACK_PATH,
   SECRET_PLACEHOLDER,
 } from './types'
@@ -25,7 +24,8 @@ const POLL_TIMEOUT_MS = 11 * 60 * 1000
 
 type OAuthFieldProps = {
   template: ChannelTemplate
-  inputs: Record<string, string> // 已填的其他字段,提供区域等影响授权端点的参数
+  inputs: Record<string, string> // 已填的其他字段:区域等影响授权端点的参数与自建应用凭证
+  channelId?: number // 编辑目标;一键授权据此让后端还原字段中的哨兵
   value: string // 当前令牌;非空表示已授权,哨兵表示沿用已存令牌
   onChange: (token: string) => void
   disabled?: boolean
@@ -33,18 +33,18 @@ type OAuthFieldProps = {
 
 /**
  * 网盘授权控件:一键授权与粘贴令牌两条路径并列。
- * 一键授权要求实例已配置对外站点地址并自建应用;粘贴路径不依赖公网可达性,是无域名部署的唯一可行方式。
+ * 一键授权要求实例已配置对外站点地址,并在模板的应用凭证字段填好自建应用;
+ * 粘贴路径不依赖公网可达性,是无域名部署的唯一可行方式。
  */
 export function OAuthField({
   template,
   inputs,
+  channelId,
   value,
   onChange,
   disabled,
 }: OAuthFieldProps) {
   const m = useMessages()
-  const [clientId, setClientId] = useState('')
-  const [clientSecret, setClientSecret] = useState('')
   const [error, setError] = useState('')
   const [waiting, setWaiting] = useState(false)
   // 一键授权换到的令牌;粘贴的文本在提交前只是草稿,不按「已授权」展示。
@@ -69,8 +69,7 @@ export function OAuthField({
       const start = await startOAuth({
         template: template.id,
         inputs,
-        client_id: clientId.trim(),
-        client_secret: clientSecret.trim(),
+        ...(channelId ? { channel_id: channelId } : {}),
       })
       window.open(start.auth_url, '_blank', 'noopener,noreferrer')
       const deadline = Date.now() + POLL_TIMEOUT_MS
@@ -96,6 +95,7 @@ export function OAuthField({
     }
   }
 
+  const hasClientId = (inputs[CLIENT_ID_KEY] ?? '').trim() !== ''
   const authorized =
     value !== '' && (value === SECRET_PLACEHOLDER || value === flowToken)
   if (authorized) {
@@ -133,24 +133,10 @@ export function OAuthField({
         <TabsTrigger value='paste'>{m.channels.oauthPaste}</TabsTrigger>
       </TabsList>
       <TabsContent value='oneclick' className='space-y-3'>
-        <Input
-          placeholder={m.channels.oauthClientId}
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          autoComplete='off'
-          disabled={disabled || waiting}
-        />
-        <PasswordInput
-          placeholder={m.channels.oauthClientSecret}
-          value={clientSecret}
-          onChange={(e) => setClientSecret(e.target.value)}
-          autoComplete='off'
-          disabled={disabled || waiting}
-        />
         <div className='flex flex-wrap items-center gap-2'>
           <Button
             type='button'
-            disabled={disabled || waiting || clientId.trim() === ''}
+            disabled={disabled || waiting || !hasClientId}
             onClick={authorize}
           >
             {waiting ? <Loader2 className='animate-spin' /> : <ExternalLink />}

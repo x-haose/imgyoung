@@ -33,5 +33,8 @@ export const CUSTOM = 'custom'
 /** 网盘类模板的分类值;网盘无桶也无稳定公开直链,相关开关对其不显示。 */
 export const CATEGORY_DRIVE = 'drive'
 
+/** 需授权模板里自建应用标识字段的 key,与后端 channel.ConfigKeyClientID 一致;一键授权须先填它。 */
+export const CLIENT_ID_KEY = 'client_id'
+
 /** 授权回调路径,须与各开放平台登记的回调地址逐字符一致。 */
 export const OAUTH_CALLBACK_PATH = '/api/admin/channel-oauth/callback'
