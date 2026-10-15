@@ -15,9 +15,14 @@ import (
 )
 
 // HandleBackupList 列出各健康渠道上快照的并集,最新在前(仅管理员路由)。
+// @Description: 没有健康渠道是外部依赖故障,回 503;任一渠道列举失败回 500。
 func (h *Handlers) HandleBackupList(w http.ResponseWriter, r *http.Request) {
 	snapshots, err := h.cfg.Backups.List(r.Context())
-	if err != nil {
+	switch {
+	case errors.Is(err, channel.ErrNoHealthyChannel):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "没有健康渠道,无法列举快照")
+		return
+	case err != nil:
 		h.cfg.Logger.Error("列举备份快照失败", "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
@@ -91,6 +96,8 @@ func (h *Handlers) writeSnapshotError(w http.ResponseWriter, name string, err er
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "快照名非法")
 	case errors.Is(err, reliability.ErrSnapshotNotFound):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "快照不存在")
+	case errors.Is(err, channel.ErrNoHealthyChannel):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "没有健康渠道,无法读取快照")
 	default:
 		h.cfg.Logger.Error("快照操作失败", "snapshot", name, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
