@@ -99,8 +99,11 @@ func TestManagerTestConfig(t *testing.T) {
 	res, err := env.Manager.TestConfig(t.Context(), channel.TestParams{
 		Driver: "local", Config: map[string]string{"path": dir},
 	})
-	if err != nil || res.Failure != nil {
-		t.Fatalf("好配置探测失败: %+v / %v", res.Failure, err)
+	if err != nil {
+		t.Fatalf("好配置测试连接出错: %v", err)
+	}
+	if res.Failure != nil {
+		t.Fatalf("好配置探测失败: %+v", res.Failure)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

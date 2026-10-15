@@ -333,7 +333,7 @@ func (m *Manager) Healthy() []Handle {
 func (m *Manager) Draining() []Handle {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	out := []Handle{}
+	var out []Handle
 	for _, c := range m.channels {
 		if c.handle.PendingDelete {
 			out = append(out, c.handle)

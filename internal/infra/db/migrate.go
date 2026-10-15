@@ -46,6 +46,7 @@ func Migrate(d *DB) error {
 	if err != nil {
 		return err
 	}
+	defer closeDir(dir)
 	if err := migrate.Validate(dir); err != nil {
 		return fmt.Errorf("迁移目录校验(atlas.sum 不匹配): %w", err)
 	}
@@ -107,13 +108,25 @@ func rejectUnknownRevisions(ctx context.Context, rrw *revisions, dir migrate.Dir
 }
 
 // embeddedDir 把内嵌的迁移文件(含 atlas.sum)装入内存目录供 Executor 读取。
+// @Description: 内存目录按名字登记在 atlas 的进程级表里并计引用,用毕须经 closeDir 释放。
 // @return 就绪的迁移目录
 // @return 读取内嵌文件失败时的错误
-func embeddedDir() (migrate.Dir, error) {
+func embeddedDir() (*migrate.MemDir, error) {
 	dir := migrate.OpenMemDir(migrationsDir)
+	if err := loadEmbedded(dir); err != nil {
+		closeDir(dir)
+		return nil, err
+	}
+	return dir, nil
+}
+
+// loadEmbedded 把内嵌的迁移文件逐个写进内存目录。
+// @param dir 内存目录
+// @return 读取或写入失败时的错误
+func loadEmbedded(dir *migrate.MemDir) error {
 	entries, err := fs.ReadDir(migrationsFS, migrationsDir)
 	if err != nil {
-		return nil, fmt.Errorf("读取内嵌迁移目录: %w", err)
+		return fmt.Errorf("读取内嵌迁移目录: %w", err)
 	}
 	for _, e := range entries {
 		if e.IsDir() {
@@ -121,11 +134,20 @@ func embeddedDir() (migrate.Dir, error) {
 		}
 		b, err := migrationsFS.ReadFile(migrationsDir + "/" + e.Name())
 		if err != nil {
-			return nil, fmt.Errorf("读取迁移文件 %s: %w", e.Name(), err)
+			return fmt.Errorf("读取迁移文件 %s: %w", e.Name(), err)
 		}
 		if err := dir.WriteFile(e.Name(), b); err != nil {
-			return nil, fmt.Errorf("装载迁移文件 %s: %w", e.Name(), err)
+			return fmt.Errorf("装载迁移文件 %s: %w", e.Name(), err)
 		}
 	}
-	return dir, nil
+	return nil
+}
+
+// closeDir 释放内存目录的一次引用。
+// @Description: 只在同一目录以不同名字登记过时返回错误,本包只用一个名字,出现即代码缺陷,直接 panic。
+// @param dir 内存目录
+func closeDir(dir *migrate.MemDir) {
+	if err := dir.Close(); err != nil {
+		panic(fmt.Sprintf("释放迁移内存目录: %v", err))
+	}
 }

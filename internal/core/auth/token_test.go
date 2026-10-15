@@ -35,8 +35,11 @@ func TestTokenExpiry(t *testing.T) {
 		t.Fatalf("签发限时 Token: %v", err)
 	}
 	row, err := queries.GetToken(ctx, timed.ID)
-	if err != nil || !row.ExpiresAt.Valid {
-		t.Fatalf("限时 Token 应落库到期时刻: %+v err=%v", row.ExpiresAt, err)
+	if err != nil {
+		t.Fatalf("读取限时 Token: %v", err)
+	}
+	if !row.ExpiresAt.Valid {
+		t.Fatalf("限时 Token 应落库到期时刻: %+v", row.ExpiresAt)
 	}
 	if _, err := svc.AuthenticateToken(ctx, timed.Plaintext); err != nil {
 		t.Fatalf("到期前应可认证: %v", err)
@@ -223,7 +226,10 @@ func TestIssueTokenReclaimsExpiredName(t *testing.T) {
 		t.Fatalf("新 Token 应可认证: %v", err)
 	}
 	row, err := queries.GetToken(ctx, old.ID)
-	if err != nil || !row.RevokedAt.Valid {
-		t.Fatalf("过期旧行应被吊销: %+v err=%v", row.RevokedAt, err)
+	if err != nil {
+		t.Fatalf("读取过期旧行: %v", err)
+	}
+	if !row.RevokedAt.Valid {
+		t.Fatalf("过期旧行应被吊销: %+v", row.RevokedAt)
 	}
 }

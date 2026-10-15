@@ -646,7 +646,7 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	changed := []string{}
+	var changed []string
 	for i, c := range channels {
 		if errors.Is(results[i], ErrChannelDeleting) {
 			continue

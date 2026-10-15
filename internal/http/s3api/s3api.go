@@ -166,9 +166,11 @@ func readBody(w http.ResponseWriter, r *http.Request, set config.Settings) ([]by
 	limit := set.MaxUploadBytes()
 	if isAWSChunked(r) {
 		// 帧结构本身占不了多少,给原始流留一倍余量,真正的闸在解帧后按内容长度判。
-		return decodeAWSChunked(http.MaxBytesReader(w, r.Body, limit*2), limit)
+		r.Body = http.MaxBytesReader(w, r.Body, limit*2)
+		return decodeAWSChunked(r.Body, limit)
 	}
-	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	data, err := io.ReadAll(r.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +345,8 @@ func (h *Handlers) writeStatus(w http.ResponseWriter, r *http.Request, status in
 		return
 	}
 	body := errorResponse{Code: code, Message: message, Key: strings.TrimPrefix(r.URL.Path, "/")}
-	if err := xml.NewEncoder(w).Encode(body); err != nil {
+	enc := xml.NewEncoder(w)
+	if err := errors.Join(enc.Encode(body), enc.Close()); err != nil {
 		h.cfg.Logger.Debug("写 S3 错误响应失败", "err", err)
 	}
 }

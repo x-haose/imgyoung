@@ -25,7 +25,7 @@ func pngBytes(t *testing.T) []byte {
 	m := image.NewRGBA(image.Rect(0, 0, 64, 48))
 	for y := 0; y < 48; y++ {
 		for x := 0; x < 64; x++ {
-			m.Set(x, y, color.RGBA{uint8(x), uint8(y), 128, 255})
+			m.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 128, A: 255})
 		}
 	}
 	var buf bytes.Buffer

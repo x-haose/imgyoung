@@ -40,6 +40,7 @@ func applyN(t *testing.T, d *DB, n int) {
 	if err != nil {
 		t.Fatalf("装载迁移目录: %v", err)
 	}
+	t.Cleanup(func() { closeDir(dir) })
 	rrw, err := newRevisions(ctx, c)
 	if err != nil {
 		t.Fatalf("初始化版本表: %v", err)
@@ -123,7 +124,7 @@ func TestMigrateRejectsNewerSchema(t *testing.T) {
 		t.Fatalf("写入未来版本记录: %v", err)
 	}
 	err := Migrate(conn)
-	if !errors.Is(err, ErrSchemaNewer) || !strings.Contains(err.Error(), future) {
+	if err == nil || !errors.Is(err, ErrSchemaNewer) || !strings.Contains(err.Error(), future) {
 		t.Fatalf("迁移错误 = %v, 期望 ErrSchemaNewer 且指出库里的版本 %s", err, future)
 	}
 }
@@ -176,6 +177,7 @@ func TestMigrateBackfillsChannelBoundAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("装载迁移目录: %v", err)
 	}
+	t.Cleanup(func() { closeDir(dir) })
 	files, err := dir.Files()
 	if err != nil {
 		t.Fatalf("读取迁移文件: %v", err)

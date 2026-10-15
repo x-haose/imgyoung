@@ -139,16 +139,6 @@ func toRGBA(src image.Image) *image.RGBA {
 	return dst
 }
 
-// ValidateFormat 校验目标格式是否在支持白名单内。
-// @param format 目标格式
-// @return 不支持时返回 ErrBadFormat
-func ValidateFormat(format string) error {
-	if mimeForFormat(format) == "" {
-		return fmt.Errorf("%w: %q", ErrBadFormat, format)
-	}
-	return nil
-}
-
 // MIME 返回目标格式对应的 MIME;白名单外返回空串,供命中缓存时定 Content-Type。
 // @param format 目标格式
 // @return MIME 字符串

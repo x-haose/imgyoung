@@ -150,15 +150,15 @@ func (s *Service) vacuum(ctx context.Context) (*os.File, int64, error) {
 	if _, err := s.cfg.Conn.ExecContext(ctx, "VACUUM INTO ?", tmp); err != nil {
 		return nil, 0, fmt.Errorf("生成数据库快照: %w", err)
 	}
+	info, err := os.Stat(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return nil, 0, fmt.Errorf("读取快照大小: %w", err)
+	}
 	f, err := os.Open(tmp)
 	if err != nil {
 		_ = os.Remove(tmp)
 		return nil, 0, fmt.Errorf("打开快照文件: %w", err)
-	}
-	info, err := f.Stat()
-	if err != nil {
-		discard(f)
-		return nil, 0, fmt.Errorf("读取快照大小: %w", err)
 	}
 	return f, info.Size(), nil
 }
