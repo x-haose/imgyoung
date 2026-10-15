@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * 健康检查
-         * @description 进程存活即返回 200,不检查数据库与渠道。
+         * @description 进程存活即返回 200，不检查数据库与渠道。
          */
         get: operations["health"];
         put?: never;
@@ -55,8 +55,8 @@ export interface paths {
         put?: never;
         /**
          * 上传图片
-         * @description multipart 表单上传。格式以 magic bytes 判定(jpeg / png / gif / webp),超过单图上限或像素预算即拒绝。
-         *     带 `Idempotency-Key` 头时,保留期内同一键重试返回同一张图。
+         * @description multipart 表单上传。格式以 magic bytes 判定（jpeg / png / gif / webp），超过单图上限或像素预算即拒绝。
+         *     带 `Idempotency-Key` 头时，保留期内同一键重试返回同一张图。
          */
         post: operations["upload"];
         delete?: never;
@@ -76,7 +76,7 @@ export interface paths {
         put?: never;
         /**
          * URL 转存
-         * @description 服务端抓取远端图片后走与直传相同的管道;仅允许公网 http/https 地址,远端声明的类型不参与判定。
+         * @description 服务端抓取远端图片后走与直传相同的管道；仅允许公网 http/https 地址，远端声明的类型不参与判定。
          */
         post: operations["uploadFromURL"];
         delete?: never;
@@ -94,10 +94,10 @@ export interface paths {
         };
         /**
          * 按短 ID 输出图片
-         * @description 计公开访问活跃度。带 `w` / `format` 参数时按需处理(宽度与格式须在后台允许的档位内);
-         *     `format` 缺省或为 `auto` 时按 `Accept` 协商,浏览器支持且档位允许则输出 WebP。
-         *     访问模式为 `redirect` 且有允许直链的渠道时 302 到渠道公开地址;处理失败降级输出原图并 `Cache-Control: no-store`。
-         *     已到期、尚待清理回收的图返回 404。参数非法(400)的请求不计访问。
+         * @description 计公开访问活跃度。带 `w` / `format` 参数时按需处理（宽度与格式须在后台允许的档位内）；
+         *     `format` 缺省或为 `auto` 时按 `Accept` 协商，浏览器支持且档位允许则输出 WebP。
+         *     访问模式为 `redirect` 且有允许直链的渠道时 302 到渠道公开地址；处理失败降级输出原图并 `Cache-Control: no-store`。
+         *     已到期、尚待清理回收的图返回 404。参数非法（400）的请求不计访问。
          */
         get: operations["serveImage"];
         put?: never;
@@ -106,7 +106,7 @@ export interface paths {
         options?: never;
         /**
          * 按短 ID 查询图片响应头
-         * @description 与 GET 同一处理,只返回响应头,不计访问。输出原图时不打开渠道对象;需要按需处理时与 GET 一样取或生成衍生图 (缓存未命中即读原图处理),响应头与 GET 相同。
+         * @description 与 GET 同一处理，只返回响应头，不计访问。输出原图时不打开渠道对象；需要按需处理时与 GET 一样取或生成衍生图 （缓存未命中即读原图处理），响应头与 GET 相同。
          */
         head: operations["headImage"];
         patch?: never;
@@ -117,7 +117,7 @@ export interface paths {
             query?: never;
             header?: never;
             path: {
-                /** @description 归属用户 id;对象键只在用户内唯一 */
+                /** @description 归属用户 id；对象键只在用户内唯一 */
                 user_id: string;
                 /** @description 客户端自取的对象键 */
                 object_key: string;
@@ -126,7 +126,7 @@ export interface paths {
         };
         /**
          * 按 S3 对象键输出图片
-         * @description S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。 同键重传会让别名改指新图,故响应为 `Cache-Control: public, no-cache`,缓存方每次带 ETag 确认。
+         * @description S3 协议面上传时客户端自取的对象键是访问别名；解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。 同键重传会让别名改指新图，故响应为 `Cache-Control: public, no-cache`，缓存方每次带 ETag 确认。
          */
         get: operations["serveImageByObjectKey"];
         put?: never;
@@ -135,7 +135,7 @@ export interface paths {
         options?: never;
         /**
          * 按 S3 对象键查询图片响应头
-         * @description 与 GET 同一处理,只返回响应头,不计访问。输出原图时不打开渠道对象;需要按需处理时与 GET 一样取或生成衍生图 (缓存未命中即读原图处理),响应头与 GET 相同。
+         * @description 与 GET 同一处理，只返回响应头，不计访问。输出原图时不打开渠道对象；需要按需处理时与 GET 一样取或生成衍生图 （缓存未命中即读原图处理），响应头与 GET 相同。
          */
         head: operations["headImageByObjectKey"];
         patch?: never;
@@ -152,7 +152,7 @@ export interface paths {
         put?: never;
         /**
          * 登录
-         * @description 校验凭证并下发会话 cookie(`imgyoung_session`,HttpOnly,SameSite=Lax,HTTPS 时带 Secure);响应体携带后续写请求要回传的 CSRF 令牌。按客户端地址与用户名限速。
+         * @description 校验凭证并下发会话 cookie（`imgyoung_session`，HttpOnly，SameSite=Lax，HTTPS 时带 Secure）；响应体携带后续写请求要回传的 CSRF 令牌。按客户端地址与用户名限速。
          */
         post: operations["login"];
         delete?: never;
@@ -172,7 +172,7 @@ export interface paths {
         put?: never;
         /**
          * 登出
-         * @description 删除服务端会话并清除 cookie,幂等。
+         * @description 删除服务端会话并清除 cookie，幂等。
          */
         post: operations["logout"];
         delete?: never;
@@ -190,7 +190,7 @@ export interface paths {
         };
         /**
          * 当前会话
-         * @description 返回会话主体与 CSRF 令牌,前端刷新后据此恢复登录态。
+         * @description 返回会话主体与 CSRF 令牌，前端刷新后据此恢复登录态。
          */
         get: operations["me"];
         put?: never;
@@ -211,7 +211,7 @@ export interface paths {
         get?: never;
         /**
          * 修改当前用户密码
-         * @description 校验旧密码;成功后该用户全部会话失效,须重新登录。新密码至少 8 个字符。
+         * @description 校验旧密码；成功后该用户全部会话失效，须重新登录。新密码至少 8 个字符。
          */
         put: operations["changePassword"];
         post?: never;
@@ -230,7 +230,7 @@ export interface paths {
         };
         /**
          * 仪表盘
-         * @description 管理员得到全站概览,普通用户得到本人用量;以响应里是否有 `channels` 区分。
+         * @description 管理员得到全站概览，普通用户得到本人用量；以响应里是否有 `channels` 区分。
          */
         get: operations["dashboard"];
         put?: never;
@@ -250,13 +250,13 @@ export interface paths {
         };
         /**
          * 运行配置只读切面
-         * @description 全部登录用户可读:界面呈现阈值文案与档位所需的键,以及服务端构建信息;不含任何凭证。
+         * @description 全部登录用户可读：界面呈现阈值文案与档位所需的键，以及服务端构建信息；不含任何凭证。
          */
         get: operations["runtimeConfig"];
         /**
          * 修改运营配置
-         * @description 请求体为「配置键 → 新值」对象,只动出现的键,保存即热生效;未知键或任一取值非法整体拒绝,不做部分生效。
-         *     以时长为单位的配置项(间隔、宽限、有效期、保留期、超时)上限为 100 年的折算值:876000 小时 / 36500 天 /
+         * @description 请求体为「配置键 → 新值」对象，只动出现的键，保存即热生效；未知键或任一取值非法整体拒绝，不做部分生效。
+         *     以时长为单位的配置项（间隔、宽限、有效期、保留期、超时）上限为 100 年的折算值：876000 小时 / 36500 天 /
          *     52560000 分钟 / 3153600000 秒 / 3153600000000 毫秒。
          *     `cdn_cloudflare_api_token` 传空串表示清除、不传表示不动。仅管理员。
          */
@@ -277,7 +277,7 @@ export interface paths {
         };
         /**
          * 全量生效配置
-         * @description 引导配置只读展示、运营配置当前值(凭证字段抹空)与派生状态;仅管理员。
+         * @description 引导配置只读展示、运营配置当前值（凭证字段抹空）与派生状态；仅管理员。
          */
         get: operations["fullConfig"];
         put?: never;
@@ -299,7 +299,7 @@ export interface paths {
         put?: never;
         /**
          * 后台上传图片
-         * @description 与 `POST /api/upload` 同一管道与防护闸,归属为会话用户,来源 Token 记空。
+         * @description 与 `POST /api/upload` 同一管道与防护闸，归属为会话用户，来源 Token 记空。
          */
         post: operations["sessionUpload"];
         delete?: never;
@@ -319,7 +319,7 @@ export interface paths {
         put?: never;
         /**
          * 后台 URL 转存
-         * @description 与 `POST /api/upload/url` 同一管道,归属为会话用户。
+         * @description 与 `POST /api/upload/url` 同一管道，归属为会话用户。
          */
         post: operations["sessionUploadFromURL"];
         delete?: never;
@@ -337,7 +337,7 @@ export interface paths {
         };
         /**
          * 图片列表
-         * @description 分页;普通用户只见自己的,管理员可按用户、Token、时间与关键词过滤。
+         * @description 分页；普通用户只见自己的，管理员可按用户、Token、时间与关键词过滤。
          */
         get: operations["listImages"];
         put?: never;
@@ -359,7 +359,7 @@ export interface paths {
         put?: never;
         /**
          * 批量删除图片
-         * @description 逐张按单删的权限与级联语义处理,单张失败不中断其余;他人图按不存在处理。单次至多 100 个 ID。
+         * @description 逐张按单删的权限与级联语义处理，单张失败不中断其余；他人图按不存在处理。单次至多 100 个 ID。
          */
         post: operations["batchDeleteImages"];
         delete?: never;
@@ -380,21 +380,21 @@ export interface paths {
         };
         /**
          * 图片详情
-         * @description 列表项字段之外附带各渠道的副本状态;普通用户查他人图一律 404,不泄露存在性。
+         * @description 列表项字段之外附带各渠道的副本状态；普通用户查他人图一律 404，不泄露存在性。
          */
         get: operations["getImage"];
         put?: never;
         post?: never;
         /**
          * 删除图片
-         * @description 立即删除引用,渠道副本、衍生图与 CDN 缓存由清理任务级联;他人图一律 404。
+         * @description 立即删除引用，渠道副本、衍生图与 CDN 缓存由清理任务级联；他人图一律 404。
          */
         delete: operations["deleteImage"];
         options?: never;
         head?: never;
         /**
          * 修改有效期或清理豁免
-         * @description 至少携带一个修改项。`ttl_hours` 对属主开放;`cleanup_exempt` 是冷图裁决的「保留」语义,仅管理员,普通用户携带即 403。
+         * @description 至少携带一个修改项。`ttl_hours` 对属主开放；`cleanup_exempt` 是冷图裁决的「保留」语义，仅管理员，普通用户携带即 403。
          */
         patch: operations["patchImage"];
         trace?: never;
@@ -408,7 +408,7 @@ export interface paths {
         };
         /**
          * 后台预览图
-         * @description 与 `/i/{id}` 同一处理管线,但走会话鉴权、不计公开访问活跃度、不受防盗链约束。
+         * @description 与 `/i/{id}` 同一处理管线，但走会话鉴权、不计公开访问活跃度、不受防盗链约束。
          */
         get: operations["adminImageBytes"];
         put?: never;
@@ -428,13 +428,13 @@ export interface paths {
         };
         /**
          * Token 列表
-         * @description 分页,缺省列本人的;管理员可带 `user_id` 查看指定用户的。只含识别前缀,无哈希无明文。
+         * @description 分页，缺省列本人的；管理员可带 `user_id` 查看指定用户的。只含识别前缀，无哈希无明文。
          */
         get: operations["listTokens"];
         put?: never;
         /**
          * 签发 Token
-         * @description 为当前用户签发具名 Token;明文仅在本响应返回一次。
+         * @description 为当前用户签发具名 Token；明文仅在本响应返回一次。
          */
         post: operations["issueToken"];
         delete?: never;
@@ -455,7 +455,7 @@ export interface paths {
         post?: never;
         /**
          * 删除已失效的 Token 记录
-         * @description 本人可删自己的,管理员可删任何人的;仍有效的 Token 返回 409,须先吊销。
+         * @description 本人可删自己的，管理员可删任何人的；仍有效的 Token 返回 409，须先吊销。
          */
         delete: operations["deleteToken"];
         options?: never;
@@ -474,7 +474,7 @@ export interface paths {
         put?: never;
         /**
          * 吊销 Token
-         * @description 本人可吊销自己的,管理员可吊销任何人的;S3 协议面的同一凭证随之失效。
+         * @description 本人可吊销自己的，管理员可吊销任何人的；S3 协议面的同一凭证随之失效。
          */
         post: operations["revokeToken"];
         delete?: never;
@@ -494,7 +494,7 @@ export interface paths {
         put?: never;
         /**
          * 轮转 Token
-         * @description 同名新 Token 原子替换旧 Token,新明文仅此一次返回;仅限本人的有效 Token。
+         * @description 同名新 Token 原子替换旧 Token，新明文仅此一次返回；仅限本人的有效 Token。
          */
         post: operations["rotateToken"];
         delete?: never;
@@ -514,7 +514,7 @@ export interface paths {
         put?: never;
         /**
          * Token 的 S3 协议凭证
-         * @description 密钥由主密钥按 Token 派生、不落库,可随时重看;仅限本人的 Token。用 POST 是为了让凭证下发也过 CSRF 闸。
+         * @description 密钥由主密钥按 Token 派生、不落库，可随时重看；仅限本人的 Token。用 POST 是为了让凭证下发也过 CSRF 闸。
          */
         post: operations["tokenS3Credential"];
         delete?: never;
@@ -532,7 +532,7 @@ export interface paths {
         };
         /**
          * 渠道模板清单
-         * @description 内置厂商模板:预填 rclone 后端与固定参数,只暴露必要字段;只下发结构(模板 id、字段 key 与类型、选项值),模板名、字段标签、说明与选项显示名由前端词典按这些键提供。仅管理员。
+         * @description 内置厂商模板：预填 rclone 后端与固定参数，只暴露必要字段；只下发结构（模板 id、字段 key 与类型、选项值），模板名、字段标签、说明与选项显示名由前端词典按这些键提供。仅管理员。
          */
         get: operations["channelTemplates"];
         put?: never;
@@ -552,13 +552,13 @@ export interface paths {
         };
         /**
          * 渠道列表
-         * @description 按优先级降序,含探测结果与副本水位,不含配置与凭证。仅管理员。
+         * @description 按优先级降序，含探测结果与副本水位，不含配置与凭证。仅管理员。
          */
         get: operations["listChannels"];
         put?: never;
         /**
          * 创建渠道
-         * @description 模板模式给 `template` + `inputs`,自定义模式给 `driver` + `config`。需授权的模板会先按后端配置流程补齐授权带出的参数(如 OneDrive 选定用户默认驱动器),向服务商查询失败返回 400。创建即深探测并落库,随后唤醒补齐管道回填存量;`encrypted` 创建时固化。仅管理员。
+         * @description 模板模式给 `template` + `inputs`，自定义模式给 `driver` + `config`。需授权的模板会先按后端配置流程补齐授权带出的参数（如 OneDrive 选定用户默认驱动器），向服务商查询失败返回 400。创建即深探测并落库，随后唤醒补齐管道回填存量；`encrypted` 创建时固化。仅管理员。
          */
         post: operations["createChannel"];
         delete?: never;
@@ -578,7 +578,7 @@ export interface paths {
         put?: never;
         /**
          * 测试连接
-         * @description 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回,补齐授权带出的参数时向服务商查询失败也在其中。授权令牌已过期时测试期间会被刷新:提交的是新令牌(创建表单,或编辑时新粘贴 / 新授权的令牌)时,刷新后的令牌随 `token` 返回;沿用已存令牌(哨兵)时直接写回该渠道,不返回。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
+         * @description 按创建同构的请求体深探测，不落库；探测成败以 `{ok, error}` 返回，补齐授权带出的参数时向服务商查询失败也在其中。授权令牌已过期时测试期间会被刷新：提交的是新令牌（创建表单，或编辑时新粘贴 / 新授权的令牌）时，刷新后的令牌随 `token` 返回；沿用已存令牌（哨兵）时直接写回该渠道，不返回。编辑场景带 `channel_id`，配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
          */
         post: operations["testChannel"];
         delete?: never;
@@ -597,13 +597,13 @@ export interface paths {
         get?: never;
         /**
          * 编辑渠道
-         * @description 配置整体替换;配置里原样回传的哨兵值表示保留原凭证,只在回读时掩码过的敏感参数上有效,落在其他键上返回 400。`encrypted` 不可变,试图变更返回 409。仅管理员。
+         * @description 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409。仅管理员。
          */
         put: operations["updateChannel"];
         post?: never;
         /**
          * 删除渠道
-         * @description 持有任何图唯一副本的渠道拒绝删除(409)。`purge` 缺省为 true:只打清理中标记并入队排空任务,排空任务删除本服务写在该渠道上的对象——图片副本、`_imgyoung/` 下的系统对象(含元数据库快照)与深探测残留,别的程序写的对象不动——删完后渠道才消失(202);`purge=false` 立即删行,远端对象(含快照)保留(204)。仅管理员。
+         * @description 持有任何图唯一副本的渠道拒绝删除（409）。`purge` 缺省为 true：只打清理中标记并入队排空任务，排空任务删除本服务写在该渠道上的对象——图片副本、`_imgyoung/` 下的系统对象（含元数据库快照）与深探测残留，别的程序写的对象不动——删完后渠道才消失（202）；`purge=false` 立即删行，远端对象（含快照）保留（204）。仅管理员。
          */
         delete: operations["deleteChannel"];
         options?: never;
@@ -620,7 +620,7 @@ export interface paths {
         };
         /**
          * 渠道配置的编辑视图
-         * @description 后端声明为密码或敏感信息的参数(rclone 选项元数据的 IsPassword / Sensitive,含访问密钥 ID、账号名、OAuth 应用凭证与令牌)以哨兵 `__imgyoung_secret_keep__` 掩码,明文永不下发;模板渠道附带还原出的表单字段值,同一口径掩码。仅管理员。
+         * @description 后端声明为密码或敏感信息的参数（rclone 选项元数据的 IsPassword / Sensitive，含访问密钥 ID、账号名、OAuth 应用凭证与令牌）以哨兵 `__imgyoung_secret_keep__` 掩码，明文永不下发；模板渠道附带还原出的表单字段值，同一口径掩码。仅管理员。
          */
         get: operations["channelConfig"];
         put?: never;
@@ -640,7 +640,7 @@ export interface paths {
         };
         /**
          * 导出 rclone 配置
-         * @description 以附件输出一份标准 rclone 可直接使用的配置文件(rclone.conf),凭它可脱离 ImgYoung 读写渠道数据。 远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致,含凭证与授权令牌,密码类参数按 rclone 规则以 obscure 形式写出; 加密渠道另有远端 `imgyoung-<渠道 id>-crypt`,指向渠道存储路径,参数与服务端的 crypt 层一致(`password` / `password2` 为 obscure 形式,`filename_encryption = standard`)。文件头的 `#` 注释说明各远端与用法。 文件里的凭证与解密密码与主密钥同等敏感;响应不缓存,每次下载记一条 `channel.export` 审计日志。仅管理员。
+         * @description 以附件输出一份标准 rclone 可直接使用的配置文件（rclone.conf），凭它可脱离 ImgYoung 读写渠道数据。 远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致，含凭证与授权令牌，密码类参数按 rclone 规则以 obscure 形式写出； 加密渠道另有远端 `imgyoung-<渠道 id>-crypt`，指向渠道存储路径，参数与服务端的 crypt 层一致（`password` / `password2` 为 obscure 形式，`filename_encryption = standard`）。文件头的 `#` 注释说明各远端与用法。 文件里的凭证与解密密码与主密钥同等敏感；响应不缓存，每次下载记一条 `channel.export` 审计日志。仅管理员。
          */
         get: operations["channelRcloneConfig"];
         put?: never;
@@ -662,7 +662,7 @@ export interface paths {
         put?: never;
         /**
          * 手动重检
-         * @description 对已有渠道执行深探测并返回探测后的完整描述;此前装载失败的渠道先重试装载,仍装不上则以装载失败作为结论。探测可能持续数十秒。仅管理员。
+         * @description 对已有渠道执行深探测并返回探测后的完整描述；此前装载失败的渠道先重试装载，仍装不上则以装载失败作为结论。探测可能持续数十秒。仅管理员。
          */
         post: operations["checkChannel"];
         delete?: never;
@@ -682,7 +682,7 @@ export interface paths {
         put?: never;
         /**
          * 发起网盘授权
-         * @description 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致;自建应用的 Client ID / Secret 是模板字段,随 `inputs` 提交并随渠道保存。编辑场景带 `channel_id`,字段里的哨兵还原为该渠道已存值后再发起。仅管理员。
+         * @description 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`，回调地址由它拼出并须与开放平台登记值逐字符一致；自建应用的 Client ID / Secret 是模板字段，随 `inputs` 提交并随渠道保存。编辑场景带 `channel_id`，字段里的哨兵还原为该渠道已存值后再发起。仅管理员。
          */
         post: operations["startChannelOAuth"];
         delete?: never;
@@ -700,7 +700,7 @@ export interface paths {
         };
         /**
          * 授权回调
-         * @description 由授权服务器把浏览器顶层跳转打回,换取令牌后交前端凭 `state` 领取;本端点返回提示页而非 JSON,令牌不写进页面。仅管理员会话。
+         * @description 由授权服务器把浏览器顶层跳转打回，换取令牌后交前端凭 `state` 领取；本端点返回提示页而非 JSON，令牌不写进页面。仅管理员会话。
          */
         get: operations["channelOAuthCallback"];
         put?: never;
@@ -720,7 +720,7 @@ export interface paths {
         };
         /**
          * 领取授权结果
-         * @description 结果只可领取一次;用户尚未完成授权时 `pending` 为 true。仅管理员。
+         * @description 结果只可领取一次；用户尚未完成授权时 `pending` 为 true。仅管理员。
          */
         get: operations["channelOAuthResult"];
         put?: never;
@@ -740,13 +740,13 @@ export interface paths {
         };
         /**
          * 用户列表
-         * @description 全部用户及其用量,不分页。仅管理员。
+         * @description 全部用户及其用量，不分页。仅管理员。
          */
         get: operations["listUsers"];
         put?: never;
         /**
          * 创建用户
-         * @description 密码至少 8 个字符;`role` 缺省为 user。仅管理员。
+         * @description 密码至少 8 个字符；`role` 缺省为 user。仅管理员。
          */
         post: operations["createUser"];
         delete?: never;
@@ -768,13 +768,13 @@ export interface paths {
         get?: never;
         /**
          * 更新用户
-         * @description 全量语义,须给出全部键;内置管理员不可禁用或降级(403)。仅管理员。
+         * @description 全量语义，须给出全部键；内置管理员不可禁用或降级（403）。仅管理员。
          */
         put: operations["updateUser"];
         post?: never;
         /**
          * 删除用户
-         * @description 名下仍有图片(409)、内置管理员(403)或当前登录用户(400)拒绝删除。仅管理员。
+         * @description 名下仍有图片（409）、内置管理员（403）或当前登录用户（400）拒绝删除。仅管理员。
          */
         delete: operations["deleteUser"];
         options?: never;
@@ -793,7 +793,7 @@ export interface paths {
         put?: never;
         /**
          * 重置用户密码
-         * @description 该用户全部会话失效;新密码至少 8 个字符。仅管理员。
+         * @description 该用户全部会话失效；新密码至少 8 个字符。仅管理员。
          */
         post: operations["resetUserPassword"];
         delete?: never;
@@ -817,7 +817,7 @@ export interface paths {
         put?: never;
         /**
          * 添加规则
-         * @description 裸域(`example.com`,精确匹配)或子域通配(`*.example.com`,只匹配子域);添加即时生效。仅管理员。
+         * @description 裸域（`example.com`，精确匹配）或子域通配（`*.example.com`，只匹配子域）；添加即时生效。仅管理员。
          */
         post: operations["addRefererRule"];
         delete?: never;
@@ -855,7 +855,7 @@ export interface paths {
         };
         /**
          * 疑似重复候选
-         * @description 后台相似扫描(pHash 汉明距离)发现的待裁决候选对,分页。仅管理员。
+         * @description 后台相似扫描（pHash 汉明距离）发现的待裁决候选对，分页。仅管理员。
          */
         get: operations["listDedupCandidates"];
         put?: never;
@@ -877,7 +877,7 @@ export interface paths {
         put?: never;
         /**
          * 合并候选
-         * @description 保留指定的一方,另一方的引用并入;保留方必须是候选对中的一方。仅管理员。
+         * @description 保留指定的一方，另一方的引用并入；保留方必须是候选对中的一方。仅管理员。
          */
         post: operations["mergeDedupCandidate"];
         delete?: never;
@@ -915,7 +915,7 @@ export interface paths {
         };
         /**
          * 冷图待清理列表
-         * @description 超过冷图阈值未被公开访问的引用,分页。裁决走图片接口:保留为 `PATCH /api/admin/images/{id}` 置清理豁免,删除为 `DELETE /api/admin/images/{id}`。仅管理员。
+         * @description 超过冷图阈值未被公开访问的引用，分页。裁决走图片接口：保留为 `PATCH /api/admin/images/{id}` 置清理豁免，删除为 `DELETE /api/admin/images/{id}`。仅管理员。
          */
         get: operations["listCleanup"];
         put?: never;
@@ -935,7 +935,7 @@ export interface paths {
         };
         /**
          * 审计日志
-         * @description 分页,可按操作者、动作、目标与时间范围过滤;`target` 精确匹配。仅管理员。
+         * @description 分页，可按操作者、动作、目标与时间范围过滤；`target` 精确匹配。仅管理员。
          */
         get: operations["listAudit"];
         put?: never;
@@ -955,7 +955,7 @@ export interface paths {
         };
         /**
          * 告警
-         * @description 缺省返回全部未恢复的告警(不分页);`status=all` 时分页返回全部历史,最新在前。仅管理员。
+         * @description 缺省返回全部未恢复的告警（不分页）；`status=all` 时分页返回全部历史，最新在前。仅管理员。
          */
         get: operations["listAlerts"];
         put?: never;
@@ -975,13 +975,13 @@ export interface paths {
         };
         /**
          * 备份快照列表
-         * @description 各健康渠道(不含清理中的渠道)上元数据库快照的并集,最新在前;每份快照列出持有它的渠道。仅管理员。
+         * @description 各健康渠道（不含清理中的渠道）上元数据库快照的并集，最新在前；每份快照列出持有它的渠道。仅管理员。
          */
         get: operations["listBackups"];
         put?: never;
         /**
          * 立即备份
-         * @description 立即做一次元数据库快照,同一份快照写到每个健康渠道(不含清理中的渠道),各渠道各自按保留份数清理旧快照。仅管理员。
+         * @description 立即做一次元数据库快照，同一份快照写到每个健康渠道（不含清理中的渠道），各渠道各自按保留份数清理旧快照。仅管理员。
          */
         post: operations["createBackup"];
         delete?: never;
@@ -999,7 +999,7 @@ export interface paths {
         };
         /**
          * 下载快照
-         * @description 以附件形式输出 SQLite 快照文件;按优先级从持有该快照的健康渠道读取,读取失败的渠道换下一个,各健康渠道都没有该快照时 404。仅管理员。
+         * @description 以附件形式输出 SQLite 快照文件；按优先级从持有该快照的健康渠道读取，读取失败的渠道换下一个，各健康渠道都没有该快照时 404。仅管理员。
          */
         get: operations["downloadBackup"];
         put?: never;
@@ -1021,7 +1021,7 @@ export interface paths {
         put?: never;
         /**
          * 从快照恢复
-         * @description 按优先级从持有该快照的健康渠道取回(读取失败的渠道换下一个,各健康渠道都没有该快照时 404),暂存到数据目录后触发优雅停机,进程被拉起时换入,原库改名保留;没有进程管理器拉起时,暂存文件等到下次启动再换入。仅管理员。
+         * @description 按优先级从持有该快照的健康渠道取回（读取失败的渠道换下一个，各健康渠道都没有该快照时 404），暂存到数据目录后触发优雅停机，进程被拉起时换入，原库改名保留；没有进程管理器拉起时，暂存文件等到下次启动再换入。仅管理员。
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -1039,7 +1039,7 @@ export interface paths {
         };
         /**
          * 导出全部元数据
-         * @description 图在哪些渠道、对象键与哈希全部在内,渠道带 `id` 与 `created_at`(加密渠道的密钥派生输入),渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
+         * @description 图在哪些渠道、对象键与哈希全部在内，渠道带 `id` 与 `created_at`（加密渠道的密钥派生输入），渠道凭证与密码哈希不在内；以附件形式输出。仅管理员。
          */
         get: operations["exportMetadata"];
         put?: never;
@@ -1056,7 +1056,7 @@ export interface components {
     schemas: {
         /** @description 错误信封 */
         Error: {
-            /** @description 面向用户的错误描述,不含内部细节与凭证 */
+            /** @description 面向用户的错误描述，不含内部细节与凭证 */
             error: string;
         };
         UploadResult: {
@@ -1064,24 +1064,24 @@ export interface components {
             id: string;
             /**
              * Format: uri
-             * @description 图片绝对访问地址;配置了 `base_url` 用配置,否则按请求推导
+             * @description 图片绝对访问地址；配置了 `base_url` 用配置，否则按请求推导
              */
             url: string;
         };
         UploadURLRequest: {
             /**
              * Format: uri
-             * @description 待转存的图片地址,仅 http / https 的公网地址
+             * @description 待转存的图片地址，仅 http / https 的公网地址
              */
             url: string;
             /** @description 覆盖由地址末段推断的文件名 */
             file_name?: string;
             /**
-             * @description 本次 EXIF 档位;缺省用全局默认
+             * @description 本次 EXIF 档位；缺省用全局默认
              * @enum {string}
              */
             exif_policy?: "strip" | "passthrough";
-            /** @description 有效期秒数(数字或数字字符串)或 `never`;缺省按「用户默认 > 全局默认」回退 */
+            /** @description 有效期秒数（数字或数字字符串）或 `never`；缺省按「用户默认 > 全局默认」回退 */
             ttl?: number | string;
         };
         LoginRequest: {
@@ -1105,7 +1105,7 @@ export interface components {
             /** @description 登录名 */
             name: string;
             role: components["schemas"]["Role"];
-            /** @description 仍为出厂默认密码;为 true 时前端强制先改密 */
+            /** @description 仍为出厂默认密码；为 true 时前端强制先改密 */
             must_change_password: boolean;
         };
         /**
@@ -1120,31 +1120,31 @@ export interface components {
         };
         /** @description 服务端二进制的构建信息 */
         BuildInfo: {
-            /** @description 版本号:发布版为 git 标签;源码构建为 Go 推导的模块版本;无从得知时为 `devel` */
+            /** @description 版本号：发布版为 git 标签；源码构建为 Go 推导的模块版本；无从得知时为 `devel` */
             version: string;
-            /** @description 构建所在提交的哈希,工作区有未提交改动时带 `-dirty` 后缀;未知为空串 */
+            /** @description 构建所在提交的哈希，工作区有未提交改动时带 `-dirty` 后缀；未知为空串 */
             commit: string;
-            /** @description 构建时刻,RFC 3339;只有发布流水线注入,源码构建为空串 */
+            /** @description 构建时刻，RFC 3339；只有发布流水线注入，源码构建为空串 */
             built_at: string;
         };
-        /** @description 运营配置的只读切面,全部登录用户可读;不含凭证 */
+        /** @description 运营配置的只读切面，全部登录用户可读；不含凭证 */
         RuntimeConfig: {
-            /** @description 冷图待清理阈值(天);0 表示未启用 */
+            /** @description 冷图待清理阈值（天）；0 表示未启用 */
             cold_cleanup_days: number;
-            /** @description 引用归零到物理删的宽限(分钟);0 表示立即 */
+            /** @description 引用归零到物理删的宽限（分钟）；0 表示立即 */
             delete_grace_minutes: number;
-            /** @description 按需处理允许的宽度档(像素);空或 null 表示不允许缩放 */
+            /** @description 按需处理允许的宽度档（像素）；空或 null 表示不允许缩放 */
             process_widths: number[] | null;
-            /** @description 全局默认有效期(小时);0 表示永不过期 */
+            /** @description 全局默认有效期（小时）；0 表示永不过期 */
             default_ttl_hours: number;
             /** @description 公开访问是否顺延带有效期图片的到期时刻 */
             ttl_renew_on_access: boolean;
             /**
              * Format: int64
-             * @description 单图上限(MB)
+             * @description 单图上限（MB）
              */
             max_upload_mb: number;
-            /** @description 对外站点地址;空则按请求域名推导 */
+            /** @description 对外站点地址；空则按请求域名推导 */
             base_url: string;
             /**
              * @description 访问模式
@@ -1152,81 +1152,81 @@ export interface components {
              */
             access_mode: "proxy" | "redirect";
             /**
-             * @description 全局默认 EXIF 档位;S3 PutObject 不适用
+             * @description 全局默认 EXIF 档位；S3 PutObject 不适用
              * @enum {string}
              */
             exif_policy: "passthrough" | "strip";
-            /** @description 新建渠道未显式指定时的加密默认值;为 true 时继承默认的新渠道不能开 302 直链 */
+            /** @description 新建渠道未显式指定时的加密默认值；为 true 时继承默认的新渠道不能开 302 直链 */
             encrypt_new_channels: boolean;
             build: components["schemas"]["BuildInfo"];
         };
-        /** @description 运营配置;属性名即配置键,真相在 settings 表,后台修改即热生效 */
+        /** @description 运营配置；属性名即配置键，真相在 settings 表，后台修改即热生效 */
         Settings: {
             /**
              * Format: int64
-             * @description 单图上限(MB)
+             * @description 单图上限（MB）
              */
             max_upload_mb: number;
             /**
              * Format: int64
-             * @description 像素预算(百万像素)
+             * @description 像素预算（百万像素）
              */
             max_pixels_mp: number;
-            /** @description 上传并发上限,满载返回 429 */
+            /** @description 上传并发上限，满载返回 429 */
             max_concurrent_uploads: number;
-            /** @description 每用户每分钟上传次数上限;0 表示不启用 */
+            /** @description 每用户每分钟上传次数上限；0 表示不启用 */
             upload_rate_per_min: number;
-            /** @description 对外站点地址;留空按请求域名推导 */
+            /** @description 对外站点地址；留空按请求域名推导 */
             base_url: string;
             /** @description Cloudflare Zone ID */
             cdn_cloudflare_zone_id: string;
-            /** @description Cloudflare API Token;响应里恒为空串(脱敏),是否已配置看 `derived.cdn_api_token_set` */
+            /** @description Cloudflare API Token；响应里恒为空串（脱敏），是否已配置看 `derived.cdn_api_token_set` */
             cdn_cloudflare_api_token: string;
             /** @description 空 Referer 是否放行 */
             allow_empty_referer: boolean;
             /**
-             * @description 全局默认 EXIF 档位,上传接口的单次表单字段可覆盖;S3 PutObject 不适用,一律按原字节保存
+             * @description 全局默认 EXIF 档位，上传接口的单次表单字段可覆盖；S3 PutObject 不适用，一律按原字节保存
              * @enum {string}
              */
             exif_policy: "passthrough" | "strip";
             /** @description 上传返回成功所需的最少同步副本数 */
             min_success: number;
             /**
-             * @description proxy 经服务代理回源;redirect 对允许直链的渠道 302
+             * @description proxy 经服务代理回源；redirect 对允许直链的渠道 302
              * @enum {string}
              */
             access_mode: "proxy" | "redirect";
             /** @description 新建渠道未显式指定时的加密默认值 */
             encrypt_new_channels: boolean;
-            /** @description 渠道健康检查间隔(秒) */
+            /** @description 渠道健康检查间隔（秒） */
             health_check_seconds: number;
-            /** @description 元数据库自动备份间隔(小时) */
+            /** @description 元数据库自动备份间隔（小时） */
             backup_interval_hours: number;
             /** @description 备份保留份数 */
             backup_keep: number;
-            /** @description 生命周期清理扫描间隔(秒) */
+            /** @description 生命周期清理扫描间隔（秒） */
             cleanup_sweep_seconds: number;
-            /** @description 引用归零到物理删的宽限(分钟);0 表示立即 */
+            /** @description 引用归零到物理删的宽限（分钟）；0 表示立即 */
             delete_grace_minutes: number;
-            /** @description 全局默认有效期(小时);0 表示永不过期 */
+            /** @description 全局默认有效期（小时）；0 表示永不过期 */
             default_ttl_hours: number;
             /** @description 公开访问是否顺延带有效期图片的到期时刻 */
             ttl_renew_on_access: boolean;
-            /** @description 访问活跃度批量落库间隔(秒) */
+            /** @description 访问活跃度批量落库间隔（秒） */
             activity_flush_seconds: number;
-            /** @description 冷图待清理阈值(天);0 表示不启用 */
+            /** @description 冷图待清理阈值（天）；0 表示不启用 */
             cold_cleanup_days: number;
-            /** @description 渠道用量上报间隔(秒) */
+            /** @description 渠道用量上报间隔（秒） */
             usage_report_seconds: number;
-            /** @description 单渠道用量告警阈值(GB);0 表示只上报不告警 */
+            /** @description 单渠道用量告警阈值（GB）；0 表示只上报不告警 */
             channel_quota_gb: number;
-            /** @description 后台查重扫描间隔(秒) */
+            /** @description 后台查重扫描间隔（秒） */
             dedup_scan_seconds: number;
-            /** @description pHash 相似判定的汉明距离上限;0 表示不做相似扫描 */
+            /** @description pHash 相似判定的汉明距离上限；0 表示不做相似扫描 */
             dedup_phash_max_distance: number;
-            /** @description 按需处理允许的宽度档(像素);空或 null 表示不允许缩放 */
+            /** @description 按需处理允许的宽度档（像素）；空或 null 表示不允许缩放 */
             process_widths: number[] | null;
-            /** @description 按需处理允许的目标格式,至少一项 */
+            /** @description 按需处理允许的目标格式，至少一项 */
             process_formats: string[];
             /** @description WebP 质量档 [0,100] */
             process_quality_webp: number;
@@ -1236,46 +1236,46 @@ export interface components {
             process_webp_method: number;
             /** @description 处理并发上限 */
             process_workers: number;
-            /** @description 单请求处理超时(毫秒),超时回退原图 */
+            /** @description 单请求处理超时（毫秒），超时回退原图 */
             process_timeout_ms: number;
             /**
              * Format: int64
-             * @description 衍生图磁盘缓存上限(MB)
+             * @description 衍生图磁盘缓存上限（MB）
              */
             variants_cache_mb: number;
-            /** @description 上传幂等键保留期(小时) */
+            /** @description 上传幂等键保留期（小时） */
             idempotency_key_ttl_hours: number;
-            /** @description 告警 Webhook 地址(http / https);空表示不外发 */
+            /** @description 告警 Webhook 地址（http / https）；空表示不外发 */
             alert_webhook_url: string;
-            /** @description 审计日志保留天数;0 表示永久保留 */
+            /** @description 审计日志保留天数；0 表示永久保留 */
             audit_retention_days: number;
         };
-        /** @description 「配置键 → 新值」对象;键与值类型同 Settings,只需给出要改的键 */
+        /** @description 「配置键 → 新值」对象；键与值类型同 Settings，只需给出要改的键 */
         SettingsPatch: {
             [key: string]: unknown;
         };
-        /** @description 引导配置的只读展示;密钥类引导项不出现 */
+        /** @description 引导配置的只读展示；密钥类引导项不出现 */
         BootstrapConfig: {
             /** @description HTTP 监听地址 */
             listen: string;
             /** @description 数据目录 */
             data_dir: string;
-            /** @description 信任其转发头的反向代理网段,逗号分隔;空串表示一概不信转发头 */
+            /** @description 信任其转发头的反向代理网段，逗号分隔；空串表示一概不信转发头 */
             trusted_proxies: string;
-            /** @description 允许抓取 /metrics 的网段,逗号分隔;空串表示对谁都不开放 */
+            /** @description 允许抓取 /metrics 的网段，逗号分隔；空串表示对谁都不开放 */
             metrics_allow: string;
         };
         /** @description 派生状态与内置策略 */
         DerivedConfig: {
-            /** @description 删除级联的 CDN purge 是否生效(zone、token 与 base_url 三者齐备) */
+            /** @description 删除级联的 CDN purge 是否生效（zone、token 与 base_url 三者齐备） */
             cdn_purge_enabled: boolean;
             /** @description Cloudflare API Token 是否已配置 */
             cdn_api_token_set: boolean;
             /** @description 每个 IP / 用户名允许的突发登录尝试次数 */
             login_burst: number;
-            /** @description 突发额度用尽后每恢复一次尝试的间隔(秒) */
+            /** @description 突发额度用尽后每恢复一次尝试的间隔（秒） */
             login_refill_seconds: number;
-            /** @description 副本对账间隔(秒) */
+            /** @description 副本对账间隔（秒） */
             reconcile_interval_seconds: number;
         };
         FullConfig: {
@@ -1293,19 +1293,19 @@ export interface components {
             healthy: boolean;
             /**
              * Format: int64
-             * @description 已存字节,副本口径
+             * @description 已存字节，副本口径
              */
             bytes: number;
         };
-        /** @description 热门图,按累计访问次数降序 */
+        /** @description 热门图，按累计访问次数降序 */
         TopImage: {
             id: string;
-            /** @description 公开访问路径,相对站点根 */
+            /** @description 公开访问路径，相对站点根 */
             url: string;
             file_name: string;
             /**
              * Format: int64
-             * @description 累计访问次数,活跃度落库周期粒度
+             * @description 累计访问次数，活跃度落库周期粒度
              */
             access_count: number;
             /**
@@ -1314,9 +1314,9 @@ export interface components {
              */
             size: number;
         };
-        /** @description 管理员视图:全站计数、待办、访问与流量估算、热门图与渠道水位 */
+        /** @description 管理员视图：全站计数、待办、访问与流量估算、热门图与渠道水位 */
         AdminDashboard: {
-            /** @description 缺少健康的异地渠道:健康且不在清理中的渠道里没有本机磁盘(local 驱动)以外的,一个健康渠道都没有时同样为 true;此时图片副本与元数据库快照在本机以外都没有可用的一份 */
+            /** @description 缺少健康的异地渠道：健康且不在清理中的渠道里没有本机磁盘（local 驱动）以外的，一个健康渠道都没有时同样为 true；此时图片副本与元数据库快照在本机以外都没有可用的一份 */
             offsite_missing: boolean;
             /** Format: int64 */
             images: number;
@@ -1344,7 +1344,7 @@ export interface components {
             top_images: components["schemas"]["TopImage"][];
             channels: components["schemas"]["ChannelStat"][];
         };
-        /** @description 普通用户视图:本人用量 */
+        /** @description 普通用户视图：本人用量 */
         UserDashboard: {
             /** Format: int64 */
             images: number;
@@ -1352,26 +1352,26 @@ export interface components {
             used_bytes: number;
             /**
              * Format: int64
-             * @description 配额上限;null 表示不限
+             * @description 配额上限；null 表示不限
              */
             quota_bytes: number | null;
         };
         Dashboard: components["schemas"]["AdminDashboard"] | components["schemas"]["UserDashboard"];
-        /** @description Token 列表项;只有识别前缀,无哈希无明文 */
+        /** @description Token 列表项；只有识别前缀，无哈希无明文 */
         Token: {
             /** Format: int64 */
             id: number;
             /** @description 用途名 */
             name: string;
-            /** @description 明文前缀,识别用 */
+            /** @description 明文前缀，识别用 */
             prefix: string;
-            /** @description 授权范围,逗号分隔 */
+            /** @description 授权范围，逗号分隔 */
             scopes: string;
-            /** @description 到期时刻;null 表示永久 */
+            /** @description 到期时刻；null 表示永久 */
             expires_at: string | null;
-            /** @description 最近使用时刻;null 表示从未使用 */
+            /** @description 最近使用时刻；null 表示从未使用 */
             last_used_at: string | null;
-            /** @description 吊销时刻;null 表示未吊销 */
+            /** @description 吊销时刻；null 表示未吊销 */
             revoked_at: string | null;
             /** @description 签发时刻 */
             created_at: string;
@@ -1385,11 +1385,11 @@ export interface components {
             total: number;
         };
         TokenCreateRequest: {
-            /** @description 用途名,同一用户内唯一 */
+            /** @description 用途名，同一用户内唯一 */
             name: string;
             /**
              * Format: int64
-             * @description 有效期小时数;缺省或 0 表示永久
+             * @description 有效期小时数；缺省或 0 表示永久
              */
             expires_in_hours?: number;
         };
@@ -1398,27 +1398,27 @@ export interface components {
             id: number;
             name: string;
             prefix: string;
-            /** @description Token 明文,仅此一次下发 */
+            /** @description Token 明文，仅此一次下发 */
             token: string;
         };
         /** @description 一枚 Token 的 S3 协议凭证与端点配置 */
         S3Credential: {
             /** @description 即 Token 明文前缀 */
             access_key_id: string;
-            /** @description 由主密钥派生,可随时重看 */
+            /** @description 由主密钥派生，可随时重看 */
             secret_access_key: string;
             /**
              * Format: uri
-             * @description 客户端填的 S3 端点,末尾 /s3 是协议面前缀
+             * @description 客户端填的 S3 端点，末尾 /s3 是协议面前缀
              */
             endpoint: string;
-            /** @description 本服务不区分区域,给一个客户端普遍接受的值 */
+            /** @description 本服务不区分区域，给一个客户端普遍接受的值 */
             region: string;
-            /** @description 无桶概念,占位名供客户端填 */
+            /** @description 无桶概念，占位名供客户端填 */
             bucket: string;
             /**
              * Format: uri
-             * @description 客户端据此拼最终访问地址,含用户 id 段
+             * @description 客户端据此拼最终访问地址，含用户 id 段
              */
             url_prefix: string;
         };
@@ -1426,16 +1426,16 @@ export interface components {
         Image: {
             /** @description 短 ID */
             id: string;
-            /** @description 公开访问路径,相对站点根 */
+            /** @description 公开访问路径，相对站点根 */
             url: string;
             /** @description 归属用户 */
             user_id: string;
             /**
              * Format: int64
-             * @description 上传来源 Token;null 表示后台上传或来源 Token 记录已删除
+             * @description 上传来源 Token；null 表示后台上传或来源 Token 记录已删除
              */
             token_id: number | null;
-            /** @description 来源 Token 用途名;null 同 token_id */
+            /** @description 来源 Token 用途名；null 同 token_id */
             token_name: string | null;
             /** @description 原始文件名 */
             file_name: string;
@@ -1452,18 +1452,18 @@ export interface components {
             height: number;
             /** @description 内容哈希 */
             sha256: string;
-            /** @description 到期时刻;null 表示永久 */
+            /** @description 到期时刻；null 表示永久 */
             expire_at: string | null;
             /**
              * Format: int64
-             * @description 有效时长(秒),访问续期按此顺延;null 表示永久
+             * @description 有效时长（秒），访问续期按此顺延；null 表示永久
              */
             ttl_seconds: number | null;
-            /** @description 最近公开访问;null 表示从未 */
+            /** @description 最近公开访问；null 表示从未 */
             last_access_at: string | null;
             /**
              * Format: int64
-             * @description 累计公开访问次数,活跃度落库周期粒度
+             * @description 累计公开访问次数，活跃度落库周期粒度
              */
             access_count: number;
             /** @description 是否在待清理列表 */
@@ -1474,7 +1474,7 @@ export interface components {
             created_at: string;
             /**
              * Format: int64
-             * @description 物理图引用计数(同图去重共享)
+             * @description 物理图引用计数（同图去重共享）
              */
             ref_count: number;
         };
@@ -1489,7 +1489,7 @@ export interface components {
              * @description 累计补齐尝试次数
              */
             attempts: number;
-            /** @description 最近一次失败原因;空表示无 */
+            /** @description 最近一次失败原因；空表示无 */
             last_error: string;
             /** @description 状态最近更新时刻 */
             updated_at: string;
@@ -1500,7 +1500,7 @@ export interface components {
          */
         ReplicaState: "pending" | "uploading" | "done" | "failed";
         ImageDetail: components["schemas"]["Image"] & {
-            /** @description 物理图在各渠道的副本状态,按渠道优先级降序 */
+            /** @description 物理图在各渠道的副本状态，按渠道优先级降序 */
             replicas: components["schemas"]["Replica"][];
         };
         ImageList: {
@@ -1511,14 +1511,14 @@ export interface components {
              */
             total: number;
         };
-        /** @description 修改项;缺省的项不动,至少携带一项 */
+        /** @description 修改项；缺省的项不动，至少携带一项 */
         ImagePatch: {
             /**
              * Format: int64
-             * @description 大于 0 从现在起算新的到期时刻并更新时长;0 改为永久
+             * @description 大于 0 从现在起算新的到期时刻并更新时长；0 改为永久
              */
             ttl_hours?: number;
-            /** @description 预设或取消清理豁免;仅管理员。取消时顺带摘掉待清理标记,由下轮扫描重判 */
+            /** @description 预设或取消清理豁免；仅管理员。取消时顺带摘掉待清理标记，由下轮扫描重判 */
             cleanup_exempt?: boolean;
         };
         BatchDeleteRequest: {
@@ -1528,7 +1528,7 @@ export interface components {
         BatchDeleteResult: {
             /** @description 成功删除张数 */
             deleted: number;
-            /** @description 失败明细;全部成功时为空数组 */
+            /** @description 失败明细；全部成功时为空数组 */
             failed: {
                 id: string;
                 /** @description 用户可读的失败原因 */
@@ -1536,30 +1536,30 @@ export interface components {
             }[];
         };
         /**
-         * @description 内置渠道模板的标识;模板名与说明由前端按它查词典
+         * @description 内置渠道模板的标识；模板名与说明由前端按它查词典
          * @enum {string}
          */
         ChannelTemplateID: "aws-s3" | "r2" | "cos" | "oss" | "b2" | "minio" | "s3-compatible" | "webdav" | "onedrive" | "googledrive" | "dropbox" | "pcloud" | "box" | "yandex";
         /**
-         * @description 模板字段的标识,即请求里 `inputs` 的键;字段标签、占位示例与帮助说明由前端按模板 id 与它查词典
+         * @description 模板字段的标识，即请求里 `inputs` 的键；字段标签、占位示例与帮助说明由前端按模板 id 与它查词典
          * @enum {string}
          */
         TemplateFieldKey: "access_key_id" | "secret_access_key" | "region" | "bucket" | "public_base_url" | "account_id" | "endpoint" | "url" | "vendor" | "user" | "pass" | "client_id" | "client_secret" | "token" | "path" | "hostname";
         /**
-         * @description select 字段的可选值,即写入渠道配置的值(rclone 参数取值);显示名由前端按它查词典,各字段的取值互不重复
+         * @description select 字段的可选值，即写入渠道配置的值（rclone 参数取值）；显示名由前端按它查词典，各字段的取值互不重复
          * @enum {string}
          */
         TemplateOptionValue: "us-east-1" | "us-east-2" | "us-west-1" | "us-west-2" | "eu-west-1" | "eu-central-1" | "ap-southeast-1" | "ap-northeast-1" | "ap-east-1" | "ap-southeast-2" | "ap-beijing" | "ap-shanghai" | "ap-guangzhou" | "ap-chengdu" | "ap-nanjing" | "ap-hongkong" | "ap-singapore" | "ap-tokyo" | "na-siliconvalley" | "eu-frankfurt" | "oss-cn-hangzhou" | "oss-cn-shanghai" | "oss-cn-beijing" | "oss-cn-zhangjiakou" | "oss-cn-shenzhen" | "oss-cn-guangzhou" | "oss-cn-hongkong" | "oss-ap-southeast-1" | "oss-ap-northeast-1" | "oss-us-west-1" | "oss-eu-central-1" | "nextcloud" | "owncloud" | "infinitescale" | "sharepoint" | "sharepoint-ntlm" | "fastmail" | "rclone" | "other" | "global" | "us" | "de" | "cn" | "api.pcloud.com" | "eapi.pcloud.com";
-        /** @description 模板的一个用户输入字段,只含结构;显示文案由前端词典提供 */
+        /** @description 模板的一个用户输入字段，只含结构；显示文案由前端词典提供 */
         TemplateField: {
             key: components["schemas"]["TemplateFieldKey"];
             /** @enum {string} */
             type: "text" | "password" | "select" | "oauth";
             required: boolean;
-            /** @description select 字段的可选值,按展示顺序 */
+            /** @description select 字段的可选值，按展示顺序 */
             options?: components["schemas"]["TemplateOptionValue"][];
         };
-        /** @description 渠道模板,只含结构;不含 provider 等预设参数,也不含显示文案 */
+        /** @description 渠道模板，只含结构；不含 provider 等预设参数，也不含显示文案 */
         ChannelTemplate: {
             id: components["schemas"]["ChannelTemplateID"];
             /** @description rclone 后端名 */
@@ -1584,7 +1584,7 @@ export interface components {
             done: number;
             /**
              * Format: int64
-             * @description 待补齐副本数(含进行中)
+             * @description 待补齐副本数（含进行中）
              */
             pending: number;
             /**
@@ -1593,7 +1593,7 @@ export interface components {
              */
             failed: number;
         };
-        /** @description 渠道的对外描述,不含配置与凭证 */
+        /** @description 渠道的对外描述，不含配置与凭证 */
         Channel: {
             /** Format: int64 */
             id: number;
@@ -1608,14 +1608,14 @@ export interface components {
             healthy: boolean;
             encrypted: boolean;
             allow_direct_link: boolean;
-            /** @description 最近探测时刻;空表示尚未探测 */
+            /** @description 最近探测时刻；空表示尚未探测 */
             last_checked_at: string;
-            /** @description 最近探测失败原因,渠道装载失败时以「装载失败」开头;空表示最近一次探测成功 */
+            /** @description 最近探测失败原因，渠道装载失败时以「装载失败」开头；空表示最近一次探测成功 */
             last_error: string;
-            /** @description 清理中:排空任务正在删除渠道上的对象,清完即消失 */
+            /** @description 清理中：排空任务正在删除渠道上的对象，清完即消失 */
             deleting: boolean;
             replicas: components["schemas"]["ReplicaStats"];
-            /** @description 创建时刻;与 `id` 一起参与加密渠道 crypt 密码与盐的派生 */
+            /** @description 创建时刻；与 `id` 一起参与加密渠道 crypt 密码与盐的派生 */
             created_at: string;
         };
         ChannelList: {
@@ -1623,9 +1623,9 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        /** @description 配置来源二选一:模板模式给 `template` + `inputs`;自定义模式 `template` 为空或 `custom`,给 `driver` + `config`。未知字段整体拒绝 */
+        /** @description 配置来源二选一：模板模式给 `template` + `inputs`；自定义模式 `template` 为空或 `custom`，给 `driver` + `config`。未知字段整体拒绝 */
         ChannelCreateRequest: {
-            /** @description 模板 id;空或 `custom` 走自定义 */
+            /** @description 模板 id；空或 `custom` 走自定义 */
             template?: string;
             /** @description 模板字段值 */
             inputs?: {
@@ -1633,25 +1633,25 @@ export interface components {
             };
             /** @description 自定义模式的 rclone 后端名 */
             driver?: string;
-            /** @description 自定义模式的后端参数,含约定键 `path`(后端内路径)与 `public_base_url`(302 直链前缀) */
+            /** @description 自定义模式的后端参数，含约定键 `path`（后端内路径）与 `public_base_url`（302 直链前缀） */
             config?: {
                 [key: string]: string;
             };
-            /** @description 渠道名,唯一 */
+            /** @description 渠道名，唯一 */
             name: string;
             /**
              * Format: int64
-             * @description 越大越优先;缺省 0
+             * @description 越大越优先；缺省 0
              */
             priority?: number;
-            /** @description 是否加密渠道;缺省用全局默认,创建时固化 */
+            /** @description 是否加密渠道；缺省用全局默认，创建时固化 */
             encrypted?: boolean;
-            /** @description 是否允许 302 直链;缺省 false */
+            /** @description 是否允许 302 直链；缺省 false */
             allow_direct_link?: boolean;
-            /** @description 创建时主动建桶,需凭证有建桶权限;缺省 false */
+            /** @description 创建时主动建桶，需凭证有建桶权限；缺省 false */
             auto_create_bucket?: boolean;
         };
-        /** @description 与创建同构,PUT 为全量语义,须给出全部键;配置里原样回传的哨兵值表示保留原凭证 */
+        /** @description 与创建同构，PUT 为全量语义，须给出全部键；配置里原样回传的哨兵值表示保留原凭证 */
         ChannelUpdateRequest: {
             template?: string;
             inputs?: {
@@ -1671,42 +1671,42 @@ export interface components {
         ChannelTestRequest: components["schemas"]["ChannelCreateRequest"] & {
             /**
              * Format: int64
-             * @description 编辑场景传渠道 id,配置中的哨兵值还原为原凭证后再探测;0 或缺省为创建场景
+             * @description 编辑场景传渠道 id，配置中的哨兵值还原为原凭证后再探测；0 或缺省为创建场景
              */
             channel_id?: number;
         };
         ChannelTestResult: {
             /** @description 探测是否通过 */
             ok: boolean;
-            /** @description 失败原因,不含凭证 */
+            /** @description 失败原因，不含凭证 */
             error?: string;
-            /** @description 测试期间服务商刷新了提交的授权令牌时出现,值为刷新后的令牌 JSON(与 rclone 的 `token` 参数同格式); 探测失败时也可能出现。存在时前端须用它替换表单里的令牌再保存——刷新令牌只能用一次的服务商(如 Box), 原令牌已被作废。模板模式替换授权字段(`inputs.token`),自定义模式替换 `config.token`。只回传令牌,不回传其他凭证 */
+            /** @description 测试期间服务商刷新了提交的授权令牌时出现，值为刷新后的令牌 JSON（与 rclone 的 `token` 参数同格式）； 探测失败时也可能出现。存在时前端须用它替换表单里的令牌再保存——刷新令牌只能用一次的服务商（如 Box）， 原令牌已被作废。模板模式替换授权字段（`inputs.token`），自定义模式替换 `config.token`。只回传令牌，不回传其他凭证 */
             token?: string;
         };
-        /** @description 渠道配置的编辑视图,敏感值以哨兵掩码 */
+        /** @description 渠道配置的编辑视图，敏感值以哨兵掩码 */
         ChannelEditConfig: {
-            /** @description 配置所用模板 id;空表示自定义 */
+            /** @description 配置所用模板 id；空表示自定义 */
             template: string;
             driver: string;
             /** @description 掩码后的后端参数 */
             config: {
                 [key: string]: string;
             };
-            /** @description 模板表单字段值,落在敏感参数上的字段同样以哨兵掩码;仅模板渠道 */
+            /** @description 模板表单字段值，落在敏感参数上的字段同样以哨兵掩码；仅模板渠道 */
             inputs?: {
                 [key: string]: string;
             };
         };
         OAuthStartRequest: {
-            /** @description 模板 id,须为需要授权的模板 */
+            /** @description 模板 id，须为需要授权的模板 */
             template: string;
-            /** @description 已填字段值:区域等影响端点的参数与自建应用的 `client_id` / `client_secret`;授权令牌字段不参与 */
+            /** @description 已填字段值：区域等影响端点的参数与自建应用的 `client_id` / `client_secret`；授权令牌字段不参与 */
             inputs?: {
                 [key: string]: string;
             };
             /**
              * Format: int64
-             * @description 编辑场景传渠道 id,字段中的哨兵还原为该渠道已存值;0 或缺省为创建场景
+             * @description 编辑场景传渠道 id，字段中的哨兵还原为该渠道已存值；0 或缺省为创建场景
              */
             channel_id?: number;
         };
@@ -1722,12 +1722,12 @@ export interface components {
         OAuthResult: {
             /** @description 用户尚未完成授权 */
             pending: boolean;
-            /** @description 授权令牌,填入渠道表单后随渠道提交 */
+            /** @description 授权令牌，填入渠道表单后随渠道提交 */
             token?: string;
             /** @description 授权失败原因 */
             error?: string;
         };
-        /** @description 用户列表项,不含任何凭证材料 */
+        /** @description 用户列表项，不含任何凭证材料 */
         User: {
             id: string;
             /** @description 登录名 */
@@ -1735,19 +1735,19 @@ export interface components {
             role: components["schemas"]["Role"];
             /**
              * Format: int64
-             * @description 配额上限;null 表示不限
+             * @description 配额上限；null 表示不限
              */
             quota_bytes: number | null;
             /**
              * Format: int64
-             * @description 上传默认有效期(小时);null 随全局,0 永久
+             * @description 上传默认有效期（小时）；null 随全局，0 永久
              */
             default_ttl_hours: number | null;
             disabled: boolean;
             created_at: string;
             /**
              * Format: int64
-             * @description 已用字节,按引用计全额
+             * @description 已用字节，按引用计全额
              */
             used_bytes: number;
             /** Format: int64 */
@@ -1758,49 +1758,49 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        /** @description 建号请求;未知字段整体拒绝 */
+        /** @description 建号请求；未知字段整体拒绝 */
         UserCreateRequest: {
             /** @description 登录名 */
             name: string;
             /**
              * Format: password
-             * @description 初始密码,至少 8 个字符
+             * @description 初始密码，至少 8 个字符
              */
             password: string;
             role?: components["schemas"]["Role"];
             /**
              * Format: int64
-             * @description 配额上限;缺省或不大于 0 表示不限
+             * @description 配额上限；缺省或不大于 0 表示不限
              */
             quota_bytes?: number;
             /**
              * Format: int64
-             * @description 上传默认有效期(小时);缺省或 null 随全局,0 永久
+             * @description 上传默认有效期（小时）；缺省或 null 随全局，0 永久
              */
             default_ttl_hours?: number | null;
         };
-        /** @description 更新请求,PUT 为全量语义,须给出全部键;未知字段整体拒绝 */
+        /** @description 更新请求，PUT 为全量语义，须给出全部键；未知字段整体拒绝 */
         UserUpdateRequest: {
             /** @description 登录名 */
             name: string;
             role: components["schemas"]["Role"];
             /**
              * Format: int64
-             * @description 配额上限;不大于 0 表示不限
+             * @description 配额上限；不大于 0 表示不限
              */
             quota_bytes: number;
             /**
              * Format: int64
-             * @description 上传默认有效期(小时);null 随全局,0 永久
+             * @description 上传默认有效期（小时）；null 随全局，0 永久
              */
             default_ttl_hours: number | null;
-            /** @description 是否禁用;内置管理员不可禁用 */
+            /** @description 是否禁用；内置管理员不可禁用 */
             disabled: boolean;
         };
         PasswordResetRequest: {
             /**
              * Format: password
-             * @description 新密码,至少 8 个字符
+             * @description 新密码，至少 8 个字符
              */
             password: string;
         };
@@ -1817,17 +1817,17 @@ export interface components {
             total: number;
         };
         RefererRuleRequest: {
-            /** @description 裸域(`example.com`)或子域通配(`*.example.com`) */
+            /** @description 裸域（`example.com`）或子域通配（`*.example.com`） */
             pattern: string;
         };
         /** @description 候选对中一方的展示信息 */
         CandidateSide: {
             /**
              * Format: int64
-             * @description 物理图 id,裁决保留方的标识
+             * @description 物理图 id，裁决保留方的标识
              */
             blob_id: number;
-            /** @description 该物理图任一引用的短 ID,预览用;空串表示暂无引用 */
+            /** @description 该物理图任一引用的短 ID，预览用；空串表示暂无引用 */
             image_id: string;
             mime: string;
             /** Format: int64 */
@@ -1838,7 +1838,7 @@ export interface components {
             height: number;
             /**
              * Format: int64
-             * @description 引用数,合并后并入保留方
+             * @description 引用数，合并后并入保留方
              */
             refs: number;
         };
@@ -1863,7 +1863,7 @@ export interface components {
         DedupMergeRequest: {
             /**
              * Format: int64
-             * @description 保留的物理图 id,须是候选对中的一方
+             * @description 保留的物理图 id，须是候选对中的一方
              */
             keep_blob_id: number;
         };
@@ -1881,7 +1881,7 @@ export interface components {
             width: number;
             /** Format: int64 */
             height: number;
-            /** @description 最近公开访问;null 表示从未 */
+            /** @description 最近公开访问；null 表示从未 */
             last_access_at: string | null;
             created_at: string;
         };
@@ -1895,9 +1895,9 @@ export interface components {
             id: number;
             /** @description 操作者用户 id */
             actor: string;
-            /** @description 操作者用户名;账号已删除时回退为原始 id */
+            /** @description 操作者用户名；账号已删除时回退为原始 id */
             actor_name: string;
-            /** @description 动作标识,形如 `channel.create` */
+            /** @description 动作标识，形如 `channel.create` */
             action: string;
             /** @description 操作目标标识 */
             target: string;
@@ -1918,12 +1918,12 @@ export interface components {
              * @enum {string}
              */
             kind: "channel_unhealthy" | "replication_failed" | "channel_quota_exceeded" | "drain_failed" | "backup_failed";
-            /** @description 告警对象,渠道名等;无对象为空串 */
+            /** @description 告警对象，渠道名等；无对象为空串 */
             target: string;
             /** @description 人话描述 */
             message: string;
             opened_at: string;
-            /** @description 恢复时刻;null 表示仍未恢复 */
+            /** @description 恢复时刻；null 表示仍未恢复 */
             resolved_at: string | null;
         };
         AlertList: {
@@ -1933,7 +1933,7 @@ export interface components {
         };
         /** @description 一份元数据库快照及持有它的渠道 */
         Snapshot: {
-            /** @description 对象文件名,形如 `imgyoung-20060102-150405.000.db` */
+            /** @description 对象文件名，形如 `imgyoung-20060102-150405.000.db` */
             name: string;
             /**
              * Format: int64
@@ -1942,10 +1942,10 @@ export interface components {
             size: number;
             /**
              * Format: date-time
-             * @description 快照时刻,RFC 3339,毫秒精度
+             * @description 快照时刻，RFC 3339，毫秒精度
              */
             taken_at: string;
-            /** @description 持有该快照的健康渠道名,按优先级降序;立即备份的响应里即写入的全部渠道 */
+            /** @description 持有该快照的健康渠道名，按优先级降序；立即备份的响应里即写入的全部渠道 */
             channels: string[];
         };
         SnapshotList: {
@@ -1961,7 +1961,7 @@ export interface components {
             /** @description 服务端说明 */
             message: string;
         };
-        /** @description 导出的 Token 元数据,无哈希 */
+        /** @description 导出的 Token 元数据，无哈希 */
         TokenExport: {
             /** Format: int64 */
             id: number;
@@ -1969,7 +1969,7 @@ export interface components {
             name: string;
             prefix: string;
             scopes: string;
-            /** @description 吊销时刻;null 表示有效 */
+            /** @description 吊销时刻；null 表示有效 */
             revoked_at: string | null;
             created_at: string;
         };
@@ -1982,7 +1982,7 @@ export interface components {
             /** Format: int64 */
             token_id: number | null;
             file_name: string;
-            /** @description S3 客户端自取的对象键;null 表示无别名 */
+            /** @description S3 客户端自取的对象键；null 表示无别名 */
             object_key: string | null;
             expire_at: string | null;
             /** Format: int64 */
@@ -1999,7 +1999,7 @@ export interface components {
             /** Format: int64 */
             id: number;
             sha256: string;
-            /** @description 64 位感知哈希,16 位十六进制 */
+            /** @description 64 位感知哈希，16 位十六进制 */
             phash: string;
             /** @description 各渠道内的对象键 */
             storage_key: string;
@@ -2014,7 +2014,7 @@ export interface components {
             ref_count: number;
             /** @description 是否已进入物理删除流程 */
             pending_delete: boolean;
-            /** @description 物理删除不早于该时刻;null 表示未排程 */
+            /** @description 物理删除不早于该时刻；null 表示未排程 */
             delete_after: string | null;
             created_at: string;
         };
@@ -2030,7 +2030,7 @@ export interface components {
             last_error: string;
             updated_at: string;
         };
-        /** @description 元数据全量导出;渠道凭证与密码哈希不在内 */
+        /** @description 元数据全量导出；渠道凭证与密码哈希不在内 */
         Export: {
             users: components["schemas"]["User"][];
             channels: components["schemas"]["Channel"][];
@@ -2059,7 +2059,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 未认证:Token 无效,或未登录 / 会话已过期 */
+        /** @description 未认证：Token 无效，或未登录 / 会话已过期 */
         Unauthorized: {
             headers: {
                 [name: string]: unknown;
@@ -2068,7 +2068,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 无权限:CSRF 校验失败、仍为出厂默认密码(改密前只放行退出、查看自己与改密)、需要管理员,或该操作不对当前角色开放 */
+        /** @description 无权限：CSRF 校验失败、仍为出厂默认密码（改密前只放行退出、查看自己与改密）、需要管理员，或该操作不对当前角色开放 */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -2077,7 +2077,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 目标不存在,或对当前用户不可见 */
+        /** @description 目标不存在，或对当前用户不可见 */
         NotFound: {
             headers: {
                 [name: string]: unknown;
@@ -2086,7 +2086,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 超过单图大小上限(运营配置 `max_upload_mb`) */
+        /** @description 超过单图大小上限（运营配置 `max_upload_mb`） */
         TooLarge: {
             headers: {
                 [name: string]: unknown;
@@ -2095,7 +2095,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 不是支持的图片格式(按 magic bytes 判定) */
+        /** @description 不是支持的图片格式（按 magic bytes 判定） */
         UnsupportedType: {
             headers: {
                 [name: string]: unknown;
@@ -2104,7 +2104,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 分辨率超出像素预算(运营配置 `max_pixels_mp`) */
+        /** @description 分辨率超出像素预算（运营配置 `max_pixels_mp`） */
         TooManyPixels: {
             headers: {
                 [name: string]: unknown;
@@ -2113,7 +2113,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 上传并发已满或该用户上传过于频繁;登录接口为尝试过于频繁 */
+        /** @description 上传并发已满或该用户上传过于频繁；登录接口为尝试过于频繁 */
         TooManyRequests: {
             headers: {
                 /** @description 建议等待的秒数 */
@@ -2124,7 +2124,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 没有健康渠道可写,或同步副本数不足 */
+        /** @description 没有健康渠道可写，或同步副本数不足 */
         ChannelsUnavailable: {
             headers: {
                 [name: string]: unknown;
@@ -2160,7 +2160,7 @@ export interface components {
                 "application/json": components["schemas"]["ImageDetail"];
             };
         };
-        /** @description 新 Token;`token` 为明文,仅此一次下发 */
+        /** @description 新 Token；`token` 为明文，仅此一次下发 */
         IssuedTokenResponse: {
             headers: {
                 [name: string]: unknown;
@@ -2169,7 +2169,7 @@ export interface components {
                 "application/json": components["schemas"]["IssuedToken"];
             };
         };
-        /** @description 渠道的完整描述(含探测结果与副本水位) */
+        /** @description 渠道的完整描述（含探测结果与副本水位） */
         ChannelResponse: {
             headers: {
                 [name: string]: unknown;
@@ -2178,10 +2178,10 @@ export interface components {
                 "application/json": components["schemas"]["Channel"];
             };
         };
-        /** @description 图片字节(HEAD 只有响应头),带强 ETag。短 ID 下内容不可变,缓存一年(`immutable`);对象键别名可被同键重传 改指,为 `Cache-Control: public, no-cache`,每次带 ETag 确认、未变即 304。同一 URL 的输出格式随 `Accept` 协商时(未显式指定 `format`),原图与衍生图响应都带 `Vary: Accept`;处理失败降级输出原图时为 `Cache-Control: no-store` */
+        /** @description 图片字节（HEAD 只有响应头），带强 ETag。短 ID 下内容不可变，缓存一年（`immutable`）；对象键别名可被同键重传 改指，为 `Cache-Control: public, no-cache`，每次带 ETag 确认、未变即 304。同一 URL 的输出格式随 `Accept` 协商时（未显式指定 `format`），原图与衍生图响应都带 `Vary: Accept`；处理失败降级输出原图时为 `Cache-Control: no-store` */
         ImageBytes: {
             headers: {
-                /** @description 强 ETag;原图为内容哈希,衍生图为哈希加处理参数 */
+                /** @description 强 ETag；原图为内容哈希，衍生图为哈希加处理参数 */
                 ETag?: string;
                 "Cache-Control"?: string;
                 Vary?: string;
@@ -2191,7 +2191,7 @@ export interface components {
                 "image/*": unknown;
             };
         };
-        /** @description 访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址。重定向目标随渠道健康与配置变化, 响应为 `Cache-Control: no-store`,不进 CDN 与浏览器缓存 */
+        /** @description 访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址。重定向目标随渠道健康与配置变化， 响应为 `Cache-Control: no-store`，不进 CDN 与浏览器缓存 */
         DirectLink: {
             headers: {
                 Location: string;
@@ -2200,7 +2200,7 @@ export interface components {
             };
             content?: never;
         };
-        /** @description ETag 命中,内容未变 */
+        /** @description ETag 命中，内容未变 */
         NotModified: {
             headers: {
                 ETag?: string;
@@ -2208,7 +2208,7 @@ export interface components {
             };
             content?: never;
         };
-        /** @description Referer 未命中防盗链白名单;纯文本 */
+        /** @description Referer 未命中防盗链白名单；纯文本 */
         RefererRejected: {
             headers: {
                 [name: string]: unknown;
@@ -2217,7 +2217,7 @@ export interface components {
                 "text/plain": string;
             };
         };
-        /** @description 图片不存在、已过期或已删除;纯文本 */
+        /** @description 图片不存在、已过期或已删除；纯文本 */
         ImageNotFound: {
             headers: {
                 [name: string]: unknown;
@@ -2226,7 +2226,7 @@ export interface components {
                 "text/plain": string;
             };
         };
-        /** @description 引用存在但当前没有健康渠道能读出对象;纯文本 */
+        /** @description 引用存在但当前没有健康渠道能读出对象；纯文本 */
         ImageUnavailable: {
             headers: {
                 [name: string]: unknown;
@@ -2235,7 +2235,7 @@ export interface components {
                 "text/plain": string;
             };
         };
-        /** @description 查询图片元数据失败(数据库故障),可稍后重试;纯文本 */
+        /** @description 查询图片元数据失败（数据库故障），可稍后重试；纯文本 */
         ImageInternalError: {
             headers: {
                 [name: string]: unknown;
@@ -2246,17 +2246,17 @@ export interface components {
         };
     };
     parameters: {
-        /** @description 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图 */
+        /** @description 客户端幂等键；保留期（运营配置 `idempotency_key_ttl_hours`）内同一用户同一键的重试返回同一张图 */
         idempotencyKey: string;
-        /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+        /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
         csrfToken: string;
-        /** @description 页码,从 1 起;缺省 1 */
+        /** @description 页码，从 1 起；缺省 1 */
         page: number;
-        /** @description 每页条数;缺省 20,上限 100 */
+        /** @description 每页条数；缺省 20，上限 100 */
         pageSize: number;
-        /** @description 时间范围下界(闭),UTC 文本 `YYYY-MM-DD HH:MM:SS` */
+        /** @description 时间范围下界（闭），UTC 文本 `YYYY-MM-DD HH:MM:SS` */
         since: string;
-        /** @description 时间范围上界(开),UTC 文本 `YYYY-MM-DD HH:MM:SS` */
+        /** @description 时间范围上界（开），UTC 文本 `YYYY-MM-DD HH:MM:SS` */
         until: string;
         /** @description 图片短 ID */
         imageID: string;
@@ -2268,11 +2268,11 @@ export interface components {
         userID: string;
         /** @description 候选行 id */
         candidateID: number;
-        /** @description 快照名,形如 `imgyoung-20060102-150405.000.db` */
+        /** @description 快照名，形如 `imgyoung-20060102-150405.000.db` */
         snapshotName: string;
-        /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+        /** @description 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放 */
         variantWidth: number;
-        /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+        /** @description 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商 */
         variantFormat: string;
         /** @description 与上次响应的 ETag 一致时返回 304 */
         ifNoneMatch: string;
@@ -2281,14 +2281,14 @@ export interface components {
         UploadForm: {
             content: {
                 "multipart/form-data": {
-                    /** @description 图片文件;文件名作元数据展示 */
+                    /** @description 图片文件；文件名作元数据展示 */
                     file: string;
                     /**
-                     * @description 本次 EXIF 档位;缺省用运营配置的全局默认
+                     * @description 本次 EXIF 档位；缺省用运营配置的全局默认
                      * @enum {string}
                      */
                     exif_policy?: "strip" | "passthrough";
-                    /** @description 有效期秒数(0 到 3153600000 的整数)或 `never` 表示永久;缺省按「用户默认 > 全局默认」回退 */
+                    /** @description 有效期秒数（0 到 3153600000 的整数）或 `never` 表示永久；缺省按「用户默认 > 全局默认」回退 */
                     ttl?: string;
                 };
             };
@@ -2348,7 +2348,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图 */
+                /** @description 客户端幂等键；保留期（运营配置 `idempotency_key_ttl_hours`）内同一用户同一键的重试返回同一张图 */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
             };
             path?: never;
@@ -2359,7 +2359,7 @@ export interface operations {
             200: components["responses"]["Uploaded"];
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description Token 无上传权限,或用户存储配额已满 */
+            /** @description Token 无上传权限，或用户存储配额已满 */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2379,7 +2379,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图 */
+                /** @description 客户端幂等键；保留期（运营配置 `idempotency_key_ttl_hours`）内同一用户同一键的重试返回同一张图 */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
             };
             path?: never;
@@ -2390,7 +2390,7 @@ export interface operations {
             200: components["responses"]["Uploaded"];
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description Token 无上传权限,或用户存储配额已满 */
+            /** @description Token 无上传权限，或用户存储配额已满 */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2418,9 +2418,9 @@ export interface operations {
     serveImage: {
         parameters: {
             query?: {
-                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                /** @description 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放 */
                 w?: components["parameters"]["variantWidth"];
-                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                /** @description 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商 */
                 format?: components["parameters"]["variantFormat"];
             };
             header?: {
@@ -2448,9 +2448,9 @@ export interface operations {
     headImage: {
         parameters: {
             query?: {
-                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                /** @description 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放 */
                 w?: components["parameters"]["variantWidth"];
-                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                /** @description 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商 */
                 format?: components["parameters"]["variantFormat"];
             };
             header?: {
@@ -2478,9 +2478,9 @@ export interface operations {
     serveImageByObjectKey: {
         parameters: {
             query?: {
-                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                /** @description 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放 */
                 w?: components["parameters"]["variantWidth"];
-                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                /** @description 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商 */
                 format?: components["parameters"]["variantFormat"];
             };
             header?: {
@@ -2488,7 +2488,7 @@ export interface operations {
                 "If-None-Match"?: components["parameters"]["ifNoneMatch"];
             };
             path: {
-                /** @description 归属用户 id;对象键只在用户内唯一 */
+                /** @description 归属用户 id；对象键只在用户内唯一 */
                 user_id: string;
                 /** @description 客户端自取的对象键 */
                 object_key: string;
@@ -2510,9 +2510,9 @@ export interface operations {
     headImageByObjectKey: {
         parameters: {
             query?: {
-                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                /** @description 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放 */
                 w?: components["parameters"]["variantWidth"];
-                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                /** @description 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商 */
                 format?: components["parameters"]["variantFormat"];
             };
             header?: {
@@ -2520,7 +2520,7 @@ export interface operations {
                 "If-None-Match"?: components["parameters"]["ifNoneMatch"];
             };
             path: {
-                /** @description 归属用户 id;对象键只在用户内唯一 */
+                /** @description 归属用户 id；对象键只在用户内唯一 */
                 user_id: string;
                 /** @description 客户端自取的对象键 */
                 object_key: string;
@@ -2579,7 +2579,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -2615,7 +2615,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -2627,7 +2627,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 已修改,会话已失效 */
+            /** @description 已修改，会话已失效 */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -2695,7 +2695,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -2731,9 +2731,9 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
-                /** @description 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图 */
+                /** @description 客户端幂等键；保留期（运营配置 `idempotency_key_ttl_hours`）内同一用户同一键的重试返回同一张图 */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
             };
             path?: never;
@@ -2744,7 +2744,7 @@ export interface operations {
             200: components["responses"]["Uploaded"];
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description CSRF 校验失败,或用户存储配额已满 */
+            /** @description CSRF 校验失败，或用户存储配额已满 */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2764,9 +2764,9 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
-                /** @description 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图 */
+                /** @description 客户端幂等键；保留期（运营配置 `idempotency_key_ttl_hours`）内同一用户同一键的重试返回同一张图 */
                 "Idempotency-Key"?: components["parameters"]["idempotencyKey"];
             };
             path?: never;
@@ -2777,7 +2777,7 @@ export interface operations {
             200: components["responses"]["Uploaded"];
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
-            /** @description CSRF 校验失败,或用户存储配额已满 */
+            /** @description CSRF 校验失败，或用户存储配额已满 */
             403: {
                 headers: {
                     [name: string]: unknown;
@@ -2805,19 +2805,19 @@ export interface operations {
     listImages: {
         parameters: {
             query?: {
-                /** @description 页码,从 1 起;缺省 1 */
+                /** @description 页码，从 1 起；缺省 1 */
                 page?: components["parameters"]["page"];
-                /** @description 每页条数;缺省 20,上限 100 */
+                /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
                 /** @description 文件名关键词 */
                 search?: string;
-                /** @description 只看指定用户的图;仅管理员生效 */
+                /** @description 只看指定用户的图；仅管理员生效 */
                 user_id?: string;
                 /** @description 只看来自指定 Token 的图 */
                 token_id?: number;
-                /** @description 时间范围下界(闭),UTC 文本 `YYYY-MM-DD HH:MM:SS` */
+                /** @description 时间范围下界（闭），UTC 文本 `YYYY-MM-DD HH:MM:SS` */
                 since?: components["parameters"]["since"];
-                /** @description 时间范围上界(开),UTC 文本 `YYYY-MM-DD HH:MM:SS` */
+                /** @description 时间范围上界（开），UTC 文本 `YYYY-MM-DD HH:MM:SS` */
                 until?: components["parameters"]["until"];
                 /** @description 为 `1` 时只看已清理豁免的图 */
                 exempt?: 1;
@@ -2845,7 +2845,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -2893,7 +2893,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -2920,7 +2920,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -2945,9 +2945,9 @@ export interface operations {
     adminImageBytes: {
         parameters: {
             query?: {
-                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                /** @description 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放 */
                 w?: components["parameters"]["variantWidth"];
-                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                /** @description 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商 */
                 format?: components["parameters"]["variantFormat"];
             };
             header?: {
@@ -2976,11 +2976,11 @@ export interface operations {
     listTokens: {
         parameters: {
             query?: {
-                /** @description 页码,从 1 起;缺省 1 */
+                /** @description 页码，从 1 起；缺省 1 */
                 page?: components["parameters"]["page"];
-                /** @description 每页条数;缺省 20,上限 100 */
+                /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
-                /** @description 查看指定用户的 Token;仅管理员生效 */
+                /** @description 查看指定用户的 Token；仅管理员生效 */
                 user_id?: string;
             };
             header?: never;
@@ -3006,7 +3006,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -3037,7 +3037,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3074,7 +3074,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3102,7 +3102,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3124,7 +3124,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3198,7 +3198,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -3229,7 +3229,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -3260,7 +3260,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3280,7 +3280,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description 渠道名已存在,或试图变更加密属性 */
+            /** @description 渠道名已存在，或试图变更加密属性 */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3294,11 +3294,11 @@ export interface operations {
     deleteChannel: {
         parameters: {
             query?: {
-                /** @description 是否清理本服务写在渠道上的对象;缺省 true */
+                /** @description 是否清理本服务写在渠道上的对象；缺省 true */
                 purge?: boolean;
             };
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3309,14 +3309,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 已标记清理中,对象删完后移除 */
+            /** @description 已标记清理中，对象删完后移除 */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description 已删除,远端对象保留 */
+            /** @description 已删除，远端对象保留 */
             204: {
                 headers: {
                     [name: string]: unknown;
@@ -3394,7 +3394,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description 渠道配置里有 rclone 配置文件无法表达的参数值(含换行、首尾空白等);消息指出远端与参数名,不含参数值 */
+            /** @description 渠道配置里有 rclone 配置文件无法表达的参数值（含换行、首尾空白等）；消息指出远端与参数名，不含参数值 */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -3409,7 +3409,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3431,7 +3431,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -3463,7 +3463,7 @@ export interface operations {
             query: {
                 /** @description 发起授权时得到的一次性标识 */
                 state: string;
-                /** @description 授权码;用户拒绝时缺省 */
+                /** @description 授权码；用户拒绝时缺省 */
                 code?: string;
                 /** @description 授权服务器报告的拒绝原因 */
                 error?: string;
@@ -3474,7 +3474,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 提示页;授权成功与失败都在此页提示,结果由领取接口给出 */
+            /** @description 提示页；授权成功与失败都在此页提示，结果由领取接口给出 */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3556,7 +3556,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -3595,7 +3595,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3636,7 +3636,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3673,7 +3673,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3727,7 +3727,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -3766,7 +3766,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3793,9 +3793,9 @@ export interface operations {
     listDedupCandidates: {
         parameters: {
             query?: {
-                /** @description 页码,从 1 起;缺省 1 */
+                /** @description 页码，从 1 起；缺省 1 */
                 page?: components["parameters"]["page"];
-                /** @description 每页条数;缺省 20,上限 100 */
+                /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
             };
             header?: never;
@@ -3821,7 +3821,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3862,7 +3862,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
@@ -3889,9 +3889,9 @@ export interface operations {
     listCleanup: {
         parameters: {
             query?: {
-                /** @description 页码,从 1 起;缺省 1 */
+                /** @description 页码，从 1 起；缺省 1 */
                 page?: components["parameters"]["page"];
-                /** @description 每页条数;缺省 20,上限 100 */
+                /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
             };
             header?: never;
@@ -3916,19 +3916,19 @@ export interface operations {
     listAudit: {
         parameters: {
             query?: {
-                /** @description 页码,从 1 起;缺省 1 */
+                /** @description 页码，从 1 起；缺省 1 */
                 page?: components["parameters"]["page"];
-                /** @description 每页条数;缺省 20,上限 100 */
+                /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
                 /** @description 操作者用户 id */
                 actor?: string;
-                /** @description 动作标识,形如 `channel.create` */
+                /** @description 动作标识，形如 `channel.create` */
                 action?: string;
-                /** @description 操作目标标识(图片短 ID、渠道 id、Token id 等),精确匹配 */
+                /** @description 操作目标标识（图片短 ID、渠道 id、Token id 等），精确匹配 */
                 target?: string;
-                /** @description 时间范围下界(闭),UTC 文本 `YYYY-MM-DD HH:MM:SS` */
+                /** @description 时间范围下界（闭），UTC 文本 `YYYY-MM-DD HH:MM:SS` */
                 since?: components["parameters"]["since"];
-                /** @description 时间范围上界(开),UTC 文本 `YYYY-MM-DD HH:MM:SS` */
+                /** @description 时间范围上界（开），UTC 文本 `YYYY-MM-DD HH:MM:SS` */
                 until?: components["parameters"]["until"];
             };
             header?: never;
@@ -3955,9 +3955,9 @@ export interface operations {
             query?: {
                 /** @description 为 `all` 时含已恢复的历史 */
                 status?: "all";
-                /** @description 页码,从 1 起;缺省 1 */
+                /** @description 页码，从 1 起；缺省 1 */
                 page?: components["parameters"]["page"];
-                /** @description 每页条数;缺省 20,上限 100 */
+                /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
             };
             header?: never;
@@ -4005,7 +4005,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path?: never;
@@ -4013,7 +4013,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 新快照,已写到每个健康渠道 */
+            /** @description 新快照，已写到每个健康渠道 */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -4024,7 +4024,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description 备份失败:生成快照失败,或有渠道上传、清理旧快照失败;错误里列出失败的渠道与原因,已写成的渠道保留该快照 */
+            /** @description 备份失败：生成快照失败，或有渠道上传、清理旧快照失败；错误里列出失败的渠道与原因，已写成的渠道保留该快照 */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4049,7 +4049,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description 快照名,形如 `imgyoung-20060102-150405.000.db` */
+                /** @description 快照名，形如 `imgyoung-20060102-150405.000.db` */
                 name: components["parameters"]["snapshotName"];
             };
             cookie?: never;
@@ -4077,18 +4077,18 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`;缺失或不匹配返回 403 */
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
                 "X-CSRF-Token": components["parameters"]["csrfToken"];
             };
             path: {
-                /** @description 快照名,形如 `imgyoung-20060102-150405.000.db` */
+                /** @description 快照名，形如 `imgyoung-20060102-150405.000.db` */
                 name: components["parameters"]["snapshotName"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description 已暂存,服务即将停机 */
+            /** @description 已暂存，服务即将停机 */
             202: {
                 headers: {
                     [name: string]: unknown;

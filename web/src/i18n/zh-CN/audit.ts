@@ -1,7 +1,7 @@
 /** 审计日志页:筛选、表格与动作标签。 */
 export const audit = {
   title: '审计日志',
-  subtitle: '管理操作只追加留痕,共 {total} 条',
+  subtitle: '管理操作只追加留痕，共 {total} 条',
   action: '动作',
   allActions: '全部动作',
   actor: '操作者',
@@ -14,7 +14,7 @@ export const audit = {
   clearFilters: '清除筛选',
   time: '时间',
   detail: '详情',
-  actorIdHint: '用户 ID:{id}',
+  actorIdHint: '用户 ID：{id}',
   empty: '没有符合条件的记录',
   actions: {
     'channel.create': '新建渠道',

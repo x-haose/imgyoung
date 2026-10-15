@@ -1,7 +1,7 @@
 /** 设置页文案:运行配置、防盗链、备份与导出、告警历史。 */
 export const settings = {
   title: '设置',
-  description: '运营配置保存即热生效;防盗链、备份与告警历史也在这里。',
+  description: '运营配置保存即热生效；防盗链、备份与告警历史也在这里。',
   tabs: {
     config: '运行配置',
     referer: '防盗链',
@@ -9,18 +9,18 @@ export const settings = {
     alerts: '告警历史',
   },
   config: {
-    hotReload: '保存即热生效,无需重启',
+    hotReload: '保存即热生效，无需重启',
     changes: '{count} 项改动',
     noChanges: '没有改动',
     invalid: '{count} 项不合法',
     revert: '还原',
     save: '保存修改',
-    saved: '已保存 {count} 项修改,即时生效',
+    saved: '已保存 {count} 项修改，即时生效',
     required: '不可为空',
     integer: '需要整数',
     min: '不能小于 {min}',
     max: '不能大于 {max}',
-    widthsInvalid: '宽度档须为正整数,逗号分隔',
+    widthsInvalid: '宽度档须为正整数，逗号分隔',
     formatsRequired: '至少允许一种目标格式',
     urlInvalid: '需要带主机的 http/https 地址',
     edited: '已修改',
@@ -30,24 +30,24 @@ export const settings = {
       lifecycle: { title: '生命周期', hint: '有效期、冷图与清理节奏' },
       process: {
         title: '按需处理',
-        hint: '带处理参数的请求一律经服务代理,redirect 模式下也是;档位白名单化防任意参数打满 CPU',
+        hint: '带处理参数的请求一律经服务代理，redirect 模式下也是；档位白名单化防任意参数打满 CPU',
       },
-      dedup: { title: '查重', hint: '精确重复自动合并,相似图进候选' },
+      dedup: { title: '查重', hint: '精确重复自动合并，相似图进候选' },
       reliability: { title: '可靠性与渠道', hint: '探测、备份与用量' },
       cdn: {
         title: 'CDN 缓存清理',
-        hint: '删除级联的 Cloudflare purge;需同时配置 Zone ID、API Token 与对外站点地址',
+        hint: '删除级联的 Cloudflare purge；需同时配置 Zone ID、API Token 与对外站点地址',
       },
       alerts: { title: '告警与审计', hint: '告警外发与日志保留' },
     },
     fields: {
       access_mode: {
         label: '访问模式',
-        hint: 'proxy 经服务代理回源;redirect 对允许直链的渠道 302,省服务器流量,带处理参数的请求、以及没有可直链渠道持有副本的图仍走代理',
+        hint: 'proxy 经服务代理回源；redirect 对允许直链的渠道 302，省服务器流量，带处理参数的请求、以及没有可直链渠道持有副本的图仍走代理',
       },
       base_url: {
         label: '对外站点地址',
-        hint: '留空按请求域名推导;经反代 / CDN 后对外域名与请求域名不一致时必须配置',
+        hint: '留空按请求域名推导；经反代 / CDN 后对外域名与请求域名不一致时必须配置',
       },
       min_success: {
         label: '最少同步副本',
@@ -60,19 +60,19 @@ export const settings = {
       max_upload_mb: { label: '单图上限', hint: '超过直接拒绝' },
       max_pixels_mp: {
         label: '像素预算',
-        hint: '宽 × 高上限,防超大图打满内存',
+        hint: '宽 × 高上限，防超大图打满内存',
       },
       max_concurrent_uploads: {
         label: '上传并发上限',
-        hint: '全局共享,决定峰值内存',
+        hint: '全局共享，决定峰值内存',
       },
       upload_rate_per_min: {
         label: '上传频率上限',
-        hint: '按用户计;0 表示不启用',
+        hint: '按用户计；0 表示不启用',
       },
       default_ttl_hours: {
         label: '默认有效期',
-        hint: '0 表示永不过期;单次上传与用户级默认可覆盖',
+        hint: '0 表示永不过期；单次上传与用户级默认可覆盖',
       },
       ttl_renew_on_access: {
         label: '访问即续期',
@@ -80,11 +80,11 @@ export const settings = {
       },
       cold_cleanup_days: {
         label: '冷图清理阈值',
-        hint: '超期未被公开访问的图进入待清理裁决;0 表示不启用',
+        hint: '超期未被公开访问的图进入待清理裁决；0 表示不启用',
       },
       delete_grace_minutes: {
         label: '删除宽限',
-        hint: '引用归零到物理删除的等待;0 表示立即',
+        hint: '引用归零到物理删除的等待；0 表示立即',
       },
       cleanup_sweep_seconds: {
         label: '清理扫描间隔',
@@ -96,25 +96,25 @@ export const settings = {
       },
       idempotency_key_ttl_hours: {
         label: '幂等键保留期',
-        hint: '客户端带 Idempotency-Key 重试的有效窗口,超期的键回收',
+        hint: '客户端带 Idempotency-Key 重试的有效窗口，超期的键回收',
       },
       process_widths: {
         label: '宽度档',
-        hint: '允许的 ?w= 取值(像素),逗号分隔;清空表示不允许缩放',
+        hint: '允许的？w= 取值（像素），逗号分隔；清空表示不允许缩放',
       },
       process_formats: {
         label: '目标格式',
-        hint: '允许的 ?format= 取值;gif 只收发原图不处理',
+        hint: '允许的？format= 取值；gif 只收发原图不处理',
       },
       exif_policy: {
         label: 'EXIF 默认档',
-        hint: '单次上传的表单字段可覆盖;S3 上传不受影响,一律按原字节保存',
+        hint: '单次上传的表单字段可覆盖；S3 上传不受影响，一律按原字节保存',
       },
       process_quality_webp: { label: 'WebP 质量档', hint: '0 到 100' },
       process_quality_jpeg: { label: 'JPEG 质量档', hint: '1 到 100' },
       process_webp_method: {
         label: 'WebP 速度权衡',
-        hint: '0 到 6,越大越慢、体积越小',
+        hint: '0 到 6，越大越慢、体积越小',
       },
       process_workers: { label: '处理并发上限', hint: '同时处理的请求数' },
       process_timeout_ms: { label: '处理超时', hint: '超时回退原图' },
@@ -125,7 +125,7 @@ export const settings = {
       dedup_scan_seconds: { label: '查重扫描间隔', hint: '后台扫描节奏' },
       dedup_phash_max_distance: {
         label: '相似判定阈值',
-        hint: '越大越宽松;0 表示不做相似扫描',
+        hint: '越大越宽松；0 表示不做相似扫描',
       },
       health_check_seconds: {
         label: '健康检查间隔',
@@ -137,7 +137,7 @@ export const settings = {
       },
       backup_keep: {
         label: '备份保留份数',
-        hint: '丢失映射即全部不可反查,宁多勿少',
+        hint: '丢失映射即全部不可反查，宁多勿少',
       },
       usage_report_seconds: {
         label: '用量上报间隔',
@@ -145,7 +145,7 @@ export const settings = {
       },
       channel_quota_gb: {
         label: '渠道用量告警阈值',
-        hint: '超过即开启告警;0 表示只上报不告警',
+        hint: '超过即开启告警；0 表示只上报不告警',
       },
       cdn_cloudflare_zone_id: {
         label: 'Cloudflare Zone ID',
@@ -153,15 +153,15 @@ export const settings = {
       },
       cdn_cloudflare_api_token: {
         label: 'Cloudflare API Token',
-        hint: '需 Zone.Cache Purge 权限;加密存储,任何界面不再回显',
+        hint: '需 Zone.Cache Purge 权限；加密存储，任何界面不再回显',
       },
       alert_webhook_url: {
         label: '告警 Webhook 地址',
-        hint: '告警开启与恢复时 POST 一条 JSON;留空不外发',
+        hint: '告警开启与恢复时 POST 一条 JSON；留空不外发',
       },
       audit_retention_days: {
         label: '审计日志保留天数',
-        hint: '超期记录由清理循环回收;0 表示永久保留',
+        hint: '超期记录由清理循环回收；0 表示永久保留',
       },
     },
     placeholders: {
@@ -193,17 +193,17 @@ export const settings = {
         strip: 'strip · 剥离元数据',
       },
     },
-    tokenSet: '已配置,留空保持不变',
+    tokenSet: '已配置，留空保持不变',
     tokenUnset: '未配置',
     purgeEnabled: 'purge 已启用',
     purgeDisabled: 'purge 未启用',
     clearToken: '清除 Token',
-    clearTokenTitle: '清除已配置的 API Token?',
-    clearTokenDesc: '清除后 CDN purge 立即停用,再次启用需重新填写 Token。',
+    clearTokenTitle: '清除已配置的 API Token？',
+    clearTokenDesc: '清除后 CDN purge 立即停用，再次启用需重新填写 Token。',
     tokenCleared: '已清除 Cloudflare API Token',
     bootstrap: {
       title: '引导配置',
-      hint: '环境变量 IMGYOUNG_*,改动需重启进程',
+      hint: '环境变量 IMGYOUNG_*，改动需重启进程',
       listen: '监听地址',
       data_dir: '数据目录',
       trusted_proxies: '信任的反代网段',
@@ -212,47 +212,47 @@ export const settings = {
       commit: '构建提交',
       builtAt: '构建时刻',
       unset: '未设置',
-      trustNone: '空:不采信任何转发头',
-      metricsNone: '空:不对任何地址开放',
+      trustNone: '空：不采信任何转发头',
+      metricsNone: '空：不对任何地址开放',
       builtin: '内置策略',
       loginRate:
-        '登录限速:每个 IP / 用户名突发 {burst} 次,之后每 {seconds} 秒恢复 1 次',
+        '登录限速：每个 IP / 用户名突发 {burst} 次，之后每 {seconds} 秒恢复 1 次',
       reconcile: '副本对账间隔 {seconds} 秒',
     },
   },
   referer: {
     title: '防盗链',
-    desc: '仅命中白名单的 Referer 才能访问公开图片链接(/i/ 与 /o/);规则增删即时生效。',
+    desc: '仅命中白名单的 Referer 才能访问公开图片链接（/i/ 与 /o/）；规则增删即时生效。',
     allowEmpty: '空 Referer 放行',
     allowEmptyHint:
-      '白名单启用时,无 Referer 的直接访问(浏览器地址栏、客户端下载)是否放行',
+      '白名单启用时，无 Referer 的直接访问（浏览器地址栏、客户端下载）是否放行',
     allowEmptySaved: '空 Referer 策略已更新',
     rules: '生效规则',
-    disabled: '未启用防盗链,所有 Referer 均可访问。',
+    disabled: '未启用防盗链，所有 Referer 均可访问。',
     syntax: '裸域 example.com 或子域通配 *.example.com',
     patternPlaceholder: '*.example.com',
     patternInvalid:
-      '规则格式非法:应为裸域(example.com)或子域通配(*.example.com)',
+      '规则格式非法：应为裸域（example.com）或子域通配（*.example.com）',
     add: '添加',
-    added: '规则已添加,即时生效',
+    added: '规则已添加，即时生效',
     remove: '删除规则 {pattern}',
-    removeTitle: '删除规则 {pattern}?',
-    removeDesc: '删除后即时生效,对应 Referer 将按剩余规则执法。',
+    removeTitle: '删除规则 {pattern}？',
+    removeDesc: '删除后即时生效，对应 Referer 将按剩余规则执法。',
     removed: '已删除 {pattern}',
   },
   export: {
     title: '数据导出',
-    desc: '导出全部元数据(用户、渠道、图片、副本分布,凭证脱敏)。图与账本都在渠道里,即便项目停更也能凭此自救。',
+    desc: '导出全部元数据（用户、渠道、图片、副本分布，凭证脱敏）。图与账本都在渠道里，即便项目停更也能凭此自救。',
     keyWarningTitle: '主密钥文件须单独离线备份',
     keyWarningDesc:
-      '主密钥(数据目录下的 master.key)不包含在数据导出与远端快照中;丢失后渠道凭证与加密渠道数据将永久不可恢复,请复制该文件到独立的安全位置。',
+      '主密钥（数据目录下的 master.key）不包含在数据导出与远端快照中；丢失后渠道凭证与加密渠道数据将永久不可恢复，请复制该文件到独立的安全位置。',
     download: '导出 JSON',
   },
   backup: {
     title: '元数据库快照',
-    desc: '按间隔自动备份到每个健康渠道,各渠道各自保留最近几份;这里可立即备份、下载或恢复。',
+    desc: '按间隔自动备份到每个健康渠道，各渠道各自保留最近几份；这里可立即备份、下载或恢复。',
     createNow: '立即备份',
-    created: '已备份:{name}',
+    created: '已备份：{name}',
     name: '快照',
     size: '大小',
     takenAt: '时刻',
@@ -260,17 +260,18 @@ export const settings = {
     download: '下载',
     restore: '恢复',
     empty: '尚无快照',
-    restoreTitle: '用 {name} 恢复元数据库?',
+    restoreTitle: '用 {name} 恢复元数据库？',
     restoreDesc:
-      '快照会先暂存到数据目录,随后服务优雅停机;由 systemd / Docker 等进程管理器重新拉起时换入。没有进程管理器则需手动启动。恢复后现库会以 imgyoung.db.pre-restore-<时刻> 留存,不会丢失。',
+      '快照会先暂存到数据目录，随后服务优雅停机；由 systemd / Docker 等进程管理器重新拉起时换入。没有进程管理器则需手动启动。恢复后现库会以 imgyoung.db.pre-restore-<时刻> 留存，不会丢失。',
     restoreConfirm: '恢复并重启',
     restarting: '服务重启中',
-    restartingDesc: '快照已暂存,正在等待进程被重新拉起;恢复后页面会自动刷新。',
-    restartSlow: '超过一分钟仍未恢复?请检查进程管理器,或手动启动服务。',
+    restartingDesc:
+      '快照已暂存，正在等待进程被重新拉起；恢复后页面会自动刷新。',
+    restartSlow: '超过一分钟仍未恢复？请检查进程管理器，或手动启动服务。',
   },
   alerts: {
     title: '告警历史',
-    desc: '告警由健康检查循环评估,开启与恢复都会记录;配置了 Webhook 时同步外发。',
+    desc: '告警由健康检查循环评估，开启与恢复都会记录；配置了 Webhook 时同步外发。',
     status: '状态',
     open: '未恢复',
     resolved: '已恢复',

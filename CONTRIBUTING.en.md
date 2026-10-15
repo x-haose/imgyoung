@@ -38,6 +38,7 @@ cd web && pnpm dev  # front-end hot reload; /api and image paths are proxied to 
 - Files < 800 lines, functions < 50 lines (test functions excepted), nesting ≤ 4, cognitive complexity ≤ 15, lines ≤ 120 characters; lint enforces all of it.
 - Errors are propagated, never swallowed; no `//nolint` or similar suppression comments: fix the code, and exclude a genuine false positive in `.golangci.yml` by file and rule, with the reason.
 - Only two kinds of tests: pure computation, and tests against a real database / storage / queue. Flows are covered end to end, not with fakes.
+- Chinese punctuation: Markdown documents, OpenAPI descriptions and the UI dictionaries use full-width punctuation; code comments, logs, server-side messages and commit messages use half-width.
 - Front end: all copy goes through the i18n dictionaries (Simplified Chinese is the baseline, English is type-checked against it); route files do not import zod; requests only go through `web/src/lib/api.ts` and server state only through TanStack Query.
 
 ## Commits and pull requests

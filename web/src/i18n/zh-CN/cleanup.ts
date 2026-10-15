@@ -2,9 +2,11 @@
 export const cleanup = {
   title: '待清理',
   subtitleEnabled:
-    '超过 {days} 天无公开访问的图片进入此列表,共 {total} 张;不会自动删除,由你裁决',
-  subtitleDisabled: '超期无公开访问的冷图,共 {total} 张;不会自动删除,由你裁决',
-  disabledNotice: '冷图打标未启用(cold_cleanup_days 为 0),此列表不会有新条目。',
+    '超过 {days} 天无公开访问的图片进入此列表，共 {total} 张；不会自动删除，由你裁决',
+  subtitleDisabled:
+    '超期无公开访问的冷图，共 {total} 张；不会自动删除，由你裁决',
+  disabledNotice:
+    '冷图打标未启用（cold_cleanup_days 为 0），此列表不会有新条目。',
   goSettings: '去设置',
   empty: '暂无待清理的冷图',
   emptyHint: '超过阈值仍无人访问的图片会在这里等你裁决',
@@ -21,22 +23,22 @@ export const cleanup = {
   selected: '已选 {count} 张',
   clearSelection: '清除选择',
   keep: '保留',
-  keepTitle: '保留这张冷图?',
-  keepDesc: '豁免后不再参与冷图打标,可在图片详情中取消。',
-  kept: '已保留,不再参与冷图打标',
+  keepTitle: '保留这张冷图？',
+  keepDesc: '豁免后不再参与冷图打标，可在图片详情中取消。',
+  kept: '已保留，不再参与冷图打标',
   keepSelected: '保留选中的 {count} 张',
-  keepSelectedTitle: '保留选中的 {count} 张图片?',
+  keepSelectedTitle: '保留选中的 {count} 张图片？',
   batchKeepDone: '已保留 {done} 张',
-  batchKeepPartial: '已保留 {done} 张,{failed} 张失败',
+  batchKeepPartial: '已保留 {done} 张，{failed} 张失败',
   delete: '删除',
-  deleteTitle: '删除这张冷图?',
+  deleteTitle: '删除这张冷图？',
   deleteDesc:
-    '删除后外链立即失效,该操作不可恢复;无其他引用的物理文件将在约 {minutes} 分钟后清理。',
+    '删除后外链立即失效，该操作不可恢复；无其他引用的物理文件将在约 {minutes} 分钟后清理。',
   deleteDescNoGrace:
-    '删除后外链立即失效,该操作不可恢复;无其他引用的物理文件将很快清理。',
+    '删除后外链立即失效，该操作不可恢复；无其他引用的物理文件将很快清理。',
   deleted: '已删除',
   deleteSelected: '删除选中的 {count} 张',
-  deleteSelectedTitle: '删除选中的 {count} 张图片?',
+  deleteSelectedTitle: '删除选中的 {count} 张图片？',
   batchDeleteDone: '已删除 {count} 张',
-  batchDeletePartial: '已删除 {deleted} 张,{failed} 张失败:{error}',
+  batchDeletePartial: '已删除 {deleted} 张，{failed} 张失败：{error}',
 }
