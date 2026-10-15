@@ -75,14 +75,14 @@ changelog:
       - '^chore(\(.+\))?:'
 
 # 镜像由上面已构建的二进制组装(Dockerfile.release 只做 COPY),与归档里的二进制完全一致;
-# 预发布版本不打 latest。
+# 预发布版本不打 latest 与大小版本标签,钉这两类标签的用户不会拉到预发布版。
 dockers_v2:
   - id: imgyoung
     images:
       - ghcr.io/x-haose/imgyoung
     tags:
       - "{{ .Version }}"
-      - "{{ .Major }}.{{ .Minor }}"
+      - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
       - "{{ if not .Prerelease }}latest{{ end }}"
     dockerfile: Dockerfile.release
     platforms:
