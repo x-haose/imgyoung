@@ -7,12 +7,16 @@ type TemplatePickerProps = {
   onSelect: (id: string) => void
 }
 
-/** 网格里一张卡片所需的字段;自定义模式不是后端模板,只有这三项。 */
-type PickerItem = Pick<ChannelTemplate, 'id' | 'name' | 'description'>
+/** 网格里一张卡片所需的字段;模板的名称与说明取自词典,自定义模式不是后端模板。 */
+type PickerItem = { id: string; name: string; description: string }
 
 /** 渠道创建的选类型步:按分类分组的品牌徽标网格,自定义模式收在末尾。 */
 export function TemplatePicker({ templates, onSelect }: TemplatePickerProps) {
   const m = useMessages()
+  const toItem = (tpl: ChannelTemplate): PickerItem => ({
+    id: tpl.id,
+    ...m.channelTemplates.templates[tpl.id],
+  })
   const custom: PickerItem = {
     id: CUSTOM,
     name: m.channels.customName,
@@ -27,7 +31,7 @@ export function TemplatePicker({ templates, onSelect }: TemplatePickerProps) {
     items:
       group.key === CUSTOM
         ? [custom]
-        : templates.filter((tpl) => tpl.category === group.key),
+        : templates.filter((tpl) => tpl.category === group.key).map(toItem),
   }))
 
   return (

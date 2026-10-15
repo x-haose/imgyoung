@@ -184,7 +184,7 @@ func TestTemplatesDownloadShape(t *testing.T) {
 			t.Errorf("模板 %q 结构不完整", tpl.ID)
 		}
 		for _, f := range tpl.Fields {
-			if f.Key == "" || f.Label == "" || f.Type == "" {
+			if f.Key == "" || f.Type == "" {
 				t.Errorf("模板 %q 字段不完整: %+v", tpl.ID, f)
 			}
 			if f.Type == FieldSelect && len(f.Options) == 0 {
@@ -307,7 +307,7 @@ func TestOAuthTemplatesKeepClientCredentials(t *testing.T) {
 		inputs := map[string]string{ConfigKeyClientID: appID, ConfigKeyClientSecret: appKey, ConfigKeyToken: authorized}
 		for _, f := range tpl.Fields {
 			if f.Type == FieldSelect {
-				inputs[f.Key] = f.Options[0].Value
+				inputs[f.Key] = f.Options[0]
 			}
 		}
 		_, cfg, err := BuildTemplateConfig(tpl.ID, inputs)

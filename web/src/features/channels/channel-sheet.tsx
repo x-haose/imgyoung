@@ -83,7 +83,9 @@ function SheetBody({ channel, onClose }: SheetBodyProps) {
             ? channel.name
             : typeId === null
               ? m.channels.pickType
-              : (template?.name ?? m.channels.customName)}
+              : template
+                ? m.channelTemplates.templates[template.id].name
+                : m.channels.customName}
         </SheetDescription>
       </SheetHeader>
       <SheetStep

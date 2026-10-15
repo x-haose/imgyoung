@@ -1,6 +1,7 @@
 import type { Messages } from '../zh-CN'
 import { audit } from './audit'
 import { auth } from './auth'
+import { channelTemplates } from './channel-templates'
 import { channels } from './channels'
 import { cleanup } from './cleanup'
 import { common } from './common'
@@ -25,6 +26,7 @@ export const en = {
   images,
   tokens,
   channels,
+  channelTemplates,
   users,
   dedup,
   cleanup,

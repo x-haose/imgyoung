@@ -2,6 +2,7 @@
 import { z } from 'zod'
 import { type Messages, t } from '@/i18n'
 import { type ChannelSource } from './data'
+import { fieldText } from './template-text'
 import {
   type ChannelItem,
   type ChannelTemplate,
@@ -33,10 +34,11 @@ const NAME_MAX_BYTES = 64
 
 /** 校验规则随模板变化:模板必填字段逐个检查,自定义模式检查驱动名与参数键。 */
 export function buildSchema(
-  m: Messages['channels'],
+  messages: Messages,
   template: ChannelTemplate | null,
   encryption: (choice: EncryptChoice) => EncryptionState
 ) {
+  const m = messages.channels
   const priorityMessage = m.priorityRange
   return z
     .object({
@@ -67,7 +69,10 @@ export function buildSchema(
             ctx.addIssue({
               code: 'custom',
               path: ['inputs', f.key],
-              message: t(m.fieldRequired, { label: f.label }),
+              message: t(m.fieldRequired, {
+                label: fieldText(messages.channelTemplates, template.id, f.key)
+                  .label,
+              }),
             })
           }
         }

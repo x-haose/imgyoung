@@ -10,12 +10,16 @@ export type ChannelItem = Schema<'Channel'>
 /** 模板字段的输入类型。 */
 export type FieldType = Schema<'TemplateField'>['type']
 
-export type FieldOption = Schema<'FieldOption'>
+/** 内置模板的标识;模板名与说明按它查词典。 */
+export type TemplateId = Schema<'ChannelTemplateID'>
 
-/** 模板的一个用户输入字段;标签与提示由后端下发。 */
+/** 模板字段的标识;字段文案按模板 id 与它查词典。 */
+export type FieldKey = Schema<'TemplateFieldKey'>
+
+/** 模板的一个用户输入字段;只含结构,显示文案在词典里。 */
 export type TemplateField = Schema<'TemplateField'>
 
-/** 渠道模板(后端下发,不含 provider 等预设参数)。 */
+/** 渠道模板(后端下发,不含 provider 等预设参数,也不含显示文案)。 */
 export type ChannelTemplate = Schema<'ChannelTemplate'>
 
 /** 单渠道配置的编辑视图;敏感值已替换为哨兵。 */

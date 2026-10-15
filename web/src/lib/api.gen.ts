@@ -532,7 +532,7 @@ export interface paths {
         };
         /**
          * 渠道模板清单
-         * @description 内置厂商模板:预填 rclone 后端与固定参数,只暴露必要字段;前端据此渲染表单。仅管理员。
+         * @description 内置厂商模板:预填 rclone 后端与固定参数,只暴露必要字段;只下发结构(模板 id、字段 key 与类型、选项值),模板名、字段标签、说明与选项显示名由前端词典按这些键提供。仅管理员。
          */
         get: operations["channelTemplates"];
         put?: never;
@@ -1535,29 +1535,33 @@ export interface components {
                 error: string;
             }[];
         };
-        FieldOption: {
-            /** @description 展示名 */
-            label: string;
-            /** @description 实际值 */
-            value: string;
-        };
-        /** @description 模板的一个用户输入字段;标签与提示由服务端下发 */
+        /**
+         * @description 内置渠道模板的标识;模板名与说明由前端按它查词典
+         * @enum {string}
+         */
+        ChannelTemplateID: "aws-s3" | "r2" | "cos" | "oss" | "b2" | "minio" | "s3-compatible" | "webdav" | "onedrive" | "googledrive" | "dropbox" | "pcloud" | "box" | "yandex";
+        /**
+         * @description 模板字段的标识,即请求里 `inputs` 的键;字段标签、占位示例与帮助说明由前端按模板 id 与它查词典
+         * @enum {string}
+         */
+        TemplateFieldKey: "access_key_id" | "secret_access_key" | "region" | "bucket" | "public_base_url" | "account_id" | "endpoint" | "url" | "vendor" | "user" | "pass" | "client_id" | "client_secret" | "token" | "path" | "hostname";
+        /**
+         * @description select 字段的可选值,即写入渠道配置的值(rclone 参数取值);显示名由前端按它查词典,各字段的取值互不重复
+         * @enum {string}
+         */
+        TemplateOptionValue: "us-east-1" | "us-east-2" | "us-west-1" | "us-west-2" | "eu-west-1" | "eu-central-1" | "ap-southeast-1" | "ap-northeast-1" | "ap-east-1" | "ap-southeast-2" | "ap-beijing" | "ap-shanghai" | "ap-guangzhou" | "ap-chengdu" | "ap-nanjing" | "ap-hongkong" | "ap-singapore" | "ap-tokyo" | "na-siliconvalley" | "eu-frankfurt" | "oss-cn-hangzhou" | "oss-cn-shanghai" | "oss-cn-beijing" | "oss-cn-zhangjiakou" | "oss-cn-shenzhen" | "oss-cn-guangzhou" | "oss-cn-hongkong" | "oss-ap-southeast-1" | "oss-ap-northeast-1" | "oss-us-west-1" | "oss-eu-central-1" | "nextcloud" | "owncloud" | "infinitescale" | "sharepoint" | "sharepoint-ntlm" | "fastmail" | "rclone" | "other" | "global" | "us" | "de" | "cn" | "api.pcloud.com" | "eapi.pcloud.com";
+        /** @description 模板的一个用户输入字段,只含结构;显示文案由前端词典提供 */
         TemplateField: {
-            key: string;
-            label: string;
+            key: components["schemas"]["TemplateFieldKey"];
             /** @enum {string} */
             type: "text" | "password" | "select" | "oauth";
             required: boolean;
-            placeholder?: string;
-            help?: string;
-            /** @description select 字段的选项 */
-            options?: components["schemas"]["FieldOption"][];
+            /** @description select 字段的可选值,按展示顺序 */
+            options?: components["schemas"]["TemplateOptionValue"][];
         };
-        /** @description 渠道模板;不含 provider 等预设参数 */
+        /** @description 渠道模板,只含结构;不含 provider 等预设参数,也不含显示文案 */
         ChannelTemplate: {
-            id: string;
-            name: string;
-            description: string;
+            id: components["schemas"]["ChannelTemplateID"];
             /** @description rclone 后端名 */
             driver: string;
             /** @enum {string} */

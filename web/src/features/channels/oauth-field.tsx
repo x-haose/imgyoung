@@ -147,7 +147,9 @@ export function OAuthField({
             {waiting ? <Loader2 className='animate-spin' /> : <ExternalLink />}
             {waiting
               ? m.channels.oauthWaiting
-              : t(m.channels.oauthGo, { name: template.name })}
+              : t(m.channels.oauthGo, {
+                  name: m.channelTemplates.templates[template.id].name,
+                })}
           </Button>
           {waiting && (
             <Button type='button' variant='ghost' onClick={cancel}>

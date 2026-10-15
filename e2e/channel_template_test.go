@@ -10,7 +10,9 @@ import (
 	"testing"
 )
 
-// TestChannelTemplatesDownload 模板清单 API 下发全部内置模板,且不泄露 provider 预设。
+// TestChannelTemplatesDownload 模板清单 API 下发全部内置模板,只含结构:不泄露 provider 预设,
+// 也不带显示文案(模板名、字段标签与选项显示名由前端词典提供);模板 id、字段 key 与选项值
+// 是否都在接口文档的枚举里,由契约校验核对。
 func TestChannelTemplatesDownload(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
@@ -25,15 +27,11 @@ func TestChannelTemplatesDownload(t *testing.T) {
 	var lr struct {
 		Items []struct {
 			ID     string `json:"id"`
-			Name   string `json:"name"`
 			Driver string `json:"driver"`
 			Fields []struct {
-				Key     string `json:"key"`
-				Type    string `json:"type"`
-				Options []struct {
-					Label string `json:"label"`
-					Value string `json:"value"`
-				} `json:"options"`
+				Key     string   `json:"key"`
+				Type    string   `json:"type"`
+				Options []string `json:"options"`
 			} `json:"fields"`
 		} `json:"items"`
 		Total int64 `json:"total"`
@@ -49,7 +47,12 @@ func TestChannelTemplatesDownload(t *testing.T) {
 	if bytes.Contains(raw, []byte("provider")) || bytes.Contains(raw, []byte("endpointPattern")) {
 		t.Fatalf("模板清单泄露了内部预设字段: %s", raw)
 	}
-	// AWS 模板应有 region 下拉且带中英选项。
+	for _, text := range []string{`"name"`, `"label"`, `"help"`, `"placeholder"`, `"description"`} {
+		if bytes.Contains(raw, []byte(text)) {
+			t.Fatalf("模板清单带了显示文案 %s: %s", text, raw)
+		}
+	}
+	// AWS 模板应有 region 下拉,选项即区域代码。
 	var awsRegionOpts int
 	for _, it := range lr.Items {
 		if it.ID != "aws-s3" {

@@ -2,6 +2,7 @@ import { getCookie, setCookie } from '@/lib/cookies'
 import { type Messages, zhCN } from './zh-CN'
 
 export type { Messages }
+export type { FieldText } from './zh-CN/channel-templates'
 
 /** 支持的界面语言;简体中文为词典基准。 */
 export const locales = ['zh-CN', 'en'] as const

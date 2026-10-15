@@ -102,7 +102,7 @@ export function ChannelForm({
     return choice === 'inherit' && inheritEncrypted ? 'inherited' : 'plain'
   }
   const form = useForm<FormValues>({
-    resolver: zodResolver(buildSchema(m.channels, template, encryption)),
+    resolver: zodResolver(buildSchema(m, template, encryption)),
     defaultValues: defaultValues(template, channel, prefill),
   })
   const configRows = useFieldArray({ control: form.control, name: 'config' })
@@ -454,6 +454,9 @@ function TypeHeader({
   onBack?: () => void
 }) {
   const m = useMessages()
+  const text = template
+    ? m.channelTemplates.templates[template.id]
+    : { name: m.channels.customName, description: m.channels.customDesc }
   return (
     <div className='flex items-center gap-3'>
       {onBack && (
@@ -470,11 +473,9 @@ function TypeHeader({
       )}
       <TypeBadge id={template?.id ?? CUSTOM} />
       <div className='min-w-0'>
-        <p className='truncate text-sm font-medium'>
-          {template?.name ?? m.channels.customName}
-        </p>
+        <p className='truncate text-sm font-medium'>{text.name}</p>
         <p className='truncate text-xs text-muted-foreground'>
-          {template?.description ?? m.channels.customDesc}
+          {text.description}
         </p>
       </div>
     </div>

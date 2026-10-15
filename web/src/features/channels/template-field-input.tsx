@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select'
 import { PasswordInput } from '@/components/password-input'
 import { OAuthField } from './oauth-field'
+import { fieldText } from './template-text'
 import { type ChannelTemplate, type TemplateField } from './types'
 
 type TemplateFieldInputProps = {
@@ -40,17 +41,18 @@ export function TemplateFieldInput({
   disabled,
 }: TemplateFieldInputProps) {
   const m = useMessages()
+  const text = fieldText(m.channelTemplates, template.id, f.key)
   const masked = f.type === 'password' || kept
   const help =
     kept && f.type !== 'oauth'
-      ? [f.help, m.channels.secretKeepHint].filter(Boolean).join(';')
-      : f.help
+      ? [text.help, m.channels.secretKeepHint].filter(Boolean).join(';')
+      : text.help
   return (
     <FormField
       name={`inputs.${f.key}`}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{f.label}</FormLabel>
+          <FormLabel>{text.label}</FormLabel>
           {f.type === 'oauth' ? (
             <OAuthField
               template={template}
@@ -69,9 +71,12 @@ export function TemplateFieldInput({
                 </SelectTrigger>
               </FormControl>
               <SelectContent>
-                {f.options?.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
+                {f.options?.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {m.channelTemplates.options[value]}
+                    <span className='font-mono text-xs text-muted-foreground'>
+                      {value}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -79,7 +84,7 @@ export function TemplateFieldInput({
           ) : masked ? (
             <FormControl>
               <PasswordInput
-                placeholder={f.placeholder}
+                placeholder={text.placeholder}
                 autoComplete='off'
                 {...field}
                 value={field.value ?? ''}
@@ -88,7 +93,7 @@ export function TemplateFieldInput({
           ) : (
             <FormControl>
               <Input
-                placeholder={f.placeholder}
+                placeholder={text.placeholder}
                 {...field}
                 value={field.value ?? ''}
               />
