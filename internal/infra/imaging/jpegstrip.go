@@ -101,7 +101,9 @@ func truncateAtEOI(tail []byte) []byte {
 // StripJPEGMetadata 移除 JPEG 中的全部元数据段与 EOI 后的尾部附加数据,
 // 返回新的字节切片(不修改输入)。
 // @Description: 纯段级字节操作,不解码、无损、零像素改动。
-// 剥离范围见 isMetadataSegment(APPn 白名单 + COM);熵编码数据原样保留;
+// 剥离范围见 isMetadataSegment(APPn 白名单 + COM);熵编码数据原样保留。
+// 唯一例外是 EXIF 方向:像素不旋转,丢了它手机竖拍的照片会横着显示,故原图带非默认方向时
+// 补回一个只含 Orientation 的最小 Exif 段,其余 EXIF 字段(GPS、机型、时间等)照删。
 // 已知边界:渐进式 JPEG 多次扫描之间的段不扫描(极少携带元数据)。
 // @param data 完整的 JPEG 字节
 // @return 剥离后的 JPEG 字节
@@ -112,6 +114,9 @@ func StripJPEGMetadata(data []byte) ([]byte, error) {
 	}
 	out := make([]byte, 0, len(data))
 	out = append(out, data[:2]...)
+	if o := jpegOrientation(data); o != orientationNormal {
+		out = append(out, orientationSegment(o)...)
+	}
 	for i := 2; ; {
 		seg, err := nextJPEGSegment(data, i)
 		if err != nil {
@@ -132,3 +137,23 @@ func StripJPEGMetadata(data []byte) ([]byte, error) {
 		i = seg.end
 	}
 }
+
+// orientationSegment 构造只含 IFD0 Orientation 一条记录的最小 APP1/Exif 段(大端 TIFF)。
+// @Description: 段长 36 字节:标记(2)+ 长度(2)+ "Exif\0\0"(6)+ TIFF 头(8)+ 记录数(2)
+// + 一条记录(12)+ 下一 IFD 偏移(4)。紧跟 SOI 放置,解码器与浏览器都会读到。
+// @param o EXIF 方向值[2,8]
+// @return 完整的段字节
+func orientationSegment(o int) []byte {
+	seg := make([]byte, 0, 36)
+	seg = append(seg, 0xFF, markerAPP1, 0, 34)
+	seg = append(seg, exifPrefix...)
+	seg = append(seg, 'M', 'M', 0, 0x2A, 0, 0, 0, tiffHeaderLen)
+	seg = append(seg, 0, 1)
+	seg = binary.BigEndian.AppendUint16(seg, exifOrientationTag)
+	seg = append(seg, 0, 3, 0, 0, 0, 1)        // 类型 SHORT,个数 1
+	seg = append(seg, 0, orientationValues[o]) // 值(大端 SHORT)
+	return append(seg, 0, 0, 0, 0, 0, 0)       // 值字段余下 2 字节 + 下一 IFD 偏移 0
+}
+
+// orientationValues 方向值到字节的对照;方向值来自 readOrientation,恒在 [1,8],越界即程序错误。
+var orientationValues = [9]byte{0, 1, 2, 3, 4, 5, 6, 7, 8}

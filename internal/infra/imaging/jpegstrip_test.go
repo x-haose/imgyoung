@@ -193,3 +193,41 @@ func TestStripJPEGMetadataRejectsMalformed(t *testing.T) {
 		})
 	}
 }
+
+// exifWithOrientation 构造带方向与一段伪 GPS 数据的 Exif 段负载:方向记录之后跟着一个可识别的哨兵串。
+func exifWithOrientation(o uint16) []byte {
+	payload := append([]byte("Exif\x00\x00"), tiffOrientation(o)...)
+	payload = binary.LittleEndian.AppendUint32(payload, 0) // 下一 IFD 偏移
+	return append(payload, []byte("GPS-SENTINEL")...)
+}
+
+// TestStripJPEGMetadataKeepsOrientation 验证剥离后非默认方向仍在、其余 EXIF 数据不在,
+// 默认方向不补段,且结果可解码、再剥一次不变。
+func TestStripJPEGMetadataKeepsOrientation(t *testing.T) {
+	jpg := spliceSegment(t, encodeJPEG(t), 0xE1, exifWithOrientation(6))
+	got, err := StripJPEGMetadata(jpg)
+	if err != nil {
+		t.Fatalf("StripJPEGMetadata 返回错误: %v", err)
+	}
+	if o := jpegOrientation(got); o != 6 {
+		t.Fatalf("剥离后方向 = %d, 期望 6", o)
+	}
+	if bytes.Contains(got, []byte("GPS-SENTINEL")) {
+		t.Fatal("方向之外的 EXIF 数据未被剥离")
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(got)); err != nil {
+		t.Fatalf("剥离后无法解码: %v", err)
+	}
+	again, err := StripJPEGMetadata(got)
+	if err != nil || !bytes.Equal(again, got) {
+		t.Fatalf("再剥一次结果变化(err=%v)", err)
+	}
+
+	normal, err := StripJPEGMetadata(spliceSegment(t, encodeJPEG(t), 0xE1, exifWithOrientation(1)))
+	if err != nil {
+		t.Fatalf("StripJPEGMetadata 返回错误: %v", err)
+	}
+	if hasSegment(t, normal, 0xE1) {
+		t.Fatal("默认方向不应补 Exif 段")
+	}
+}
