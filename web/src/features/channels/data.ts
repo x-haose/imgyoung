@@ -83,11 +83,13 @@ export const testChannel = (body: ChannelTestBody) =>
 export const checkChannel = (id: number) =>
   api.post<ChannelItem>(`/api/admin/channels/${id}/check`)
 
-/** 下载渠道的 rclone 配置文件;文件头注释的语言随当前界面语言。 */
-export function downloadRcloneConfig(id: number) {
-  return api.download(`/api/admin/channels/${id}/rclone-config`, {
-    lang: getLocale(),
-  })
+/** 下载渠道的 rclone 配置文件;文件头注释的语言随当前界面语言。signal 中止即放弃这次下载。 */
+export function downloadRcloneConfig(id: number, signal: AbortSignal) {
+  return api.download(
+    `/api/admin/channels/${id}/rclone-config`,
+    { lang: getLocale() },
+    signal
+  )
 }
 
 /** purge 为真时渠道先转为清理中,对象删完才移除;为假时立即移除、远端对象保留。 */

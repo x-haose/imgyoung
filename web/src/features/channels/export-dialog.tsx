@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { t } from '@/i18n'
 import {
@@ -7,6 +8,7 @@ import {
   Server,
   TriangleAlert,
 } from 'lucide-react'
+import { isAbort, toastError } from '@/lib/errors'
 import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -26,7 +28,10 @@ type ExportConfigDialogProps = {
   onClose: () => void
 }
 
-/** 导出渠道的 rclone 配置:先说明文件里有什么、该怎么保管,确认后下载;下载成功才关闭,失败留在对话框里重试。 */
+/**
+ * 导出渠道的 rclone 配置:先说明文件里有什么、该怎么保管,确认后下载;下载成功才关闭,失败留在对话框里重试。
+ * 关闭对话框即中止进行中的下载:对话框换给另一个渠道后,上一个渠道的下载不会再保存文件或关掉它。
+ */
 export function ExportConfigDialog({
   channel,
   onClose,
@@ -34,12 +39,24 @@ export function ExportConfigDialog({
   const m = useMessages()
   const c = m.channels
   const encrypted = channel?.encrypted === true
+  const pending = useRef<AbortController | null>(null)
   const dl = useMutation({
-    mutationFn: downloadRcloneConfig,
+    mutationFn: (id: number) => {
+      const ctl = new AbortController()
+      pending.current = ctl
+      return downloadRcloneConfig(id, ctl.signal)
+    },
     onSuccess: onClose,
+    onError: (err) => {
+      if (!isAbort(err)) toastError(err)
+    },
   })
+  const close = () => {
+    pending.current?.abort()
+    onClose()
+  }
   return (
-    <Dialog open={channel !== null} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={channel !== null} onOpenChange={(open) => !open && close()}>
       <DialogContent className='sm:max-w-md'>
         <DialogHeader>
           <DialogTitle>{c.exportConfigTitle}</DialogTitle>
@@ -64,7 +81,7 @@ export function ExportConfigDialog({
           <AlertDescription>{c.exportConfigWarnDesc}</AlertDescription>
         </Alert>
         <DialogFooter>
-          <Button variant='outline' onClick={onClose}>
+          <Button variant='outline' onClick={close}>
             {m.common.cancel}
           </Button>
           {channel && (

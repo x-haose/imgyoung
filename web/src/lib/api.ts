@@ -83,6 +83,8 @@ async function rawFetch(
   try {
     return await fetch(path, { ...init, headers, credentials: 'same-origin' })
   } catch (err) {
+    // 调用方主动中止不是网络故障,原样抛出 AbortError 由调用方识别。
+    if (init?.signal?.aborted) throw err
     throw new ApiError(0, messages().common.networkError, { cause: err })
   }
 }
@@ -172,13 +174,15 @@ export async function apiFetch<T>(
 /**
  * 下载附件:整个响应体取回成功后才交给浏览器保存,失败(错误响应、传输中断)抛 ApiError 由界面提示,
  * 不会把错误响应或残缺的内容存成文件。文件名取响应头 Content-Disposition。
+ * signal 中止时抛 AbortError(见 isAbort),什么也不保存。
  */
-async function download(path: string): Promise<void> {
-  const resp = await request(path)
+async function download(path: string, signal?: AbortSignal): Promise<void> {
+  const resp = await request(path, { signal })
   let blob: Blob
   try {
     blob = await resp.blob()
   } catch (err) {
+    if (signal?.aborted) throw err
     throw new ApiError(0, messages().common.networkError, { cause: err })
   }
   const url = URL.createObjectURL(blob)
@@ -238,9 +242,12 @@ export const api = {
   /** 表单上传:Content-Type 连同 boundary 由浏览器自设。 */
   form: <T>(path: string, body: FormData) =>
     apiFetch<T>(path, { method: 'POST', body }),
-  /** 下载附件,取回成功后才交给浏览器保存;失败抛 ApiError。 */
-  download: (path: string, params?: Record<string, QueryValue>) =>
-    download(withQuery(path, params)),
+  /** 下载附件,取回成功后才交给浏览器保存;失败抛 ApiError,signal 中止时抛 AbortError。 */
+  download: (
+    path: string,
+    params?: Record<string, QueryValue>,
+    signal?: AbortSignal
+  ) => download(withQuery(path, params), signal),
 }
 
 /** 后端列表统一信封;total 为过滤后的总条数,供分页。 */
