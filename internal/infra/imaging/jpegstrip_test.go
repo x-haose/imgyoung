@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"image"
 	"image/jpeg"
+	"slices"
 	"testing"
 )
 
@@ -127,7 +128,7 @@ func TestStripJPEGMetadataKeepsPixels(t *testing.T) {
 // 比 EXIF 更大,strip 必须一并截断。
 func TestStripJPEGMetadataDropsTrailingData(t *testing.T) {
 	jpg := encodeJPEG(t)
-	withTrailer := append(append([]byte{}, jpg...), []byte("EMBEDDED-MP4-DATA-0123456789")...)
+	withTrailer := slices.Concat(jpg, []byte("EMBEDDED-MP4-DATA-0123456789"))
 
 	got, err := StripJPEGMetadata(withTrailer)
 	if err != nil {

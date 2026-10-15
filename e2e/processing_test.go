@@ -13,6 +13,7 @@ import (
 	"image/jpeg"
 	"io"
 	"net/http"
+	"slices"
 	"testing"
 )
 
@@ -203,9 +204,7 @@ func procJPEG(w, h, orient int) []byte {
 	seg := []byte{0xFF, 0xE1}
 	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
-	out := append([]byte{}, data[:2]...)
-	out = append(out, seg...)
-	return append(out, data[2:]...)
+	return slices.Concat(data[:2], seg, data[2:])
 }
 
 func procGIF(w, h, frames int) []byte {

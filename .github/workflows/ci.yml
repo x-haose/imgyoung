@@ -39,7 +39,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.4
+          version: v2.14.0
       - name: Tidy
         run: go mod tidy -diff
       # runner 自带 shellcheck;安装脚本按 POSIX sh 检查,dash / busybox 下也要能跑

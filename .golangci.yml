@@ -90,6 +90,10 @@ linters:
         # purge / degraded 这类布尔参数是领域事实,不是控制耦合
         - name: flag-parameter
           disabled: true
+        # if-init 把 err 的作用域限定在这次判断内,是全仓库统一的写法;参数是结构体字面量时 init 必然跨行,
+        # 把调用提到 if 之前会让 err 进入外层作用域,与同一函数里其他调用的 err 混用
+        - name: multiline-if-init
+          disabled: true
         - name: cognitive-complexity
           arguments: [15]
         - name: line-length-limit
@@ -132,6 +136,11 @@ linters:
       - path: internal/core/channel/oauth\.go$
         linters: [gosec]
         text: "G117"
+      # 会话 cookie 恒设 HttpOnly 与 SameSite=Lax;Secure 按客户端到站点的第一跳是否 HTTPS 决定——
+      # 纯 HTTP 部署时浏览器不保存 Secure cookie,恒设会让这类部署无法登录
+      - path: internal/http/adminapi/auth\.go$
+        linters: [gosec]
+        text: "G124"
 
 formatters:
   enable:

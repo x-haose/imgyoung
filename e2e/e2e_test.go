@@ -297,9 +297,7 @@ func jpegWithEXIF(t *testing.T) []byte {
 	seg := []byte{0xFF, 0xE1}
 	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
-	out := append([]byte{}, jpg[:2]...)
-	out = append(out, seg...)
-	return append(out, jpg[2:]...)
+	return slices.Concat(jpg[:2], seg, jpg[2:])
 }
 
 // upload 发起一次上传。

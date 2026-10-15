@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -77,10 +78,7 @@ func jpegWithEXIF(t *testing.T) []byte {
 	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
 
-	out := append([]byte{}, jpg[:2]...)
-	out = append(out, seg...)
-	out = append(out, jpg[2:]...)
-	return out
+	return slices.Concat(jpg[:2], seg, jpg[2:])
 }
 
 // fetchStored 按 imageID 取出渠道内的实际存储字节。
