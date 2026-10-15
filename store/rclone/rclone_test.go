@@ -2,6 +2,7 @@ package rclone
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/cache"
 	"github.com/rclone/rclone/fs/config/obscure"
 	"github.com/rclone/rclone/fs/fspath"
@@ -306,5 +308,38 @@ func TestObscureSecrets(t *testing.T) {
 
 	if err := ObscureSecrets("没有这个后端", map[string]string{}); err == nil {
 		t.Error("未知后端应报错")
+	}
+}
+
+// TestPutSetsContentType 验证写入时按内容嗅探出的 Content-Type 交给后端(内存后端会保存它),
+// 且嗅探读过的开头字节不丢。
+func TestPutSetsContentType(t *testing.T) {
+	ctx := t.Context()
+	d, err := Open(ctx, Options{Backend: "memory", Path: "content-type"})
+	if err != nil {
+		t.Fatalf("打开内存驱动: %v", err)
+	}
+	t.Cleanup(func() { _ = d.Close(context.Background()) })
+
+	payload := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 1024)...)
+	if err := d.Put(ctx, "no-extension", bytes.NewReader(payload), int64(len(payload))); err != nil {
+		t.Fatalf("写入: %v", err)
+	}
+	obj, err := d.f.NewObject(ctx, "no-extension")
+	if err != nil {
+		t.Fatalf("查找对象: %v", err)
+	}
+	typer, ok := obj.(fs.MimeTyper)
+	if !ok || typer.MimeType(ctx) != "image/png" {
+		t.Fatalf("对象类型未按内容设置(ok=%v)", ok)
+	}
+	rc, err := d.Open(ctx, "no-extension")
+	if err != nil {
+		t.Fatalf("读回: %v", err)
+	}
+	got, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("读回字节不一致(err=%v)", err)
 	}
 }

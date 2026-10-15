@@ -5,6 +5,7 @@
 package rclone
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/http"
 	"sync"
 	"time"
 
@@ -241,10 +243,21 @@ func (d *Driver) EnsureBucket(ctx context.Context) error {
 	return nil
 }
 
+// sniffLen 内容类型嗅探读取的开头字节数(net/http.DetectContentType 只看前 512 字节)。
+const sniffLen = 512
+
 // Put 将 r 中的 size 个字节流式写入 key。
+// @Description: 按内容开头嗅探 Content-Type(net/http.DetectContentType,WHATWG 嗅探算法)一并交给后端。
+// 对象键未必带扩展名,不给类型时对象存储会存成 application/octet-stream,浏览器直接打开公开链接就变成下载。
 func (d *Driver) Put(ctx context.Context, key string, r io.Reader, size int64) error {
-	src := object.NewStaticObjectInfo(key, time.Now(), size, true, nil, nil)
-	if _, err := d.f.Put(ctx, r, src); err != nil {
+	br := bufio.NewReaderSize(r, sniffLen)
+	head, err := br.Peek(sniffLen)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("读取对象 %q 开头: %w", key, err)
+	}
+	src := object.NewStaticObjectInfo(key, time.Now(), size, true, nil, nil).
+		WithMimeType(http.DetectContentType(head))
+	if _, err := d.f.Put(ctx, br, src); err != nil {
 		return fmt.Errorf("写入对象 %q: %w", key, err)
 	}
 	return nil
