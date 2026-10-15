@@ -1,6 +1,6 @@
 ---
 title: 一行安装脚本
-description: 在 Linux 与 macOS 上下载发布版、校验 sha256 并装入 PATH;Linux 上可同时注册 systemd 服务。重复执行即升级。
+description: 在 Linux 与 macOS 上下载发布版、校验 sha256 并装入 PATH；Linux 上可同时注册 systemd 服务。重复执行即升级。
 ---
 
 ## 用法
@@ -9,7 +9,7 @@ description: 在 Linux 与 macOS 上下载发布版、校验 sha256 并装入 PA
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
 ```
 
-选项经 `sh -s --` 传给脚本:
+选项经 `sh -s --` 传给脚本：
 
 ```bash title="终端"
 # 装成 systemd 服务并启动(仅 Linux,需要 root)
@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh -s -- --version 1.0.0
 ```
 
-想先读一遍脚本再执行:
+想先读一遍脚本再执行：
 
 ```bash title="终端"
 curl -fsSLo install.sh https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh
@@ -27,50 +27,50 @@ less install.sh
 sudo sh install.sh --service
 ```
 
-脚本需要 `curl`、`tar`、`install`,以及 `sha256sum` 或 `shasum` 之一;`--service` 还需要 `systemctl`。
+脚本需要 `curl`、`tar`、`install`，以及 `sha256sum` 或 `shasum` 之一；`--service` 还需要 `systemctl`。
 
 ## 选项与环境变量
 
 | 选项 | 默认 | 说明 |
 |---|---|---|
-| `--version X.Y.Z` | 最新正式版 | 安装指定版本,前缀 `v` 可带可不带 |
-| `--dir DIR` | root 为 `/usr/local/bin`,其他用户为 `~/.local/bin` | 二进制安装目录,不存在时创建,必须可写;与 `--service` 同用时须为绝对路径,且不在 `/home`、`/root`、`/run/user` 下 |
-| `--service` | 不安装 | 仅 Linux,需要 root:同时安装并启动 systemd 服务 `imgyoung`,数据在 `/var/lib/imgyoung` |
+| `--version X.Y.Z` | 最新正式版 | 安装指定版本，前缀 `v` 可带可不带 |
+| `--dir DIR` | root 为 `/usr/local/bin`，其他用户为 `~/.local/bin` | 二进制安装目录，不存在时创建，必须可写；与 `--service` 同用时须为绝对路径，且不在 `/home`、`/root`、`/run/user` 下 |
+| `--service` | 不安装 | 仅 Linux，需要 root：同时安装并启动 systemd 服务 `imgyoung`，数据在 `/var/lib/imgyoung` |
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
-| `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | 发布页地址。用镜像站或内网分发时设置,目录结构须与 GitHub Releases 一致,见下文「镜像站与内网分发」 |
+| `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | 发布页地址。用镜像站或内网分发时设置，目录结构须与 GitHub Releases 一致，见下文「镜像站与内网分发」 |
 
-传入未知选项或格式不对的版本号,脚本当场报错退出,不做任何改动。
+传入未知选项或格式不对的版本号，脚本当场报错退出，不做任何改动。
 
 ## 脚本做了什么
 
-1. **检查前提**。确认 `curl`、`tar`、`install` 存在;带 `--service` 时再确认系统是 Linux、以 root 运行、有 `systemctl`,且指定的 `--dir` 是家目录之外的绝对路径。不满足就在下载之前退出,不动系统。
-2. **识别平台**。`uname -s` 为 Linux 或 Darwin,`uname -m` 为 x86_64 / amd64 或 aarch64 / arm64;其他系统或架构直接报错(Windows 请用 [发布包](./binary.mdx))。
-3. **确定版本**。没给 `--version` 时请求 `<发布页>/latest`,跟随跳转,取最终地址的最后一段作为版本标签;GitHub 的 latest 不含预发布版。
-4. **下载并校验**。在临时目录下载 `imgyoung_<版本号>_<系统>_<架构>.tar.gz` 与同版本的 `checksums.txt`,核对 sha256;不一致即中止,不安装任何东西。临时目录在脚本退出时删除。
-5. **安装二进制**。以 0755 权限装到目标目录的 `imgyoung`,并打印它的版本信息。
-6. **安装服务**(仅 `--service`)。把发布包里的 `deploy/imgyoung.service` 写到 `/etc/systemd/system/imgyoung.service`,其中 `ExecStart` 换成实际安装路径,与原有文件内容不同时给出提示;执行 `systemctl daemon-reload` 并 enable。服务已在运行就重启以换上新版本,否则启动。
-7. **提示下一步**。目标目录不在 `PATH` 中时提醒;打印登录地址与出厂账号。
+1. **检查前提**。确认 `curl`、`tar`、`install` 存在；带 `--service` 时再确认系统是 Linux、以 root 运行、有 `systemctl`，且指定的 `--dir` 是家目录之外的绝对路径。不满足就在下载之前退出，不动系统。
+2. **识别平台**。`uname -s` 为 Linux 或 Darwin，`uname -m` 为 x86_64 / amd64 或 aarch64 / arm64；其他系统或架构直接报错（Windows 请用 [发布包](./binary.mdx)）。
+3. **确定版本**。没给 `--version` 时请求 `<发布页>/latest`，跟随跳转，取最终地址的最后一段作为版本标签；GitHub 的 latest 不含预发布版。
+4. **下载并校验**。在临时目录下载 `imgyoung_<版本号>_<系统>_<架构>.tar.gz` 与同版本的 `checksums.txt`，核对 sha256；不一致即中止，不安装任何东西。临时目录在脚本退出时删除。
+5. **安装二进制**。以 0755 权限装到目标目录的 `imgyoung`，并打印它的版本信息。
+6. **安装服务**（仅 `--service`）。把发布包里的 `deploy/imgyoung.service` 写到 `/etc/systemd/system/imgyoung.service`，其中 `ExecStart` 换成实际安装路径，与原有文件内容不同时给出提示；执行 `systemctl daemon-reload` 并 enable。服务已在运行就重启以换上新版本，否则启动。
+7. **提示下一步**。目标目录不在 `PATH` 中时提醒；打印登录地址与出厂账号。
 
-没加 `--service` 时,脚本只安装二进制,不会启动它。直接运行 `imgyoung` 即可,数据写在当前目录的 `data/`(可用 `IMGYOUNG_DATA_DIR` 指定)。长期运行请交给进程管理器,原因见 [安装方式](./index.mdx)。
+没加 `--service` 时，脚本只安装二进制，不会启动它。直接运行 `imgyoung` 即可，数据写在当前目录的 `data/`（可用 `IMGYOUNG_DATA_DIR` 指定）。长期运行请交给进程管理器，原因见 [安装方式](./index.mdx)。
 
 ## systemd 服务
 
-`--service` 安装的就是仓库里的这份示例,只改了 `ExecStart`:
+`--service` 安装的就是仓库里的这份示例，只改了 `ExecStart`：
 
 <include cwd lang="ini" meta='title="deploy/imgyoung.service"'>../deploy/imgyoung.service</include>
 
-几个关键设置:
+几个关键设置：
 
-- **数据目录**。`IMGYOUNG_DATA_DIR=%S/imgyoung` 即 `/var/lib/imgyoung`,由 `StateDirectory=imgyoung` 让 systemd 创建并交给运行用户。启用 `DynamicUser` 时实际目录是 `/var/lib/private/imgyoung`,`/var/lib/imgyoung` 是指向它的符号链接。里面是 `imgyoung.db`、`master.key`、local 渠道的 `blobs/` 与衍生图缓存 `variants/`。
-- **DynamicUser=yes**。每次启动由 systemd 分配一个临时系统用户来运行,不需要预先建用户。配合 `ProtectSystem=strict`、`ProtectHome=yes` 等沙箱设置,进程只能写自己的数据目录:local 渠道的路径改到别处时,要用 `ReadWritePaths=` 放开那个目录;二进制也不能装在 `/home` 或 `/root` 下,否则服务启动不了,脚本遇到这种 `--dir` 会直接拒绝。
-- **Restart=always**。后台「恢复」快照会让服务正常退出,systemd 3 秒后重新拉起,启动时在开库前换入快照。`Restart=on-failure` 不会拉起正常退出的进程,恢复要等到有人手动启动服务才完成。
-- **TimeoutStopSec=15s**。停止时先停收新请求,在途请求最多等 6 秒(超时强制断开);再取消后台循环与在途补齐任务,最多等 2 秒;然后关库退出。合计约 8 秒,15 秒留出余量。被取消的补齐任务在下次启动时由对账重新入队。
-- **UMask=0077**。新建的文件(包括 `master.key`)只有运行用户可读写。
-- **RCLONE_CONFIG=**(置空)。渠道参数由 ImgYoung 直接交给 rclone,不读 rclone 的配置文件。
+- **数据目录**。`IMGYOUNG_DATA_DIR=%S/imgyoung` 即 `/var/lib/imgyoung`，由 `StateDirectory=imgyoung` 让 systemd 创建并交给运行用户。启用 `DynamicUser` 时实际目录是 `/var/lib/private/imgyoung`，`/var/lib/imgyoung` 是指向它的符号链接。里面是 `imgyoung.db`、`master.key`、local 渠道的 `blobs/` 与衍生图缓存 `variants/`。
+- **DynamicUser=yes**。每次启动由 systemd 分配一个临时系统用户来运行，不需要预先建用户。配合 `ProtectSystem=strict`、`ProtectHome=yes` 等沙箱设置，进程只能写自己的数据目录：local 渠道的路径改到别处时，要用 `ReadWritePaths=` 放开那个目录；二进制也不能装在 `/home` 或 `/root` 下，否则服务启动不了，脚本遇到这种 `--dir` 会直接拒绝。
+- **Restart=always**。后台「恢复」快照会让服务正常退出，systemd 3 秒后重新拉起，启动时在开库前换入快照。`Restart=on-failure` 不会拉起正常退出的进程，恢复要等到有人手动启动服务才完成。
+- **TimeoutStopSec=15s**。停止时先停收新请求，在途请求最多等 6 秒（超时强制断开）；再取消后台循环与在途补齐任务，最多等 2 秒；然后关库退出。合计约 8 秒，15 秒留出余量。被取消的补齐任务在下次启动时由对账重新入队。
+- **UMask=0077**。新建的文件（包括 `master.key`）只有运行用户可读写。
+- **RCLONE_CONFIG=**（置空）。渠道参数由 ImgYoung 直接交给 rclone，不读 rclone 的配置文件。
 
-常用命令:
+常用命令：
 
 ```bash title="终端"
 systemctl status imgyoung        # 运行状态
@@ -80,13 +80,13 @@ sudo systemctl restart imgyoung  # 改了环境变量后重启生效
 
 ### 修改服务配置
 
-带 `--service` 重跑脚本时,`/etc/systemd/system/imgyoung.service` 会被发布包里的版本整个覆盖,内容有变化时脚本会提示。本地的改动不要写进这个文件,写进 drop-in:
+带 `--service` 重跑脚本时，`/etc/systemd/system/imgyoung.service` 会被发布包里的版本整个覆盖，内容有变化时脚本会提示。本地的改动不要写进这个文件，写进 drop-in：
 
 ```bash title="终端"
 sudo systemctl edit imgyoung
 ```
 
-在打开的编辑器里写入要覆盖的设置,例如只经本机反向代理对外时改成只监听回环:
+在打开的编辑器里写入要覆盖的设置，例如只经本机反向代理对外时改成只监听回环：
 
 ```ini title="/etc/systemd/system/imgyoung.service.d/override.conf"
 [Service]
@@ -97,18 +97,18 @@ Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
 
 ## 升级
 
-重新执行安装时的同一条命令:
+重新执行安装时的同一条命令：
 
-- 加过 `--service`:替换二进制、重写服务文件,并重启服务换上新版本。升级时必须同样带上 `--service`,否则只换了磁盘上的文件,运行中的仍是旧版本。
-- 没加 `--service`:只替换二进制,自己重启进程。
+- 加过 `--service`：替换二进制、重写服务文件，并重启服务换上新版本。升级时必须同样带上 `--service`，否则只换了磁盘上的文件，运行中的仍是旧版本。
+- 没加 `--service`：只替换二进制，自己重启进程。
 
-要停在某个版本,用 `--version`。数据库结构在新版本启动时自动迁移。
+要停在某个版本，用 `--version`。数据库结构在新版本启动时自动迁移。
 
-`--version` 也能装回旧版本,但不能借此降级:被新版本迁移过的数据库,旧版本会拒绝启动,并在错误里写明库里与二进制各自的最新迁移版本。回滚只能用旧版本加升级前的快照,步骤与升级前的准备见 [升级](../operations/upgrade.mdx)。
+`--version` 也能装回旧版本，但不能借此降级：被新版本迁移过的数据库，旧版本会拒绝启动，并在错误里写明库里与二进制各自的最新迁移版本。回滚只能用旧版本加升级前的快照，步骤与升级前的准备见 [升级](../operations/upgrade.mdx)。
 
 ## 卸载
 
-装了服务时:
+装了服务时：
 
 ```bash title="终端"
 sudo systemctl disable --now imgyoung
@@ -118,24 +118,24 @@ sudo systemctl daemon-reload
 sudo rm /usr/local/bin/imgyoung
 ```
 
-数据目录不会随之删除。确认已经不需要其中的图片、数据库与 `master.key` 之后再删:
+数据目录不会随之删除。确认已经不需要其中的图片、数据库与 `master.key` 之后再删：
 
 ```bash title="终端"
 sudo rm -rf /var/lib/private/imgyoung /var/lib/imgyoung
 ```
 
-只装了二进制时,删除二进制(默认 `~/.local/bin/imgyoung` 或 `/usr/local/bin/imgyoung`),再按需删除运行时用过的数据目录。
+只装了二进制时，删除二进制（默认 `~/.local/bin/imgyoung` 或 `/usr/local/bin/imgyoung`），再按需删除运行时用过的数据目录。
 
 ## 镜像站与内网分发
 
-访问 GitHub 不便时,把发布物放到镜像站或内网服务器,用 `IMGYOUNG_RELEASES` 指过去。环境变量要给执行脚本的 `sh`,不是给 `curl`:
+访问 GitHub 不便时，把发布物放到镜像站或内网服务器，用 `IMGYOUNG_RELEASES` 指过去。环境变量要给执行脚本的 `sh`，不是给 `curl`：
 
 ```bash title="终端"
 curl -fsSL https://mirror.example.com/imgyoung/install.sh \
   | sudo IMGYOUNG_RELEASES=https://mirror.example.com/imgyoung/releases sh -s -- --service
 ```
 
-`install.sh` 本身也要能从那里取到。镜像站的目录须与 GitHub Releases 一致:
+`install.sh` 本身也要能从那里取到。镜像站的目录须与 GitHub Releases 一致：
 
 ```text
 <IMGYOUNG_RELEASES>/latest                                   跳转到 .../tag/vX.Y.Z
@@ -143,4 +143,4 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 <IMGYOUNG_RELEASES>/download/vX.Y.Z/checksums.txt
 ```
 
-`/latest` 只在不指定 `--version` 时用到:脚本跟随跳转,把最终地址的最后一段当作版本号,它必须以 `v` 加数字开头。镜像站做不到这种跳转时,安装与升级都显式带上 `--version`。
+`/latest` 只在不指定 `--version` 时用到：脚本跟随跳转，把最终地址的最后一段当作版本号，它必须以 `v` 加数字开头。镜像站做不到这种跳转时，安装与升级都显式带上 `--version`。

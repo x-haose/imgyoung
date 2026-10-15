@@ -1,22 +1,22 @@
 ---
 title: 发布包
-description: 下载对应平台的发布包,校验 sha256 后直接运行;适合 Windows 与不便执行安装脚本的环境。
+description: 下载对应平台的发布包，校验 sha256 后直接运行；适合 Windows 与不便执行安装脚本的环境。
 ---
 
 ## 选择发布包
 
-到 [发布页](https://github.com/x-haose/imgyoung/releases) 下载对应平台的压缩包。文件名里的版本号不带 `v`(如 `1.0.0`),下载路径里的标签带 `v`(如 `v1.0.0`):
+到 [发布页](https://github.com/x-haose/imgyoung/releases) 下载对应平台的压缩包。文件名里的版本号不带 `v`（如 `1.0.0`），下载路径里的标签带 `v`（如 `v1.0.0`）：
 
 | 系统 | amd64 | arm64 |
 |---|---|---|
 | Linux | `imgyoung_<版本号>_linux_amd64.tar.gz` | `imgyoung_<版本号>_linux_arm64.tar.gz` |
-| macOS | `imgyoung_<版本号>_darwin_amd64.tar.gz`(Intel) | `imgyoung_<版本号>_darwin_arm64.tar.gz`(Apple 芯片) |
+| macOS | `imgyoung_<版本号>_darwin_amd64.tar.gz`（Intel）| `imgyoung_<版本号>_darwin_arm64.tar.gz`（Apple 芯片）|
 | Windows | `imgyoung_<版本号>_windows_amd64.zip` | `imgyoung_<版本号>_windows_arm64.zip` |
 
-同目录的 `checksums.txt` 列出每个包的 sha256。包里的内容:
+同目录的 `checksums.txt` 列出每个包的 sha256。包里的内容：
 
 <Files>
-  <File name="imgyoung(Windows 为 imgyoung.exe)" />
+  <File name="imgyoung（Windows 为 imgyoung.exe）" />
   <File name="LICENSE" />
   <File name="README.md、README.en.md" />
   <Folder name="deploy" defaultOpen>
@@ -30,11 +30,11 @@ description: 下载对应平台的发布包,校验 sha256 后直接运行;适合
   </Folder>
 </Files>
 
-`deploy/` 是 Docker Compose、反向代理与 systemd 的示例配置,`web/licenses/` 是管理后台所用第三方代码的许可证。二进制不依赖其他文件,可以单独拷走。
+`deploy/` 是 Docker Compose、反向代理与 systemd 的示例配置，`web/licenses/` 是管理后台所用第三方代码的许可证。二进制不依赖其他文件，可以单独拷走。
 
 ## 下载与校验
 
-以 1.0.0 为例,换成你要装的版本与架构:
+以 1.0.0 为例，换成你要装的版本与架构：
 
 <Tabs items={['Linux', 'macOS', 'Windows']}>
 <Tab value="Linux">
@@ -62,7 +62,7 @@ grep " $FILE\$" checksums.txt | shasum -a 256 -c -
 tar -xzf "$FILE"
 ```
 
-二进制没有开发者签名,也没有经过 Apple 公证。用 `curl` 下载的文件不带隔离属性,可以直接运行;用浏览器下载的包解压后,先去掉隔离属性,否则系统会拦下:
+二进制没有开发者签名，也没有经过 Apple 公证。用 `curl` 下载的文件不带隔离属性，可以直接运行；用浏览器下载的包解压后，先去掉隔离属性，否则系统会拦下：
 
 ```bash title="终端"
 xattr -d com.apple.quarantine imgyoung
@@ -89,7 +89,7 @@ Expand-Archive $File -DestinationPath imgyoung
 </Tab>
 </Tabs>
 
-校验通过时,Linux 与 macOS 输出 `<文件名>: OK`,PowerShell 不报错;不一致就不要使用这个包,重新下载。
+校验通过时，Linux 与 macOS 输出 `<文件名>: OK`，PowerShell 不报错；不一致就不要使用这个包，重新下载。
 
 ## 运行
 
@@ -111,9 +111,9 @@ cd imgyoung
 </Tab>
 </Tabs>
 
-浏览器打开 `http://<主机>:8721/`,用 `admin` / `imgyoung123` 登录,首次登录会要求立即改密。`Ctrl+C` 优雅停机。
+浏览器打开 `http://<主机>:8721/`，用 `admin` / `imgyoung123` 登录，首次登录会要求立即改密。`Ctrl+C` 优雅停机。
 
-- **数据目录**默认是**启动时当前目录**下的 `data/`,不是二进制所在的目录;换个目录启动就会得到一个全新的空实例。用 `IMGYOUNG_DATA_DIR` 固定位置:
+- **数据目录**默认是**启动时当前目录**下的 `data/`，不是二进制所在的目录；换个目录启动就会得到一个全新的空实例。用 `IMGYOUNG_DATA_DIR` 固定位置：
 
   ```bash
   IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
@@ -123,16 +123,16 @@ cd imgyoung
   $env:IMGYOUNG_DATA_DIR = "D:\imgyoung-data"; .\imgyoung.exe
   ```
 
-- **监听地址**默认 `:8721`,即所有网卡;只给本机反向代理用时设 `IMGYOUNG_LISTEN=127.0.0.1:8721`。其他环境变量见 [配置](../configuration.mdx)。
-- **查看版本**:`./imgyoung -version`。这是唯一的命令行参数,其余配置都走环境变量与后台。
+- **监听地址**默认 `:8721`，即所有网卡；只给本机反向代理用时设 `IMGYOUNG_LISTEN=127.0.0.1:8721`。其他环境变量见 [配置](../configuration.mdx)。
+- **查看版本**：`./imgyoung -version`。这是唯一的命令行参数，其余配置都走环境变量与后台。
 
-Windows 上首次运行时,防火墙可能询问是否允许 `imgyoung.exe` 访问网络;只在本机使用可以不放行。
+Windows 上首次运行时，防火墙可能询问是否允许 `imgyoung.exe` 访问网络；只在本机使用可以不放行。
 
 ## 交给进程管理器托管
 
-长期运行不要只开在一个终端里。进程管理器负责开机启动、崩溃后拉起;另外,后台「设置 → 备份与导出」里的「恢复」会让服务主动正常退出,靠进程管理器重新拉起时换入快照,没有它恢复就要手动启动才能完成。进程管理器要配置成**进程退出后总是重启**,包括正常退出。
+长期运行不要只开在一个终端里。进程管理器负责开机启动、崩溃后拉起；另外，后台「设置 → 备份与导出」里的「恢复」会让服务主动正常退出，靠进程管理器重新拉起时换入快照，没有它恢复就要手动启动才能完成。进程管理器要配置成**进程退出后总是重启**，包括正常退出。
 
-- **Linux**:用包里的 systemd 示例,效果与 [一行安装脚本](./script.mdx) 的 `--service` 相同,数据在 `/var/lib/imgyoung`,各项设置的含义也见那一页:
+- **Linux**：用包里的 systemd 示例，效果与 [一行安装脚本](./script.mdx) 的 `--service` 相同，数据在 `/var/lib/imgyoung`，各项设置的含义也见那一页：
 
   ```bash title="终端"
   sudo install -m 0755 imgyoung /usr/local/bin/imgyoung
@@ -141,9 +141,9 @@ Windows 上首次运行时,防火墙可能询问是否允许 `imgyoung.exe` 访�
   sudo systemctl enable --now imgyoung
   ```
 
-- **macOS**:可以写一个 launchd 服务,或者改用 [Docker](./docker.mdx)。
-- **Windows**:用 WinSW、NSSM 等工具把 `imgyoung.exe` 注册为 Windows 服务,设置好工作目录或 `IMGYOUNG_DATA_DIR`,以及退出后重启。
+- **macOS**：可以写一个 launchd 服务，或者改用 [Docker](./docker.mdx)。
+- **Windows**：用 WinSW、NSSM 等工具把 `imgyoung.exe` 注册为 Windows 服务，设置好工作目录或 `IMGYOUNG_DATA_DIR`，以及退出后重启。
 
 ## 升级
 
-下载新版本的包并校验,停止服务,用新的二进制替换旧的,再启动。数据目录不用动,数据库结构在新版本启动时自动迁移。换回旧的二进制不能降级:旧版本遇到被新版本迁移过的数据库会拒绝启动,回滚要用旧版本加升级前的快照。升级前建议先在后台「设置 → 备份与导出」点「立即备份」,回滚步骤与更多注意事项见 [升级](../operations/upgrade.mdx)。
+下载新版本的包并校验，停止服务，用新的二进制替换旧的，再启动。数据目录不用动，数据库结构在新版本启动时自动迁移。换回旧的二进制不能降级：旧版本遇到被新版本迁移过的数据库会拒绝启动，回滚要用旧版本加升级前的快照。升级前建议先在后台「设置 → 备份与导出」点「立即备份」，回滚步骤与更多注意事项见 [升级](../operations/upgrade.mdx)。

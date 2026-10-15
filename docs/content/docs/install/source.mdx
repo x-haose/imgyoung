@@ -1,6 +1,6 @@
 ---
 title: 源码构建
-description: 从源码构建带管理后台的单二进制,以及构建参数背后的原因。
+description: 从源码构建带管理后台的单二进制，以及构建参数背后的原因。
 ---
 
 ## 前置工具
@@ -9,11 +9,11 @@ description: 从源码构建带管理后台的单二进制,以及构建参数背
 |---|---|---|
 | Go | `go.mod` 里 `go` 指令声明的版本或更新 | 编译服务端 |
 | Node.js | 22 | 构建管理后台前端 |
-| pnpm | `web/package.json` 的 `packageManager` 字段;执行 `corepack enable` 后自动使用该版本 | 前端依赖与构建 |
-| [Task](https://taskfile.dev) | 3 | 构建入口,`task --list` 列出全部任务 |
-| Git | 任意 | 获取源码;构建时 Go 工具链从 Git 信息推导版本号 |
+| pnpm | `web/package.json` 的 `packageManager` 字段；执行 `corepack enable` 后自动使用该版本 | 前端依赖与构建 |
+| [Task](https://taskfile.dev) | 3 | 构建入口，`task --list` 列出全部任务 |
+| Git | 任意 | 获取源码；构建时 Go 工具链从 Git 信息推导版本号 |
 
-只构建、不改代码的话,这些就够了。参与开发所需的 lint 等工具见仓库的 [CONTRIBUTING.md](https://github.com/x-haose/imgyoung/blob/main/CONTRIBUTING.md)。
+只构建、不改代码的话，这些就够了。参与开发所需的 lint 等工具见仓库的 [CONTRIBUTING.md](https://github.com/x-haose/imgyoung/blob/main/CONTRIBUTING.md)。
 
 ## 构建与运行
 
@@ -24,15 +24,15 @@ task build
 ./imgyoung
 ```
 
-`task build` 先构建前端(在 `web/` 里执行 `pnpm install --frozen-lockfile` 与 `pnpm build`,产物落到 `web/dist`),再编译出仓库根目录下的 `imgyoung`。`task run` 等于构建后直接运行。
+`task build` 先构建前端（在 `web/` 里执行 `pnpm install --frozen-lockfile` 与 `pnpm build`，产物落到 `web/dist`），再编译出仓库根目录下的 `imgyoung`。`task run` 等于构建后直接运行。
 
-浏览器打开 `http://localhost:8721/`,用 `admin` / `imgyoung123` 登录。数据写在当前目录的 `data/`,与 [发布包](./binary.mdx) 相同,托管与升级方式也一样。
+浏览器打开 `http://localhost:8721/`，用 `admin` / `imgyoung123` 登录。数据写在当前目录的 `data/`，与 [发布包](./binary.mdx) 相同，托管与升级方式也一样。
 
-`./imgyoung -version` 显示的版本号由 Go 工具链从 Git 推导:检出在某个标签上时就是该标签,否则是伪版本;工作区有未提交的改动时带 dirty 标记。构建时刻由发布流水线与 `Dockerfile` 写入,`task build` 构建的二进制里为空。
+`./imgyoung -version` 显示的版本号由 Go 工具链从 Git 推导：检出在某个标签上时就是该标签，否则是伪版本；工作区有未提交的改动时带 dirty 标记。构建时刻由发布流水线与 `Dockerfile` 写入，`task build` 构建的二进制里为空。
 
 ## 构建参数
 
-Taskfile 在顶层设置了两个环境变量,`task build`、`task run` 等构建任务都在这组条件下进行(只有 `task test` 的竞争检测在 Linux / Windows 上会打开 cgo):
+Taskfile 在顶层设置了两个环境变量，`task build`、`task run` 等构建任务都在这组条件下进行（只有 `task test` 的竞争检测在 Linux / Windows 上会打开 cgo）：
 
 ```yaml title="Taskfile.yml(节选)"
 env:
@@ -40,38 +40,38 @@ env:
   GOFLAGS: -tags=nodynamic
 ```
 
-不用 Task 时,等价的手动步骤是:
+不用 Task 时，等价的手动步骤是：
 
 ```bash title="终端"
 (cd web && pnpm install --frozen-lockfile && pnpm build)
 CGO_ENABLED=0 go build -trimpath -tags nodynamic -o imgyoung ./cmd/imgyoung
 ```
 
-- **`CGO_ENABLED=0`**:全程纯 Go。SQLite 驱动、图像编解码都是纯 Go 或 WASM 实现,不需要 C 工具链;Linux 产物不依赖 libc,可以直接交叉编译(如加上 `GOOS=linux GOARCH=arm64`),也能放进 distroless/static 这类没有 libc 的最小镜像。
-- **`-tags nodynamic`**:WebP 编解码库默认会在运行时尝试加载系统里的 libwebp 共享库,这会让 Linux 二进制依赖系统的动态链接器,在 distroless/static 等最小镜像里根本启动不了。加上这个标签后只用内置的 WASM 实现,产物是真正的静态二进制,行为也不随主机是否装了 libwebp 而变化。
-- **`-trimpath`**:去掉二进制里的本机源码路径。
+- **`CGO_ENABLED=0`**：全程纯 Go。SQLite 驱动、图像编解码都是纯 Go 或 WASM 实现，不需要 C 工具链；Linux 产物不依赖 libc，可以直接交叉编译（如加上 `GOOS=linux GOARCH=arm64`），也能放进 distroless/static 这类没有 libc 的最小镜像。
+- **`-tags nodynamic`**：WebP 编解码库默认会在运行时尝试加载系统里的 libwebp 共享库，这会让 Linux 二进制依赖系统的动态链接器，在 distroless/static 等最小镜像里根本启动不了。加上这个标签后只用内置的 WASM 实现，产物是真正的静态二进制，行为也不随主机是否装了 libwebp 而变化。
+- **`-trimpath`**：去掉二进制里的本机源码路径。
 
-发布流水线(`.goreleaser.yaml`)与镜像构建(`Dockerfile`)用的是同一组参数。
+发布流水线（`.goreleaser.yaml`）与镜像构建（`Dockerfile`）用的是同一组参数。
 
 ## 先构建前端
 
-管理后台的前端产物通过 `go:embed` 编进二进制,但产物不入库,仓库里的 `web/dist` 只有一个占位文件。跳过前端直接 `go build`,编译照样成功、接口也都正常,但没有后台页面:访问 `/` 返回 404,启动日志里会有一条告警:
+管理后台的前端产物通过 `go:embed` 编进二进制，但产物不入库，仓库里的 `web/dist` 只有一个占位文件。跳过前端直接 `go build`，编译照样成功、接口也都正常，但没有后台页面：访问 `/` 返回 404，启动日志里会有一条告警：
 
 ```text
 level=WARN msg="前端产物缺少 index.html,后台页面不可用(API 不受影响)"
 ```
 
-看到它就先执行 `task web`(或上面的 `pnpm` 两步)再重新编译。这也是 ImgYoung 不提供 `go install` 安装方式的原因。
+看到它就先执行 `task web`（或上面的 `pnpm` 两步）再重新编译。这也是 ImgYoung 不提供 `go install` 安装方式的原因。
 
 ## 用 Docker 构建镜像
 
-只有 Docker、没有 Go 与 Node.js 时,可以用仓库根目录的多阶段 `Dockerfile` 构建,前端与 Go 都在构建容器里编译:
+只有 Docker、没有 Go 与 Node.js 时，可以用仓库根目录的多阶段 `Dockerfile` 构建，前端与 Go 都在构建容器里编译：
 
 ```bash title="终端"
 task docker
 ```
 
-它等价于下面的命令,得到本地镜像 `imgyoung:dev`:
+它等价于下面的命令，得到本地镜像 `imgyoung:dev`：
 
 ```bash title="终端"
 docker build \
@@ -80,4 +80,4 @@ docker build \
   -t imgyoung:dev .
 ```
 
-构建上下文不含 `.git`,版本号与提交只能经 `--build-arg` 传入,不传时版本显示为 `devel`。镜像的用法与发布镜像相同,见 [Docker 镜像](./docker.mdx)。
+构建上下文不含 `.git`，版本号与提交只能经 `--build-arg` 传入，不传时版本显示为 `devel`。镜像的用法与发布镜像相同，见 [Docker 镜像](./docker.mdx)。

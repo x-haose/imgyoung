@@ -6,7 +6,7 @@ import { REPO_URL } from '@/lib/site'
 /** 页脚文案。 */
 const TEXT: Record<Language, Record<string, string>> = {
   zh: {
-    tagline: '多渠道主备容灾的自部署图床。单二进制,Docker 一行起。',
+    tagline: '多渠道主备容灾的自部署图床。单二进制，Docker 一行起。',
     docs: '文档',
     quickStart: '快速开始',
     install: '安装',

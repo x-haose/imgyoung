@@ -1,35 +1,35 @@
 ---
 title: 接口参考
-description: ImgYoung HTTP 接口的认证方式、错误格式与通用约定;各分组的接口详情由 OpenAPI 文档生成。
+description: ImgYoung HTTP 接口的认证方式、错误格式与通用约定；各分组的接口详情由 OpenAPI 文档生成。
 ---
 
 ## 接口文档从哪里来
 
-仓库里的 `api/openapi.yaml`(OpenAPI 3.1)是 ImgYoung 对外 HTTP 接口的唯一依据。本节各分组页由它生成;
-端到端测试用它核对每条 `/api/`、`/healthz` 与 `/i/` 响应的状态码与响应体;管理后台的前端类型也由它生成。
+仓库里的 `api/openapi.yaml`（OpenAPI 3.1）是 ImgYoung 对外 HTTP 接口的唯一依据。本节各分组页由它生成；
+端到端测试用它核对每条 `/api/`、`/healthz` 与 `/i/` 响应的状态码与响应体；管理后台的前端类型也由它生成。
 
-这份文档编译进了二进制,运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本,可以直接导入 Swagger UI、
-Scalar 或各类代码生成器:
+这份文档编译进了二进制，运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本，可以直接导入 Swagger UI、
+Scalar 或各类代码生成器：
 
 ```bash title="终端"
 curl -o openapi.yaml https://img.example.com/api/openapi.yaml
 ```
 
-S3 协议面(`/s3/…`)按 AWS S3 规范实现,使用 XML 错误体,不在本参考内;用法见 [上传客户端](../guides/clients.mdx)。
+S3 协议面（`/s3/…`）按 AWS S3 规范实现，使用 XML 错误体，不在本参考内；用法见 [上传客户端](../guides/clients.mdx)。
 
 ## 认证
 
-认证面只有两个,凭证互不通用:
+认证面只有两个，凭证互不通用：
 
 | | 数据面 | 管理后台 |
 |---|---|---|
 | 路径 | `POST /api/upload`、`POST /api/upload/url` | `/api/admin/…` |
-| 凭证 | 上传 Token,放在 `Authorization: Bearer <token>` 头 | 会话 cookie `imgyoung_session`;状态变更请求另带 `X-CSRF-Token` 头 |
-| 获取方式 | 在管理后台「上传 Token」页签发,明文只显示一次 | `POST /api/admin/auth/login` |
-| 认证失败 | 401:Token 无效、已过期或已吊销 | 401:未登录或会话已过期 |
-| 权限不足 | 403:Token 没有上传权限 | 403:CSRF 令牌缺失或不匹配;仍为出厂默认密码;需要管理员权限 |
+| 凭证 | 上传 Token，放在 `Authorization: Bearer <token>` 头 | 会话 cookie `imgyoung_session`；状态变更请求另带 `X-CSRF-Token` 头 |
+| 获取方式 | 在管理后台「上传 Token」页签发，明文只显示一次 | `POST /api/admin/auth/login` |
+| 认证失败 | 401：Token 无效、已过期或已吊销 | 401：未登录或会话已过期 |
+| 权限不足 | 403：Token 没有上传权限 | 403：CSRF 令牌缺失或不匹配；仍为出厂默认密码；需要管理员权限 |
 
-上传 Token 形如 `imgy_…`,只授权数据面,管理后台的接口一律不接受它。图片访问入口(`/i/…`、`/o/…`)与 `/healthz`、
+上传 Token 形如 `imgy_…`，只授权数据面，管理后台的接口一律不接受它。图片访问入口（`/i/…`、`/o/…`）与 `/healthz`、
 `/api/openapi.yaml` 不需要认证。
 
 ### 会话与 CSRF 令牌
@@ -37,19 +37,19 @@ S3 协议面(`/s3/…`)按 AWS S3 规范实现,使用 XML 错误体,不在本参
 <Steps>
 <Step>
 
-**登录**:`POST /api/admin/auth/login`,请求体 `{"name": "<登录名>", "password": "<密码>"}`。
-成功后响应设置会话 cookie,响应体为 `{"user": {…}, "csrf_token": "…"}`。
+**登录**：`POST /api/admin/auth/login`，请求体 `{"name": "<登录名>", "password": "<密码>"}`。
+成功后响应设置会话 cookie，响应体为 `{"user": {…}, "csrf_token": "…"}`。
 
 </Step>
 <Step>
 
-**调用接口**:每个请求都带上 cookie。`GET`、`HEAD`、`OPTIONS` 只需 cookie;其余方法还要以 `X-CSRF-Token` 头回传
-登录时拿到的 `csrf_token`,缺失或不匹配返回 403。
+**调用接口**：每个请求都带上 cookie。`GET`、`HEAD`、`OPTIONS` 只需 cookie；其余方法还要以 `X-CSRF-Token` 头回传
+登录时拿到的 `csrf_token`，缺失或不匹配返回 403。
 
 </Step>
 <Step>
 
-**恢复登录态**:页面刷新等丢失了 `csrf_token` 时,`GET /api/admin/me` 会返回当前用户与同一个 `csrf_token`。
+**恢复登录态**：页面刷新等丢失了 `csrf_token` 时，`GET /api/admin/me` 会返回当前用户与同一个 `csrf_token`。
 
 </Step>
 </Steps>
@@ -68,73 +68,73 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
   https://img.example.com/api/admin/auth/logout
 ```
 
-会话的细节:
+会话的细节：
 
-- cookie 带 `HttpOnly` 与 `SameSite=Lax`;请求经 HTTPS 到达时(直接 TLS,或受信任的反向代理以 `X-Forwarded-Proto` 告知)另带 `Secure`。
-- 会话有效期 30 天,从登录时刻算起,不随使用顺延;到期后须重新登录。
-- 修改密码后,该用户的全部会话失效。
+- cookie 带 `HttpOnly` 与 `SameSite=Lax`；请求经 HTTPS 到达时（直接 TLS，或受信任的反向代理以 `X-Forwarded-Proto` 告知）另带 `Secure`。
+- 会话有效期 30 天，从登录时刻算起，不随使用顺延；到期后须重新登录。
+- 修改密码后，该用户的全部会话失效。
 - 登录尝试过于频繁时返回 429。
-- 账号仍是出厂默认密码时,会话只能用三个接口:退出(`POST /api/admin/auth/logout`)、查看自己(`GET /api/admin/me`,
-  其中 `must_change_password` 为 true)与改密(`PUT /api/admin/me/password`)。其余后台接口(包括后台上传、签发 Token)
-  一律返回 403 `须先修改出厂默认密码`,改密并重新登录后放行。
+- 账号仍是出厂默认密码时，会话只能用三个接口：退出（`POST /api/admin/auth/logout`）、查看自己（`GET /api/admin/me`，
+  其中 `must_change_password` 为 true）与改密（`PUT /api/admin/me/password`）。其余后台接口（包括后台上传、签发 Token）
+  一律返回 403 `须先修改出厂默认密码`，改密并重新登录后放行。
 
-渠道、用户、防盗链、审计、告警、备份、导出、裁决,以及运营配置的全量读取与修改,仅管理员可用,普通用户调用返回 403。
+渠道、用户、防盗链、审计、告警、备份、导出、裁决，以及运营配置的全量读取与修改，仅管理员可用，普通用户调用返回 403。
 
 ## 错误格式
 
-除下面的例外,错误响应一律是 JSON 信封:
+除下面的例外，错误响应一律是 JSON 信封：
 
 ```json
 { "error": "存储渠道暂不可用,请稍后重试" }
 ```
 
-`error` 是面向用户的描述(中文),不含内部细节与凭证。程序据 HTTP 状态码判断错误类别,不要解析这段文字。
+`error` 是面向用户的描述（中文），不含内部细节与凭证。程序据 HTTP 状态码判断错误类别，不要解析这段文字。
 
-**例外是图片访问入口**(`/i/{id}`、`/o/{user_id}/{object_key}` 与后台预览图 `/api/admin/images/{id}/thumb`):
-除了处理参数非法的 400 仍是 JSON 信封,其余错误响应都是纯文本:
+**例外是图片访问入口**（`/i/{id}`、`/o/{user_id}/{object_key}` 与后台预览图 `/api/admin/images/{id}/thumb`）：
+除了处理参数非法的 400 仍是 JSON 信封，其余错误响应都是纯文本：
 
 | 状态码 | 含义 |
 |---|---|
-| 403 | 防盗链拒绝(仅 `/i/` 与 `/o/`) |
+| 403 | 防盗链拒绝（仅 `/i/` 与 `/o/`）|
 | 404 | 图片不存在、已到期或已删除 |
-| 500 | 查询图片元数据失败(数据库故障),可稍后重试 |
+| 500 | 查询图片元数据失败（数据库故障），可稍后重试 |
 | 503 | 当前没有健康渠道能读出这张图 |
 
-后台预览图在会话认证之后才进入这条管线,未登录等认证错误仍是 JSON 信封。访问模式为 `redirect` 时,图片访问入口的 302 重定向
-带 `Cache-Control: no-store`:重定向目标随渠道健康与配置变化,不进 CDN 与浏览器缓存。
+后台预览图在会话认证之后才进入这条管线，未登录等认证错误仍是 JSON 信封。访问模式为 `redirect` 时，图片访问入口的 302 重定向
+带 `Cache-Control: no-store`：重定向目标随渠道健康与配置变化，不进 CDN 与浏览器缓存。
 
-常见状态码:
+常见状态码：
 
 | 状态码 | 含义 |
 |---|---|
 | 400 | 请求体或参数非法 |
-| 401 | 未认证:Token 无效,或未登录、会话已过期 |
-| 403 | 无权限:CSRF 校验失败、仍为出厂默认密码、需要管理员、Token 无上传权限;上传时也表示存储配额已满 |
-| 404 | 目标不存在,或对当前用户不可见 |
-| 409 | 与现有状态冲突,如重名,或渠道持有部分图片的唯一副本 |
-| 413 | 超过单图大小上限(运营配置 `max_upload_mb`) |
-| 415 | 不是支持的图片格式(按文件内容判定) |
-| 422 | 分辨率超出像素预算(运营配置 `max_pixels_mp`) |
-| 429 | 上传并发已满、该用户上传过于频繁,或登录尝试过于频繁;有 `Retry-After` 头时按它等待 |
+| 401 | 未认证：Token 无效，或未登录、会话已过期 |
+| 403 | 无权限：CSRF 校验失败、仍为出厂默认密码、需要管理员、Token 无上传权限；上传时也表示存储配额已满 |
+| 404 | 目标不存在，或对当前用户不可见 |
+| 409 | 与现有状态冲突，如重名，或渠道持有部分图片的唯一副本 |
+| 413 | 超过单图大小上限（运营配置 `max_upload_mb`）|
+| 415 | 不是支持的图片格式（按文件内容判定）|
+| 422 | 分辨率超出像素预算（运营配置 `max_pixels_mp`）|
+| 429 | 上传并发已满、该用户上传过于频繁，或登录尝试过于频繁；有 `Retry-After` 头时按它等待 |
 | 500 | 服务端内部错误 |
-| 503 | 上传时没有健康渠道可写或同步副本数不足;访问图片时暂无渠道能读出 |
+| 503 | 上传时没有健康渠道可写或同步副本数不足；访问图片时暂无渠道能读出 |
 
-每个接口实际可能返回的状态码,以各分组页为准。
+每个接口实际可能返回的状态码，以各分组页为准。
 
 ## 通用约定
 
-- **时刻**:除特别说明外,均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`(如 `2026-10-15 08:30:00`),不带时区后缀。
-  例外是构建信息的 `built_at` 与备份快照的 `taken_at`,为 RFC 3339(`taken_at` 精确到毫秒)。
-- **列表**:列表接口返回 `{"items": […], "total": N}`,`total` 是过滤后的总条数。
-- **分页**:图片、上传 Token、疑似重复、待清理、审计日志、告警列表支持 `page`(从 1 起,默认 1)与 `page_size`(默认 20,
-  最大 100,超出按 100 处理)。
-- **时间范围**:图片列表与审计日志支持 `since`(含)与 `until`(不含),格式同上。
-- **ID**:图片为 10 位短 ID 字符串;用户 ID 为字符串(内置管理员为 `default`);Token、渠道、疑似重复候选等记录为整数;备份快照以文件名标识。
-- **幂等上传**:上传请求可带 `Idempotency-Key` 头,保留期(运营配置 `idempotency_key_ttl_hours`,默认 24 小时)内,
+- **时刻**：除特别说明外，均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`（如 `2026-10-15 08:30:00`），不带时区后缀。
+  例外是构建信息的 `built_at` 与备份快照的 `taken_at`，为 RFC 3339（`taken_at` 精确到毫秒）。
+- **列表**：列表接口返回 `{"items": […], "total": N}`，`total` 是过滤后的总条数。
+- **分页**：图片、上传 Token、疑似重复、待清理、审计日志、告警列表支持 `page`（从 1 起，默认 1）与 `page_size`（默认 20，
+  最大 100，超出按 100 处理）。
+- **时间范围**：图片列表与审计日志支持 `since`（含）与 `until`（不含），格式同上。
+- **ID**：图片为 10 位短 ID 字符串；用户 ID 为字符串（内置管理员为 `default`）；Token、渠道、疑似重复候选等记录为整数；备份快照以文件名标识。
+- **幂等上传**：上传请求可带 `Idempotency-Key` 头，保留期（运营配置 `idempotency_key_ttl_hours`，默认 24 小时）内，
   同一用户同一键的重试返回同一张图。键按用户隔离。
-- **请求体**:JSON 接口使用 `application/json`;文件上传使用 `multipart/form-data`,文件字段名为 `file`,
-  可选的 `exif_policy` 与 `ttl` 也只认表单字段(不读 URL 查询参数),每个最多 1 KiB。
-- **服务地址**:接口与站点同源,路径前缀即上文所列,没有版本号段。
+- **请求体**：JSON 接口使用 `application/json`；文件上传使用 `multipart/form-data`，文件字段名为 `file`，
+  可选的 `exif_policy` 与 `ttl` 也只认表单字段（不读 URL 查询参数），每个最多 1 KiB。
+- **服务地址**：接口与站点同源，路径前缀即上文所列，没有版本号段。
 
 ## 分组
 
@@ -143,7 +143,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
     上传 Token 认证的上传与 URL 转存
   </Card>
   <Card title="图片访问" href="./image-access.mdx">
-    公开的图片输出入口,受防盗链约束
+    公开的图片输出入口，受防盗链约束
   </Card>
   <Card title="后台·会话" href="./admin-session.mdx">
     登录、登出、当前用户与改密
@@ -152,7 +152,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
     仪表盘与运行配置
   </Card>
   <Card title="后台·上传" href="./admin-upload.mdx">
-    会话认证的后台上传,与数据面同一管道
+    会话认证的后台上传，与数据面同一管道
   </Card>
   <Card title="后台·图片" href="./admin-images.mdx">
     图片列表、详情、修改与删除
@@ -164,16 +164,16 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
     渠道模板、创建、编辑、探测、删除与网盘授权
   </Card>
   <Card title="后台·用户" href="./admin-users.mdx">
-    多用户建号、配额与密码重置(仅管理员)
+    多用户建号、配额与密码重置（仅管理员）
   </Card>
   <Card title="后台·防盗链" href="./admin-referer.mdx">
-    Referer 白名单(仅管理员)
+    Referer 白名单（仅管理员）
   </Card>
   <Card title="后台·裁决" href="./admin-review.mdx">
-    相似重复与冷图待清理的裁决(仅管理员)
+    相似重复与冷图待清理的裁决（仅管理员）
   </Card>
   <Card title="后台·运维" href="./admin-operations.mdx">
-    审计日志、告警、备份快照与元数据导出(仅管理员)
+    审计日志、告警、备份快照与元数据导出（仅管理员）
   </Card>
   <Card title="系统" href="./system.mdx">
     健康检查与接口文档

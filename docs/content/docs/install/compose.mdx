@@ -1,15 +1,15 @@
 ---
 title: Docker Compose
-description: 用仓库里的 compose.yaml 运行 ImgYoung,以及与 Caddy 组合、自动申请证书对外提供 HTTPS 的写法。
+description: 用仓库里的 compose.yaml 运行 ImgYoung，以及与 Caddy 组合、自动申请证书对外提供 HTTPS 的写法。
 ---
 
 ## 示例文件
 
-仓库 `deploy/compose.yaml`(发布包里也有一份):
+仓库 `deploy/compose.yaml`（发布包里也有一份）：
 
 <include cwd lang="yaml" meta='title="deploy/compose.yaml"'>../deploy/compose.yaml</include>
 
-放进一个空目录后启动:
+放进一个空目录后启动：
 
 ```bash title="终端"
 mkdir imgyoung && cd imgyoung
@@ -17,35 +17,35 @@ curl -fsSLO https://raw.githubusercontent.com/x-haose/imgyoung/main/deploy/compo
 docker compose up -d
 ```
 
-浏览器打开 `http://<主机>:8721/`,用 `admin` / `imgyoung123` 登录,首次登录会要求立即改密。
+浏览器打开 `http://<主机>:8721/`，用 `admin` / `imgyoung123` 登录，首次登录会要求立即改密。
 
-镜像标签、数据卷内容、环境变量与重启策略的含义见 [Docker 镜像](./docker.mdx),这里不重复。在 `environment:` 里用 `${VAR}` 引用宿主机变量之前,先读那一页「环境变量」一节的提醒:宿主机没设的变量会被代入空串。
+镜像标签、数据卷内容、环境变量与重启策略的含义见 [Docker 镜像](./docker.mdx)，这里不重复。在 `environment:` 里用 `${VAR}` 引用宿主机变量之前，先读那一页「环境变量」一节的提醒：宿主机没设的变量会被代入空串。
 
-示例里的 `stop_grace_period: 15s` 是停止时等待进程退出的上限。ImgYoung 收到停止信号后先停收新请求、等在途请求至多 6 秒,再停后台任务至多 2 秒,然后关库退出;15 秒在这约 8 秒之上留出余量。
+示例里的 `stop_grace_period: 15s` 是停止时等待进程退出的上限。ImgYoung 收到停止信号后先停收新请求、等在途请求至多 6 秒，再停后台任务至多 2 秒，然后关库退出；15 秒在这约 8 秒之上留出余量。
 
 ## 日常操作
 
-在 `compose.yaml` 所在目录执行:
+在 `compose.yaml` 所在目录执行：
 
 | 操作 | 命令 |
 |---|---|
 | 启动或应用 `compose.yaml` 的改动 | `docker compose up -d` |
 | 查看状态 | `docker compose ps` |
 | 跟踪日志 | `docker compose logs -f imgyoung` |
-| 停止并删除容器(数据卷保留) | `docker compose down` |
+| 停止并删除容器（数据卷保留）| `docker compose down` |
 | 升级 | `docker compose pull && docker compose up -d` |
 
 <Callout type="error" title="不要加 -v">
-  `docker compose down -v` 会连同数据卷一起删除,数据库、图片与 `master.key` 全部丢失。
+  `docker compose down -v` 会连同数据卷一起删除，数据库、图片与 `master.key` 全部丢失。
 </Callout>
 
-数据卷的实际名字带项目名前缀,项目名默认是目录名:在 `imgyoung` 目录下就是 `imgyoung_imgyoung-data`,可用 `docker volume ls` 确认。
+数据卷的实际名字带项目名前缀，项目名默认是目录名：在 `imgyoung` 目录下就是 `imgyoung_imgyoung-data`，可用 `docker volume ls` 确认。
 
-要固定版本,把 `image:` 改成 `ghcr.io/x-haose/imgyoung:1.0` 这样的主次版本标签或具体版本,再执行 `docker compose up -d`。改回更旧的标签不能降级:旧版本遇到被新版本迁移过的数据库会拒绝启动。升级前建议先在后台「设置 → 备份与导出」点「立即备份」,回滚步骤与更多注意事项见 [升级](../operations/upgrade.mdx)。
+要固定版本，把 `image:` 改成 `ghcr.io/x-haose/imgyoung:1.0` 这样的主次版本标签或具体版本，再执行 `docker compose up -d`。改回更旧的标签不能降级：旧版本遇到被新版本迁移过的数据库会拒绝启动。升级前建议先在后台「设置 → 备份与导出」点「立即备份」，回滚步骤与更多注意事项见 [升级](../operations/upgrade.mdx)。
 
 ## 与 Caddy 组合对外提供 HTTPS
 
-Caddy 会自动申请并续期证书。把下面两个文件放在同一目录,域名换成你的,并让它的 DNS 指向这台主机、放行 80 与 443 端口:
+Caddy 会自动申请并续期证书。把下面两个文件放在同一目录，域名换成你的，并让它的 DNS 指向这台主机、放行 80 与 443 端口：
 
 <Files>
   <Folder name="imgyoung" defaultOpen>
@@ -96,15 +96,15 @@ img.example.com {
 }
 ```
 
-这份 Caddyfile 与仓库 `deploy/Caddyfile` 在配置上的区别只有转发目标:Caddy 在容器里,要用服务名 `imgyoung:8721` 而不是 `127.0.0.1:8721`。
+这份 Caddyfile 与仓库 `deploy/Caddyfile` 在配置上的区别只有转发目标：Caddy 在容器里，要用服务名 `imgyoung:8721` 而不是 `127.0.0.1:8721`。
 
-几点说明:
+几点说明：
 
-- **为什么要设 `IMGYOUNG_TRUSTED_PROXIES`**。ImgYoung 默认只信回环地址发来的转发头,而 Caddy 容器连过来的地址是 Docker 网络里的私网地址。不设的话,登录限速会把所有访客当成同一个来源,返回的图片链接是 `http://` 而不是 `https://`,会话 cookie 也不带 `Secure`。
-- **核对网段**。Compose 给项目建的网络通常落在 `172.16.0.0/12` 内,但 Docker 的默认地址池用完后也会分配 `192.168.0.0/16` 里的网段。用 `docker network inspect imgyoung_default`(项目名为目录名时)查看 `Subnet`,不在 `172.16.0.0/12` 内就改成实际网段。
-- **证书与 Caddy 的数据**。证书存在 `caddy-data` 卷里,删掉它会导致重新申请证书。
-- **上传大小**。Caddy 默认不限制请求体大小,单图上限只由后台的「单图上限」(出厂 50 MB)决定。
-- **链接地址**。设好可信代理后,未配置 `base_url` 时链接按 Caddy 转发的域名与协议生成,即 `https://img.example.com/i/...`。只有对外域名与 Caddy 收到的域名不一致(比如前面还有 CDN)时才需要配置 `base_url`,见 [配置](../configuration.mdx)。
-- **指标**。公网入口屏蔽了 `/metrics`;同一网络里的 Prometheus 可以直接抓 `imgyoung:8721/metrics`,私网地址默认放行。见 [监控](../operations/monitoring.mdx)。
+- **为什么要设 `IMGYOUNG_TRUSTED_PROXIES`**。ImgYoung 默认只信回环地址发来的转发头，而 Caddy 容器连过来的地址是 Docker 网络里的私网地址。不设的话，登录限速会把所有访客当成同一个来源，返回的图片链接是 `http://` 而不是 `https://`，会话 cookie 也不带 `Secure`。
+- **核对网段**。Compose 给项目建的网络通常落在 `172.16.0.0/12` 内，但 Docker 的默认地址池用完后也会分配 `192.168.0.0/16` 里的网段。用 `docker network inspect imgyoung_default`（项目名为目录名时）查看 `Subnet`，不在 `172.16.0.0/12` 内就改成实际网段。
+- **证书与 Caddy 的数据**。证书存在 `caddy-data` 卷里，删掉它会导致重新申请证书。
+- **上传大小**。Caddy 默认不限制请求体大小，单图上限只由后台的「单图上限」（出厂 50 MB）决定。
+- **链接地址**。设好可信代理后，未配置 `base_url` 时链接按 Caddy 转发的域名与协议生成，即 `https://img.example.com/i/...`。只有对外域名与 Caddy 收到的域名不一致（比如前面还有 CDN）时才需要配置 `base_url`，见 [配置](../configuration.mdx)。
+- **指标**。公网入口屏蔽了 `/metrics`；同一网络里的 Prometheus 可以直接抓 `imgyoung:8721/metrics`，私网地址默认放行。见 [监控](../operations/monitoring.mdx)。
 
 用 Nginx 或其他代理的写法见 [反向代理](../operations/reverse-proxy.mdx)。

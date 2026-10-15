@@ -1,32 +1,32 @@
 ---
 title: 上传客户端
-description: 把 PicGo、PicList、Typora、aws CLI、rclone 等客户端接到 ImgYoung:自定义 Web 图床与 S3 协议两种方式。
+description: 把 PicGo、PicList、Typora、aws CLI、rclone 等客户端接到 ImgYoung：自定义 Web 图床与 S3 协议两种方式。
 ---
 
 ## 两种接入方式
 
 | | 自定义 Web 图床 | S3 协议 |
 |---|---|---|
-| 客户端要求 | 能发 multipart POST,并从 JSON 响应里取出链接 | 能向 S3 兼容存储上传(SigV4 签名、路径风格寻址) |
+| 客户端要求 | 能发 multipart POST，并从 JSON 响应里取出链接 | 能向 S3 兼容存储上传（SigV4 签名、路径风格寻址）|
 | 典型客户端 | PicGo + web-uploader 插件、PicList「高级自定义」 | PicList 内置 AWS S3、PicGo + s3 插件、aws CLI、rclone、各语言 S3 SDK |
 | 凭证 | 上传 Token 明文 | 由上传 Token 派生的 access key 与 secret |
 | 返回的链接 | 服务端返回 `/i/<短ID>` | 客户端按对象键自己拼 `/o/<用户 id>/<对象键>` |
 | 有效期 | 可以逐次指定 | 只用默认值 |
-| EXIF 处理 | 可以逐次指定档位,省略时用全局默认 | 不处理,按原字节保存 |
+| EXIF 处理 | 可以逐次指定档位，省略时用全局默认 | 不处理，按原字节保存 |
 | 幂等键 | 支持 | 不支持 |
 | 同名文件再传 | 每次都是一张新图 | 同一对象键按 S3 语义覆盖 |
 
-两种方式最后都进同一条上传管道,格式、大小、配额、频控规则相同,见 [上传](./upload.mdx)。
-凭证都来自后台「上传 Token」页:建议每个客户端单独签发一枚具名 Token,某个客户端泄露时只吊销它。
+两种方式最后都进同一条上传管道，格式、大小、配额、频控规则相同，见 [上传](./upload.mdx)。
+凭证都来自后台「上传 Token」页：建议每个客户端单独签发一枚具名 Token，某个客户端泄露时只吊销它。
 
 ## 自定义 Web 图床
 
-客户端把图片以 multipart 表单 POST 到 `/api/upload`,文件字段名 `file`,带 `Authorization: Bearer <Token>` 请求头,从响应 JSON 的 `url` 字段取链接。
-`url` 是绝对地址;经反向代理或 CDN 后对外域名与请求域名不一致时,先在「设置 → 运行配置」填好「对外站点地址」,否则返回的链接会是反代内侧的地址。
+客户端把图片以 multipart 表单 POST 到 `/api/upload`，文件字段名 `file`，带 `Authorization: Bearer <Token>` 请求头，从响应 JSON 的 `url` 字段取链接。
+`url` 是绝对地址；经反向代理或 CDN 后对外域名与请求域名不一致时，先在「设置 → 运行配置」填好「对外站点地址」，否则返回的链接会是反代内侧的地址。
 
-### PicGo:web-uploader 插件
+### PicGo：web-uploader 插件
 
-PicGo 本身没有通用的 HTTP 上传方式,需要在插件设置里搜索安装 `web-uploader`(npm 包 `picgo-plugin-web-uploader`),图床列表里会多出「自定义Web图床」:
+PicGo 本身没有通用的 HTTP 上传方式，需要在插件设置里搜索安装 `web-uploader`（npm 包 `picgo-plugin-web-uploader`），图床列表里会多出「自定义Web图床」：
 
 | 插件参数 | 配置键 | 填写 |
 |---|---|---|
@@ -34,65 +34,65 @@ PicGo 本身没有通用的 HTTP 上传方式,需要在插件设置里搜索安�
 | POST参数名 | `paramName` | `file` |
 | JSON路径 | `jsonPath` | `url` |
 | 自定义请求头 | `customHeader` | `{"Authorization": "Bearer imgy_xxxxxxxx"}` |
-| 自定义Body | `customBody` | 可选,作为额外的表单字段一起提交,如 `{"ttl": "never", "exif_policy": "strip"}` |
+| 自定义Body | `customBody` | 可选，作为额外的表单字段一起提交，如 `{"ttl": "never", "exif_policy": "strip"}` |
 
 `customBody` 里的值请写成字符串。
 
-### PicList:高级自定义
+### PicList：高级自定义
 
-PicList 内置的「高级自定义」图床填写同样的内容:接口地址 `https://img.example.com/api/upload`,请求方式 POST,文件字段名 `file`,请求头 `Authorization: Bearer imgy_xxxxxxxx`,返回值中链接的 JSON 路径 `url`。
-需要指定有效期或 EXIF 档位时,把 `ttl`、`exif_policy` 作为附加的表单字段。
+PicList 内置的「高级自定义」图床填写同样的内容：接口地址 `https://img.example.com/api/upload`，请求方式 POST，文件字段名 `file`，请求头 `Authorization: Bearer imgy_xxxxxxxx`，返回值中链接的 JSON 路径 `url`。
+需要指定有效期或 EXIF 档位时，把 `ttl`、`exif_policy` 作为附加的表单字段。
 
 ## S3 协议
 
-ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集,凭证就是上传 Token:吊销 Token,这条路同时失效。
-协议入口收在 `/s3` 前缀下,是因为 S3 的桶路径本是站点根下的单段路径,直接挂在根上会占用管理后台页面的顶层路由。
+ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集，凭证就是上传 Token：吊销 Token，这条路同时失效。
+协议入口收在 `/s3` 前缀下，是因为 S3 的桶路径本是站点根下的单段路径，直接挂在根上会占用管理后台页面的顶层路由。
 
 ### 取得 S3 配置
 
-在后台「上传 Token」页,点某枚有效 Token 行末的「更多操作」→「S3 客户端配置」,弹窗给出全部参数,逐项复制即可:
+在后台「上传 Token」页，点某枚有效 Token 行末的「更多操作」→「S3 客户端配置」，弹窗给出全部参数，逐项复制即可：
 
 | 弹窗字段 | 示例值 | 说明 |
 |---|---|---|
-| 应用密钥 ID | `imgy_AbCdEfG` | 即 Token 的识别前缀(12 个字符) |
-| 应用密钥 | 64 位十六进制 | 由主密钥按该 Token 派生,不落库,可随时回来重看 |
-| 桶名 | `images` | 没有桶的概念,填任何桶名都接受,桶名也不进对象键 |
-| 区域 | `us-east-1` | 不区分区域,填任何值都接受 |
-| 自定义节点 | `https://img.example.com/s3` | 结尾的 `/s3` 是协议入口前缀,不能省 |
-| 自定义域名 | `https://img.example.com/o/<用户 id>` | 拼图片链接用,含你的用户 id |
+| 应用密钥 ID | `imgy_AbCdEfG` | 即 Token 的识别前缀（12 个字符）|
+| 应用密钥 | 64 位十六进制 | 由主密钥按该 Token 派生，不落库，可随时回来重看 |
+| 桶名 | `images` | 没有桶的概念，填任何桶名都接受，桶名也不进对象键 |
+| 区域 | `us-east-1` | 不区分区域，填任何值都接受 |
+| 自定义节点 | `https://img.example.com/s3` | 结尾的 `/s3` 是协议入口前缀，不能省 |
+| 自定义域名 | `https://img.example.com/o/<用户 id>` | 拼图片链接用，含你的用户 id |
 
-节点与域名按「对外站点地址」生成,未设置时按打开后台所用的地址推导。
+节点与域名按「对外站点地址」生成，未设置时按打开后台所用的地址推导。
 
-- **必须用路径风格寻址**(path-style,请求形如 `/s3/<桶>/<对象键>`)。自部署没有桶子域名,客户端有「路径风格」「ForcePathStyle」之类的开关时请打开。
-- 只能查看自己的 Token 的 S3 配置;管理员也看不到别人的。
-- 轮转 Token 后 access key 与 secret 都会变,客户端要换成新值。更换主密钥会让全部 S3 secret 失效。
-- Token 吊销、过期或所属用户被禁用时,签名校验一律失败。
+- **必须用路径风格寻址**（path-style，请求形如 `/s3/<桶>/<对象键>`）。自部署没有桶子域名，客户端有「路径风格」「ForcePathStyle」之类的开关时请打开。
+- 只能查看自己的 Token 的 S3 配置；管理员也看不到别人的。
+- 轮转 Token 后 access key 与 secret 都会变，客户端要换成新值。更换主密钥会让全部 S3 secret 失效。
+- Token 吊销、过期或所属用户被禁用时，签名校验一律失败。
 
 ### 支持的操作
 
 | 操作 | 请求 | 行为 |
 |---|---|---|
-| PutObject | `PUT /s3/<桶>/<对象键>` | 走上传管道。响应头 `ETag` 为上传正文的 SHA-256,`x-amz-meta-image-id` 为这张图的短 ID |
+| PutObject | `PUT /s3/<桶>/<对象键>` | 走上传管道。响应头 `ETag` 为上传正文的 SHA-256，`x-amz-meta-image-id` 为这张图的短 ID |
 | HeadBucket | `HEAD /s3/<桶>` | 凭证有效即返回 200 |
 | HeadObject | `HEAD /s3/<桶>/<对象键>` | 返回对象的元数据头 |
-| GetObject | `GET /s3/<桶>/<对象键>` | 返回保存的原图,不做按需处理,不计访问,不受防盗链约束;缓存头与 `/o/` 别名相同 |
-| DeleteObject | `DELETE /s3/<桶>/<对象键>` | 删除该对象键当前指向的图;对象不存在也返回 204 |
+| GetObject | `GET /s3/<桶>/<对象键>` | 返回保存的原图，不做按需处理，不计访问，不受防盗链约束；缓存头与 `/o/` 别名相同 |
+| DeleteObject | `DELETE /s3/<桶>/<对象键>` | 删除该对象键当前指向的图；对象不存在也返回 204 |
 
-不支持:列举桶与对象(`ListBuckets`、`ListObjects`)、分片上传、`CopyObject`、建桶、ACL、预签名 URL(查询串签名)与 SigV2 签名。这些请求得到 4xx 错误。
-客户端随请求带的 ACL 头不报错,也不起作用。
+不支持：列举桶与对象（`ListBuckets`、`ListObjects`）、分片上传、`CopyObject`、建桶、ACL、预签名 URL（查询串签名）与 SigV2 签名。这些请求得到 4xx 错误。
+客户端随请求带的 ACL 头不报错，也不起作用。
 
-签名与正文:
+签名与正文：
 
-- 只认 `Authorization` 头里的 `AWS4-HMAC-SHA256` 签名;请求时间与服务器相差超过 15 分钟即拒绝。
-- 支持 `UNSIGNED-PAYLOAD`,也支持 aws CLI v2 等默认使用的 `aws-chunked` 分块正文。声明了正文哈希时,服务端会核对它与实际正文一致。
+- 只认 `Authorization` 头里的 `AWS4-HMAC-SHA256` 签名；请求时间与服务器相差超过 15 分钟即拒绝。
+- 支持 `UNSIGNED-PAYLOAD`，也支持 aws CLI v2 等默认使用的 `aws-chunked` 分块正文。声明了正文哈希时，服务端会核对它与实际正文一致。
 
-上传时的取值:
+上传时的取值：
 
-- 对象键是桶名之后的整段路径(URL 解码后),最长 1024 字节,不能含控制字符、不能以 `/` 开头;在同一用户内唯一。
-- 文件名取对象键最后一段;有效期按「用户默认 > 全局默认」。
-- 不做 EXIF 处理,全局 EXIF 默认档对 S3 上传不生效:保存的字节与上传的完全一致,PUT 响应的 ETag 与之后 GetObject 的 ETag 相同。
+- 对象键是桶名之后的整段路径（URL 解码后），最长 1024 字节，不能含控制字符、不能以 `/` 开头；在同一用户内唯一。
+- 文件名取对象键最后一段；有效期按「用户默认 > 全局默认」。
+- 不做 EXIF 处理，全局 EXIF 默认档对 S3 上传不生效：保存的字节与上传的完全一致，PUT 响应的 ETag 与之后 GetObject 的 ETag 相同。
 
-错误以 S3 风格的 XML 返回,客户端按 `Code` 区分:
+错误以 S3 风格的 XML 返回，客户端按 `Code` 区分：
 
 | 情形 | 状态码 | Code |
 |---|---|---|
@@ -101,63 +101,63 @@ ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集,凭证就是上传 Toke
 | 缺少或无法解析 `Authorization` 头 | 400 | `AuthorizationHeaderMalformed` |
 | 不是 `AWS4-HMAC-SHA256` 签名 | 400 | `InvalidRequest` |
 | 超过单图大小上限 | 400 | `EntityTooLarge` |
-| 不是支持的图片,或超过像素预算 | 400 | `InvalidRequest` |
+| 不是支持的图片，或超过像素预算 | 400 | `InvalidRequest` |
 | 存储配额已满 | 403 | `QuotaExceeded` |
 | 对象键过长 / 含非法字符 / 缺失 | 400 | `KeyTooLongError` / `InvalidArgument` / `InvalidRequest` |
-| 对象不存在,或指向的图已到期 | 404 | `NoSuchKey` |
-| 上传时没有健康渠道可写,或同步写入的份数达不到最少同步副本数 | 503 | `ServiceUnavailable` |
-| 对象暂时读不出来(GET / HEAD) | 503 | `ServiceUnavailable` |
+| 对象不存在，或指向的图已到期 | 404 | `NoSuchKey` |
+| 上传时没有健康渠道可写，或同步写入的份数达不到最少同步副本数 | 503 | `ServiceUnavailable` |
+| 对象暂时读不出来（GET / HEAD）| 503 | `ServiceUnavailable` |
 | 其余服务端错误 | 500 | `InternalError` |
 
-上传并发已满或频率超限时返回 429,响应体是 JSON 而不是 XML。
+上传并发已满或频率超限时返回 429，响应体是 JSON 而不是 XML。
 
 ### 对象键别名 [#object-key-aliases]
 
-经 S3 上传的图片除了短 ID,还有一个按对象键的访问地址:
+经 S3 上传的图片除了短 ID，还有一个按对象键的访问地址：
 
 ```text
 https://img.example.com/o/<用户 id>/<对象键>
 ```
 
-- 用户 id 是不可变的账号标识,不是登录名:内置管理员为 `default`,其他用户是建号时生成的 10 位随机串,可在「用户」页的 ID 列或 S3 配置弹窗的「自定义域名」里看到。对象键只在用户内唯一,所以链接里必须带它;用不可变的 ID 而不是登录名,是因为登录名可以修改,改名后旧名再被别人占用,之前分享出去的链接就会指向别人的图。
-- `/o/` 与 `/i/<短ID>` 是同一张图的两个入口,按需处理、格式协商、防盗链、访问计数完全一致;只有缓存方式不同,见下文与 [访问图片](./access.mdx#caching)。
-- 短 ID 在 PutObject 的响应头 `x-amz-meta-image-id` 里,也能在后台「图片」页查到。
+- 用户 id 是不可变的账号标识，不是登录名：内置管理员为 `default`，其他用户是建号时生成的 10 位随机串，可在「用户」页的 ID 列或 S3 配置弹窗的「自定义域名」里看到。对象键只在用户内唯一，所以链接里必须带它；用不可变的 ID 而不是登录名，是因为登录名可以修改，改名后旧名再被别人占用，之前分享出去的链接就会指向别人的图。
+- `/o/` 与 `/i/<短ID>` 是同一张图的两个入口，按需处理、格式协商、防盗链、访问计数完全一致；只有缓存方式不同，见下文与 [访问图片](./access.mdx#caching)。
+- 短 ID 在 PutObject 的响应头 `x-amz-meta-image-id` 里，也能在后台「图片」页查到。
 
 ### 同键覆盖
 
-对同一对象键再次 PutObject,按 S3 语义覆盖:
+对同一对象键再次 PutObject，按 S3 语义覆盖：
 
-- 这个对象键改为指向新上传的图,`/o/` 链接随之显示新图。
-- 旧图不会被删除:它的短 ID 可能已经分享出去,链接继续可用,也继续占用存储与配额;不需要时到后台「图片」页手动删除。
+- 这个对象键改为指向新上传的图，`/o/` 链接随之显示新图。
+- 旧图不会被删除：它的短 ID 可能已经分享出去，链接继续可用，也继续占用存储与配额；不需要时到后台「图片」页手动删除。
 - DeleteObject 只删除对象键当前指向的那张图。
 
-对象键可以被覆盖,所以 `/o/` 链接(以及 S3 GetObject)的响应是 `Cache-Control: public, no-cache` 加强 `ETag`:浏览器与 CDN 可以缓存,但每次使用前都要带 `ETag` 向本服务确认,内容没变时得到 304。
-同键覆盖后,下一次确认就会拿到新图。短链 `/i/<短ID>` 始终指向同一张图,仍按一年不可变缓存。
+对象键可以被覆盖，所以 `/o/` 链接（以及 S3 GetObject）的响应是 `Cache-Control: public, no-cache` 加强 `ETag`：浏览器与 CDN 可以缓存，但每次使用前都要带 `ETag` 向本服务确认，内容没变时得到 304。
+同键覆盖后，下一次确认就会拿到新图。短链 `/i/<短ID>` 始终指向同一张图，仍按一年不可变缓存。
 
 ## 客户端配置示例
 
 以下示例里的 `imgy_AbCdEfG`、`<secret>`、`<用户 id>` 换成「S3 客户端配置」弹窗里的实际值。
 
-### PicList:内置 AWS S3
+### PicList：内置 AWS S3
 
-PicList 自带「AWS S3」图床,按配置键对应填写(界面上的字段名随版本可能不同):
+PicList 自带「AWS S3」图床，按配置键对应填写（界面上的字段名随版本可能不同）：
 
 | 配置键 | 填写 |
 |---|---|
 | `accessKeyID` | 弹窗里的「应用密钥 ID」 |
 | `secretAccessKey` | 弹窗里的「应用密钥」 |
 | `bucketName` | `images` |
-| `uploadPath` | 对象键模板,例如 `{year}/{month}/{md5}.{extName}` |
+| `uploadPath` | 对象键模板，例如 `{year}/{month}/{md5}.{extName}` |
 | `region` | `us-east-1` |
 | `endpoint` | `https://img.example.com/s3` |
 | `pathStyleAccess` | 开启 |
 | `urlPrefix` | `https://img.example.com/o/<用户 id>` |
-| `disableBucketPrefixToURL` | 开启。否则路径风格下 PicList 会在链接里插入桶名,得到打不开的地址 |
+| `disableBucketPrefixToURL` | 开启。否则路径风格下 PicList 会在链接里插入桶名，得到打不开的地址 |
 
-### PicGo:s3 插件
+### PicGo：s3 插件
 
-PicGo 没有内置 S3 上传,需要在插件设置里安装 `s3`(npm 包 `picgo-plugin-s3`),图床列表里会多出「Amazon S3」。
-这个插件生成链接推荐用「自定义输出 URL 模板」(`outputURLPattern`),其中 `{path}` 是上传后的完整对象键:
+PicGo 没有内置 S3 上传，需要在插件设置里安装 `s3`（npm 包 `picgo-plugin-s3`），图床列表里会多出「Amazon S3」。
+这个插件生成链接推荐用「自定义输出 URL 模板」（`outputURLPattern`），其中 `{path}` 是上传后的完整对象键：
 
 | 配置键 | 填写 |
 |---|---|
@@ -166,17 +166,17 @@ PicGo 没有内置 S3 上传,需要在插件设置里安装 `s3`(npm 包 `picgo-
 | `uploadPath` | 例如 `{year}/{month}/{md5}.{extName}` |
 | `region` | `us-east-1` |
 | `endpoint` | `https://img.example.com/s3` |
-| `pathStyleAccess` | 开启(界面上叫 ForcePathStyle) |
+| `pathStyleAccess` | 开启（界面上叫 ForcePathStyle）|
 | `outputURLPattern` | `https://img.example.com/o/<用户 id>/{path}` |
 
-用 `{md5}` 之类的内容哈希做对象键,同一张图重复上传得到同一个键,不同的图不会互相覆盖。
+用 `{md5}` 之类的内容哈希做对象键，同一张图重复上传得到同一个键，不同的图不会互相覆盖。
 
 ### Typora
 
-Typora 不直接上传到 S3 或自定义接口,而是交给 PicGo:在 Typora 的偏好设置 → 图像里,把上传服务选为 `PicGo (app)` 或 `PicGo-Core (command line)`。
+Typora 不直接上传到 S3 或自定义接口，而是交给 PicGo：在 Typora 的偏好设置 → 图像里，把上传服务选为 `PicGo (app)` 或 `PicGo-Core (command line)`。
 
-- 选 `PicGo (app)`:Typora 调用正在运行的 PicGo 应用,按上面任一种方式在 PicGo 里配好图床即可。
-- 选 `PicGo-Core (command line)`:PicGo-Core 读取 `~/.picgo/config.json`。先用 `picgo install s3`(或 `picgo install web-uploader`)装好插件,再写配置:
+- 选 `PicGo (app)`：Typora 调用正在运行的 PicGo 应用，按上面任一种方式在 PicGo 里配好图床即可。
+- 选 `PicGo-Core (command line)`：PicGo-Core 读取 `~/.picgo/config.json`。先用 `picgo install s3`（或 `picgo install web-uploader`）装好插件，再写配置：
 
 <Tabs items={['S3 插件', 'web-uploader 插件']}>
 <Tab value="S3 插件">
@@ -255,8 +255,8 @@ aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
   s3 rm s3://images/blog/2026/photo.png
 ```
 
-- `aws s3 cp` 对超过 `multipart_threshold`(默认 8 MB)的文件改用分片上传,而分片上传不受支持。把它调到大于「单图上限」的值,或改用 `aws s3api put-object` 单次上传。
-- `aws s3 ls`、`aws s3 sync` 依赖列举对象,不可用。
+- `aws s3 cp` 对超过 `multipart_threshold`（默认 8 MB）的文件改用分片上传，而分片上传不受支持。把它调到大于「单图上限」的值，或改用 `aws s3api put-object` 单次上传。
+- `aws s3 ls`、`aws s3 sync` 依赖列举对象，不可用。
 
 上传后的链接是 `https://img.example.com/o/<用户 id>/blog/2026/photo.png`。
 
@@ -275,9 +275,9 @@ rclone config create imgyoung s3 \
 rclone copyto ./photo.png imgyoung:images/blog/2026/photo.png
 ```
 
-- `no_check_bucket=true` 让 rclone 跳过上传前的建桶检查;服务端不支持建桶。
-- 只用 `copyto`、`deletefile` 这类按单个对象操作的命令;`ls`、`sync`、`copy` 目录等依赖列举对象,不可用。
+- `no_check_bucket=true` 让 rclone 跳过上传前的建桶检查；服务端不支持建桶。
+- 只用 `copyto`、`deletefile` 这类按单个对象操作的命令；`ls`、`sync`、`copy` 目录等依赖列举对象，不可用。
 
 ### 其他 S3 SDK
 
-任何语言的 S3 SDK 都按同样的要点配置:端点设为 `https://img.example.com/s3`,开启路径风格寻址,区域随意填(如 `us-east-1`),只用 PutObject / HeadObject / GetObject / DeleteObject,不要让 SDK 自动切换到分片上传。
+任何语言的 S3 SDK 都按同样的要点配置：端点设为 `https://img.example.com/s3`，开启路径风格寻址，区域随意填（如 `us-east-1`），只用 PutObject / HeadObject / GetObject / DeleteObject，不要让 SDK 自动切换到分片上传。
