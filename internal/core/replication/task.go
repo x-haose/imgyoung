@@ -324,6 +324,7 @@ func (*replicateWorker) Timeout(*river.Job[ReplicateArgs]) time.Duration {
 // Work 执行一次副本复制:从任一就绪渠道读出,写入目标渠道,状态写回业务表。
 // @Description: 幂等——副本已 done 直接返回;目标渠道不存在则取消任务并标记 failed;
 // 目标渠道清理中则取消任务;复制失败回退 pending 并交由 River 重试,最后一次尝试失败标记 failed。
+// 写入与状态写回在目标渠道的写入租约内:渠道随后被标为清理中时,排空等这次写完再列举,写下的对象不会遗留。
 func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs]) error {
 	args := job.Args
 	q := w.cfg.Queries
@@ -345,10 +346,12 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 		w.markState(ctx, args, channel.StateFailed, &channel.Failure{Reason: channel.ReasonChannelUnavailable}, 0)
 		return river.JobCancel(fmt.Errorf("目标渠道 %d 未装载", args.ChannelID))
 	}
-	if target.PendingDelete {
+	release, inService := w.cfg.Manager.HoldWrites(target.ID)
+	if !inService {
 		// 渠道正在清理:往上面补副本只是给排空任务添活,副本行由它一并删除。
 		return river.JobCancel(fmt.Errorf("目标渠道 %q 正在清理中", target.Name))
 	}
+	defer release()
 	blob, err := q.GetBlob(ctx, args.BlobID)
 	if err != nil {
 		return fmt.Errorf("读取 blob %d: %w", args.BlobID, err)
@@ -412,6 +415,7 @@ func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target c
 }
 
 // markState 写回副本状态,失败仅告警(业务表兜底,不阻断任务流转)。
+// @Description: 写回脱离任务的取消:任务超时被 River 取消后,失败结论照样要落库,副本才会转 failed、告警才可见。
 // @param state 副本状态
 // @param f 失败结论;nil 表示清空失败原因
 // @param attemptsDelta 尝试计数增量(仅置 uploading 时为 1,保证计数=实际尝试次数)
@@ -421,7 +425,7 @@ func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, sta
 	if f != nil {
 		reason, detail = string(f.Reason), f.Detail
 	}
-	if err := w.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
+	if err := w.cfg.Queries.MarkBlobChannel(context.WithoutCancel(ctx), sqlc.MarkBlobChannelParams{
 		State: state, LastErrorReason: reason, LastError: detail, Attempts: attemptsDelta,
 		BlobID: args.BlobID, ChannelID: args.ChannelID,
 	}); err != nil {

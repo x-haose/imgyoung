@@ -51,6 +51,8 @@ export const server = {
     backup_snapshot_failed: '生成数据库快照失败：{detail}',
     backup_store_failed:
       '快照 {snapshot} 有 {failed}/{total} 个渠道未写成（{detail}）',
+    backup_prune_failed:
+      '快照 {snapshot} 已写入，但有 {failed}/{total} 个渠道清理旧快照失败，保留份数没能生效（{detail}）',
     snapshot_name_invalid: '快照名非法',
     snapshot_not_found: '快照不存在',
     settings_body_invalid: '请求体需为非空的 键→值 JSON 对象',
@@ -69,6 +71,8 @@ export const server = {
     channel_not_found: '渠道不存在',
     channel_name_exists: '渠道名已存在',
     channel_deleting: '渠道正在清理中，不能修改或探测',
+    channel_config_changed:
+      '渠道配置在保存期间已被改动（另一次编辑，或服务商刷新了授权令牌），请重新保存',
     channel_encrypted_immutable:
       '加密属性创建后不可变（变更会造成密文/明文混存且不可恢复）；如需调整请新建渠道并迁移数据',
     channel_sole_replicas:
@@ -78,6 +82,8 @@ export const server = {
     channel_name_too_long: '渠道参数非法：name 超过 {max} 字节',
     channel_encrypted_direct_link:
       '渠道参数非法：加密渠道不允许直链（密文无法直出）',
+    channel_local_path_relative:
+      '渠道参数非法：local 渠道的路径须为绝对路径，收到 {path}',
     channel_config_key_invalid:
       '渠道参数非法：配置键 {key} 非法（仅允许字母数字下划线）',
     channel_keep_not_secret:

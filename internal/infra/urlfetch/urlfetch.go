@@ -68,9 +68,12 @@ func New(maxBytes func() int64, timeout time.Duration) *Fetcher {
 			DisableKeepAlives:     true, // 每次抓取重新建连,避免复用到校验时刻之外建立的连接
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
+			// via 含最初那次请求:跟随第 n 跳时 len(via) == n。
+			if len(via) > maxRedirects {
 				return ErrTooManyRedirects
 			}
+			// net/http 跟随重定向时把上一跳的完整地址写进 Referer,用户提交的地址不外泄给重定向目标。
+			req.Header.Del("Referer")
 			return checkScheme(req.URL)
 		},
 	}

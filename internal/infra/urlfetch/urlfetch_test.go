@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -72,17 +73,31 @@ func TestFetchRejectsPrivateTarget(t *testing.T) {
 	}
 }
 
-// TestFetchRedirectHopLimit 重定向跳数超上限即失败,不被无限跳转拖住。
+// TestFetchRedirectHopLimit 最多跟随 maxRedirects 跳,再多即失败;跟随时不把上一跳的地址作为 Referer 带给下一跳。
 func TestFetchRedirectHopLimit(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, srv.URL+"/next", http.StatusFound)
+		if ref := r.Header.Get("Referer"); ref != "" {
+			http.Error(w, "referer "+ref, http.StatusBadRequest)
+			return
+		}
+		left, err := strconv.Atoi(r.URL.Query().Get("left"))
+		if err != nil || left == 0 {
+			_, _ = w.Write([]byte("ok"))
+			return
+		}
+		http.Redirect(w, r, srv.URL+"/?left="+strconv.Itoa(left-1), http.StatusFound)
 	}))
 	defer srv.Close()
+	f := newLoopbackFetcher(t, 1<<20)
 
-	_, _, err := newLoopbackFetcher(t, 1<<20).Fetch(context.Background(), srv.URL)
+	data, _, err := f.Fetch(context.Background(), srv.URL+"/?left="+strconv.Itoa(maxRedirects))
+	if err != nil || string(data) != "ok" {
+		t.Fatalf("%d 跳重定向应成功,得 %q, %v", maxRedirects, data, err)
+	}
+	_, _, err = f.Fetch(context.Background(), srv.URL+"/?left="+strconv.Itoa(maxRedirects+1))
 	if !errors.Is(err, ErrTooManyRedirects) {
-		t.Fatalf("无限重定向期望 ErrTooManyRedirects,得 %v", err)
+		t.Fatalf("%d 跳重定向期望 ErrTooManyRedirects,得 %v", maxRedirects+1, err)
 	}
 }
 

@@ -52,6 +52,8 @@ export const server = {
     backup_snapshot_failed: 'Creating the database snapshot failed: {detail}',
     backup_store_failed:
       'Snapshot {snapshot} was not written to {failed} of {total} channels ({detail})',
+    backup_prune_failed:
+      'Snapshot {snapshot} was written, but removing old snapshots failed on {failed} of {total} channels, so the retention count is not enforced ({detail})',
     snapshot_name_invalid: 'Invalid snapshot name',
     snapshot_not_found: 'Snapshot not found',
     settings_body_invalid:
@@ -74,6 +76,8 @@ export const server = {
     channel_name_exists: 'A channel with this name already exists',
     channel_deleting:
       'The channel is being cleaned up and cannot be changed or probed',
+    channel_config_changed:
+      'The channel configuration changed while saving (another edit, or the provider refreshed the authorization token). Save again',
     channel_encrypted_immutable:
       'Encryption cannot change after creation (changing it would mix ciphertext and plaintext beyond recovery). Create a new channel and migrate the data instead',
     channel_sole_replicas:
@@ -85,6 +89,8 @@ export const server = {
       'Invalid channel settings: name is longer than {max} bytes',
     channel_encrypted_direct_link:
       'Invalid channel settings: encrypted channels cannot use direct links (ciphertext cannot be served directly)',
+    channel_local_path_relative:
+      'Invalid channel settings: the path of a local channel must be absolute, got {path}',
     channel_config_key_invalid:
       'Invalid channel settings: parameter key {key} is invalid (only letters, digits and underscores)',
     channel_keep_not_secret:

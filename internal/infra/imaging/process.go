@@ -32,7 +32,7 @@ var (
 
 // EncodeSettings 编码档位配置,由运行配置注入 Processor;质量固定档既压 CPU 又提高缓存命中率。
 type EncodeSettings struct {
-	QualityWebP int   // libwebp 质量[0,100]
+	QualityWebP int   // webp 质量[1,100];编码库把 <=0 当作默认质量 75
 	QualityJPEG int   // stdlib jpeg 质量[1,100]
 	WebPMethod  int   // libwebp 质量/速度权衡[0,6]
 	MaxPixels   int64 // 源图像素预算(w×h 上限)

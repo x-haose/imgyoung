@@ -60,12 +60,38 @@ var _ driver.Driver = (*Driver)(nil)
 // @Description: 参数映射挂本包的 setter,后端刷新 OAuth 令牌等写回时经 OnChange 持久化,
 // 令牌不会只活在内存、重启即退回初始值。加密渠道的内层 Fs 以随机名登记进 rclone 的 fs
 // 缓存,crypt 层按该名取用。错误链不携带参数——其中含凭证,任何回显(日志、API 错误消息)
-// 都是泄露面。
-// @param ctx 控制后端初始化的取消
+// 都是泄露面。ctx 只管构造过程:构造完成后它的取消与截止时刻不影响驱动。
+// @param ctx 控制构造的超时与取消
 // @param opts 构造参数
 // @return 创建好的驱动实例,用毕须 Close
-// @return 后端不存在或初始化失败时的错误
+// @return 后端不存在、初始化失败或 ctx 在构造期间结束时的错误
 func Open(ctx context.Context, opts Options) (*Driver, error) {
+	bctx, detach := constructContext(ctx)
+	d, err := newDriver(bctx, opts)
+	if detach() || err != nil {
+		return d, err
+	}
+	// 构造恰在 ctx 结束时完成:驱动留存的上下文已随之取消,不可用;关闭不受这次取消影响。
+	return nil, errors.Join(context.Cause(ctx), d.Close(context.WithoutCancel(ctx)))
+}
+
+// constructContext 返回构造后端所用的上下文:构造期间随 ctx 取消,脱钩之后不再受 ctx 影响。
+// @Description: rclone 后端留存构造时的上下文,之后的请求沿用它(OAuth 令牌刷新等);调用方的 ctx 通常属于
+// 一次请求或一次任务,结束即取消,不能让它带走驱动。上下文里的值照常传递。
+// @param ctx 调用方的上下文
+// @return bctx 构造用的上下文
+// @return detach 构造结束后调用;返回 false 表示 ctx 已在构造期间结束,bctx 随之取消
+func constructContext(ctx context.Context) (bctx context.Context, detach func() bool) {
+	bctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	return bctx, context.AfterFunc(ctx, cancel)
+}
+
+// newDriver 构造驱动,加密渠道在后端之上套 crypt 层。
+// @param ctx 构造用的上下文,由后端留存
+// @param opts 构造参数
+// @return 创建好的驱动实例
+// @return 后端不存在或初始化失败时的错误
+func newDriver(ctx context.Context, opts Options) (*Driver, error) {
 	inner, err := newBackend(ctx, opts.Backend, opts.Path, withDefaults(opts.Backend, opts.Params), opts.OnChange)
 	if err != nil {
 		return nil, err
@@ -89,7 +115,7 @@ func Open(ctx context.Context, opts Options) (*Driver, error) {
 }
 
 // newBackend 以参数映射直接构造一个后端 Fs。
-// @param ctx 控制初始化的取消
+// @param ctx 构造用的上下文,由后端留存
 // @param backend rclone 后端名
 // @param root 后端内路径
 // @param params 后端参数
@@ -107,6 +133,10 @@ func newBackend(ctx context.Context, backend, root string, params map[string]str
 	m.AddGetter(store, configmap.PriorityNormal)
 	m.AddGetter(defaultValues{options: ri.Options}, configmap.PriorityDefault)
 	m.AddSetter(store)
+	// 修改时间取服务端记下的时刻:S3 类后端否则要为每个对象单独 HEAD 读元数据,列举一个大桶就是同样多次请求。
+	// 后端在构造时取用这份全局配置,之后的列举都按它。
+	ctx, ci := fs.AddConfig(ctx)
+	ci.UseServerModTime = true
 	f, err := ri.NewFs(ctx, newName(), root, m)
 	if err != nil {
 		return nil, fmt.Errorf("初始化 rclone 后端 %q: %w", backend, err)

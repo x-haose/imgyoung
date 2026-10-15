@@ -47,6 +47,19 @@ func (q *Queries) ChannelStorageUsage(ctx context.Context) ([]ChannelStorageUsag
 	return items, nil
 }
 
+const clearChannelLoadFailure = `-- name: ClearChannelLoadFailure :exec
+UPDATE channels
+SET last_error_stage  = NULL,
+    last_error_reason = NULL,
+    last_error        = NULL
+WHERE id = ? AND last_error_stage = 'load'
+`
+
+func (q *Queries) ClearChannelLoadFailure(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, clearChannelLoadFailure, id)
+	return err
+}
+
 const createChannel = `-- name: CreateChannel :one
 INSERT INTO channels (name, driver, config_sealed, priority, encrypted, allow_direct_link, template)
 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -166,7 +179,10 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 
 const markChannelPendingDelete = `-- name: MarkChannelPendingDelete :exec
 UPDATE channels
-SET pending_delete = 1
+SET pending_delete    = 1,
+    last_error_stage  = NULL,
+    last_error_reason = NULL,
+    last_error        = NULL
 WHERE id = ?
 `
 
@@ -232,16 +248,16 @@ func (q *Queries) RecordChannelLoadFailure(ctx context.Context, arg RecordChanne
 	return err
 }
 
-const updateChannelConfig = `-- name: UpdateChannelConfig :exec
+const updateChannelConfig = `-- name: UpdateChannelConfig :execrows
 UPDATE channels
-SET name              = ?,
-    driver            = ?,
-    config_sealed     = ?,
-    priority          = ?,
-    allow_direct_link = ?,
-    template          = ?,
-    bound_at          = ?
-WHERE id = ?
+SET name              = ?1,
+    driver            = ?2,
+    config_sealed     = ?3,
+    priority          = ?4,
+    allow_direct_link = ?5,
+    template          = ?6,
+    bound_at          = ?7
+WHERE id = ?8 AND pending_delete = 0 AND config_sealed = ?9
 `
 
 type UpdateChannelConfigParams struct {
@@ -253,10 +269,11 @@ type UpdateChannelConfigParams struct {
 	Template        string
 	BoundAt         string
 	ID              int64
+	ExpectedSealed  string
 }
 
-func (q *Queries) UpdateChannelConfig(ctx context.Context, arg UpdateChannelConfigParams) error {
-	_, err := q.db.ExecContext(ctx, updateChannelConfig,
+func (q *Queries) UpdateChannelConfig(ctx context.Context, arg UpdateChannelConfigParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateChannelConfig,
 		arg.Name,
 		arg.Driver,
 		arg.ConfigSealed,
@@ -265,24 +282,32 @@ func (q *Queries) UpdateChannelConfig(ctx context.Context, arg UpdateChannelConf
 		arg.Template,
 		arg.BoundAt,
 		arg.ID,
+		arg.ExpectedSealed,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
-const updateChannelConfigSealed = `-- name: UpdateChannelConfigSealed :exec
+const updateChannelConfigSealed = `-- name: UpdateChannelConfigSealed :execrows
 UPDATE channels
-SET config_sealed = ?
-WHERE id = ?
+SET config_sealed = ?1
+WHERE id = ?2 AND config_sealed = ?3
 `
 
 type UpdateChannelConfigSealedParams struct {
-	ConfigSealed string
-	ID           int64
+	ConfigSealed   string
+	ID             int64
+	ExpectedSealed string
 }
 
-func (q *Queries) UpdateChannelConfigSealed(ctx context.Context, arg UpdateChannelConfigSealedParams) error {
-	_, err := q.db.ExecContext(ctx, updateChannelConfigSealed, arg.ConfigSealed, arg.ID)
-	return err
+func (q *Queries) UpdateChannelConfigSealed(ctx context.Context, arg UpdateChannelConfigSealedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateChannelConfigSealed, arg.ConfigSealed, arg.ID, arg.ExpectedSealed)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateChannelProbeResult = `-- name: UpdateChannelProbeResult :execrows

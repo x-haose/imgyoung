@@ -13,6 +13,7 @@ import (
 	"image"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -77,6 +78,8 @@ type ChannelSelector interface {
 	Healthy() []channel.Handle
 	// All 返回全部渠道句柄,按优先级降序。
 	All() []channel.Handle
+	// HoldWrites 取渠道的写入租约;渠道已标为清理中时 ok 为 false。
+	HoldWrites(channelID int64) (release func(), ok bool)
 }
 
 // putTimeout 单次渠道同步写入的超时上限——远端渠道半死时不允许无限挂起
@@ -212,20 +215,41 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 	if err != nil {
 		return Result{}, err
 	}
+	return s.store(ctx, set, opts, user, meta, prep)
+}
+
+// store 把处理好的图写进渠道并落库,随后为其余渠道触发补齐。
+// @Description: 写入与落库都在目标渠道的写入租约内:渠道期间被标为清理中,排空等这次落库后再列举,写下的对象
+// 不会遗留。落库时仍在役的同步副本不够,本次上传失败并删掉已写入的对象。
+// @param set 本次请求生效的配置快照
+// @param opts 上传参数
+// @param user 归属用户
+// @param meta 原图信息
+// @param prep 净化后的字节与哈希
+// @return 上传结果
+// @return 写入或落库失败时的错误
+func (s *Service) store(ctx context.Context, set config.Settings, opts Options, user sqlc.User, meta imageMeta,
+	prep prepared) (Result, error) {
 	shortID := id.New()
 	key := id.StorageKey(shortID, prep.sha256)
-	doneIDs, err := s.writeReplicas(ctx, key, prep.data, minSuccess(set))
+	targets, release := s.holdTargets()
+	defer release()
+	doneIDs, err := s.writeReplicas(ctx, targets, key, prep.data, minSuccess(set))
 	if err != nil {
 		return Result{}, err
 	}
 	all := s.cfg.Channels.All()
 	blobID, err := s.persist(ctx, persistParams{
 		shortID: shortID, userID: opts.UserID, tokenID: opts.TokenID, fileName: truncateName(opts.FileName),
-		idemKey: opts.IdempotencyKey, doneIDs: doneIDs, channels: all,
+		idemKey: opts.IdempotencyKey, doneIDs: doneIDs, channels: all, need: minSuccess(set),
 		sha256: prep.sha256, phash: prep.phash, key: key, mime: meta.mime, size: int64(len(prep.data)),
 		width: int64(meta.width), height: int64(meta.height),
 		ttl: resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()), objectKey: opts.ObjectKey,
 	})
+	if errors.Is(err, ErrInsufficientReplicas) {
+		s.discardWritten(ctx, targets, doneIDs, key)
+		return Result{}, err
+	}
 	if err != nil {
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
 		if imageID, found, _ := s.imageByIdempotencyKey(ctx, opts); found {
@@ -335,8 +359,8 @@ func prepare(data []byte, mime string, policy imaging.EXIFPolicy) (prepared, err
 // @param need 最少同步副本数,>= 1
 // @return 已写入的渠道 ID,按写入顺序
 // @return 无健康渠道时为 channel.ErrNoHealthyChannel,份数不足时为 ErrInsufficientReplicas
-func (s *Service) writeReplicas(ctx context.Context, key string, data []byte, need int) ([]int64, error) {
-	healthy := s.cfg.Channels.Healthy()
+func (s *Service) writeReplicas(ctx context.Context, healthy []channel.Handle, key string, data []byte,
+	need int) ([]int64, error) {
 	if len(healthy) == 0 {
 		return nil, fmt.Errorf("选择主渠道: %w", channel.ErrNoHealthyChannel)
 	}
@@ -365,6 +389,43 @@ func (s *Service) writeReplicas(ctx context.Context, key string, data []byte, ne
 		return nil, err
 	}
 	return doneIDs, nil
+}
+
+// holdTargets 取当前健康渠道的写入租约,作为本次上传的候选渠道;取不到租约的(已标为清理中)不参与。
+// @return targets 已取得租约的健康渠道,按优先级降序
+// @return release 释放全部租约,落库之后调用
+func (s *Service) holdTargets() (targets []channel.Handle, release func()) {
+	healthy := s.cfg.Channels.Healthy()
+	releases := make([]func(), 0, len(healthy))
+	for _, h := range healthy {
+		if rel, ok := s.cfg.Channels.HoldWrites(h.ID); ok {
+			targets = append(targets, h)
+			releases = append(releases, rel)
+		}
+	}
+	return targets, func() {
+		for _, rel := range releases {
+			rel()
+		}
+	}
+}
+
+// discardWritten 上传在落库时失败,删掉已写进各渠道的对象。
+// @Description: 尽力而为:删不掉的,在役渠道上由对账 GC 当孤儿回收;已标为清理中的渠道没有副本记录指向它,
+// 只能留在远端,记日志备查。删除脱离请求的取消,客户端断开也照样清理。
+// @param targets 本次上传的候选渠道
+// @param doneIDs 已写入的渠道 ID
+// @param key 对象键
+func (s *Service) discardWritten(ctx context.Context, targets []channel.Handle, doneIDs []int64, key string) {
+	ctx = context.WithoutCancel(ctx)
+	for _, h := range targets {
+		if !slices.Contains(doneIDs, h.ID) {
+			continue
+		}
+		if err := h.Driver.Delete(ctx, key); err != nil && !errors.Is(err, driver.ErrNotFound) {
+			s.cfg.Logger.Warn("上传未落库,删除已写入的对象失败", "channel", h.Name, "key", key, "err", err)
+		}
+	}
 }
 
 // enqueuePending 为未同步写入的渠道触发异步补齐;入队失败仅告警,pending 行由恢复扫描兜底。
@@ -487,7 +548,8 @@ type persistParams struct {
 	fileName      string           // 原始文件名
 	idemKey       string           // 幂等键,可为空;按用户隔离
 	doneIDs       []int64          // 已同步写入的渠道 ID(至少含主渠道)
-	channels      []channel.Handle // 本次上传使用的渠道快照(与 doneIDs 同源,避免两次取集合不一致)
+	channels      []channel.Handle // 落库时的在役渠道,未同步写入的据此记为待补齐
+	need          int              // 落库时仍在役的同步副本至少要有几份,>= 1
 	sha256        string           // 净化后字节哈希(十六进制)
 	phash         int64            // 感知哈希(按位存入 int64)
 	key           string           // 渠道对象键
@@ -577,27 +639,63 @@ func insertImage(ctx context.Context, q *sqlc.Queries, p persistParams, blobID i
 	return nil
 }
 
-// insertReplicaStates 写入副本状态:已同步渠道就绪,其余渠道待补齐(outbox,补齐任务据此驱动)。
+// insertReplicaStates 写入副本状态:已同步渠道就绪,其余在役渠道待补齐(outbox,补齐任务据此驱动)。
+// @Description: 渠道是否在役以落库这一刻的渠道表为准,与删除渠道的事务串行:写入期间被标为清理中的渠道,
+// 副本照样记下(排空据此删掉对象)但不算有效副本;写入期间被删除的渠道不记。有效副本不足 p.need 份时整体失败,
+// 不让上传在没有可用副本的情况下报成功。
 // @param ctx 控制超时与取消
 // @param q 事务内查询集
 // @param p 落库字段
 // @param blobID 物理图主键
-// @return 写入失败时的错误
+// @return 有效副本不足时包裹 ErrInsufficientReplicas 的错误;写入失败时的错误
 func insertReplicaStates(ctx context.Context, q *sqlc.Queries, p persistParams, blobID int64) error {
 	done := make(map[int64]struct{}, len(p.doneIDs))
+	effective := 0
 	for _, chID := range p.doneIDs {
 		done[chID] = struct{}{}
+		n, err := insertReplica(ctx, q, blobID, chID, channel.StateDone)
+		if err != nil {
+			return err
+		}
+		effective += int(n)
+	}
+	if effective < p.need {
+		return fmt.Errorf("%w: 落库时仍在役的同步副本 %d 份,要求 %d 份", ErrInsufficientReplicas, effective, p.need)
 	}
 	for _, h := range p.channels {
-		state := channel.StatePending
 		if _, ok := done[h.ID]; ok {
-			state = channel.StateDone
+			continue
 		}
-		if err := q.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
-			BlobID: blobID, ChannelID: h.ID, State: state,
+		if _, err := q.InsertBlobChannelInService(ctx, sqlc.InsertBlobChannelInServiceParams{
+			BlobID: blobID, State: channel.StatePending, ChannelID: h.ID,
 		}); err != nil {
 			return fmt.Errorf("写入副本状态(渠道 %d): %w", h.ID, err)
 		}
 	}
 	return nil
+}
+
+// insertReplica 记下一份已写入的副本:渠道在役时计为有效副本;已标为清理中时照样记下、不计;已删除时不记。
+// @param q 事务内查询集
+// @param blobID 物理图主键
+// @param channelID 渠道主键
+// @param state 副本状态
+// @return 计入有效副本的份数(0 或 1)
+// @return 写入失败时的错误
+func insertReplica(ctx context.Context, q *sqlc.Queries, blobID, channelID int64, state string) (int64, error) {
+	n, err := q.InsertBlobChannelInService(ctx, sqlc.InsertBlobChannelInServiceParams{
+		BlobID: blobID, State: state, ChannelID: channelID,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("写入副本状态(渠道 %d): %w", channelID, err)
+	}
+	if n > 0 {
+		return n, nil
+	}
+	if _, err := q.InsertBlobChannelIfExists(ctx, sqlc.InsertBlobChannelIfExistsParams{
+		BlobID: blobID, State: state, ChannelID: channelID,
+	}); err != nil {
+		return 0, fmt.Errorf("写入副本状态(渠道 %d): %w", channelID, err)
+	}
+	return 0, nil
 }

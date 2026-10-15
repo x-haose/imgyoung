@@ -135,6 +135,48 @@ func (q *Queries) GetBlobChannel(ctx context.Context, arg GetBlobChannelParams) 
 	return i, err
 }
 
+const insertBlobChannelIfExists = `-- name: InsertBlobChannelIfExists :execrows
+INSERT INTO blob_channels (blob_id, channel_id, state)
+SELECT ?1, c.id, ?2
+FROM channels c
+WHERE c.id = ?3
+`
+
+type InsertBlobChannelIfExistsParams struct {
+	BlobID    int64
+	State     string
+	ChannelID int64
+}
+
+func (q *Queries) InsertBlobChannelIfExists(ctx context.Context, arg InsertBlobChannelIfExistsParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertBlobChannelIfExists, arg.BlobID, arg.State, arg.ChannelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const insertBlobChannelInService = `-- name: InsertBlobChannelInService :execrows
+INSERT INTO blob_channels (blob_id, channel_id, state)
+SELECT ?1, c.id, ?2
+FROM channels c
+WHERE c.id = ?3 AND c.pending_delete = 0
+`
+
+type InsertBlobChannelInServiceParams struct {
+	BlobID    int64
+	State     string
+	ChannelID int64
+}
+
+func (q *Queries) InsertBlobChannelInService(ctx context.Context, arg InsertBlobChannelInServiceParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertBlobChannelInService, arg.BlobID, arg.State, arg.ChannelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listBlobChannelIDs = `-- name: ListBlobChannelIDs :many
 SELECT channel_id
 FROM blob_channels

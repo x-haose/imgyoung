@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"sync"
@@ -35,6 +36,10 @@ var ErrEncryptedImmutable = errors.New("channel: 加密属性创建后不可变"
 
 // ErrChannelDeleting 渠道正在清理中:不再编辑、探测或测试,只等排空完成或直接移除。
 var ErrChannelDeleting = errors.New("channel: 渠道正在清理中")
+
+// ErrChannelConfigChanged 编辑保存时渠道配置已不是读取时的那份:期间另有编辑落库,或服务商刷新令牌后写回了渠道。
+// 编辑不落库,重新保存即按新的配置处理。
+var ErrChannelConfigChanged = errors.New("channel: 渠道配置在保存期间已被改动")
 
 // TokenRefreshedError 保存渠道失败,而保存过程中服务商已刷新了表单提交的授权令牌。
 // @Description: 刷新令牌只能用一次的服务商(Box 等)此时已作废原令牌,调用方须把新令牌交还表单,
@@ -71,7 +76,7 @@ const nameMaxLen = 64
 var configKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // validateCreateParams 校验创建参数:必填项、渠道名长度、配置键字符集、
-// 加密与直链的互斥(密文无法直出)。
+// 加密与直链的互斥(密文无法直出)、local 后端的路径须为绝对路径。
 // @param p 创建参数
 // @return 参数非法时包裹 ErrInvalidChannel 的带错误码错误
 func validateCreateParams(p CreateParams) error {
@@ -83,6 +88,11 @@ func validateCreateParams(p CreateParams) error {
 	}
 	if p.Encrypted && p.AllowDirectLink {
 		return errcode.Wrap(ErrInvalidChannel, errcode.ChannelEncryptedDirect)
+	}
+	// 相对路径按进程的工作目录解析,换个方式启动或在别处用导出的配置就指向别的目录。
+	if path := p.Config[configKeyPath]; p.Driver == "local" && path != "" && path != SecretPlaceholder &&
+		!filepath.IsAbs(path) {
+		return errcode.Wrap(ErrInvalidChannel, errcode.ChannelLocalPathRelative, "path", path)
 	}
 	for k := range p.Config {
 		if k == configKeyPath || k == configKeyPublicBaseURL {
@@ -308,11 +318,12 @@ type UpdateParams struct {
 // 沿用已存授权时授权带出的参数一并保留。后端名或配置有任何改动即把绑定时刻重置为当前时刻。
 // 成功后 Reload 重建本渠道驱动,再对该渠道深探测落库。编辑不改变副本集合语义,不触发存量回填。
 // 清理中的渠道不可编辑。编辑失败而服务商已刷新了令牌时:沿用的已存令牌刷新后写回渠道并重载
-// (已存的那份可能已作废,在用驱动须换用新令牌);表单提交的新令牌以 TokenRefreshedError 交还。
+// (已存的那份可能已作废,在用驱动须换用新令牌),重载失败由健康检查重试;表单提交的新令牌以
+// TokenRefreshedError 交还。
 // @param channelID 渠道主键
 // @param p 编辑参数
-// @return ErrChannelNotFound / ErrChannelDeleting / ErrEncryptedImmutable / ErrChannelNameExists /
-// ErrInvalidChannel 或落库、重载失败时的错误
+// @return ErrChannelNotFound / ErrChannelDeleting / ErrChannelConfigChanged / ErrEncryptedImmutable /
+// ErrChannelNameExists / ErrInvalidChannel 或落库、重载失败时的错误
 func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) error {
 	reload, err := m.updateRecord(ctx, channelID, p)
 	if err != nil {
@@ -320,7 +331,7 @@ func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) e
 			return err
 		}
 		if rerr := m.Reload(ctx); rerr != nil {
-			return errors.Join(err, fmt.Errorf("刷新后的令牌已写回渠道,但重载失败: %w", rerr))
+			m.cfg.Logger.Error("刷新后的令牌已写回渠道,但重载失败,健康检查时重试", "channel_id", channelID, "err", rerr)
 		}
 		return err
 	}
@@ -333,16 +344,15 @@ func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) e
 	return nil
 }
 
-// updateRecord 校验编辑参数并写回渠道记录;配置密文的读改写全程持锁,与后端写回互斥。
-// @Description: 失败时沿用的已存令牌若已被刷新,新令牌写回渠道,reload 为 true。
+// updateRecord 校验编辑参数并写回渠道记录;写回以读到的配置密文为条件,其间配置被改动则不写。
+// @Description: 失败时沿用的已存令牌若已被刷新,新令牌写回渠道,reload 为 true;写回不成(库里的令牌已变或
+// 落库失败)时以 TokenRefreshedError 把新令牌交还表单——已存的那份可能已被服务商作废,丢掉新令牌渠道就坏了。
 // @param channelID 渠道主键
 // @param p 编辑参数
 // @return reload 渠道配置已改动、调用方须重载;仅 err 非 nil 时为 true
-// @return err ErrChannelNotFound / ErrChannelDeleting / ErrEncryptedImmutable / ErrChannelNameExists /
-// ErrInvalidChannel、TokenRefreshedError 或落库失败时的错误
+// @return err ErrChannelNotFound / ErrChannelDeleting / ErrChannelConfigChanged / ErrEncryptedImmutable /
+// ErrChannelNameExists / ErrInvalidChannel、TokenRefreshedError 或落库失败时的错误
 func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdateParams) (reload bool, err error) {
-	m.cfgMu.Lock()
-	defer m.cfgMu.Unlock()
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, ErrChannelNotFound
@@ -366,8 +376,12 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	if p.Config[ConfigKeyToken] != SecretPlaceholder {
 		return false, &TokenRefreshedError{Token: refreshed, Err: err}
 	}
-	if perr := m.persistParamLocked(ctx, channelID, ConfigKeyToken, refreshed); perr != nil {
-		return false, errors.Join(err, perr)
+	applied, perr := m.mergeParam(ctx, channelID, ConfigKeyToken, old[ConfigKeyToken], refreshed)
+	if perr != nil {
+		m.cfg.Logger.Error("编辑失败,刷新出的令牌也没能写回渠道,已交还表单", "channel_id", channelID, "err", perr)
+	}
+	if !applied {
+		return false, &TokenRefreshedError{Token: refreshed, Err: err}
 	}
 	return true, err
 }
@@ -380,7 +394,8 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 // @param p 编辑参数
 // @param old 渠道已存的配置
 // @param config 已整理的配置;补齐与试构造期间的写回原地并入,失败时也已并入
-// @return ErrChannelNameExists / ErrInvalidChannel 或落库失败时的错误
+// @return ErrChannelNameExists / ErrInvalidChannel / ErrChannelNotFound / ErrChannelDeleting /
+// ErrChannelConfigChanged(编辑期间渠道被删除、标为清理中或配置被改动)或落库失败时的错误
 func (m *Manager) applyEdit(ctx context.Context, row sqlc.Channel, p UpdateParams,
 	old, config map[string]string) error {
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
@@ -398,16 +413,37 @@ func (m *Manager) applyEdit(ctx context.Context, row sqlc.Channel, p UpdateParam
 	if rebind {
 		boundAt = sqlc.TimeText(time.Now())
 	}
-	if err := m.cfg.Queries.UpdateChannelConfig(ctx, sqlc.UpdateChannelConfigParams{
+	n, err := m.cfg.Queries.UpdateChannelConfig(ctx, sqlc.UpdateChannelConfigParams{
 		Name: p.Name, Driver: p.Driver, ConfigSealed: sealed, Priority: p.Priority,
 		AllowDirectLink: boolToInt(p.AllowDirectLink), Template: p.Template, BoundAt: boundAt, ID: row.ID,
-	}); err != nil {
+		ExpectedSealed: row.ConfigSealed,
+	})
+	if err != nil {
 		if db.IsUniqueViolation(err, "channels.name") {
 			return ErrChannelNameExists
 		}
 		return fmt.Errorf("更新渠道记录: %w", err)
 	}
+	if n == 0 {
+		return m.whyNotUpdated(ctx, row.ID)
+	}
 	return nil
+}
+
+// whyNotUpdated 渠道记录没被改到时判明原因:已删除、已标为清理中,或配置已不是读取时的那份。
+// @param channelID 渠道主键
+// @return ErrChannelNotFound / ErrChannelDeleting / ErrChannelConfigChanged,或查询失败时的错误
+func (m *Manager) whyNotUpdated(ctx context.Context, channelID int64) error {
+	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return ErrChannelNotFound
+	case err != nil:
+		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
+	case row.PendingDelete != 0:
+		return ErrChannelDeleting
+	}
+	return ErrChannelConfigChanged
 }
 
 // editedConfig 校验编辑参数,并把提交的配置整理成可入库形态(哨兵还原、密码编码),不访问后端。
@@ -529,24 +565,33 @@ func (m *Manager) Delete(ctx context.Context, channelID int64, purge bool) error
 	return m.Reload(ctx)
 }
 
-// Remove 删除渠道记录及其全部副本记录,不检查唯一副本、不触碰远端对象。
-// @Description: 供排空任务清完对象后收尾;唯一副本检查在打清理中标记时已经做过,
-// 之后该渠道的副本不再被任何路径计入。
+// Remove 删除仍在清理中的渠道记录及其全部副本记录,不检查唯一副本、不触碰远端对象。
+// @Description: 供排空任务清完对象后收尾;唯一副本检查在打清理中标记时已经做过,之后该渠道的副本不再被任何
+// 路径计入。渠道此刻已不在清理中(管理员已直接移除)时什么都不做。
 // @param channelID 渠道主键
-// @return 落库或重载失败时的错误
-func (m *Manager) Remove(ctx context.Context, channelID int64) error {
+// @return removed 本次是否删掉了渠道记录
+// @return err 落库或重载失败时的错误
+func (m *Manager) Remove(ctx context.Context, channelID int64) (removed bool, err error) {
 	tx, err := m.cfg.Conn.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("开启事务: %w", err)
+		return false, fmt.Errorf("开启事务: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := removeChannelRows(ctx, m.cfg.Queries.WithTx(tx), channelID); err != nil {
-		return err
+	q := m.cfg.Queries.WithTx(tx)
+	row, err := q.GetChannel(ctx, channelID)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && row.PendingDelete == 0) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("读取渠道 %d: %w", channelID, err)
+	}
+	if err := removeChannelRows(ctx, q, channelID); err != nil {
+		return false, err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交事务: %w", err)
+		return false, fmt.Errorf("提交事务: %w", err)
 	}
-	return m.Reload(ctx)
+	return true, m.Reload(ctx)
 }
 
 // removeChannelRows 在事务内删除渠道的副本记录与渠道记录(副本记录有外键指向渠道,先删)。

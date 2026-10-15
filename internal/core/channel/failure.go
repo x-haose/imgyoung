@@ -135,6 +135,8 @@ var failureRules = []struct {
 	{[]string{"permanentredirect", "authorizationheadermalformed"}, ReasonRegionMismatch},
 	{[]string{"no such host", "server misbehaving"}, ReasonDNS},
 	{[]string{"connection refused", "connection reset"}, ReasonConnect},
+	// 握手超时是网络问题,文本里也带 "tls handshake",须排在证书规则之前。
+	{[]string{"tls handshake timeout"}, ReasonTimeout},
 	{[]string{"certificate", "x509", "tls handshake"}, ReasonTLS},
 	{[]string{"context deadline exceeded", "i/o timeout", "timeout"}, ReasonTimeout},
 	{[]string{"permission denied", "read-only file system"}, ReasonPermission},
@@ -195,14 +197,14 @@ func rootCause(err error) error {
 
 // truncateRunes 把 s 截断到最多 limit 个字符(按 rune 计,多字节文本安全)。
 // @param s 原文
-// @param limit 字符数上限
-// @return 截断后的文本,被截断时追加省略号
+// @param limit 字符数上限,>= 1
+// @return 截断后的文本,不超过 limit 个字符;被截断时末字符为省略号
 func truncateRunes(s string, limit int) string {
 	r := []rune(s)
 	if len(r) <= limit {
 		return s
 	}
-	return string(r[:limit]) + "…"
+	return string(r[:limit-1]) + "…"
 }
 
 // secretValues 取配置里须保密的值,供 Explain 从原文里抹除。

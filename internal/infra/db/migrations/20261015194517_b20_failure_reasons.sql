@@ -1,7 +1,7 @@
 -- Add column "last_error_reason" to table: "blob_channels"
 ALTER TABLE `blob_channels` ADD COLUMN `last_error_reason` text NOT NULL DEFAULT '';
 -- Add column "params" to table: "alerts"
-ALTER TABLE `alerts` ADD COLUMN `params` text NOT NULL DEFAULT '{}';
+ALTER TABLE `alerts` ADD COLUMN `params` text NULL;
 -- Add column "last_error_stage" to table: "channels"
 ALTER TABLE `channels` ADD COLUMN `last_error_stage` text NULL;
 -- Add column "last_error_reason" to table: "channels"

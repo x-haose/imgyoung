@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -55,7 +56,7 @@ func SessionFrom(ctx context.Context) (auth.SessionInfo, bool) {
 
 // TokenAuth 数据 API 鉴权中间件:校验 Bearer Token 并要求具备指定 scope。
 // @Description: Token 唯一真相在 DB(哈希比对);通过后把主体放入请求上下文,
-// handler 取出后显式传参进 core。
+// handler 取出后显式传参进 core。查库失败返回 500,不当作 Token 无效。
 // @param svc 认证服务
 // @param scope 本路由要求的授权范围
 // @param l 结构化日志
@@ -69,8 +70,13 @@ func TokenAuth(svc *auth.Service, scope string, l *slog.Logger) func(http.Handle
 				return
 			}
 			tp, err := svc.AuthenticateToken(r.Context(), plaintext)
-			if err != nil {
+			switch {
+			case errors.Is(err, auth.ErrTokenInvalid):
 				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.UploadTokenInvalid)
+				return
+			case err != nil:
+				l.Error("校验 Token 失败", "err", err)
+				httpx.WriteError(l, w, http.StatusInternalServerError, errcode.Internal)
 				return
 			}
 			if !slices.Contains(strings.Split(tp.Scopes, ","), scope) {
@@ -83,8 +89,8 @@ func TokenAuth(svc *auth.Service, scope string, l *slog.Logger) func(http.Handle
 }
 
 // SessionAuth 管理面鉴权中间件:校验会话 cookie。
-// @Description: 无 cookie、会话过期或用户被禁用一律 401;通过后把会话信息放入
-// 请求上下文。管理面不认 Token——凭证边界见鉴权模型。
+// @Description: 无 cookie、会话过期或用户被禁用一律 401,查库失败返回 500;通过后把会话信息放入
+// 请求上下文。管理面不认 Token。
 // @param svc 认证服务
 // @param l 结构化日志
 // @return 中间件
@@ -97,8 +103,13 @@ func SessionAuth(svc *auth.Service, l *slog.Logger) func(http.Handler) http.Hand
 				return
 			}
 			info, err := svc.ValidateSession(r.Context(), c.Value)
-			if err != nil {
+			switch {
+			case errors.Is(err, auth.ErrSessionInvalid):
 				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.Unauthenticated)
+				return
+			case err != nil:
+				l.Error("校验会话失败", "err", err)
+				httpx.WriteError(l, w, http.StatusInternalServerError, errcode.Internal)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeySession, info)))

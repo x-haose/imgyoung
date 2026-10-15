@@ -54,6 +54,25 @@ func applyN(t *testing.T, d *DB, n int) {
 	}
 }
 
+// applyBefore 应用名字以 suffix 结尾的迁移之前的全部版本,构造它之前的旧库。
+func applyBefore(t *testing.T, d *DB, suffix string) {
+	t.Helper()
+	dir, err := embeddedDir()
+	if err != nil {
+		t.Fatalf("装载迁移目录: %v", err)
+	}
+	t.Cleanup(func() { closeDir(dir) })
+	files, err := dir.Files()
+	if err != nil {
+		t.Fatalf("读取迁移文件: %v", err)
+	}
+	idx := slices.IndexFunc(files, func(f migrate.File) bool { return strings.HasSuffix(f.Name(), suffix) })
+	if idx < 0 {
+		t.Fatalf("找不到迁移 *%s", suffix)
+	}
+	applyN(t, d, idx)
+}
+
 // queryString 取单行单列字符串结果,便于断言。
 func queryString(t *testing.T, d *DB, query string, args ...any) string {
 	t.Helper()
@@ -88,24 +107,21 @@ func TestMigrateFresh(t *testing.T) {
 	}
 }
 
-// TestMigrateDoesNotReviveLocalChannel 验证内置 local 渠道只播种一次:管理员删掉它之后
-// 再次迁移(每次启动都会跑)不得把它种回来;渠道表彻底为空的全新库才播种。
+// TestMigrateDoesNotReviveLocalChannel 验证内置 local 渠道只在全新库播种一次:它是唯一渠道时被删掉、
+// 渠道表为空,再次迁移(每次启动都会跑)也不得把它种回来。
 func TestMigrateDoesNotReviveLocalChannel(t *testing.T) {
 	conn := openTest(t)
 	if err := Migrate(conn); err != nil {
 		t.Fatalf("首次迁移: %v", err)
 	}
 	ctx := context.Background()
-	if _, err := conn.ExecContext(ctx, `INSERT INTO channels (name, driver) VALUES ('mine', 's3')`); err != nil {
-		t.Fatalf("新增渠道: %v", err)
-	}
 	if _, err := conn.ExecContext(ctx, `DELETE FROM channels WHERE name = 'local'`); err != nil {
 		t.Fatalf("删除 local 渠道: %v", err)
 	}
 	if err := Migrate(conn); err != nil {
 		t.Fatalf("再次迁移: %v", err)
 	}
-	if got := queryString(t, conn, `SELECT COUNT(*) FROM channels WHERE name = 'local'`); got != "0" {
+	if got := queryString(t, conn, `SELECT COUNT(*) FROM channels`); got != "0" {
 		t.Fatalf("已删除的 local 渠道被重新播种(count=%s)", got)
 	}
 }
@@ -173,22 +189,7 @@ func TestMigrateBackfillsLegacyRows(t *testing.T) {
 // 指向渠道的副本记录与外键完好;迁移之后新建的渠道,绑定时刻与创建时刻同值。
 func TestMigrateBackfillsChannelBoundAt(t *testing.T) {
 	conn := openTest(t)
-	dir, err := embeddedDir()
-	if err != nil {
-		t.Fatalf("装载迁移目录: %v", err)
-	}
-	t.Cleanup(func() { closeDir(dir) })
-	files, err := dir.Files()
-	if err != nil {
-		t.Fatalf("读取迁移文件: %v", err)
-	}
-	idx := slices.IndexFunc(files, func(f migrate.File) bool {
-		return strings.HasSuffix(f.Name(), "_b19_channel_bound_at.sql")
-	})
-	if idx < 0 {
-		t.Fatal("找不到加绑定时刻的迁移")
-	}
-	applyN(t, conn, idx)
+	applyBefore(t, conn, "_b19_channel_bound_at.sql")
 	const createdAt = "2020-01-02 03:04:05"
 	for _, stmt := range []string{
 		`INSERT INTO channels (id, name, driver, created_at) VALUES (7, 'legacy', 'local', '` + createdAt + `')`,
@@ -218,5 +219,36 @@ func TestMigrateBackfillsChannelBoundAt(t *testing.T) {
 	}
 	if got := queryString(t, conn, `SELECT bound_at = created_at FROM channels WHERE name = 'fresh'`); got != "1" {
 		t.Error("新建渠道的绑定时刻应与创建时刻同值")
+	}
+}
+
+// TestMigrateRewritesSettingsOutOfRange 存量配置按收紧后的取值范围改写:WebP 质量 0 改为实际生效的 75;
+// 不是站点根地址的 base_url 清空,合法的原样保留。
+func TestMigrateRewritesSettingsOutOfRange(t *testing.T) {
+	for stored, want := range map[string]string{
+		"https://img.example.com":      "https://img.example.com",
+		"HTTP://Img.Example.com:8080":  "HTTP://Img.Example.com:8080",
+		"img.example.com":              "",
+		"https://img.example.com/sub":  "",
+		"https://img.example.com?":     "",
+		"https://user@img.example.com": "",
+	} {
+		t.Run(stored, func(t *testing.T) {
+			conn := openTest(t)
+			applyBefore(t, conn, "_b22_settings_constraints.sql")
+			if _, err := conn.ExecContext(context.Background(),
+				`INSERT INTO settings (id, base_url, process_quality_webp) VALUES (1, ?, 0)`, stored); err != nil {
+				t.Fatalf("写入旧版配置: %v", err)
+			}
+			if err := Migrate(conn); err != nil {
+				t.Fatalf("升级迁移: %v", err)
+			}
+			if got := queryString(t, conn, `SELECT base_url FROM settings`); got != want {
+				t.Errorf("base_url = %q, 期望 %q", got, want)
+			}
+			if got := queryString(t, conn, `SELECT process_quality_webp FROM settings`); got != "75" {
+				t.Errorf("process_quality_webp = %s, 期望 75", got)
+			}
+		})
 	}
 }

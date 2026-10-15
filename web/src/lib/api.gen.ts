@@ -597,7 +597,7 @@ export interface paths {
         get?: never;
         /**
          * 编辑渠道
-         * @description 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409；清理中的渠道不可编辑（409）。编辑失败而服务商已刷新了令牌时：沿用已存令牌的，新令牌写回渠道；表单提交的新令牌随错误的 `token` 交还。仅管理员。
+         * @description 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409；清理中的渠道不可编辑（409）；保存期间渠道配置被另一次编辑或令牌写回改动的，不落库并返回 409，重新保存即可。编辑失败而服务商已刷新了令牌时：沿用已存令牌的，新令牌写回渠道；表单提交的新令牌随错误的 `token` 交还。仅管理员。
          */
         put: operations["updateChannel"];
         post?: never;
@@ -1068,7 +1068,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "snapshot_name_invalid" | "snapshot_not_found" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "snapshot_name_invalid" | "snapshot_not_found" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败归类，按底层错误的特征判定；`unclassified` 表示未能归类，排障看原文
          * @enum {string}
@@ -1260,7 +1260,7 @@ export interface components {
             process_widths: number[] | null;
             /** @description 按需处理允许的目标格式，至少一项 */
             process_formats: string[];
-            /** @description WebP 质量档 [0,100] */
+            /** @description WebP 质量档 [1,100] */
             process_quality_webp: number;
             /** @description JPEG 质量档 [1,100] */
             process_quality_jpeg: number;
@@ -1962,10 +1962,10 @@ export interface components {
             target: string;
             /** @description 中文描述 */
             message: string;
-            /** @description 描述参数，管理后台按 `kind` 与它渲染当前语言的描述。`channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail` （同 ChannelFailure；渠道尚未探测过时为空对象）；`replication_failed`：`failed`；`channel_quota_exceeded`：`bytes`、`quota`； `backup_failed`：`code`（ErrorCode）加该错误码的文案参数 */
+            /** @description 描述参数，管理后台按 `kind` 与它渲染当前语言的描述。`channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail` （同 ChannelFailure；渠道尚未探测过时为空对象）；`replication_failed`：`failed`；`channel_quota_exceeded`：`bytes`、`quota`； `backup_failed`：`code`（ErrorCode）加该错误码的文案参数。null 表示该告警只有中文 `message`，没有描述参数 */
             params: {
                 [key: string]: string;
-            };
+            } | null;
             opened_at: string;
             /** @description 恢复时刻；null 表示仍未恢复 */
             resolved_at: string | null;
@@ -2124,6 +2124,15 @@ export interface components {
         };
         /** @description 目标不存在，或对当前用户不可见 */
         NotFound: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 服务端故障（数据库读写失败等），原因记在服务端日志；可稍后重试 */
+        InternalError: {
             headers: {
                 [name: string]: unknown;
             };
@@ -2426,6 +2435,7 @@ export interface operations {
             415: components["responses"]["UnsupportedType"];
             422: components["responses"]["TooManyPixels"];
             429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
             503: components["responses"]["ChannelsUnavailable"];
         };
     };
@@ -2457,6 +2467,7 @@ export interface operations {
             415: components["responses"]["UnsupportedType"];
             422: components["responses"]["TooManyPixels"];
             429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
             /** @description 远端返回错误、重定向过多或无法取回 */
             502: {
                 headers: {
@@ -2627,6 +2638,7 @@ export interface operations {
                 };
             };
             429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
         };
     };
     logout: {
@@ -2650,6 +2662,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     me: {
@@ -2663,6 +2676,7 @@ export interface operations {
         responses: {
             200: components["responses"]["SessionResponse"];
             401: components["responses"]["Unauthorized"];
+            500: components["responses"]["InternalError"];
         };
     };
     changePassword: {
@@ -2699,6 +2713,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     dashboard: {
@@ -2721,6 +2736,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     runtimeConfig: {
@@ -2743,6 +2759,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     updateConfig: {
@@ -2765,6 +2782,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     fullConfig: {
@@ -2779,6 +2797,7 @@ export interface operations {
             200: components["responses"]["FullConfigResponse"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     sessionUpload: {
@@ -2811,6 +2830,7 @@ export interface operations {
             415: components["responses"]["UnsupportedType"];
             422: components["responses"]["TooManyPixels"];
             429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
             503: components["responses"]["ChannelsUnavailable"];
         };
     };
@@ -2844,6 +2864,7 @@ export interface operations {
             415: components["responses"]["UnsupportedType"];
             422: components["responses"]["TooManyPixels"];
             429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
             /** @description 远端返回错误、重定向过多或无法取回 */
             502: {
                 headers: {
@@ -2893,6 +2914,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     batchDeleteImages: {
@@ -2923,6 +2945,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     getImage: {
@@ -2941,6 +2964,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     deleteImage: {
@@ -2968,6 +2992,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     patchImage: {
@@ -2994,6 +3019,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     adminImageBytes: {
@@ -3054,6 +3080,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     issueToken: {
@@ -3085,6 +3112,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     deleteToken: {
@@ -3122,6 +3150,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     revokeToken: {
@@ -3150,6 +3179,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     rotateToken: {
@@ -3172,6 +3202,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     tokenS3Credential: {
@@ -3202,6 +3233,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     channelTemplates: {
@@ -3224,6 +3256,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     listChannels: {
@@ -3246,6 +3279,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     createChannel: {
@@ -3326,6 +3360,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ChannelDeleting"];
+            500: components["responses"]["InternalError"];
         };
     };
     updateChannel: {
@@ -3368,7 +3403,7 @@ export interface operations {
                     "application/json": components["schemas"]["ChannelSaveError"];
                 };
             };
-            /** @description 渠道名已存在、试图变更加密属性，或渠道正在清理中 */
+            /** @description 渠道名已存在、试图变更加密属性、渠道正在清理中，或保存期间配置已被改动 */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3433,6 +3468,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     channelConfig: {
@@ -3460,6 +3496,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     channelRcloneConfig: {
@@ -3505,6 +3542,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     checkChannel: {
@@ -3528,6 +3566,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ChannelDeleting"];
+            500: components["responses"]["InternalError"];
         };
     };
     startChannelOAuth: {
@@ -3560,6 +3599,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ChannelDeleting"];
+            500: components["responses"]["InternalError"];
         };
     };
     channelOAuthCallback: {
@@ -3598,6 +3638,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     channelOAuthResult: {
@@ -3632,6 +3673,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     listUsers: {
@@ -3654,6 +3696,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     createUser: {
@@ -3693,6 +3736,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     updateUser: {
@@ -3734,6 +3778,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     deleteUser: {
@@ -3771,6 +3816,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     resetUserPassword: {
@@ -3803,6 +3849,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     listRefererRules: {
@@ -3825,6 +3872,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     addRefererRule: {
@@ -3864,6 +3912,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     deleteRefererRule: {
@@ -3892,6 +3941,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     listDedupCandidates: {
@@ -3919,6 +3969,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     mergeDedupCandidate: {
@@ -3960,6 +4011,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            500: components["responses"]["InternalError"];
         };
     };
     dismissDedupCandidate: {
@@ -3988,6 +4040,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     listCleanup: {
@@ -4015,6 +4068,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     listAudit: {
@@ -4052,6 +4106,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     listAlerts: {
@@ -4081,6 +4136,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
     listBackups: {
@@ -4103,6 +4159,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description 任一健康渠道列举快照失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description 没有健康渠道 */
             503: {
                 headers: {
@@ -4137,7 +4202,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description 备份失败：生成快照失败，或有渠道上传、清理旧快照失败；错误里列出失败的渠道与原因，已写成的渠道保留该快照 */
+            /** @description 备份失败：生成快照失败（`backup_snapshot_failed`）、有渠道没写成快照（`backup_store_failed`），或快照都写成、 有渠道清理旧快照失败（`backup_prune_failed`）；错误里列出失败的渠道与根因，已写成的渠道保留该快照 */
             500: {
                 headers: {
                     [name: string]: unknown;
@@ -4184,6 +4249,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description 持有该快照的渠道都读取失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description 没有健康渠道 */
             503: {
                 headers: {
@@ -4223,6 +4297,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description 持有该快照的渠道都读取失败，或暂存到数据目录失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description 没有健康渠道 */
             503: {
                 headers: {
@@ -4256,6 +4339,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
         };
     };
 }

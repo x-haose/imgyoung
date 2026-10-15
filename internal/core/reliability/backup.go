@@ -59,16 +59,19 @@ func New(cfg Config) *Service {
 
 // RunOnce 执行一次备份:快照一次 → 写入每个健康渠道并各自清理超额旧份;结果记入 LastFailure。
 // @Description: 快照经各渠道驱动写入,加密渠道自动得到密文备份。单个渠道失败不影响其余渠道继续写,
-// 但本轮记为失败,写成的渠道保留这份快照。写入期间占用各渠道的系统对象(见 channel.Manager.HoldSystemWrites),
+// 但本轮记为失败,写成的渠道保留这份快照。写入期间占用各渠道的系统对象(见 channel.Manager.HoldWrites),
 // 期间被标为清理中的渠道跳过不写。恢复经 Stage 暂存、重启时 ApplyStaged 换入。
+// ctx 被取消(停机)造成的失败不记入 LastFailure:那不是备份的结论。
 // @return 新快照,Channels 为写入的全部渠道;失败时为零值
-// @return 带错误码的错误:没有健康渠道时(包裹 channel.ErrNoHealthyChannel)、生成快照失败,或任一渠道
-// 上传、清理失败时列出各失败渠道及根因
+// @return 带错误码的错误:没有健康渠道时(包裹 channel.ErrNoHealthyChannel)、生成快照失败、任一渠道快照没写成,
+// 或快照都写成但有渠道清理旧快照失败时,列出各失败渠道及根因
 func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	snap, err := s.backup(ctx)
-	s.recordResult(err)
+	if err == nil || ctx.Err() == nil {
+		s.recordResult(err)
+	}
 	return snap, err
 }
 
@@ -89,30 +92,32 @@ func (s *Service) backup(ctx context.Context) (Snapshot, error) {
 
 	taken := time.Now().UTC().Truncate(time.Millisecond)
 	key := snapshotKey(taken)
-	written := make([]string, 0, len(targets))
-	var failures []string
+	var t storeTally
 	for _, h := range targets {
-		stored, err := s.storeHeld(ctx, h, key, io.NewSectionReader(f, 0, size), size)
-		if err != nil {
-			failures = append(failures, h.Name+": "+s.cfg.Channels.ExplainFor(h.ID, err).Detail)
-			s.cfg.Logger.Warn("快照写入渠道失败", "channel", h.Name, "key", key, "err", err)
-			continue
-		}
-		if stored {
-			written = append(written, h.Name)
-		}
+		s.storeHeld(ctx, h, key, io.NewSectionReader(f, 0, size), size, &t)
 	}
 	name := strings.TrimPrefix(key, Dir+"/")
-	attempted := len(written) + len(failures)
+	attempted := strconv.Itoa(len(t.written) + len(t.putFailed))
 	switch {
-	case len(failures) > 0:
+	case len(t.putFailed) > 0:
 		return Snapshot{}, errcode.New(errcode.BackupStoreFailed, "snapshot", name,
-			"failed", strconv.Itoa(len(failures)), "total", strconv.Itoa(attempted),
-			"detail", strings.Join(failures, "; "))
-	case attempted == 0:
+			"failed", strconv.Itoa(len(t.putFailed)), "total", attempted,
+			"detail", strings.Join(append(t.putFailed, t.pruneFailed...), "; "))
+	case len(t.written) == 0:
 		return Snapshot{}, errNoTarget()
+	case len(t.pruneFailed) > 0:
+		return Snapshot{}, errcode.New(errcode.BackupPruneFailed, "snapshot", name,
+			"failed", strconv.Itoa(len(t.pruneFailed)), "total", attempted,
+			"detail", strings.Join(t.pruneFailed, "; "))
 	}
-	return Snapshot{Name: name, Size: size, TakenAt: taken, Channels: written}, nil
+	return Snapshot{Name: name, Size: size, TakenAt: taken, Channels: t.written}, nil
+}
+
+// storeTally 一轮备份在各渠道上的结果。
+type storeTally struct {
+	written     []string // 写成快照的渠道名,按写入顺序
+	putFailed   []string // 快照没写成的渠道,每项形如 "渠道名: 根因原文"
+	pruneFailed []string // 快照写成、清理旧快照失败的渠道,每项形如 "渠道名: 根因原文"
 }
 
 // errNoTarget 没有可写快照的渠道。
@@ -121,21 +126,30 @@ func errNoTarget() error {
 	return errcode.Wrap(fmt.Errorf("选择备份目标渠道: %w", channel.ErrNoHealthyChannel), errcode.NoHealthyChannel)
 }
 
-// storeHeld 占用渠道的系统对象后写入快照;渠道此刻已标为清理中则不写。
+// storeHeld 在渠道的写入租约内写入快照、再清理超额旧份,结果记进 t;渠道此刻已标为清理中则跳过。
 // @param h 目标渠道
 // @param key 快照对象键
 // @param r 快照内容
 // @param size 字节数
-// @return stored 是否写入
-// @return err 上传或清理失败时的错误
-func (s *Service) storeHeld(ctx context.Context, h channel.Handle, key string, r io.Reader, size int64) (stored bool,
-	err error) {
-	release, ok := s.cfg.Channels.HoldSystemWrites(h.ID)
+// @param t 本轮结果
+func (s *Service) storeHeld(ctx context.Context, h channel.Handle, key string, r io.Reader, size int64,
+	t *storeTally) {
+	release, ok := s.cfg.Channels.HoldWrites(h.ID)
 	if !ok {
-		return false, nil
+		return
 	}
 	defer release()
-	return true, s.store(ctx, h, key, r, size)
+	if err := h.Driver.Put(ctx, key, r, size); err != nil {
+		t.putFailed = append(t.putFailed, h.Name+": "+s.cfg.Channels.ExplainFor(h.ID, err).Detail)
+		s.cfg.Logger.Warn("快照写入渠道失败", "channel", h.Name, "key", key, "err", err)
+		return
+	}
+	t.written = append(t.written, h.Name)
+	s.cfg.Logger.Info("元数据库快照已备份", "channel", h.Name, "key", key, "bytes", size)
+	if err := s.prune(ctx, h); err != nil {
+		t.pruneFailed = append(t.pruneFailed, h.Name+": "+s.cfg.Channels.ExplainFor(h.ID, err).Detail)
+		s.cfg.Logger.Warn("清理渠道上的旧快照失败", "channel", h.Name, "err", err)
+	}
 }
 
 // vacuum 用 VACUUM INTO 在数据目录生成一致性快照文件并打开它。
@@ -169,21 +183,6 @@ func (s *Service) vacuum(ctx context.Context) (*os.File, int64, error) {
 func discard(f *os.File) {
 	_ = f.Close()
 	_ = os.Remove(f.Name())
-}
-
-// store 把快照写入一个渠道,再清理该渠道上超出保留份数的旧快照。
-// @param ctx 控制超时与取消
-// @param h 目标渠道
-// @param key 快照对象键
-// @param r 快照内容
-// @param size 字节数
-// @return 上传或清理失败时的错误
-func (s *Service) store(ctx context.Context, h channel.Handle, key string, r io.Reader, size int64) error {
-	if err := h.Driver.Put(ctx, key, r, size); err != nil {
-		return fmt.Errorf("上传快照: %w", err)
-	}
-	s.cfg.Logger.Info("元数据库快照已备份", "channel", h.Name, "key", key, "bytes", size)
-	return s.prune(ctx, h)
 }
 
 // Run 周期执行备份,直至 ctx 取消;启动时有健康渠道缺少备份间隔内的快照才先备份一次。

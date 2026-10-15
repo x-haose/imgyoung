@@ -5,6 +5,7 @@ package alert
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,26 +170,29 @@ func (s *Service) refresh(ctx context.Context, existing sqlc.Alert, c Condition)
 
 // encodeParams 把描述参数编码为告警表 params 列的 JSON 文本;键按字典序输出,同样的参数得到同样的文本。
 // @param params 描述参数,可为 nil
-// @return JSON 对象文本
+// @return JSON 对象文本,恒非 NULL;nil 编码为空对象
 // @return 编码失败时的错误
-func encodeParams(params map[string]string) (string, error) {
+func encodeParams(params map[string]string) (sql.NullString, error) {
 	if params == nil {
 		params = map[string]string{}
 	}
 	b, err := json.Marshal(params)
 	if err != nil {
-		return "", fmt.Errorf("编码告警参数: %w", err)
+		return sql.NullString{}, fmt.Errorf("编码告警参数: %w", err)
 	}
-	return string(b), nil
+	return sql.NullString{String: string(b), Valid: true}, nil
 }
 
 // DecodeParams 把告警表 params 列还原为描述参数。
-// @param raw 列值,JSON 对象文本
-// @return 描述参数
+// @param raw 列值,JSON 对象文本或 NULL
+// @return 描述参数;列为 NULL(该行只有中文描述)时为 nil
 // @return 列值不是字符串到字符串的 JSON 对象时的错误
-func DecodeParams(raw string) (map[string]string, error) {
+func DecodeParams(raw sql.NullString) (map[string]string, error) {
+	if !raw.Valid {
+		return nil, nil
+	}
 	params := map[string]string{}
-	if err := json.Unmarshal([]byte(raw), &params); err != nil {
+	if err := json.Unmarshal([]byte(raw.String), &params); err != nil {
 		return nil, fmt.Errorf("解析告警参数: %w", err)
 	}
 	return params, nil

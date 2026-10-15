@@ -65,11 +65,13 @@ func (s *OAuthSessions) Start(driver string, params map[string]string, redirectU
 	return state, nil
 }
 
-// PendingAuth 一次待换取令牌的授权的发起信息。
+// PendingAuth 一次授权的发起信息与进展。
 type PendingAuth struct {
 	Driver      string            // rclone 后端名
 	Params      map[string]string // 后端参数,含自建应用凭证
 	RedirectURI string            // 发起时使用的回调地址,换取令牌时必须一致
+	Completed   bool              // 已记下换取结果(成功或失败);回调被再次打开时不再换取
+	Failed      bool              // 已记下的结果是失败
 }
 
 // Pending 取出待换取令牌的会话信息。
@@ -83,10 +85,14 @@ func (s *OAuthSessions) Pending(state string) (PendingAuth, error) {
 	if !ok || expired(sess) {
 		return PendingAuth{}, ErrOAuthSessionNotFound
 	}
-	return PendingAuth{Driver: sess.driver, Params: sess.params, RedirectURI: sess.redirectURI}, nil
+	return PendingAuth{
+		Driver: sess.driver, Params: sess.params, RedirectURI: sess.redirectURI,
+		Completed: sess.token != "" || sess.failure != nil, Failed: sess.failure != nil,
+	}, nil
 }
 
-// Complete 记录换取结果。
+// Complete 记录换取结果;已有结果时保留先记下的那个。
+// @Description: 授权码只能用一次,回调被再次打开(刷新页面、浏览器重放)时第二次换取必然失败,不能覆盖第一次换到的令牌。
 // @param state 一次性 state
 // @param token 换取到的令牌 JSON;失败时为空
 // @param failure 失败原因;成功时为 nil
@@ -98,7 +104,9 @@ func (s *OAuthSessions) Complete(state, token string, failure *errcode.Error) er
 	if !ok || expired(sess) {
 		return ErrOAuthSessionNotFound
 	}
-	sess.token, sess.failure = token, failure
+	if sess.token == "" && sess.failure == nil {
+		sess.token, sess.failure = token, failure
+	}
 	return nil
 }
 

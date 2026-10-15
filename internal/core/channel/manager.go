@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
@@ -57,9 +58,10 @@ type ManagerConfig struct {
 // managed 一条已加载渠道的运行态。
 type managed struct {
 	handle  Handle         // 对外句柄
-	healthy bool           // 健康标记(加载时从 DB 读取)
+	healthy bool           // 健康标记,取自渠道行,探测结论落库后经 setHealth 同步
 	driver  *rclone.Driver // 驱动实例,退役时 Close
 	source  driverSource   // 构造驱动所用的输入,Reload 据此判定是否需要重建
+	live    *liveParams    // 驱动手里当前的参数值;后端写回经它核对库里的值,与 driver 一一对应
 }
 
 // driverSource 决定驱动实例形态的全部输入;任一项变化即须重建驱动。
@@ -82,13 +84,13 @@ func (s driverSource) equal(other driverSource) bool {
 // @Description: 自持驱动实例;配置变更调 Reload,只重建配置有变的渠道、关闭退役实例。
 // 读方法并发安全。
 type Manager struct {
-	cfg         ManagerConfig           // 依赖
-	mu          sync.RWMutex            // 保护 channels
-	channels    []managed               // 已加载渠道,按优先级降序
-	reloadMu    sync.Mutex              // 串行化 Reload 与 Close:两者都要在"读取现状 → 构造/关闭 → 换入"之间保持现状不变
-	cfgMu       sync.Mutex              // 串行化渠道配置密文的读改写(编辑与后端写回并发时不互相覆盖)
-	systemMu    sync.Mutex              // 保护 systemLocks
-	systemLocks map[int64]*sync.RWMutex // 渠道主键 → 系统对象锁(见 HoldSystemWrites);按需创建,渠道删除后不回收
+	cfg        ManagerConfig           // 依赖
+	mu         sync.RWMutex            // 保护 channels 与 healthGen
+	channels   []managed               // 已加载渠道,按优先级降序
+	healthGen  map[int64]uint64        // 渠道主键 → setHealth 次数;Reload 据此识别装载期间翻转过的健康标记
+	reloadMu   sync.Mutex              // 串行化 Reload 与 Close:两者都要在"读取现状 → 构造/关闭 → 换入"之间保持现状不变
+	writeMu    sync.Mutex              // 保护 writeLocks
+	writeLocks map[int64]*sync.RWMutex // 渠道主键 → 写入租约锁(见 HoldWrites);按需创建,渠道删除后不回收
 }
 
 // NewManager 创建管理器并完成首次加载。
@@ -106,50 +108,126 @@ func NewManager(ctx context.Context, cfg ManagerConfig) (*Manager, error) {
 // errNothingLoaded 渠道表非空却一个渠道也装载不了;各渠道的失败原因已作为探测结论落库。
 var errNothingLoaded = errors.New("channel: 全部渠道均无法装载")
 
+// loadTimeout 构造一个后端的时限。网盘类后端构造时要刷新令牌、查询驱动器信息,往返数次;
+// 不可达的后端到点即按装载失败(超时)处理,不拖住启动、重载与健康检查。
+const loadTimeout = 30 * time.Second
+
 // Reload 按渠道表现状重建管理器状态。
 // @Description: 配置未变的渠道沿用既有驱动实例(在途操作不受影响);配置有变、新增或此前装载失败的
-// 渠道构造新实例,被替换与已删除渠道的旧实例在换入后关闭。单渠道装载失败只跳过,不拖垮其余渠道
-// (一个坏渠道不能 brick 服务),失败原因作为探测结论落库,渠道列表如实显示;全部失败才视为致命,
-// 此时保留旧状态。
+// 渠道构造新实例,被替换与已删除渠道的旧实例在换入后关闭。各渠道并行装载、各自计时,整轮耗时等于
+// 最慢的一个。单渠道装载失败只跳过,不拖垮其余渠道(一个坏渠道不能 brick 服务),失败原因作为探测结论
+// 落库,渠道列表如实显示;全部失败才视为致命,此时保留旧状态。
 // @return 查询失败、装载失败原因落库失败或全部渠道无法装载(errNothingLoaded)时的错误
 func (m *Manager) Reload(ctx context.Context) error {
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
 
+	gens := m.healthGens()
 	rows, err := m.cfg.Queries.ListChannels(ctx)
 	if err != nil {
 		return fmt.Errorf("加载渠道列表: %w", err)
 	}
 	previous := m.byID()
-	loaded := make([]managed, 0, len(rows))
-	var recordErrs []error
-	for _, row := range rows {
-		c, loadErr := m.loadChannel(ctx, row, previous)
-		if loadErr == nil {
-			loaded = append(loaded, c)
-			continue
-		}
-		m.cfg.Logger.Warn("渠道装载失败,本渠道跳过,健康检查时重试", "channel", row.Name, "err", loadErr)
-		if err := m.recordLoadFailure(ctx, row, loadErr); err != nil {
-			recordErrs = append(recordErrs, err)
-		}
-	}
-	recordErr := errors.Join(recordErrs...)
+	loaded, recordErr := m.loadAll(ctx, rows, previous)
 	if len(rows) > 0 && len(loaded) == 0 {
 		if recordErr != nil {
 			return recordErr
 		}
 		return fmt.Errorf("%w(共 %d 个)", errNothingLoaded, len(rows))
 	}
-	m.mu.Lock()
-	m.channels = loaded
-	m.mu.Unlock()
+	m.swapIn(loaded, gens)
+	for _, c := range loaded {
+		if prev, ok := previous[c.handle.ID]; ok && prev.driver == c.driver {
+			delete(previous, c.handle.ID)
+		}
+	}
 	for _, prev := range previous {
 		if err := prev.driver.Close(ctx); err != nil {
 			m.cfg.Logger.Warn("关闭退役渠道驱动失败", "channel", prev.handle.Name, "err", err)
 		}
 	}
 	return recordErr
+}
+
+// swapIn 换入新装载的渠道;健康标记取自渠道行,装载期间经 setHealth 翻转过的渠道沿用内存里的值。
+// @Description: 探测结论先写库、再 setHealth;装载开始时读到的行可能早于装载期间的一次翻转,照搬它会把刚翻转的
+// 标记改回旧值,直到下一轮健康检查。
+// @param loaded 新装载的渠道,按优先级降序
+// @param gens 装载开始前的健康翻转计数(见 healthGens)
+func (m *Manager) swapIn(loaded []managed, gens map[int64]uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current := make(map[int64]bool, len(m.channels))
+	for _, c := range m.channels {
+		current[c.handle.ID] = c.healthy
+	}
+	for i := range loaded {
+		id := loaded[i].handle.ID
+		if healthy, ok := current[id]; ok && m.healthGen[id] != gens[id] {
+			loaded[i].healthy = healthy
+		}
+	}
+	m.channels = loaded
+}
+
+// healthGens 返回各渠道健康翻转计数的副本。
+// @return 渠道主键 → setHealth 次数
+func (m *Manager) healthGens() map[int64]uint64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return maps.Clone(m.healthGen)
+}
+
+// loadOutcome 一条渠道记录的装载结果。
+type loadOutcome struct {
+	c   managed // 运行态;ok 为 false 时无意义
+	ok  bool    // 是否装上
+	err error   // 结论落库失败时的错误
+}
+
+// loadAll 并行装载全部渠道记录,结论逐条落库。
+// @param rows 渠道记录,按优先级降序
+// @param previous 换入前的运行态索引;只读
+// @return loaded 装上的渠道,保持 rows 的顺序
+// @return recordErr 结论落库失败时的错误
+func (m *Manager) loadAll(ctx context.Context, rows []sqlc.Channel, previous map[int64]managed) (loaded []managed,
+	recordErr error) {
+	outcomes := make([]loadOutcome, len(rows))
+	var wg sync.WaitGroup
+	for i, row := range rows {
+		prev := previous[row.ID]
+		wg.Go(func() {
+			c, ok, err := m.loadOrRecord(ctx, row, prev)
+			outcomes[i] = loadOutcome{c: c, ok: ok, err: err}
+		})
+	}
+	wg.Wait()
+	loaded = make([]managed, 0, len(rows))
+	var errs []error
+	for _, o := range outcomes {
+		if o.ok {
+			loaded = append(loaded, o.c)
+		}
+		if o.err != nil {
+			errs = append(errs, o.err)
+		}
+	}
+	return loaded, errors.Join(errs...)
+}
+
+// loadOrRecord 装载一条渠道记录,结论落库:装上了清掉此前的装载失败,装不上记下原因。
+// @param row 渠道记录
+// @param prev 该渠道换入前的运行态(见 loadChannel)
+// @return c 运行态;ok 为 false 时无意义
+// @return ok 是否装上
+// @return err 结论落库失败时的错误
+func (m *Manager) loadOrRecord(ctx context.Context, row sqlc.Channel, prev managed) (c managed, ok bool, err error) {
+	c, loadErr := m.loadChannel(ctx, row, prev)
+	if loadErr == nil {
+		return c, true, m.clearLoadFailure(ctx, row)
+	}
+	m.cfg.Logger.Warn("渠道装载失败,本渠道跳过,健康检查时重试", "channel", row.Name, "err", loadErr)
+	return managed{}, false, m.recordLoadFailure(ctx, row, loadErr)
 }
 
 // recordLoadFailure 把渠道装载失败作为探测结论落库(不健康,环节为装载)。
@@ -178,13 +256,27 @@ func (m *Manager) recordLoadFailure(ctx context.Context, row sqlc.Channel, loadE
 	return nil
 }
 
-// loadChannel 为一条渠道记录装配运行态:驱动输入未变则沿用既有实例并从 previous 摘除,否则构造新实例。
+// clearLoadFailure 渠道这次装上了,清掉此前落库的装载失败;其他环节的失败结论不动。
+// @Description: 清理中的渠道不再被探测,不清掉的话一次瞬时的装载失败会一直显示到清完。落库脱离调用方的取消。
+// @param row 渠道记录
+// @return 落库失败时的错误
+func (m *Manager) clearLoadFailure(ctx context.Context, row sqlc.Channel) error {
+	if row.LastErrorStage.String != string(StageLoad) {
+		return nil
+	}
+	if err := m.cfg.Queries.ClearChannelLoadFailure(context.WithoutCancel(ctx), row.ID); err != nil {
+		return fmt.Errorf("清除渠道 %d 的装载失败: %w", row.ID, err)
+	}
+	return nil
+}
+
+// loadChannel 为一条渠道记录装配运行态:驱动输入未变则沿用既有实例,否则构造新实例。
 // @param ctx 控制驱动构造的取消
 // @param row 渠道记录
-// @param previous 换入前的运行态索引;沿用的项会被摘除,剩余项由调用方关闭
+// @param prev 该渠道换入前的运行态;零值表示此前未装载
 // @return 运行态
 // @return 解密或驱动构造失败时的错误
-func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous map[int64]managed) (managed, error) {
+func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, prev managed) (managed, error) {
 	params, err := m.unsealConfigMap(row.ConfigSealed)
 	if err != nil {
 		return managed{}, err
@@ -193,11 +285,15 @@ func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous ma
 		driver: row.Driver, encrypted: row.Encrypted != 0, createdAt: row.CreatedAt, params: params,
 	}
 	var drv *rclone.Driver
-	if prev, ok := previous[row.ID]; ok && prev.source.equal(source) {
-		drv, source = prev.driver, prev.source
-		delete(previous, row.ID)
-	} else if drv, err = m.openDriver(ctx, row, params); err != nil {
-		return managed{}, err
+	var live *liveParams
+	if prev.driver != nil && prev.source.equal(source) {
+		drv, source, live = prev.driver, prev.source, prev.live
+	} else {
+		if drv, live, err = m.openDriver(ctx, row, params); err != nil {
+			return managed{}, err
+		}
+		// 构造期间已落库的写回(如初始化时刷新的令牌)记进驱动输入,下次 Reload 不把它当成配置变更。
+		source.params = live.snapshot()
 	}
 	return managed{
 		handle: Handle{
@@ -212,6 +308,7 @@ func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous ma
 		healthy: row.Healthy != 0,
 		driver:  drv,
 		source:  source,
+		live:    live,
 	}, nil
 }
 
@@ -281,48 +378,6 @@ func secretsIn(driverName string, params map[string]string) []string {
 	return secretValues(params, keys)
 }
 
-// systemLock 返回渠道的系统对象锁,没有则创建。
-// @param channelID 渠道主键
-// @return 锁
-func (m *Manager) systemLock(channelID int64) *sync.RWMutex {
-	m.systemMu.Lock()
-	defer m.systemMu.Unlock()
-	if m.systemLocks == nil {
-		m.systemLocks = map[int64]*sync.RWMutex{}
-	}
-	l, ok := m.systemLocks[channelID]
-	if !ok {
-		l = &sync.RWMutex{}
-		m.systemLocks[channelID] = l
-	}
-	return l
-}
-
-// HoldSystemWrites 为往渠道写系统对象(元数据库快照、深探测临时对象)占用渠道,与排空删除系统对象互斥。
-// @Description: 持读锁后再确认渠道在役:渠道一旦标为清理中,之后的写入在此被拒;此前已占用的写入,
-// 排空的 LockSystemObjects 会等它释放后再列举删除,写下的对象不会漏删。多个写入可同时占用。
-// @param channelID 渠道主键
-// @return release 写完调用;ok 为 false 时为 nil
-// @return ok 渠道在役为 true;已标为清理中或不在管理器中为 false,此时不得写入
-func (m *Manager) HoldSystemWrites(channelID int64) (release func(), ok bool) {
-	l := m.systemLock(channelID)
-	l.RLock()
-	if h, found := m.Get(channelID); !found || h.PendingDelete {
-		l.RUnlock()
-		return nil, false
-	}
-	return l.RUnlock, true
-}
-
-// LockSystemObjects 独占渠道的系统对象,等在途写入(HoldSystemWrites)全部释放;排空删除系统对象前调用。
-// @param channelID 渠道主键,须已标为清理中
-// @return 删完调用的解锁函数
-func (m *Manager) LockSystemObjects(channelID int64) (unlock func()) {
-	l := m.systemLock(channelID)
-	l.Lock()
-	return l.Unlock
-}
-
 // Healthy 返回当前健康且不在清理中的渠道句柄,按优先级降序。
 // @return 健康渠道切片(副本)
 func (m *Manager) Healthy() []Handle {
@@ -351,10 +406,16 @@ func (m *Manager) Draining() []Handle {
 	return out
 }
 
-// setHealth 更新单个渠道的内存健康标记(健康翻转无需重建驱动)。
+// setHealth 更新单个渠道的内存健康标记并记一次翻转;在探测结论落库之后调用。健康翻转无需重建驱动。
+// @param channelID 渠道主键
+// @param healthy 新的健康标记
 func (m *Manager) setHealth(channelID int64, healthy bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.healthGen == nil {
+		m.healthGen = map[int64]uint64{}
+	}
+	m.healthGen[channelID]++
 	for i := range m.channels {
 		if m.channels[i].handle.ID == channelID {
 			m.channels[i].healthy = healthy
@@ -433,16 +494,23 @@ func (m *Manager) Get(channelID int64) (Handle, bool) {
 // openDriver 为一条渠道记录构造驱动,后端写回落库。
 // @param row 渠道记录
 // @param params 解密后的完整配置(含约定键)
-// @return 就绪的驱动
-// @return 密钥派生或后端初始化失败时的错误
-func (m *Manager) openDriver(ctx context.Context, row sqlc.Channel, params map[string]string) (*rclone.Driver, error) {
+// @return drv 就绪的驱动
+// @return live 驱动手里当前的参数值,随后端写回更新
+// @return err 密钥派生或后端初始化失败时的错误
+func (m *Manager) openDriver(ctx context.Context, row sqlc.Channel, params map[string]string) (drv *rclone.Driver,
+	live *liveParams, err error) {
 	opts, err := m.channelOptions(row, params)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	channelID := row.ID
-	opts.OnChange = func(key, value string) { m.persistOwn(channelID, key, value) }
-	return rclone.Open(ctx, opts)
+	live = newLiveParams(params)
+	opts.OnChange = func(key, value string) { m.persistOwn(channelID, live, key, value) }
+	drv, err = openBackend(ctx, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	return drv, live, nil
 }
 
 // channelOptions 把渠道记录翻译成驱动构造参数:约定键拆出,加密渠道派生 crypt 密码与盐。
@@ -481,33 +549,17 @@ func (m *Manager) openTrial(ctx context.Context, driverName string, params map[s
 	onChange func(key, value string)) (*rclone.Driver, error) {
 	opts := m.driverOptions(driverName, params)
 	opts.OnChange = onChange
+	return openBackend(ctx, opts)
+}
+
+// openBackend 在 loadTimeout 内构造驱动;时限只管构造,构造好的驱动不受它影响。
+// @param opts 构造参数
+// @return 就绪的驱动
+// @return 后端初始化失败或超时的错误
+func openBackend(ctx context.Context, opts rclone.Options) (*rclone.Driver, error) {
+	ctx, cancel := context.WithTimeout(ctx, loadTimeout)
+	defer cancel()
 	return rclone.Open(ctx, opts)
-}
-
-// writeBacks 收集一次性驱动的写回,关闭驱动后并入将要落库的配置。
-type writeBacks struct {
-	mu     sync.Mutex        // 后端可能在任意 goroutine 写回
-	values map[string]string // 参数名 → 最近一次写回的值
-}
-
-// record 记下一次写回;签名与 rclone.Options.OnChange 一致。
-// @param key 参数名
-// @param value 新值
-func (w *writeBacks) record(key, value string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.values == nil {
-		w.values = map[string]string{}
-	}
-	w.values[key] = value
-}
-
-// applyTo 把收集到的写回并入配置(原地修改)。
-// @param config 将要落库的配置
-func (w *writeBacks) applyTo(config map[string]string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	maps.Copy(config, w.values)
 }
 
 // driverOptions 把渠道配置翻译成驱动构造参数:约定键拆出,内置 local 缺省落 dataDir/blobs。
@@ -534,75 +586,6 @@ func (m *Manager) driverOptions(driverName string, params map[string]string) rcl
 func (m *Manager) closeTrial(ctx context.Context, d *rclone.Driver, what string) {
 	if err := d.Close(ctx); err != nil {
 		m.cfg.Logger.Warn("关闭临时驱动失败", "what", what, "err", err)
-	}
-}
-
-// persistParam 把后端运行期写回的参数(刷新后的 OAuth 令牌等)并入渠道配置并落库。
-// @Description: 写回来自 rclone 内部,不带上下文,也不该被某个请求的取消牵连,故用独立上下文。
-// 落库失败只能记录——rclone 的写回接口无处接收错误;内存里的新值仍在用,重启后退回旧值。
-// @param channelID 渠道主键
-// @param key 参数名
-// @param value 新值
-// @return 库里是否已是该值(本次写入或原本相同);失败时为 false,原因已记录
-func (m *Manager) persistParam(channelID int64, key, value string) bool {
-	m.cfgMu.Lock()
-	defer m.cfgMu.Unlock()
-	if err := m.persistParamLocked(context.Background(), channelID, key, value); err != nil {
-		m.cfg.Logger.Error("后端写回参数无法落库", "channel_id", channelID, "key", key, "err", err)
-		return false
-	}
-	return true
-}
-
-// persistParamLocked 把一个参数并入渠道配置并落库;库里已是该值时不写。调用方须持 cfgMu。
-// @param channelID 渠道主键
-// @param key 参数名
-// @param value 新值
-// @return 读取、解密、加密或落库失败时的错误
-func (m *Manager) persistParamLocked(ctx context.Context, channelID int64, key, value string) error {
-	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
-	if err != nil {
-		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
-	}
-	params, err := m.unsealConfigMap(row.ConfigSealed)
-	if err != nil {
-		return err
-	}
-	if params[key] == value {
-		return nil
-	}
-	params[key] = value
-	sealed, err := m.sealConfigMap(params)
-	if err != nil {
-		return err
-	}
-	if err := m.cfg.Queries.UpdateChannelConfigSealed(ctx, sqlc.UpdateChannelConfigSealedParams{
-		ConfigSealed: sealed, ID: channelID,
-	}); err != nil {
-		return fmt.Errorf("写入渠道 %q 配置: %w", row.Name, err)
-	}
-	m.cfg.Logger.Info("渠道参数已由后端写回并落库", "channel", row.Name, "key", key)
-	return nil
-}
-
-// persistOwn 落库渠道自己驱动的写回,并同步进该渠道的驱动输入。
-// @Description: 驱动手里已是新值,下次 Reload 不应把写回误判为配置变更而重建驱动。一次性驱动的写回
-// 只经 persistParam 落库、不同步,下次 Reload 据此重建在用驱动,换用新值。
-// @param channelID 渠道主键
-// @param key 参数名
-// @param value 新值
-func (m *Manager) persistOwn(channelID int64, key, value string) {
-	if !m.persistParam(channelID, key, value) {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.channels {
-		if m.channels[i].handle.ID == channelID {
-			next := maps.Clone(m.channels[i].source.params)
-			next[key] = value
-			m.channels[i].source.params = next
-		}
 	}
 }
 
@@ -642,8 +625,8 @@ func (m *Manager) unsealConfigMap(sealed string) (map[string]string, error) {
 }
 
 // deriveHex 为渠道派生一个 hex 编码的子密钥(crypt 密码/盐)。
-// @Description: 用途标识含创建时间——SQLite 的 rowid 可能在删除后被复用,
-// 仅绑 ID 会让新渠道派生出与已删渠道相同的密钥。
+// @Description: 用途标识由渠道 ID 与创建时刻组成,两者建渠道时定下、此后不变;派生口径一变,
+// 已加密渠道上的对象就解不开。
 // @param row 渠道记录
 // @param usage 用途后缀
 // @return 64 位 hex 字符串

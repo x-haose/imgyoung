@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"database/sql"
 )
 
 const countAlerts = `-- name: CountAlerts :one
@@ -179,7 +180,7 @@ type OpenAlertParams struct {
 	Kind    string
 	Target  string
 	Message string
-	Params  string
+	Params  sql.NullString
 }
 
 func (q *Queries) OpenAlert(ctx context.Context, arg OpenAlertParams) (int64, error) {
@@ -214,7 +215,7 @@ WHERE id = ?
 
 type UpdateAlertDescriptionParams struct {
 	Message string
-	Params  string
+	Params  sql.NullString
 	ID      int64
 }
 

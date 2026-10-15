@@ -48,7 +48,8 @@ func (s *Service) conditions(ctx context.Context) ([]Condition, error) {
 }
 
 // channelConditions 从渠道表判定不健康与排空失败。
-// @Description: 清理中的渠道不参与选路与探测,其失败栏只会来自排空失败;在役渠道不健康时以最近一次
+// @Description: 清理中的渠道不参与选路与探测,其失败栏只来自排空失败或装载失败(打清理中标记时已清空,
+// 两者都让排空跑不下去);在役渠道不健康时以最近一次
 // 失败的结论为描述,参数为 stage / reason / detail(见 channel.LastFailure);尚未探测过的没有参数。
 // @param channels 渠道表全部行
 // @return 条件列表

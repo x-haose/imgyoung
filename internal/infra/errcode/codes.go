@@ -66,8 +66,10 @@ var (
 var (
 	BackupSnapshotFailed = define("backup_snapshot_failed", "生成数据库快照失败: {detail}")
 	BackupStoreFailed    = define("backup_store_failed", "快照 {snapshot} 有 {failed}/{total} 个渠道未写成({detail})")
-	SnapshotNameInvalid  = define("snapshot_name_invalid", "快照名非法")
-	SnapshotNotFound     = define("snapshot_not_found", "快照不存在")
+	BackupPruneFailed    = define("backup_prune_failed",
+		"快照 {snapshot} 已写入,但有 {failed}/{total} 个渠道清理旧快照失败,保留份数没能生效({detail})")
+	SnapshotNameInvalid = define("snapshot_name_invalid", "快照名非法")
+	SnapshotNotFound    = define("snapshot_not_found", "快照不存在")
 )
 
 // 运营配置。
@@ -91,12 +93,14 @@ var (
 	ChannelNotFound           = define("channel_not_found", "渠道不存在")
 	ChannelNameExists         = define("channel_name_exists", "渠道名已存在")
 	ChannelDeleting           = define("channel_deleting", "渠道正在清理中,不能修改或探测")
+	ChannelConfigChanged      = define("channel_config_changed", "渠道配置在保存期间已被改动(另一次编辑,或服务商刷新了授权令牌),请重新保存")
 	ChannelEncryptedImmutable = define("channel_encrypted_immutable", "加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据")
 	ChannelSoleReplicas       = define("channel_sole_replicas", "该渠道持有 {count} 张图片的唯一副本,删除会丢数据;请先迁移或删除相关图片")
 	PurgeParamInvalid         = define("purge_param_invalid", "purge 参数须为 true 或 false")
 	ChannelNameDriverRequired = define("channel_name_driver_required", "渠道参数非法: name 与 driver 必填")
 	ChannelNameTooLong        = define("channel_name_too_long", "渠道参数非法: name 超过 {max} 字节")
 	ChannelEncryptedDirect    = define("channel_encrypted_direct_link", "渠道参数非法: 加密渠道不允许直链(密文无法直出)")
+	ChannelLocalPathRelative  = define("channel_local_path_relative", "渠道参数非法: local 渠道的路径须为绝对路径,收到 {path}")
 	ChannelConfigKeyInvalid   = define("channel_config_key_invalid", "渠道参数非法: 配置键 {key} 非法(仅允许字母数字下划线)")
 	ChannelKeepNotSecret      = define("channel_keep_not_secret", "渠道参数非法: 字段 {field} 不是凭证,不能沿用已存值")
 	ChannelKeepNoValue        = define("channel_keep_no_value", "渠道参数非法: 字段 {field} 无已存原值可保留,请重新填写")

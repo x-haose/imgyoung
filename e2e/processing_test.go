@@ -99,7 +99,8 @@ func TestProcessOrientation(t *testing.T) {
 	}
 }
 
-// TestProcessGifAnimationProtected 动图保护:gif 带处理参数仍应回原动图(不可重编码、不拍成静图)。
+// TestProcessGifAnimationProtected 动图保护:gif 带合法处理参数仍应回原动图(不可重编码、不拍成静图);
+// 档外参数与其他图一样 400,任意取值打不出新的缓存条目。
 func TestProcessGifAnimationProtected(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, procSettings)
@@ -114,6 +115,9 @@ func TestProcessGifAnimationProtected(t *testing.T) {
 	_, body2 := procGet(t, inst, url+"?w=320&format=webp", nil)
 	if procSniff(body2) != "gif" {
 		t.Errorf("gif 带处理参数应回原动图,得 %s(动图保护失效)", procSniff(body2))
+	}
+	if resp, _ := procGet(t, inst, url+"?w=999", nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("gif 带档外宽度状态码 = %d, 期望 400", resp.StatusCode)
 	}
 }
 

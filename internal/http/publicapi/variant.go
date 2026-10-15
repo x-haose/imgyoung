@@ -42,18 +42,14 @@ type variantRequest struct {
 
 // parseVariantRequest 解析按需处理参数并做档位白名单校验。
 // @Description: 宽度取 ?w=(须在档位白名单)、格式取 ?format=(显式或 auto→Accept 协商);
-// 无处理诉求(无宽度且协商无更优格式,或目标即原格式)则不处理、走原图。
-// 源不可重编码(gif 动图等)一律走原图,不因显式 format 或协商被解码首帧转成静图、丢动画。
+// 无处理诉求(无宽度且协商无更优格式,或目标即原格式)则不处理、走原图。参数先校验、与原图格式无关:
+// 非法取值一律 400,合法取值有限,同一张图在 CDN 上的缓存条目有界。源不可重编码(gif 动图等)一律走原图,
+// 不因显式 format 或协商被解码首帧转成静图、丢动画。
 // @param r 请求
 // @param mime 原图 MIME,用于"保持原格式"判定
 // @return 处理诉求
 // @return 参数非法时为 errVariantParams
 func (h *Handlers) parseVariantRequest(r *http.Request, mime string) (variantRequest, error) {
-	orig := originalProcessableFormat(mime)
-	if orig == "" {
-		return variantRequest{}, nil
-	}
-
 	q := r.URL.Query()
 	var width int
 	if widthStr := q.Get("w"); widthStr != "" {
@@ -63,17 +59,22 @@ func (h *Handlers) parseVariantRequest(r *http.Request, mime string) (variantReq
 		}
 		width = n
 	}
-
-	// 目标格式:显式档位 > Accept 协商 > 原格式。协商路径(format 空/auto)响应随 Accept 变,需 Vary。
 	format := q.Get("format")
 	negotiated := format == "" || format == "auto"
+	if !negotiated && !h.formatAllowed(format) {
+		return variantRequest{}, errVariantParams
+	}
+
+	orig := originalProcessableFormat(mime)
+	if orig == "" {
+		return variantRequest{}, nil
+	}
+	// 目标格式:显式档位 > Accept 协商 > 原格式。协商路径(format 空/auto)响应随 Accept 变,需 Vary。
 	if negotiated {
 		format = negotiateFormat(r.Header.Get("Accept"), h.formatAllowed)
 		if format == "" {
 			format = orig // 无更优格式,保持原格式(已确保可重编码)
 		}
-	} else if !h.formatAllowed(format) {
-		return variantRequest{}, errVariantParams
 	}
 
 	// 目标即原格式且不缩放:处理无收益,走原图。

@@ -1,14 +1,12 @@
 package middleware
 
 import (
-	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
 
-	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
@@ -81,31 +79,41 @@ func uploadSubject(r *http.Request) (string, bool) {
 	return "", false
 }
 
-// UploadRateLimit 按用户的上传频率限制中间件(进程内令牌桶)。
-// @Description: 须挂在认证中间件(TokenAuth 或 SessionAuth)之后,以认证主体的
-// 用户 id 为键——同一用户经 Token 与后台会话上传共享同一额度。
+// UploadRateLimiter 按用户的上传频率限制(进程内令牌桶)。
+// @Description: 以认证主体的用户 id 为键——同一用户经 Token、后台会话与 S3 上传共享同一额度。
 // 额度逐请求取值,热生效:取值 <= 0 表示不启用,额度变更时该用户令牌桶按新额度重建。
-// 突发额度等于每分钟额度,满则 429 + Retry-After。
+// 突发额度等于每分钟额度,满则 429 + Retry-After。各协议面经 Middleware 挂同一个限制器。
+type UploadRateLimiter struct {
+	perMinute func() int   // 每用户每分钟允许上传次数的读取口
+	table     rateLimiters // 按用户的令牌桶
+}
+
+// NewUploadRateLimiter 创建上传频率限制器。
 // @param perMinute 每用户每分钟允许上传次数的读取口
-// @param l 结构化日志
+// @return 限制器
+func NewUploadRateLimiter(perMinute func() int) *UploadRateLimiter {
+	return &UploadRateLimiter{perMinute: perMinute, table: rateLimiters{entries: map[string]*rateEntry{}}}
+}
+
+// Middleware 返回挂在某个协议面上的中间件;须挂在该面的认证之后。
+// @param reject 该协议面写出拒绝的方式
 // @return 中间件
-func UploadRateLimit(perMinute func() int, l *slog.Logger) func(http.Handler) http.Handler {
-	table := &rateLimiters{entries: map[string]*rateEntry{}}
+func (u *UploadRateLimiter) Middleware(reject Rejecter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			quota := perMinute()
+			quota := u.perMinute()
 			if quota <= 0 {
 				next.ServeHTTP(w, r)
 				return
 			}
 			userID, ok := uploadSubject(r)
 			if !ok {
-				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.UploadUnauthenticated)
+				reject(w, r, http.StatusUnauthorized, errcode.UploadUnauthenticated)
 				return
 			}
-			if !table.allow(userID, quota, time.Now()) {
+			if !u.table.allow(userID, quota, time.Now()) {
 				w.Header().Set("Retry-After", "60")
-				httpx.WriteError(l, w, http.StatusTooManyRequests, errcode.UploadRateLimited)
+				reject(w, r, http.StatusTooManyRequests, errcode.UploadRateLimited)
 				return
 			}
 			next.ServeHTTP(w, r)

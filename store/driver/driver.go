@@ -16,13 +16,13 @@ import (
 
 // ErrNotFound 表示目标对象在该渠道中不存在。
 // @Description: 所有 Driver 实现在对象缺失时必须返回可被 errors.Is 命中的该哨兵。
-var ErrNotFound = errors.New("storage: object not found")
+var ErrNotFound = errors.New("storage: 对象不存在")
 
 // ObjectInfo 渠道内对象的基本信息。
 type ObjectInfo struct {
 	Key     string    // 渠道内对象键(相对路径形式)
 	Size    int64     // 对象字节大小
-	ModTime time.Time // 对象修改时间(对账宽限期与备份保留判断依据)
+	ModTime time.Time // 对象修改时间,对账宽限期的判断依据;rclone 驱动在后端支持时取服务端记下的写入时刻
 }
 
 // Driver 存储执行器抽象。

@@ -117,14 +117,52 @@ func (s *configSection) writeTo(cf *goconfig.ConfigFile) error {
 	return nil
 }
 
+// culprit 整份文本解析失败时逐个参数单独写出、回读,找出读不回来的那一个。
+// @Description: 某些值(如以三个双引号开头)写得进去,读的时候却让整份文件解析失败;单独检查每个值才能指出是谁。
+// @param sections 写入的段
+// @return 指出段名与参数名的 *UnrepresentableError;逐个检查都过、只有放在一起才解析失败时为包裹
+// ErrUnrepresentable 的错误(不带值)
+func culprit(sections []configSection) error {
+	for i := range sections {
+		for k, v := range sections[i].written() {
+			if !roundTrips(sections[i].name, k, v) {
+				return &UnrepresentableError{Remote: sections[i].name, Key: k}
+			}
+		}
+	}
+	return fmt.Errorf("%w: 生成的文本按 rclone 的读法无法解析", ErrUnrepresentable)
+}
+
+// roundTrips 判断一个参数单独写进配置文件后能否原样读回。
+// @param section 段名
+// @param key 参数名
+// @param value 参数值
+// @return 能原样读回为 true
+func roundTrips(section, key, value string) bool {
+	cf, err := goconfig.LoadFromReader(strings.NewReader(""))
+	if err != nil {
+		return false
+	}
+	cf.SetValue(section, key, value)
+	var buf bytes.Buffer
+	if err := goconfig.SaveConfigData(cf, &buf); err != nil {
+		return false
+	}
+	back, err := goconfig.LoadFromReader(&buf)
+	if err != nil {
+		return false
+	}
+	got, err := back.GetValue(section, key)
+	return err == nil && got == value
+}
+
 // verifyReadBack 按 rclone 读配置文件的方式回读文本,核对每段写出的参数都读回原值。
 // @Description: rclone 的 INI 库读值时去首尾空白、按行切分、展开 %(name)s 引用,这些值写得进却读不回原样。
-// 含换行的值会让整个文件解析失败,而解析错误带着出错那一行的原文(可能是凭证),故先逐值查出换行;
-// 解析失败时也不带解析错误的原文。
+// 含换行或以三个双引号开头的值会让整个文件解析失败,而解析错误带着出错那一行的原文(可能是凭证),故先逐值
+// 查出换行,整份解析失败时再逐个参数单独检查,都不带解析错误的原文。
 // @param text 配置文件文本
 // @param sections 写入的段
-// @return 某参数含换行或读不回原值时的 *UnrepresentableError;整份文本无法解析时包裹 ErrUnrepresentable 的错误;
-// 两者都不带值
+// @return 某参数读不回原值时指出段名与参数名的 *UnrepresentableError;都不带值
 func verifyReadBack(text string, sections []configSection) error {
 	for i := range sections {
 		for k, v := range sections[i].written() {
@@ -135,7 +173,7 @@ func verifyReadBack(text string, sections []configSection) error {
 	}
 	cf, err := goconfig.LoadFromReader(strings.NewReader(text))
 	if err != nil {
-		return fmt.Errorf("%w: 生成的文本按 rclone 的读法无法解析", ErrUnrepresentable)
+		return culprit(sections)
 	}
 	for i := range sections {
 		for k, v := range sections[i].written() {

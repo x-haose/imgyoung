@@ -173,8 +173,8 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	h.kickReplication(r.Context(), req.Name)
 	h.cfg.Logger.Info("渠道已创建", "id", channelID, "name", req.Name, "encrypted", encrypted)
-	h.recordAudit(r.Context(), audit.ActionChannelCreate, req.Name,
-		fmt.Sprintf("id=%d encrypted=%v", channelID, encrypted))
+	h.recordAudit(r.Context(), audit.ActionChannelCreate, strconv.FormatInt(channelID, 10),
+		fmt.Sprintf("name=%s encrypted=%v", req.Name, encrypted))
 	h.writeChannelInfo(w, r, channelID, http.StatusCreated)
 }
 
@@ -217,8 +217,8 @@ func (h *Handlers) HandleChannelUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.cfg.Logger.Info("渠道已编辑", "id", channelID, "name", req.Name)
-	h.recordAudit(r.Context(), audit.ActionChannelUpdate, req.Name,
-		fmt.Sprintf("id=%d priority=%d allow_direct_link=%v", channelID, req.Priority, req.AllowDirectLink))
+	h.recordAudit(r.Context(), audit.ActionChannelUpdate, strconv.FormatInt(channelID, 10),
+		fmt.Sprintf("name=%s priority=%d allow_direct_link=%v", req.Name, req.Priority, req.AllowDirectLink))
 	h.writeChannelInfo(w, r, channelID, http.StatusOK)
 }
 
@@ -237,6 +237,8 @@ func (h *Handlers) writeChannelSaveError(w http.ResponseWriter, err error, logMs
 		status, e = http.StatusNotFound, errcode.New(errcode.ChannelNotFound)
 	case errors.Is(err, channel.ErrChannelDeleting):
 		status, e = http.StatusConflict, errcode.New(errcode.ChannelDeleting)
+	case errors.Is(err, channel.ErrChannelConfigChanged):
+		status, e = http.StatusConflict, errcode.New(errcode.ChannelConfigChanged)
 	case errors.Is(err, channel.ErrEncryptedImmutable):
 		status, e = http.StatusConflict, errcode.New(errcode.ChannelEncryptedImmutable)
 	case errors.Is(err, channel.ErrChannelNameExists):

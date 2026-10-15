@@ -83,7 +83,8 @@ func (h *Handlers) HandleChannelOAuthStart(w http.ResponseWriter, r *http.Reques
 
 // HandleChannelOAuthCallback 接收授权服务器回调,换取令牌后由前端领取。
 // @Description: 本端点在浏览器新标签中打开,故返回极简 HTML 提示页而非 JSON;
-// 令牌不写入页面,由前端另行凭 state 领取,避免落进浏览器历史与截图。
+// 令牌不写入页面,由前端另行凭 state 领取,避免落进浏览器历史与截图。同一 state 的回调再次打开时
+// 不再换取(授权码只能用一次),按已记下的结果显示提示页。
 func (h *Handlers) HandleChannelOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	state := q.Get("state")
@@ -94,6 +95,14 @@ func (h *Handlers) HandleChannelOAuthCallback(w http.ResponseWriter, r *http.Req
 	pending, err := h.cfg.OAuth.Pending(state)
 	if err != nil {
 		writeOAuthPage(w, http.StatusBadRequest, text, text.expired)
+		return
+	}
+	if pending.Completed {
+		msg := text.done
+		if pending.Failed {
+			msg = text.failed
+		}
+		writeOAuthPage(w, http.StatusOK, text, msg)
 		return
 	}
 	token, failure := h.exchangeOAuth(r, pending, q)

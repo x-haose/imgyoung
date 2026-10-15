@@ -69,6 +69,14 @@ linters:
           deny:
             - pkg: github.com/x-haose/imgyoung/store
               desc: 选路与容灾属于 core,传输层经 core 访问存储
+        # 测试环境装配(真实库 + 本地渠道)只供测试使用,生产代码引用它即把测试替身带进二进制。
+        testonly:
+          files: ["$all", "!$test"]
+          deny:
+            - pkg: github.com/x-haose/imgyoung/internal/core/testenv
+              desc: 测试环境装配只供 _test.go 使用
+            - pkg: github.com/x-haose/imgyoung/internal/http/apitest
+              desc: 接口测试辅助只供 _test.go 使用
     revive:
       enable-all-rules: true
       rules:

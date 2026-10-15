@@ -53,12 +53,12 @@ func (m *Manager) ProbeChannel(ctx context.Context, channelID int64) error {
 	return m.recordProbe(ctx, channelID, probeErr)
 }
 
-// deepProbeChannel 对在役渠道做一次深探测;探测期间占用渠道的系统对象写入,排空不会与它交错。
+// deepProbeChannel 对在役渠道做一次深探测;探测在渠道的写入租约内进行,排空不会与它交错。
 // @param h 渠道句柄
 // @return probeErr 探测失败的原因;nil 表示写读删全通
 // @return err 渠道已进入清理中时的 ErrChannelDeleting
 func (m *Manager) deepProbeChannel(ctx context.Context, h Handle) (probeErr, err error) {
-	release, ok := m.HoldSystemWrites(h.ID)
+	release, ok := m.HoldWrites(h.ID)
 	if !ok {
 		return nil, ErrChannelDeleting
 	}
@@ -66,14 +66,18 @@ func (m *Manager) deepProbeChannel(ctx context.Context, h Handle) (probeErr, err
 	return deepProbe(ctx, h.Driver), nil
 }
 
-// unloadedProbeResult 给出重试装载仍未装上的渠道的探测结论:渠道不存在,或装载失败原因已落库。
+// unloadedProbeResult 给出重试装载仍未装上的渠道的探测结论:渠道不存在、正在清理中,或装载失败原因已落库。
 // @param channelID 渠道主键
-// @return ErrChannelNotFound、ctx 取消或查询失败时的错误;装载失败已落库时为 nil
+// @return ErrChannelNotFound、ErrChannelDeleting、ctx 取消或查询失败时的错误;装载失败已落库时为 nil
 func (m *Manager) unloadedProbeResult(ctx context.Context, channelID int64) error {
-	if _, err := m.cfg.Queries.GetChannel(ctx, channelID); errors.Is(err, sql.ErrNoRows) {
+	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
 		return ErrChannelNotFound
-	} else if err != nil {
+	case err != nil:
 		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
+	case row.PendingDelete != 0:
+		return ErrChannelDeleting
 	}
 	return ctx.Err()
 }
@@ -146,7 +150,8 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (TestResult, err
 // trialProbe 用一次性驱动对整理好的配置做深探测,收集后端运行期的写回(访问令牌过期时的刷新)。
 // @Description: 编辑场景下,沿用渠道已存值(提交为哨兵)的参数被写回时落到该渠道,随后重载让已装载的驱动
 // 换用新值——对刷新令牌只能用一次的服务商,否则库里与在用驱动手里的刷新令牌都已作废。其余写回(本次提交的
-// 新值被刷新,或落库失败)交还调用方。构造或探测失败时写回照样交还:刷新可能发生在失败之前。
+// 新值被刷新、渠道配置在测试期间已被编辑,或落库失败)交还调用方。构造或探测失败时写回照样交还:刷新可能
+// 发生在失败之前。
 // @param p 测试参数
 // @param config 已整理的配置
 // @return probeErr 构造或探测失败的原因;nil 表示连接可用
@@ -156,8 +161,10 @@ func (m *Manager) trialProbe(ctx context.Context, p TestParams,
 	config map[string]string) (probeErr error, unsaved map[string]string, err error) {
 	var persisted atomic.Bool
 	var wb writeBacks
+	live := newLiveParams(config)
 	onChange := func(key, value string) {
-		if p.ChannelID > 0 && p.Config[key] == SecretPlaceholder && m.persistParam(p.ChannelID, key, value) {
+		expected := live.swap(key, value)
+		if p.ChannelID > 0 && p.Config[key] == SecretPlaceholder && m.persistParam(p.ChannelID, key, expected, value) {
 			persisted.Store(true)
 			return
 		}

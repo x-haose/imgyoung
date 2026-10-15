@@ -388,11 +388,18 @@ func TestDeleteWithPurgeMarksDraining(t *testing.T) {
 		t.Fatal("清理中渠道不应再被探测")
 	}
 
-	if err := env.Manager.Remove(t.Context(), id); err != nil {
-		t.Fatalf("Remove: %v", err)
+	if removed, err := env.Manager.Remove(t.Context(), id); err != nil || !removed {
+		t.Fatalf("Remove = %v/%v, 期望删掉清理中的渠道", removed, err)
 	}
 	if _, ok := env.Manager.Get(id); ok {
 		t.Fatal("Remove 后渠道仍可取到")
+	}
+	if removed, err := env.Manager.Remove(t.Context(), id); err != nil || removed {
+		t.Fatalf("再次 Remove = %v/%v, 期望已不存在时什么都不做", removed, err)
+	}
+	idNext, _ := env.AddLocalChannel(t, "after-remove", 100, false)
+	if idNext <= id {
+		t.Fatalf("新渠道主键 %d 复用了已删除渠道的 %d", idNext, id)
 	}
 
 	id2, _ := env.AddLocalChannel(t, "drop-now", 200, false)

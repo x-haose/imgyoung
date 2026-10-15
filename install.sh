@@ -38,6 +38,11 @@ need() {
 	command -v "$1" >/dev/null 2>&1 || fail "需要 $1,请先安装"
 }
 
+# valid_version 判断版本标签是否形如 v1.2.3 或 v1.2.3-rc.1。
+valid_version() {
+	printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+}
+
 # parse_args 解析命令行选项。
 parse_args() {
 	while [ $# -gt 0 ]; do
@@ -45,10 +50,7 @@ parse_args() {
 		--version)
 			[ $# -ge 2 ] || fail "--version 需要一个版本号,如 1.0.0"
 			version="v${2#v}"
-			case "$version" in
-			v[0-9]*) ;;
-			*) fail "版本号 $2 无效,应形如 1.0.0" ;;
-			esac
+			valid_version "$version" || fail "版本号 $2 无效,应形如 1.0.0"
 			shift 2
 			;;
 		--dir)
@@ -90,10 +92,7 @@ resolve_version() {
 	url=$(curl -fsSLI -o /dev/null -w '%{url_effective}' "$RELEASES/latest") ||
 		fail "无法获取最新版本;可用 --version 指定"
 	version="${url##*/}"
-	case "$version" in
-	v[0-9]*) ;;
-	*) fail "无法从 $url 解析出版本号;可用 --version 指定" ;;
-	esac
+	valid_version "$version" || fail "无法从 $url 解析出版本号;可用 --version 指定"
 }
 
 # sha256_of 输出文件的 sha256 十六进制摘要。

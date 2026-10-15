@@ -142,11 +142,7 @@ func TestLoadFailureVisibleAndRetried(t *testing.T) {
 	good := mustGetChannel(t, env, id).ConfigSealed
 	setSealedConfig := func(sealed string) {
 		t.Helper()
-		if err := env.Queries.UpdateChannelConfigSealed(t.Context(), sqlc.UpdateChannelConfigSealedParams{
-			ConfigSealed: sealed, ID: id,
-		}); err != nil {
-			t.Fatalf("改写渠道配置密文: %v", err)
-		}
+		setSealed(t, env, id, sealed)
 	}
 	assertLoaded := func(want bool) {
 		t.Helper()
@@ -193,11 +189,7 @@ func TestLoadFailureRecordedWhileDraining(t *testing.T) {
 	if err := env.Manager.Delete(t.Context(), id, true); err != nil {
 		t.Fatalf("标记清理中: %v", err)
 	}
-	if err := env.Queries.UpdateChannelConfigSealed(t.Context(), sqlc.UpdateChannelConfigSealedParams{
-		ConfigSealed: "not-a-sealed-config", ID: id,
-	}); err != nil {
-		t.Fatalf("改写渠道配置密文: %v", err)
-	}
+	setSealed(t, env, id, "not-a-sealed-config")
 	if err := env.Manager.Reload(t.Context()); err != nil {
 		t.Fatalf("重载: %v", err)
 	}
@@ -365,4 +357,15 @@ func mustCreateBlob(t *testing.T, env *testenv.Env, sha, key string) int64 {
 		t.Fatalf("创建 blob: %v", err)
 	}
 	return id
+}
+
+// setSealed 直接改写渠道的配置密文。
+func setSealed(t *testing.T, env *testenv.Env, channelID int64, sealed string) {
+	t.Helper()
+	n, err := env.Queries.UpdateChannelConfigSealed(t.Context(), sqlc.UpdateChannelConfigSealedParams{
+		ConfigSealed: sealed, ID: channelID, ExpectedSealed: mustGetChannel(t, env, channelID).ConfigSealed,
+	})
+	if err != nil || n != 1 {
+		t.Fatalf("改写渠道配置密文: 改动 %d 行, err=%v", n, err)
+	}
 }

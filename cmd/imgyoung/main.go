@@ -35,5 +35,9 @@ func runServer(logger *slog.Logger) error {
 		return err
 	}
 	defer cleanup()
-	return a.serve()
+	if err := a.serve(); err != nil {
+		logger.Error("运行失败", "err", err)
+		return err
+	}
+	return nil
 }

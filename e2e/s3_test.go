@@ -438,3 +438,71 @@ func TestS3DeleteObject(t *testing.T) {
 		t.Errorf("伪造 access key HEAD 状态码 = %d, 期望 403 (err=%v)", s3Status(err), err)
 	}
 }
+
+// assertS3Error 断言 SDK 调用以指定状态码与 S3 错误码失败;错误码取自 XML 错误体,证明响应是 S3 格式。
+func assertS3Error(t *testing.T, err error, what string, status int, code string) {
+	t.Helper()
+	var respErr *awshttp.ResponseError
+	if !errors.As(err, &respErr) {
+		t.Errorf("%s: 期望 HTTP 响应错误,得 %v", what, err)
+		return
+	}
+	if respErr.HTTPStatusCode() != status {
+		t.Errorf("%s: 状态码 = %d, 期望 %d", what, respErr.HTTPStatusCode(), status)
+	}
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != code {
+		t.Errorf("%s: 错误码 = %v, 期望 %s", what, err, code)
+	}
+}
+
+// TestS3UnsupportedOperations 没有实现的操作一律 501 NotImplemented:不回落到后台页面,带子资源参数的请求与
+// CopyObject 也不被当成对象读写(GET ?acl 不返回图片字节,分段上传不把分段存成对象,复制不存下空文件)。
+func TestS3UnsupportedOperations(t *testing.T) {
+	t.Parallel()
+	env := s3Setup(t, nil)
+	cred := env.cred
+	s3c := newS3Client(t, cred)
+	ctx := context.Background()
+	const objectKey = "unsupported.png"
+	if err := putWith(t, cred, objectKey); err != nil {
+		t.Fatalf("S3 上传失败: %v", err)
+	}
+
+	_, err := s3c.ListBuckets(ctx, &s3.ListBucketsInput{})
+	assertS3Error(t, err, "ListBuckets", http.StatusNotImplemented, "NotImplemented")
+	_, err = s3c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(cred.Bucket)})
+	assertS3Error(t, err, "ListObjectsV2", http.StatusNotImplemented, "NotImplemented")
+	_, err = s3c.GetObjectAcl(ctx, &s3.GetObjectAclInput{Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey)})
+	assertS3Error(t, err, "GetObjectAcl", http.StatusNotImplemented, "NotImplemented")
+	_, err = s3c.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String("multipart.png"),
+	})
+	assertS3Error(t, err, "CreateMultipartUpload", http.StatusNotImplemented, "NotImplemented")
+	_, err = s3c.CopyObject(ctx, &s3.CopyObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String("copy.png"),
+		CopySource: aws.String(cred.Bucket + "/" + objectKey),
+	})
+	assertS3Error(t, err, "CopyObject", http.StatusNotImplemented, "NotImplemented")
+}
+
+// TestS3RateLimitedIsS3Error 上传超频时 S3 面同样 429,错误体是 S3 的 XML 与限流码 SlowDown,
+// SDK 能识别为限流并退避,而不是一个解析不了的 JSON 体。
+func TestS3RateLimitedIsS3Error(t *testing.T) {
+	t.Parallel()
+	env := s3Setup(t, map[string]any{"upload_rate_per_min": 1})
+	cred := env.cred
+	if err := putWith(t, cred, "first.png"); err != nil {
+		t.Fatalf("首次 S3 上传失败: %v", err)
+	}
+	s3c := s3.New(s3.Options{
+		BaseEndpoint: aws.String(cred.Endpoint), Region: cred.Region,
+		Credentials:      credentials.NewStaticCredentialsProvider(cred.AccessKeyID, cred.SecretAccessKey, ""),
+		UsePathStyle:     true,
+		RetryMaxAttempts: 1, // 只看第一次响应,不让 SDK 的限流退避把测试拖长
+	})
+	_, err := s3c.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket: aws.String(cred.Bucket), Key: aws.String("second.png"), Body: bytes.NewReader(pngBytes(t)),
+	})
+	assertS3Error(t, err, "超频上传", http.StatusTooManyRequests, "SlowDown")
+}

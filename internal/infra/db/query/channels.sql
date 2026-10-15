@@ -39,16 +39,16 @@ SET healthy           = 0,
     last_error        = ?
 WHERE id = ? AND pending_delete = 1;
 
--- name: UpdateChannelConfig :exec
+-- name: UpdateChannelConfig :execrows
 UPDATE channels
-SET name              = ?,
-    driver            = ?,
-    config_sealed     = ?,
-    priority          = ?,
-    allow_direct_link = ?,
-    template          = ?,
-    bound_at          = ?
-WHERE id = ?;
+SET name              = sqlc.arg(name),
+    driver            = sqlc.arg(driver),
+    config_sealed     = sqlc.arg(config_sealed),
+    priority          = sqlc.arg(priority),
+    allow_direct_link = sqlc.arg(allow_direct_link),
+    template          = sqlc.arg(template),
+    bound_at          = sqlc.arg(bound_at)
+WHERE id = sqlc.arg(id) AND pending_delete = 0 AND config_sealed = sqlc.arg(expected_sealed);
 
 -- name: RebindAllChannels :execrows
 UPDATE channels
@@ -56,13 +56,23 @@ SET bound_at = datetime('now');
 
 -- name: MarkChannelPendingDelete :exec
 UPDATE channels
-SET pending_delete = 1
+SET pending_delete    = 1,
+    last_error_stage  = NULL,
+    last_error_reason = NULL,
+    last_error        = NULL
 WHERE id = ?;
 
--- name: UpdateChannelConfigSealed :exec
+-- name: ClearChannelLoadFailure :exec
 UPDATE channels
-SET config_sealed = ?
-WHERE id = ?;
+SET last_error_stage  = NULL,
+    last_error_reason = NULL,
+    last_error        = NULL
+WHERE id = ? AND last_error_stage = 'load';
+
+-- name: UpdateChannelConfigSealed :execrows
+UPDATE channels
+SET config_sealed = sqlc.arg(config_sealed)
+WHERE id = sqlc.arg(id) AND config_sealed = sqlc.arg(expected_sealed);
 
 -- name: DeleteChannel :exec
 DELETE FROM channels

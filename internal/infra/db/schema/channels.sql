@@ -1,6 +1,6 @@
 -- 存储渠道:rclone 后端的一份具名配置,参与上传选路与访问容灾。
 CREATE TABLE channels (
-    id INTEGER PRIMARY KEY, -- 内部主键(rowid 别名,自增)
+    id INTEGER PRIMARY KEY AUTOINCREMENT, -- 内部主键;AUTOINCREMENT 保证删除后不复用,补齐、删除与排空任务的参数只认主键,复用会让它们落到新渠道上
     name TEXT NOT NULL UNIQUE, -- 渠道名,展示与日志用
     driver TEXT NOT NULL, -- rclone 后端名(local/s3/webdav 等)
     config_sealed TEXT NOT NULL DEFAULT '', -- 加密后的参数 JSON(secret.EncryptString 产物),空串表示无参数

@@ -22,13 +22,15 @@ type payload struct {
 	Kind       string            `json:"kind"`                  // 告警类型
 	Target     string            `json:"target"`                // 告警对象
 	Message    string            `json:"message"`               // 中文描述
-	Params     map[string]string `json:"params"`                // 描述参数,与管理后台告警接口的 params 相同
+	Params     map[string]string `json:"params"`                // 描述参数,与管理后台告警接口的 params 相同;nil 表示只有中文描述
 	Status     string            `json:"status"`                // open / resolved
 	OpenedAt   string            `json:"opened_at"`             // 开启时刻,UTC 文本
 	ResolvedAt string            `json:"resolved_at,omitempty"` // 恢复时刻,UTC 文本;开启投递时为空
 }
 
-// deliver 把尚未投递的开启与恢复逐条 POST 到 Webhook;地址为空时一律记为已投递。
+// deliver 把尚未投递的开启与恢复按告警先后逐条 POST 到 Webhook;地址为空时一律记为已投递。
+// @Description: 同一对象(类型加对象)的前一条告警这轮没投出去,后面的也不投,留到下一轮按顺序补——否则接收方
+// 可能先收到新告警的开启、再收到旧告警的恢复,误以为该对象已经恢复。
 // @param ctx 控制超时与取消
 // @return 读取或标记告警表失败时的错误
 func (s *Service) deliver(ctx context.Context) error {
@@ -37,43 +39,53 @@ func (s *Service) deliver(ctx context.Context) error {
 		return fmt.Errorf("读取待投递告警: %w", err)
 	}
 	url := s.cfg.WebhookURL()
+	held := map[key]bool{}
 	for _, a := range pending {
-		if err := s.notify(ctx, url, a); err != nil {
+		k := key{a.Kind, a.Target}
+		if held[k] {
+			continue
+		}
+		delivered, err := s.notify(ctx, url, a)
+		if err != nil {
 			return err
+		}
+		if !delivered {
+			held[k] = true
 		}
 	}
 	return nil
 }
 
 // notify 投递一条告警尚未投递的转折:先开启后恢复,接收方看到的顺序才完整。
-// @Description: 投递失败只记日志、留待下一轮,不算错误,其余告警照常投递。
+// @Description: 投递失败只记日志、留待下一轮,不算错误。
 // @param ctx 控制超时与取消
 // @param url Webhook 地址;空表示不外发、直接记为已投递
 // @param a 告警行
-// @return 标记告警表失败时的错误
-func (s *Service) notify(ctx context.Context, url string, a sqlc.Alert) error {
+// @return delivered 这条告警待投的转折是否都已投出
+// @return err 解析参数或标记告警表失败时的错误
+func (s *Service) notify(ctx context.Context, url string, a sqlc.Alert) (delivered bool, err error) {
 	params, err := DecodeParams(a.Params)
 	if err != nil {
-		return fmt.Errorf("告警 %d: %w", a.ID, err)
+		return false, fmt.Errorf("告警 %d: %w", a.ID, err)
 	}
 	if a.OpenNotified == 0 {
 		if url != "" && !s.post(ctx, url, payloadFor(a, params, statusOpen)) {
-			return nil
+			return false, nil
 		}
 		if err := s.cfg.Queries.MarkAlertOpenNotified(ctx, a.ID); err != nil {
-			return fmt.Errorf("标记告警 %d 开启已投递: %w", a.ID, err)
+			return false, fmt.Errorf("标记告警 %d 开启已投递: %w", a.ID, err)
 		}
 	}
 	if !a.ResolvedAt.Valid || a.ResolveNotified != 0 {
-		return nil
+		return true, nil
 	}
 	if url != "" && !s.post(ctx, url, payloadFor(a, params, statusResolved)) {
-		return nil
+		return false, nil
 	}
 	if err := s.cfg.Queries.MarkAlertResolveNotified(ctx, a.ID); err != nil {
-		return fmt.Errorf("标记告警 %d 恢复已投递: %w", a.ID, err)
+		return false, fmt.Errorf("标记告警 %d 恢复已投递: %w", a.ID, err)
 	}
-	return nil
+	return true, nil
 }
 
 // payloadFor 组装一条告警某次转折的请求体。

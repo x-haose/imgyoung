@@ -42,7 +42,7 @@ type WriteOptions struct {
 
 // Write 按顺序向驱动写入同一份数据,凑够 opts.Need 份即返回;某个驱动写失败就顺延下一个。
 // @Description: 每次尝试都从 r 的开头重新读,失败的半截写入不影响下一个驱动。ctx 取消后不再
-// 尝试后续驱动,直接返回取消错误——取消造成的失败不是驱动的结论。
+// 尝试后续驱动;份数不足时只要 ctx 已取消就返回取消错误——取消造成的失败不是驱动的结论。
 // @param ds 驱动,按优先级降序
 // @param key 对象键
 // @param r 数据源,每次尝试独立读取 [0, size)
@@ -77,6 +77,9 @@ func Write(ctx context.Context, ds []driver.Driver, key string, r io.ReaderAt, s
 		done++
 	}
 	if done < opts.Need {
+		if err := ctx.Err(); err != nil {
+			return attempts, err
+		}
 		return attempts, fmt.Errorf("%w: 要求 %d 份,成功 %d 份: %w",
 			ErrInsufficient, opts.Need, done, errors.Join(failures...))
 	}
@@ -103,7 +106,7 @@ func put(ctx context.Context, d driver.Driver, key string, r io.Reader, size int
 // @Description: 打开成功即返回,后续驱动不再访问。全部失败时两类错误互斥:每个驱动都报告对象不存在,
 // 返回包裹 driver.ErrNotFound 的错误(对象确实缺失);否则返回包裹 ErrUnavailable 的错误
 // (至少一个驱动故障,对象可能仍在),此时各驱动的原始错误只以文本出现,要逐个判断请看尝试记录。
-// ctx 取消后不再尝试后续驱动。
+// ctx 取消后不再尝试后续驱动;全部失败时只要 ctx 已取消就返回取消错误。
 // @param ds 驱动,按优先级降序
 // @param key 对象键
 // @return 读取流,调用方负责 Close;失败时为 nil
@@ -123,6 +126,9 @@ func Open(ctx context.Context, ds []driver.Driver, key string) (io.ReadCloser, [
 		if err == nil {
 			return rc, attempts, nil
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, attempts, err
 	}
 	return nil, attempts, unreadable(key, attempts)
 }

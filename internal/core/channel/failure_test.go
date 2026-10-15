@@ -58,8 +58,8 @@ func TestExplainDetailIsRootCause(t *testing.T) {
 		t.Fatalf("Explain = %+v", f)
 	}
 	long := Explain(errors.New(string(make([]rune, failureDetailMaxLen+10))))
-	if n := len([]rune(long.Detail)); n != failureDetailMaxLen+1 {
-		t.Errorf("截断后长度 = %d, 期望 %d(含省略号)", n, failureDetailMaxLen+1)
+	if r := []rune(long.Detail); len(r) != failureDetailMaxLen || r[len(r)-1] != '…' {
+		t.Errorf("截断后长度 = %d、末字符 %q, 期望 %d 个字符且以省略号结尾", len(r), r[len(r)-1], failureDetailMaxLen)
 	}
 	if got := Explain(fmt.Errorf("探测: %w", failover.ErrProbeMismatch)).Reason; got != ReasonProbeMismatch {
 		t.Errorf("读回不一致归类 = %s", got)

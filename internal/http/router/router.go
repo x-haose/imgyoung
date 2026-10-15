@@ -33,11 +33,21 @@ type Config struct {
 	Logger          *slog.Logger           // 结构化日志
 }
 
-// uploadGuards 上传防护闸,只此一份,数据面、后台上传与 S3 入口共享:
-// 频率限制按认证主体的用户 id 计,并发闸全局共享(峰值内存由总并发决定,与入口无关)。
+// uploadGuards 一个协议面上的上传防护闸。闸本身只此一份,数据面、后台上传与 S3 入口共享:
+// 频率限制按认证主体的用户 id 计,并发闸全局共享(峰值内存由总并发决定,与入口无关);各面只是拒绝响应的格式不同。
 type uploadGuards struct {
 	rate func(http.Handler) http.Handler // 按用户的上传频率限制
 	gate func(http.Handler) http.Handler // 全局上传并发闸
+}
+
+// guardsFor 把共享的防护闸挂到一个协议面上。
+// @param rate 上传频率限制器
+// @param gate 上传并发闸
+// @param reject 该协议面写出拒绝的方式
+// @return 该协议面的防护闸
+func guardsFor(rate *middleware.UploadRateLimiter, gate *middleware.ConcurrencyGate,
+	reject middleware.Rejecter) uploadGuards {
+	return uploadGuards{rate: rate.Middleware(reject), gate: gate.Middleware(reject)}
 }
 
 // New 构建完整路由。
@@ -54,10 +64,9 @@ func New(cfg Config) http.Handler {
 	r.Get("/healthz", cfg.Public.HandleHealth)
 	r.Get("/api/openapi.yaml", openAPIHandler())
 	r.With(middleware.AllowFrom(cfg.MetricsAllow, cfg.Logger)).Handle("/metrics", cfg.Metrics.Handler())
-	guards := uploadGuards{
-		rate: middleware.UploadRateLimit(func() int { return cfg.Settings().UploadRatePerMin }, cfg.Logger),
-		gate: middleware.ConcurrencyLimit(func() int { return cfg.Settings().MaxConcurrentUploads }, cfg.Logger),
-	}
+	rate := middleware.NewUploadRateLimiter(func() int { return cfg.Settings().UploadRatePerMin })
+	gate := middleware.NewConcurrencyGate(func() int { return cfg.Settings().MaxConcurrentUploads })
+	guards := guardsFor(rate, gate, middleware.JSONRejecter(cfg.Logger))
 	r.Group(func(g chi.Router) {
 		g.Use(middleware.TokenAuth(cfg.Auth, "upload", cfg.Logger))
 		g.Use(guards.rate, guards.gate)
@@ -76,7 +85,7 @@ func New(cfg Config) http.Handler {
 		g.Head("/o/*", cfg.Public.HandleServeObjectKey)
 	})
 	if cfg.S3 != nil {
-		r.Route("/s3", func(s3 chi.Router) { mountS3(s3, cfg, guards) })
+		r.Route("/s3", func(s3 chi.Router) { mountS3(s3, cfg, guardsFor(rate, gate, cfg.S3.Reject)) })
 	}
 	if cfg.Web != nil {
 		// 其余路径交给内嵌 SPA(静态文件 + history 路由回落)。
@@ -187,11 +196,15 @@ func mountAdminOnly(ad chi.Router, cfg Config) {
 // SPA 路由(命中却方法不符 → 405,再不回落到前端)。客户端把端点配成 <站点>/s3 即可。
 // 自带 SigV4 签名鉴权(凭证仍是同一批上传 Token),故不套 TokenAuth;上传防护闸共享。
 // 闸门顺序:并发闸挡在验签之前(未验签请求也不该无界并发地打数据库),验签产生主体后才轮到按用户计的频控。
+// 只实现对象的 PUT / GET / HEAD / DELETE 与桶的 HEAD;其余操作(列举、ACL、分段上传等)一律以 S3 错误
+// NotImplemented 拒绝,不回落到前端页面,也不被当成对象读写。
 // @param s3 /s3 下的子路由
 // @param cfg 路由依赖
-// @param guards 上传防护闸
+// @param guards S3 面的上传防护闸
 func mountS3(s3 chi.Router, cfg Config, guards uploadGuards) {
-	s3.Use(guards.gate, cfg.S3.Authenticate)
+	s3.Use(guards.gate, cfg.S3.Authenticate, cfg.S3.RejectUnsupported)
+	s3.NotFound(cfg.S3.HandleNotImplemented)
+	s3.MethodNotAllowed(cfg.S3.HandleNotImplemented)
 	s3.With(guards.rate).Put("/{bucket}/*", cfg.S3.HandlePutObject)
 	s3.Head("/{bucket}", cfg.S3.HandleHeadBucket)
 	// 读与删不是上传,不过上传频控;并发闸与验签照过。

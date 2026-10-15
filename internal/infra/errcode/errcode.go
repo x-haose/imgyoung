@@ -112,6 +112,7 @@ func From(err error) (*Error, bool) {
 }
 
 // Message 渲染错误码的中文文案。
+// @Description: 模板只扫一遍,填进去的参数值不再参与替换——值里含有形如 {name} 的文本时照原样输出。
 // @param code 错误码;零值是代码缺陷,直接 panic
 // @param params 文案参数
 // @return 填好参数的文案;模板里没有给值的占位符原样保留
@@ -120,8 +121,9 @@ func Message(code Code, params map[string]string) string {
 	if !ok {
 		panic("errcode: 未登记的错误码 " + code.id)
 	}
+	pairs := make([]string, 0, 2*len(params))
 	for k, v := range params {
-		msg = strings.ReplaceAll(msg, "{"+k+"}", v)
+		pairs = append(pairs, "{"+k+"}", v)
 	}
-	return msg
+	return strings.NewReplacer(pairs...).Replace(msg)
 }

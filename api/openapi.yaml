@@ -154,6 +154,8 @@ paths:
           $ref: '#/components/responses/TooManyPixels'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ChannelsUnavailable'
   /api/upload/url:
@@ -189,6 +191,8 @@ paths:
           $ref: '#/components/responses/TooManyPixels'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '502':
           description: 远端返回错误、重定向过多或无法取回
           content:
@@ -366,6 +370,8 @@ paths:
                 $ref: '#/components/schemas/Error'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/auth/logout:
     post:
       operationId: logout
@@ -383,6 +389,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/me:
     get:
       operationId: me
@@ -396,6 +404,8 @@ paths:
           $ref: '#/components/responses/SessionResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/me/password:
     put:
       operationId: changePassword
@@ -425,6 +435,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/dashboard:
     get:
@@ -445,6 +457,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/config:
     get:
       operationId: runtimeConfig
@@ -464,6 +478,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
     put:
       operationId: updateConfig
       tags: [Admin · Overview and settings]
@@ -492,6 +508,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/config/full:
     get:
       operationId: fullConfig
@@ -507,6 +525,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/upload:
     post:
@@ -542,6 +562,8 @@ paths:
           $ref: '#/components/responses/TooManyPixels'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ChannelsUnavailable'
   /api/admin/upload/url:
@@ -578,6 +600,8 @@ paths:
           $ref: '#/components/responses/TooManyPixels'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
         '502':
           description: 远端返回错误、重定向过多或无法取回
           content:
@@ -633,6 +657,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/images/batch-delete:
     post:
       operationId: batchDeleteImages
@@ -662,6 +688,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/images/{id}:
     parameters:
       - $ref: '#/components/parameters/imageID'
@@ -681,6 +709,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
     patch:
       operationId: patchImage
       tags: [Admin · Images]
@@ -707,6 +737,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
     delete:
       operationId: deleteImage
       tags: [Admin · Images]
@@ -725,6 +757,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/images/{id}/thumb:
     get:
       operationId: adminImageBytes
@@ -785,6 +819,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       operationId: issueToken
       tags: [Admin · Upload tokens]
@@ -815,6 +851,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/tokens/{id}:
     delete:
       operationId: deleteToken
@@ -843,6 +881,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/tokens/{id}/revoke:
     post:
       operationId: revokeToken
@@ -865,6 +905,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/tokens/{id}/rotate:
     post:
       operationId: rotateToken
@@ -887,6 +929,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/tokens/{id}/s3-credential:
     post:
       operationId: tokenS3Credential
@@ -913,6 +957,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/channel-templates:
     get:
@@ -933,6 +979,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channels:
     get:
       operationId: listChannels
@@ -952,6 +1000,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       operationId: createChannel
       tags: [Admin · Storage channels]
@@ -1025,12 +1075,14 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/ChannelDeleting'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channels/{id}:
     put:
       operationId: updateChannel
       tags: [Admin · Storage channels]
       summary: 编辑渠道
-      description: 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409；清理中的渠道不可编辑（409）。编辑失败而服务商已刷新了令牌时：沿用已存令牌的，新令牌写回渠道；表单提交的新令牌随错误的 `token` 交还。仅管理员。
+      description: 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409；清理中的渠道不可编辑（409）；保存期间渠道配置被另一次编辑或令牌写回改动的，不落库并返回 409，重新保存即可。编辑失败而服务商已刷新了令牌时：沿用已存令牌的，新令牌写回渠道；表单提交的新令牌随错误的 `token` 交还。仅管理员。
       security:
         - session: []
       parameters:
@@ -1062,7 +1114,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ChannelSaveError'
         '409':
-          description: 渠道名已存在、试图变更加密属性，或渠道正在清理中
+          description: 渠道名已存在、试图变更加密属性、渠道正在清理中，或保存期间配置已被改动
           content:
             application/json:
               schema:
@@ -1107,6 +1159,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channels/{id}/config:
     get:
       operationId: channelConfig
@@ -1132,6 +1186,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channels/{id}/rclone-config:
     get:
       operationId: channelRcloneConfig
@@ -1188,6 +1244,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channels/{id}/check:
     post:
       operationId: checkChannel
@@ -1212,6 +1270,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/ChannelDeleting'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channel-oauth/start:
     post:
       operationId: startChannelOAuth
@@ -1245,6 +1305,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/ChannelDeleting'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channel-oauth/callback:
     get:
       operationId: channelOAuthCallback
@@ -1287,6 +1349,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/channel-oauth/result:
     get:
       operationId: channelOAuthResult
@@ -1319,6 +1383,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/users:
     get:
@@ -1339,6 +1405,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       operationId: createUser
       tags: [Admin · Users]
@@ -1373,6 +1441,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/users/{id}:
     parameters:
       - $ref: '#/components/parameters/userID'
@@ -1408,6 +1478,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
     delete:
       operationId: deleteUser
       tags: [Admin · Users]
@@ -1434,6 +1506,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/users/{id}/password:
     post:
       operationId: resetUserPassword
@@ -1462,6 +1536,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/referer-whitelist:
     get:
@@ -1482,6 +1558,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
     post:
       operationId: addRefererRule
       tags: [Admin · Hotlink protection]
@@ -1516,6 +1594,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/referer-whitelist/{id}:
     delete:
       operationId: deleteRefererRule
@@ -1544,6 +1624,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/dedup:
     get:
@@ -1567,6 +1649,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/dedup/{id}/merge:
     post:
       operationId: mergeDedupCandidate
@@ -1601,6 +1685,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/dedup/{id}/dismiss:
     post:
       operationId: dismissDedupCandidate
@@ -1623,6 +1709,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/cleanup:
     get:
       operationId: listCleanup
@@ -1645,6 +1733,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /api/admin/audit:
     get:
@@ -1685,6 +1775,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/alerts:
     get:
       operationId: listAlerts
@@ -1713,6 +1805,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/backups:
     get:
       operationId: listBackups
@@ -1732,6 +1826,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          description: 任一健康渠道列举快照失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: 没有健康渠道
           content:
@@ -1759,7 +1859,9 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '500':
-          description: 备份失败：生成快照失败，或有渠道上传、清理旧快照失败；错误里列出失败的渠道与原因，已写成的渠道保留该快照
+          description: >-
+            备份失败：生成快照失败（`backup_snapshot_failed`）、有渠道没写成快照（`backup_store_failed`），或快照都写成、
+            有渠道清理旧快照失败（`backup_prune_failed`）；错误里列出失败的渠道与根因，已写成的渠道保留该快照
           content:
             application/json:
               schema:
@@ -1801,6 +1903,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          description: 持有该快照的渠道都读取失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: 没有健康渠道
           content:
@@ -1833,6 +1941,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '500':
+          description: 持有该快照的渠道都读取失败，或暂存到数据目录失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '503':
           description: 没有健康渠道
           content:
@@ -1863,6 +1977,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
 components:
   securitySchemes:
@@ -2035,6 +2151,12 @@ components:
             $ref: '#/components/schemas/Error'
     NotFound:
       description: 目标不存在，或对当前用户不可见
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: 服务端故障（数据库读写失败等），原因记在服务端日志；可稍后重试
       content:
         application/json:
           schema:
@@ -2234,6 +2356,7 @@ components:
         - referer_not_found
         - backup_snapshot_failed
         - backup_store_failed
+        - backup_prune_failed
         - snapshot_name_invalid
         - snapshot_not_found
         - settings_body_invalid
@@ -2251,12 +2374,14 @@ components:
         - channel_not_found
         - channel_name_exists
         - channel_deleting
+        - channel_config_changed
         - channel_encrypted_immutable
         - channel_sole_replicas
         - purge_param_invalid
         - channel_name_driver_required
         - channel_name_too_long
         - channel_encrypted_direct_link
+        - channel_local_path_relative
         - channel_config_key_invalid
         - channel_keep_not_secret
         - channel_keep_no_value
@@ -2624,7 +2749,7 @@ components:
           description: 按需处理允许的目标格式，至少一项
         process_quality_webp:
           type: integer
-          description: WebP 质量档 [0,100]
+          description: WebP 质量档 [1,100]
         process_quality_jpeg:
           type: integer
           description: JPEG 质量档 [1,100]
@@ -3763,13 +3888,13 @@ components:
           type: string
           description: 中文描述
         params:
-          type: object
+          type: [object, 'null']
           additionalProperties:
             type: string
           description: >-
             描述参数，管理后台按 `kind` 与它渲染当前语言的描述。`channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail`
             （同 ChannelFailure；渠道尚未探测过时为空对象）；`replication_failed`：`failed`；`channel_quota_exceeded`：`bytes`、`quota`；
-            `backup_failed`：`code`（ErrorCode）加该错误码的文案参数
+            `backup_failed`：`code`（ErrorCode）加该错误码的文案参数。null 表示该告警只有中文 `message`，没有描述参数
         opened_at:
           type: string
         resolved_at:

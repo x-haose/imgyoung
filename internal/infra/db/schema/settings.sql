@@ -30,7 +30,7 @@ CREATE TABLE settings (
     dedup_phash_max_distance INTEGER NOT NULL DEFAULT 10, -- pHash 相似判定汉明距离上限;0=不做相似扫描
     process_widths TEXT NOT NULL DEFAULT '[100,200,400,800,1600]', -- 允许的宽度档(JSON 数组,像素);[] 表示不允许缩放
     process_formats TEXT NOT NULL DEFAULT '["webp","jpeg","png"]', -- 允许的目标格式(JSON 数组)
-    process_quality_webp INTEGER NOT NULL DEFAULT 80, -- 按需处理 webp 质量档[0,100]
+    process_quality_webp INTEGER NOT NULL DEFAULT 80, -- 按需处理 webp 质量档[1,100]
     process_quality_jpeg INTEGER NOT NULL DEFAULT 85, -- 按需处理 jpeg 质量档[1,100]
     process_webp_method INTEGER NOT NULL DEFAULT 4, -- webp 质量/速度权衡[0,6]
     process_workers INTEGER NOT NULL DEFAULT 4, -- 处理并发上限(信号量)

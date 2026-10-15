@@ -1,4 +1,4 @@
-h1:FIOZYupCNFCCXPehN2KFILvE38BpWvtOaGfECy8VdsY=
+h1:ohlQGbw/DgxrKFFTD7B5ApB1/P+siPMqG7rzBwiPdnQ=
 20260703132606_init.sql h1:r9fx8hZFI5/ggNckSOFlc6disj2i3717SFs4TsaOye8=
 20260704051551_add_variants.sql h1:8GTfYMZfMDfTHSIEGdvgECbqQNDZIuotyfU9IjqAzAE=
 20260716151735_iter5_multiuser.sql h1:TSgSM+1IiaWzR85m20jYcGP1rVpiB1izBfWah/vQAu4=
@@ -20,4 +20,6 @@ h1:FIOZYupCNFCCXPehN2KFILvE38BpWvtOaGfECy8VdsY=
 20261014185016_b17_alerts.sql h1:VTKI/aFGsuk3SwNZxgp9JhUCzl3Ka4Y3dj9JSQxK/Ak=
 20261015113503_b18_master_key_fingerprint.sql h1:Hwt+18dXEmHrtc7/ZcwebiX7UP+/Ec47e8lduSUPyLw=
 20261015153529_b19_channel_bound_at.sql h1:xIPrCyEH9WwOzG5L1nxGl1GfwhKCY7Qhdmj4janO3fA=
-20261015194517_b20_failure_reasons.sql h1:PBA7p+99vmhL25gLYPiuZufAFpBOGDERl1PW4lrdj6s=
+20261015194517_b20_failure_reasons.sql h1:O/RckBx2/VTCYS8S/IVj9hIOdQLXONm5GayMZrZNRt8=
+20261016120000_b21_channel_id_autoincrement.sql h1:DlxEZqANMiz82UdAGaMBJ3ze3M+6w3yl3uDG2YWVHHA=
+20261016130000_b22_settings_constraints.sql h1:LXGxy0sCMfz+DcD0lEklGncC8wLvh7i9s22dEaJIY4k=

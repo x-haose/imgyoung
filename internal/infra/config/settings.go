@@ -44,7 +44,7 @@ type Settings struct {
 	DedupPhashMaxDistance  int                `json:"dedup_phash_max_distance"`  // pHash 相似判定的汉明距离上限;0=不做相似扫描
 	ProcessWidths          []int              `json:"process_widths"`            // 允许的宽度档白名单(像素);空表示不允许缩放
 	ProcessFormats         []string           `json:"process_formats"`           // 允许的目标格式白名单
-	ProcessQualityWebP     int                `json:"process_quality_webp"`      // 按需处理 webp 质量档[0,100]
+	ProcessQualityWebP     int                `json:"process_quality_webp"`      // 按需处理 webp 质量档[1,100]
 	ProcessQualityJPEG     int                `json:"process_quality_jpeg"`      // 按需处理 jpeg 质量档[1,100]
 	ProcessWebPMethod      int                `json:"process_webp_method"`       // webp 质量/速度权衡[0,6]
 	ProcessWorkers         int                `json:"process_workers"`           // 处理并发上限(信号量)
@@ -184,9 +184,10 @@ func validateBaseURL(raw string) error {
 	if raw == "" {
 		return nil
 	}
+	// 末尾单独的 ? 或 # 不进 RawQuery / Fragment,按原文判定。
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
-		u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		u.Path != "" || u.Opaque != "" || strings.ContainsAny(raw, "?#") {
 		return errcode.New(errcode.SettingSiteRoot, "key", "base_url", "value", raw)
 	}
 	return nil
@@ -280,7 +281,7 @@ func validateWebhookURL(raw string) error {
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateProcess() error {
 	if err := firstError(
-		between("process_quality_webp", s.ProcessQualityWebP, 0, 100),
+		between("process_quality_webp", s.ProcessQualityWebP, 1, 100),
 		between("process_quality_jpeg", s.ProcessQualityJPEG, 1, 100),
 		between("process_webp_method", s.ProcessWebPMethod, 0, 6),
 		positive("process_workers", s.ProcessWorkers),

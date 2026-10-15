@@ -1,6 +1,6 @@
 /**
  * 服务端返回的错误、失败结论与告警的当前语言文案:服务端只给错误码、归类与参数,文案在词典里。
- * 页面若是旧版本、服务端新增了取值,词典里查不到:错误退回服务端的中文原文,失败结论退回根因原文。
+ * 页面若是旧版本、服务端新增了取值,词典里查不到:错误与告警退回服务端的中文原文,失败结论退回根因原文。
  */
 import { messages, t } from '@/i18n'
 import type { components } from './api.gen'
@@ -52,15 +52,20 @@ export function channelFailureText(f: ChannelFailure): string {
   return prefix + failureText(f)
 }
 
-/** 告警的当前语言描述,按告警类型取模板并填入参数;字节数按单位换算。 */
+/**
+ * 告警的当前语言描述,按告警类型取模板并填入参数;字节数按单位换算。
+ * 没有描述参数或类型不在词典里时退回服务端的中文描述。
+ */
 export function alertText(a: AlertItem): string {
   const m = messages().server
   const p = a.params
+  const template = lookup(m.alerts, a.kind)
+  if (p === null || template === undefined) return a.message
   switch (a.kind) {
     case 'channel_unhealthy':
     case 'drain_failed':
       if (p.reason === undefined) return m.unhealthyUnprobed
-      return t(m.alerts[a.kind], {
+      return t(template, {
         failure: channelFailureText({
           stage: p.stage as ChannelFailure['stage'],
           reason: p.reason as Failure['reason'],
@@ -68,13 +73,13 @@ export function alertText(a: AlertItem): string {
         }),
       })
     case 'channel_quota_exceeded':
-      return t(m.alerts.channel_quota_exceeded, {
+      return t(template, {
         bytes: formatBytes(Number(p.bytes)),
         quota: formatBytes(Number(p.quota)),
       })
     case 'backup_failed': {
       const { code, ...params } = p
-      return t(m.alerts.backup_failed, {
+      return t(template, {
         error: errorText({
           code: code as ErrorBody['code'],
           error: a.message,
@@ -83,6 +88,6 @@ export function alertText(a: AlertItem): string {
       })
     }
     default:
-      return t(m.alerts[a.kind], p)
+      return t(template, p)
   }
 }

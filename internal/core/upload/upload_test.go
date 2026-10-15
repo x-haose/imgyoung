@@ -23,6 +23,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	storagedriver "github.com/x-haose/imgyoung/store/driver"
 )
@@ -435,8 +436,8 @@ func TestProcessMinSuccessUnmetRejects(t *testing.T) {
 }
 
 // liveImage 构造按当前时刻查询未到期引用的参数。
-func liveImage(id string) sqlc.GetImageBlobParams {
-	return sqlc.GetImageBlobParams{ID: id, Now: sqlc.TimeText(time.Now())}
+func liveImage(imageID string) sqlc.GetImageBlobParams {
+	return sqlc.GetImageBlobParams{ID: imageID, Now: sqlc.TimeText(time.Now())}
 }
 
 // uploadPNG 以默认用户、原样保留元数据上传一张小 PNG,读回其引用记录与各渠道的副本状态。
@@ -459,4 +460,49 @@ func (e *testEnv) uploadPNG(t *testing.T) (sqlc.GetImageBlobRow, []sqlc.ListBlob
 		t.Fatalf("查询副本状态: %v", err)
 	}
 	return row, replicas
+}
+
+// leavingSelector 在上传写完、取在役渠道落库之前把内置 local 渠道标为清理中,重现「上传与删除渠道交错」。
+type leavingSelector struct {
+	*channel.Manager
+	t  *testing.T
+	id int64 // 要标为清理中的渠道
+}
+
+// All 先把渠道标为清理中,再返回在役渠道。
+func (s leavingSelector) All() []channel.Handle {
+	if err := s.Delete(s.t.Context(), s.id, true); err != nil {
+		s.t.Fatalf("标记清理中: %v", err)
+	}
+	return s.Manager.All()
+}
+
+// TestUploadFailsWhenOnlyReplicaLeavesService 验证唯一写成副本的渠道在落库前被标为清理中时上传失败:
+// 不留下没有可用副本的图片记录,已写入的对象被删掉。
+func TestUploadFailsWhenOnlyReplicaLeavesService(t *testing.T) {
+	env := testenv.New(t)
+	local := env.Local(t)
+	svc := upload.New(upload.Config{
+		Conn: env.Conn, Queries: env.Queries, Channels: leavingSelector{Manager: env.Manager, t: t, id: local.ID},
+		Settings: testenv.Settings(nil), Logger: env.Logger,
+	})
+	_, err := svc.Process(t.Context(), pngBytes(t), upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+	})
+	if !errors.Is(err, upload.ErrInsufficientReplicas) {
+		t.Fatalf("err = %v, 期望 ErrInsufficientReplicas", err)
+	}
+	var images int
+	if err := env.Conn.QueryRow("SELECT COUNT(*) FROM images").Scan(&images); err != nil || images != 0 {
+		t.Fatalf("图片记录 %d 条(err=%v), 期望没有", images, err)
+	}
+	objs, err := local.Driver.List(t.Context(), "")
+	if err != nil {
+		t.Fatalf("列举渠道: %v", err)
+	}
+	for _, o := range objs {
+		if id.IsStorageKey(o.Key) {
+			t.Fatalf("已写入的对象未删除: %s", o.Key)
+		}
+	}
 }

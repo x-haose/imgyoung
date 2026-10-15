@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -17,7 +18,7 @@ const (
 	RoleUser  = "user"  // 只见自己的图片与 Token
 )
 
-// MinPasswordLength 密码最小长度(按字节计);建号、改密、重置三条路径同一门槛。
+// MinPasswordLength 密码最小长度(按字符即 Unicode 码点计);建号、改密、重置三条路径同一门槛。
 const MinPasswordLength = 8
 
 // 用户管理哨兵错误,调用方据此映射 HTTP 状态码。
@@ -34,7 +35,7 @@ var (
 // @param password 明文密码
 // @return 过短时的 ErrPasswordTooShort
 func validatePassword(password string) error {
-	if len(password) < MinPasswordLength {
+	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return ErrPasswordTooShort
 	}
 	return nil

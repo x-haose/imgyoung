@@ -38,6 +38,18 @@ VALUES (?, ?, ?)
 ON CONFLICT (blob_id, channel_id)
 DO UPDATE SET state = excluded.state, updated_at = datetime('now');
 
+-- name: InsertBlobChannelInService :execrows
+INSERT INTO blob_channels (blob_id, channel_id, state)
+SELECT sqlc.arg(blob_id), c.id, sqlc.arg(state)
+FROM channels c
+WHERE c.id = sqlc.arg(channel_id) AND c.pending_delete = 0;
+
+-- name: InsertBlobChannelIfExists :execrows
+INSERT INTO blob_channels (blob_id, channel_id, state)
+SELECT sqlc.arg(blob_id), c.id, sqlc.arg(state)
+FROM channels c
+WHERE c.id = sqlc.arg(channel_id);
+
 -- name: MarkBlobChannel :exec
 UPDATE blob_channels
 SET state             = ?,

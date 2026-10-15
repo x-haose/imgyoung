@@ -149,8 +149,12 @@ func (h *Handlers) HandleUserResetPassword(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	userID := chi.URLParam(r, "id")
-	if _, err := h.cfg.Queries.GetUser(r.Context(), userID); err != nil {
+	if _, err := h.cfg.Queries.GetUser(r.Context(), userID); errors.Is(err, sql.ErrNoRows) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.UserNotFound)
+		return
+	} else if err != nil {
+		h.cfg.Logger.Error("查询用户失败", "id", userID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	err := h.cfg.Auth.SetPassword(r.Context(), userID, req.Password)

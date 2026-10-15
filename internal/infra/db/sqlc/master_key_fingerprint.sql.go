@@ -9,6 +9,21 @@ import (
 	"context"
 )
 
+const firstSealedValue = `-- name: FirstSealedValue :one
+SELECT sealed
+FROM (SELECT config_sealed AS sealed FROM channels WHERE config_sealed <> ''
+      UNION ALL
+      SELECT cdn_cloudflare_api_token AS sealed FROM settings WHERE cdn_cloudflare_api_token <> '')
+LIMIT 1
+`
+
+func (q *Queries) FirstSealedValue(ctx context.Context) (string, error) {
+	row := q.db.QueryRowContext(ctx, firstSealedValue)
+	var sealed string
+	err := row.Scan(&sealed)
+	return sealed, err
+}
+
 const getMasterKeyFingerprint = `-- name: GetMasterKeyFingerprint :one
 SELECT fingerprint
 FROM master_key_fingerprint

@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -157,7 +158,9 @@ func (r *Runner) reclaimOrphans(ctx context.Context, h channel.Handle, orphans [
 }
 
 // requeuePhantoms 处理幻影副本:DB 记为就绪、渠道缺失的,回退 pending 并重新入队补齐。
-// @Description: 复位失败的行跳过不计数;入队失败只告警,pending 行由下一轮对账扫描兜底入队。
+// @Description: 列举在查副本记录之前:列举越过之后才写入、随即记为就绪的对象不在列举结果里,复位前逐个再查一次
+// 对象,确实不存在才算幻影——否则刚上传的图会被复位成 pending,而补齐找不到别的源,从此读不到。
+// 复位失败的行跳过不计数;入队失败只告警,pending 行由下一轮对账扫描兜底入队。
 // @param h 目标渠道
 // @param done DB 记为就绪的对象键 → blob 主键
 // @param onChannel 渠道上实际存在的对象键 → 字节数
@@ -166,7 +169,7 @@ func (r *Runner) requeuePhantoms(ctx context.Context, h channel.Handle,
 	done, onChannel map[string]int64) int {
 	requeued := 0
 	for key, blobID := range done {
-		if _, ok := onChannel[key]; ok {
+		if _, ok := onChannel[key]; ok || !r.missing(ctx, h, key) {
 			continue
 		}
 		if err := r.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
@@ -182,4 +185,19 @@ func (r *Runner) requeuePhantoms(ctx context.Context, h channel.Handle,
 		requeued++
 	}
 	return requeued
+}
+
+// missing 再查一次对象,确认它确实不在渠道上。
+// @param h 目标渠道
+// @param key 对象键
+// @return 对象不存在为 true;对象存在或查询失败(留待下一轮)为 false
+func (r *Runner) missing(ctx context.Context, h channel.Handle, key string) bool {
+	_, err := h.Driver.Stat(ctx, key)
+	if errors.Is(err, driver.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		r.cfg.Logger.Warn("核对疑似幻影副本失败,留待下一轮", "channel", h.Name, "key", key, "err", err)
+	}
+	return false
 }

@@ -276,20 +276,28 @@ func TestNewNameIsValidConfigName(t *testing.T) {
 	}
 }
 
-// TestConfigFileUnrepresentableHidesValue 参数值含换行时导出被拒,错误只指出远端与参数键,不带参数值的任何片段。
+// TestConfigFileUnrepresentableHidesValue 参数值含换行或以三个双引号开头时导出被拒,错误指出远端与参数键,不带参数值的任何片段。
 func TestConfigFileUnrepresentableHidesValue(t *testing.T) {
 	const tail = "secret-after-newline"
-	_, err := ConfigFile(Options{Backend: "local", Path: "/data", Params: map[string]string{
-		"links": "https://x\n" + tail,
-	}}, "imgyoung-1", "imgyoung-1-crypt")
-	if !errors.Is(err, ErrUnrepresentable) {
-		t.Fatalf("期望 ErrUnrepresentable,得到 %v", err)
-	}
-	if strings.Contains(err.Error(), tail) || strings.Contains(err.Error(), "https://x") {
-		t.Fatalf("错误里带出了参数值: %v", err)
-	}
-	if !strings.Contains(err.Error(), `"links"`) {
-		t.Fatalf("错误应指出参数键: %v", err)
+	for name, value := range map[string]string{
+		"含换行":     "https://x\n" + tail,
+		"三个双引号开头": `"""https://x` + tail,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ConfigFile(Options{Backend: "local", Path: "/data", Params: map[string]string{
+				"links": value,
+			}}, "imgyoung-1", "imgyoung-1-crypt")
+			ue, ok := errors.AsType[*UnrepresentableError](err)
+			if !ok || !errors.Is(err, ErrUnrepresentable) {
+				t.Fatalf("期望 *UnrepresentableError,得到 %v", err)
+			}
+			if ue.Remote != "imgyoung-1" || ue.Key != "links" {
+				t.Fatalf("错误指出的位置 = %s/%s,期望 imgyoung-1/links", ue.Remote, ue.Key)
+			}
+			if strings.Contains(err.Error(), tail) || strings.Contains(err.Error(), "https://x") {
+				t.Fatalf("错误里带出了参数值: %v", err)
+			}
+		})
 	}
 }
 
@@ -359,5 +367,27 @@ func TestPutSetsContentType(t *testing.T) {
 	_ = rc.Close()
 	if err != nil || !bytes.Equal(got, payload) {
 		t.Fatalf("读回字节不一致(err=%v)", err)
+	}
+}
+
+// TestConstructContextDetaches 验证构造用的上下文在构造期间随调用方取消,脱钩之后不再随之取消——
+// 后端留存它发后续请求,调用方的请求结束不能连带作废驱动。
+func TestConstructContextDetaches(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	bctx, detach := constructContext(ctx)
+	if !detach() {
+		t.Fatal("ctx 尚未取消,脱钩却报告已结束")
+	}
+	cancel()
+	if bctx.Err() != nil {
+		t.Fatalf("脱钩后调用方取消仍波及构造上下文: %v", bctx.Err())
+	}
+
+	ctx, cancel = context.WithCancel(t.Context())
+	bctx, detach = constructContext(ctx)
+	cancel()
+	<-bctx.Done()
+	if detach() {
+		t.Fatal("ctx 已在构造期间取消,脱钩却报告成功")
 	}
 }

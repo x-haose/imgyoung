@@ -46,7 +46,7 @@ func TestVerifyPasswordMalformed(t *testing.T) {
 	}
 }
 
-// TestValidatePassword 验证最小长度门槛:不足即拒,恰好达标放行;按字节计,多字节字符同样计长。
+// TestValidatePassword 验证最小长度门槛:不足即拒,恰好达标放行;按码点计,一个汉字算一个字符。
 func TestValidatePassword(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
@@ -57,7 +57,8 @@ func TestValidatePassword(t *testing.T) {
 		{"七位", "1234567", true},
 		{"恰好八位", "12345678", false},
 		{"长密码", "correct-horse-battery", false},
-		{"三个汉字九字节", "密码值", false},
+		{"七个汉字二十一字节", "七个汉字的密码", true},
+		{"恰好八个汉字", "八个汉字的密码值", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validatePassword(tt.password)

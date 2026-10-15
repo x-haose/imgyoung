@@ -199,7 +199,8 @@ var (
 
 // ServeObject 按短 ID 向已验签的客户端输出原图:元数据头、If-None-Match 协商与流式字节。
 // @Description: 客户端取回的是自己的对象,与公开浏览不同——不计活跃度、不走 302 直链、不做按需处理;
-// HEAD 只写元数据头,不打开渠道对象流。错误只在写出任何响应之前返回,调用方据此写自己的错误体。
+// HEAD 只写元数据头,不打开渠道对象流,没有可服务的副本时与 GET 一样不可用。错误只在写出任何响应之前返回,
+// 调用方据此写自己的错误体。
 // @param w 响应写入器
 // @param r 请求,GET 或 HEAD
 // @param imageID 对外短 ID
@@ -221,14 +222,17 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 		writeNotModified(w, etag, opts.mutable, opts.varyAccept)
 		return nil
 	}
-	if r.Method == http.MethodHead {
-		writeOriginalHeaders(w.Header(), row, opts)
-		w.WriteHeader(http.StatusOK)
-		return nil
-	}
 	candidates, err := h.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)
 	if err != nil {
 		return fmt.Errorf("查询渠道候选: %w", err)
+	}
+	if r.Method == http.MethodHead {
+		if len(candidates) == 0 {
+			return fmt.Errorf("%w: 没有可服务的副本", ErrObjectUnavailable)
+		}
+		writeOriginalHeaders(w.Header(), row, opts)
+		w.WriteHeader(http.StatusOK)
+		return nil
 	}
 	rc, err := h.cfg.Channels.OpenFirst(r.Context(), candidates, row.StorageKey)
 	if err != nil {

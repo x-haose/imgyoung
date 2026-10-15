@@ -236,6 +236,8 @@ func TestStoreUpdateRejectsInvalid(t *testing.T) {
 		"时长溢出":           {"default_ttl_hours", MaxDurationHours + 1, errcode.SettingTooLarge},
 		"站点地址缺协议":        {"base_url", "img.example.com", errcode.SettingSiteRoot},
 		"站点地址带路径":        {"base_url", "https://img.example.com/sub", errcode.SettingSiteRoot},
+		"站点地址末尾空查询":      {"base_url", "https://img.example.com?", errcode.SettingSiteRoot},
+		"站点地址末尾空片段":      {"base_url", "https://img.example.com#", errcode.SettingSiteRoot},
 		"Webhook 非 HTTP": {"alert_webhook_url", "ftp://x", errcode.SettingURL},
 	} {
 		t.Run(name, func(t *testing.T) {
