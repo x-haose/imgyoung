@@ -1,0 +1,120 @@
+---
+title: 升级
+description: 各安装方式的升级命令、启动时自动执行的数据库迁移,以及回滚时的注意事项。
+---
+
+## 升级前
+
+1. 读一遍目标版本的 [Release 说明](https://github.com/x-haose/imgyoung/releases)。
+2. 留一份回滚用的元数据库副本:在后台「设置 → 备份与导出 → 元数据库快照」点「立即备份」,再「下载」这份快照,保存在服务器以外。也可以停服后复制 `<数据目录>/imgyoung.db`(停服后才是一致的)。
+3. 确认 master.key 已有备份,见[配置](../configuration.mdx#主密钥)。
+
+当前版本可用 `imgyoung -version` 查看,或看后台「设置 → 运行配置 → 引导配置」里的「服务端版本」。
+
+## 升级命令
+
+<Tabs items={['一行安装脚本', 'Docker', 'Compose', '二进制', '源码']}>
+<Tab value="一行安装脚本">
+
+重新执行安装脚本即升级到最新正式版;指定版本加 `--version vX.Y.Z`。
+
+```bash title="终端"
+# 用 systemd 服务运行的(当初加了 --service):替换二进制、重写服务单元并重启服务
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sudo sh -s -- --service
+
+# 自己管理进程的:只替换二进制,之后自行重启 imgyoung
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
+```
+
+`--service` 会用发布包里的 `deploy/imgyoung.service` 覆盖 `/etc/systemd/system/imgyoung.service`;自定义的环境变量请放在 `systemctl edit` 创建的 drop-in 里,不会被覆盖。
+
+</Tab>
+<Tab value="Docker">
+
+拉取新镜像,删掉旧容器,用**同一个数据卷**和原来的参数重新创建。删除容器不会删除命名数据卷。
+
+```bash title="终端"
+docker pull ghcr.io/x-haose/imgyoung:latest
+docker stop imgyoung && docker rm imgyoung
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+镜像标签:`latest` 跟随最新正式版;`1.0` 这样的「主.次」标签跟随该系列的最新补丁版;`1.0.3` 这样的完整版本号固定不变。预发布版只有完整版本号标签。
+
+</Tab>
+<Tab value="Compose">
+
+```bash title="终端"
+docker compose pull
+docker compose up -d
+```
+
+`compose.yaml` 里钉的是「主.次」或完整版本号时,跨系列升级要先改 `image:` 的标签。
+
+</Tab>
+<Tab value="二进制">
+
+从[发布页](https://github.com/x-haose/imgyoung/releases)下载对应平台的新压缩包,用同目录的 `checksums.txt` 校验后解压,替换旧的 `imgyoung` 二进制,然后重启进程。数据目录不动。
+
+```bash title="终端"
+sha256sum -c checksums.txt --ignore-missing
+tar -xzf imgyoung_<版本号>_linux_amd64.tar.gz
+```
+
+</Tab>
+<Tab value="源码">
+
+```bash title="终端"
+git fetch --tags
+git checkout vX.Y.Z
+task build
+```
+
+用新生成的 `./imgyoung` 替换正在运行的二进制并重启。
+
+</Tab>
+</Tabs>
+
+## 数据库迁移
+
+数据库迁移打包在二进制里,每次启动、打开数据库之后自动执行:
+
+- 先校验迁移文件与校验和清单一致,再按版本顺序应用所有尚未应用的迁移;跨多个版本升级时,中间版本的迁移会依次补齐。已应用的版本记录在数据库的 `schema_revisions` 表里。
+- 补齐子系统的任务队列表也在启动时迁移到当前版本。
+- 新增的运营配置项由迁移按出厂默认值补齐,已有配置保持不变。
+- 迁移失败时进程以错误退出,日志给出失败的迁移文件名。此时用升级前的副本回滚(见下文)。
+
+不需要也没有单独的迁移命令。
+
+## 回滚
+
+迁移只有升级方向,没有降级脚本。被新版本迁移过的数据库**不能**直接交给旧版本使用:旧版本启动时不会拒绝它(它认为没有待应用的迁移),但表结构已经变化——部分迁移会删除列或重建表——运行中会出现错误。
+
+回滚到旧版本:
+
+<Steps>
+<Step>
+
+停止服务。
+
+</Step>
+<Step>
+
+换回旧版本的二进制或镜像标签。
+
+</Step>
+<Step>
+
+用升级前留的副本替换元数据库:把 `<数据目录>/imgyoung.db` 以及可能存在的 `imgyoung.db-wal`、`imgyoung.db-shm` 移走,再把副本放为 `imgyoung.db`。Docker 部署的文件属主须为 `65532:65532`,写入方法参考[备份与恢复](./backup.mdx)里借临时容器的做法。
+
+</Step>
+<Step>
+
+启动服务。
+
+</Step>
+</Steps>
+
+升级之后产生的元数据随之丢失,影响与从快照恢复相同:这期间上传的图片会被对账 GC 当作孤儿删除,详见[备份与恢复](./backup.mdx)。

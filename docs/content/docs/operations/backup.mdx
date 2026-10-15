@@ -1,0 +1,193 @@
+---
+title: 备份与恢复
+description: 元数据库自动快照、从快照恢复、主机全损后的灾难恢复、元数据导出与对账 GC。
+---
+
+## 需要备份什么
+
+渠道里的对象用内容哈希命名,图片与短链、用户、Token 的对应关系全在元数据库里。元数据库丢了,渠道里的图片就无法再对应回来;主密钥丢了,渠道凭证与加密渠道的数据都无法解密。
+
+| 内容 | 位置 | 如何备份 |
+|---|---|---|
+| 主密钥 | `<数据目录>/master.key`,或环境变量 `IMGYOUNG_MASTER_KEY` | 首次启动后复制一份离线保存,与快照分开存放,见[配置](../configuration.mdx#主密钥) |
+| 元数据库 | `<数据目录>/imgyoung.db` | 自动快照(存放在渠道上),另外定期下载一份存到别处 |
+| 图片 | 各渠道 | 配置多个渠道,由副本补齐保证每张图不止一份;内置 local 渠道的数据在 `<数据目录>/blobs/` |
+| 部署配置 | 环境变量、systemd drop-in、`compose.yaml`、反代配置 | 纳入你自己的配置管理 |
+
+`<数据目录>/variants/` 是衍生图缓存,丢失后按需重新生成,不必备份。服务运行中不要直接复制 `imgyoung.db`:数据库处于 WAL 模式,最近的写入可能还在 `imgyoung.db-wal` 里。要拿一份一致的副本,用后台下载快照,或先停服再复制。
+
+## 元数据库自动快照
+
+- **生成**:用 SQLite 的 `VACUUM INTO` 生成一份一致的快照,先写到 `<数据目录>/backup-snapshot.tmp`(需要约一个数据库大小的空闲空间),上传后删除。
+- **存放位置**:当前**主渠道**——健康且不在清理中的渠道里优先级最高的那个。对象键为 `_imgyoung/backup/imgyoung-<UTC 时刻>.db`(如 `imgyoung-20261015-083000.123.db`),位于渠道路径之下;主渠道是内置 local 渠道时即 `<数据目录>/blobs/_imgyoung/backup/`。快照只存一份,不会补齐到其他渠道。
+- **加密**:主渠道是加密渠道时,快照随渠道一起被加密,渠道商看不到内容。
+- **节奏**:每隔「备份间隔」(`backup_interval_hours`,出厂 24 小时)一次,间隔从进程启动起算,修改间隔后从修改时刻重新计时。
+- **启动时**:主渠道上最新快照距今已超过一个备份间隔(或一份都没有)时立即补做一次,否则跳过——频繁重启不会用同一天的快照挤掉轮换下来的历史。
+- **保留**:每次备份成功后,主渠道上只保留最新的「备份保留份数」(`backup_keep`,出厂 7)份,更旧的删除。
+- **失败**:没有健康渠道、生成或上传失败时开启 `backup_failed` 告警,下一次成功后自动恢复,见[监控与告警](./monitoring.mdx)。
+
+<Callout type="warn" title="快照和图片在同一块盘上">
+只有内置 local 渠道时,快照落在本机 `<数据目录>/blobs/` 下,主机损坏会连同快照一起丢失。总览页会对此给出提示。只接入一个异地渠道并不够:快照总是存放在优先级最高的健康渠道上,要让快照离开本机,把异地渠道的优先级调到 local(出厂优先级 100)之上,或者定期下载快照另存。
+</Callout>
+
+<Callout type="warn" title="主渠道是加密渠道时">
+加密渠道的 crypt 密钥由主密钥与该渠道在元数据库里的编号、创建时刻共同派生。元数据库整体丢失后,即使有 master.key,也无法再解密存放在加密渠道上的快照。主渠道是加密渠道时,务必定期把快照下载到别处保存。
+</Callout>
+
+## 在后台查看与管理快照
+
+「设置 → 备份与导出 → 元数据库快照」列出主渠道上的快照,最新在前:
+
+- 「立即备份」:马上做一次快照(同样会清理超出保留份数的旧快照);
+- 「下载」:下载快照文件,它就是一个完整的 SQLite 数据库;
+- 「恢复」:用该快照替换当前元数据库,见下一节。
+
+列表只显示**当前**主渠道上的快照。主渠道变化后(故障切换或调整优先级),旧主渠道上的快照仍在原处,但不再显示,也不再被轮换清理。没有健康渠道时列表与操作都会失败。
+
+## 从快照恢复
+
+运行中的 SQLite 文件无法安全替换,所以恢复分两步:先暂存,再在下一次启动、打开数据库之前换入。
+
+<Steps>
+<Step>
+
+**暂存并停机**:在快照行点「恢复」,确认「恢复并重启」。服务把快照下载到 `<数据目录>/imgyoung.db.restore`(先写临时文件,完整后再改名),记一条 `backup.restore` 审计日志,返回后开始优雅停机:HTTP 连接与补齐任务各有最多 30 秒收尾。
+
+</Step>
+<Step>
+
+**由进程管理器拉起**:进程正常退出,需要进程管理器把它重新拉起。Docker 用 `--restart unless-stopped`、Compose 用 `restart: unless-stopped`、systemd 用 `Restart=always`(`deploy/` 里的示例都已这样配置)。直接在终端运行的二进制会就此退出,暂存文件留到你下次手动启动时换入。
+
+</Step>
+<Step>
+
+**换入**:启动时、打开数据库之前,现有的 `imgyoung.db` 连同 `-wal`、`-shm` 改名为 `imgyoung.db.pre-restore-<UTC 时刻>` 留存,暂存文件改名为 `imgyoung.db`。随后照常执行数据库迁移,较早版本的快照会被迁移到当前版本。
+
+</Step>
+<Step>
+
+**重新登录**:后台页面在服务恢复后自动刷新。会话与密码都回到快照时刻的状态,要用那时的密码登录。
+
+</Step>
+</Steps>
+
+留存的 `imgyoung.db.pre-restore-*` 不会自动删除,确认恢复无误后手动清理。
+
+恢复把元数据整体退回快照时刻,在此之后发生的变化与渠道上的实际对象不再一致:
+
+- **快照之后上传的图片**:元数据里没有它们,渠道上的对象成为孤儿,会被对账 GC 删除(见下文),无法通过 ImgYoung 找回;
+- **快照之后删除的图片**:元数据里还在,但渠道对象已删,访问失败,并以「副本补齐失败」告警出现,在后台删掉即可;
+- **快照之后的其他改动**:新建的渠道、用户、Token,修改过的运营配置与防盗链规则,全部退回快照时刻。
+
+## 主机全损后的灾难恢复
+
+前提:你有 master.key 的备份,并且能拿到一份快照文件——自己下载保存的,或者从**未加密**的渠道上直接取回(用渠道服务商的控制台或 rclone 下载渠道路径下 `_imgyoung/backup/` 里最新的 `imgyoung-*.db`)。
+
+<Steps>
+<Step>
+
+**在新机器上安装同一或更新版本**,见[安装](../install/index.mdx)。已经启动过也没关系:换入快照时,全新实例的数据库会被改名留存;只是它首次启动时生成的 `master.key` 必须在下一步换成原来那把。
+
+</Step>
+<Step>
+
+**停服,放入主密钥与快照**:在数据目录里放入原来的 `master.key`,把快照文件放为 `imgyoung.db.restore`。
+
+<Tabs items={['二进制', 'Docker', 'Compose', 'systemd']}>
+<Tab value="二进制">
+
+```bash title="终端"
+mkdir -p data
+cp imgyoung-master.key data/master.key && chmod 600 data/master.key
+cp imgyoung-20261015-083000.123.db data/imgyoung.db.restore
+```
+
+</Tab>
+<Tab value="Docker">
+
+镜像以 uid 65532 运行且没有 shell,借一个临时容器写入数据卷并修正属主:
+
+```bash title="终端"
+# 容器已在运行时先 docker stop imgyoung;还没有容器时按原来的参数先建出来(不启动)
+docker create --name imgyoung --restart unless-stopped -p 8721:8721 \
+  -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+docker run --rm --volumes-from imgyoung -v "$PWD":/in:ro alpine:3.24 sh -c '
+  cp /in/imgyoung-master.key /data/master.key &&
+  cp /in/imgyoung-20261015-083000.123.db /data/imgyoung.db.restore &&
+  chmod 600 /data/master.key &&
+  chown 65532:65532 /data /data/master.key /data/imgyoung.db.restore'
+docker start imgyoung
+```
+
+</Tab>
+<Tab value="Compose">
+
+```bash title="终端"
+docker compose stop        # 还没有启动过时改用 docker compose create
+docker run --rm --volumes-from "$(docker compose ps -a -q imgyoung)" -v "$PWD":/in:ro alpine:3.24 sh -c '
+  cp /in/imgyoung-master.key /data/master.key &&
+  cp /in/imgyoung-20261015-083000.123.db /data/imgyoung.db.restore &&
+  chmod 600 /data/master.key &&
+  chown 65532:65532 /data /data/master.key /data/imgyoung.db.restore'
+docker compose up -d
+```
+
+</Tab>
+<Tab value="systemd">
+
+`install.sh --service` 安装后服务已经启动过一次,`/var/lib/imgyoung` 已由 systemd 建好并归属运行用户。放入文件后把属主改成与现有数据库一致:
+
+```bash title="终端"
+sudo systemctl stop imgyoung
+sudo cp imgyoung-master.key /var/lib/imgyoung/master.key
+sudo cp imgyoung-20261015-083000.123.db /var/lib/imgyoung/imgyoung.db.restore
+sudo chown --reference=/var/lib/imgyoung/imgyoung.db \
+  /var/lib/imgyoung/master.key /var/lib/imgyoung/imgyoung.db.restore
+sudo chmod 600 /var/lib/imgyoung/master.key
+sudo systemctl start imgyoung
+```
+
+</Tab>
+</Tabs>
+
+主密钥用环境变量 `IMGYOUNG_MASTER_KEY` 提供的,改设环境变量即可,不必放文件。
+
+</Step>
+<Step>
+
+**启动并检查**:二进制方式此时启动 `imgyoung`。日志里出现「已用暂存快照换入元数据库,原库留存」即换入成功。用快照时刻的账号密码登录,在「存储渠道」页确认各渠道恢复健康。
+
+</Step>
+</Steps>
+
+恢复后,原来只存在 local 渠道上的图片已随主机丢失;其他渠道上有副本的图片照常可访问,local 渠道上缺失的副本会被对账 GC 发现并从其他渠道补回。
+
+<Callout type="warn" title="不要让全新实例长时间连着旧渠道">
+也可以先启动一个全新实例,在后台按原参数接入存放快照的渠道、把它的优先级调到最高,再从「元数据库快照」里恢复。但全新实例的元数据库里没有任何图片:对账 GC 在进程启动 24 小时后首次运行,会把渠道上超过宽限期的对象全部当作孤儿删除。走这条路就要在接入渠道后立即完成恢复,恢复前不要点「立即备份」。
+</Callout>
+
+## 元数据导出
+
+「设置 → 备份与导出 → 数据导出 → 导出 JSON」下载 `imgyoung-export.json`(每次导出记一条 `data.export` 审计日志),内容:
+
+| 字段 | 内容 |
+|---|---|
+| `users` | 用户:ID、登录名、角色、配额、默认有效期、是否禁用、用量与图片数;不含密码哈希 |
+| `channels` | 渠道:名称、驱动、优先级、健康状态、是否加密、是否允许直链、副本水位;不含任何配置参数与凭证 |
+| `tokens` | Token:名称、归属用户、明文前缀、授权范围、吊销与签发时刻;不含哈希 |
+| `images` | 每条图片引用:短 ID、物理图、归属用户与 Token、原始文件名、对象键别名、有效期、访问统计、清理标记 |
+| `blobs` | 每个物理图:SHA-256、感知哈希、渠道内对象键、MIME、大小、宽高、引用计数、删除状态 |
+| `blob_channels` | 每份副本在哪个渠道、状态与最近错误 |
+
+导出可读、自包含,即使不再运行 ImgYoung,也能凭它和渠道里的对象把图片对应回来。它不是恢复用的格式:恢复用快照。运营配置、防盗链规则、审计日志与告警不在导出内。
+
+## 对账 GC
+
+补齐子系统每 24 小时对每个健康渠道做一次双向对账(第一次在进程启动 24 小时后),渠道内 `_imgyoung/` 前缀下的系统对象(含快照)与健康探测对象不参与:
+
+- **孤儿**:渠道上有、元数据库里没有记为该渠道已就绪副本的对象。修改时间超过 48 小时宽限期的直接删除,免得按量计费的渠道为无主对象付费;宽限期覆盖「已写入渠道、尚未落库」的正常中间状态。
+- **幻影**:元数据库记为已就绪、渠道上实际缺失的副本。状态退回待补齐,重新入队从其他渠道复制。
+
+每个渠道对账完成后记一条「渠道对账完成」日志,含对象数、回收的孤儿数与重新入队的幻影数。
+
+此外每 10 分钟有一次副本对账(不列举渠道对象):把恢复健康的渠道上失败的副本重新置为待补齐,把未完成的副本重新入队。

@@ -1,0 +1,120 @@
+---
+title: Upgrading
+description: Upgrade commands for each installation method, the database migrations that run automatically at startup, and what to watch out for when rolling back.
+---
+
+## Before upgrading
+
+1. Read the [release notes](https://github.com/x-haose/imgyoung/releases) of the target version.
+2. Keep a copy of the metadata database to roll back to: in the admin console, go to **Settings → Backups & export → Metadata snapshots**, click **Back up now**, then **Download** that snapshot and store it off the server. Alternatively, stop the service and copy `<data dir>/imgyoung.db` (only consistent once stopped).
+3. Make sure `master.key` is backed up; see [Configuration](../configuration.mdx#master-key).
+
+Check the running version with `imgyoung -version`, or under **Server version** in **Settings → Runtime settings → Bootstrap configuration**.
+
+## Upgrade commands
+
+<Tabs items={['Install script', 'Docker', 'Compose', 'Binary', 'Source']}>
+<Tab value="Install script">
+
+Rerunning the install script upgrades to the latest stable release; add `--version vX.Y.Z` for a specific one.
+
+```bash title="Terminal"
+# Running as a systemd service (installed with --service): replaces the binary, rewrites the unit and restarts the service
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sudo sh -s -- --service
+
+# Managing the process yourself: only replaces the binary; restart imgyoung afterwards
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
+```
+
+`--service` overwrites `/etc/systemd/system/imgyoung.service` with `deploy/imgyoung.service` from the release archive; keep your own environment variables in a drop-in created with `systemctl edit`, which is left alone.
+
+</Tab>
+<Tab value="Docker">
+
+Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume.
+
+```bash title="Terminal"
+docker pull ghcr.io/x-haose/imgyoung:latest
+docker stop imgyoung && docker rm imgyoung
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+Image tags: `latest` follows the newest stable release; a major.minor tag such as `1.0` follows the newest patch of that series; a full version such as `1.0.3` never moves. Pre-releases only get the full version tag.
+
+</Tab>
+<Tab value="Compose">
+
+```bash title="Terminal"
+docker compose pull
+docker compose up -d
+```
+
+If `compose.yaml` pins a major.minor or full version, change the `image:` tag first to move to another series.
+
+</Tab>
+<Tab value="Binary">
+
+Download the new archive for your platform from the [releases page](https://github.com/x-haose/imgyoung/releases), verify it against `checksums.txt` from the same release, extract it, replace the old `imgyoung` binary and restart the process. The data directory stays as it is.
+
+```bash title="Terminal"
+sha256sum -c checksums.txt --ignore-missing
+tar -xzf imgyoung_<version>_linux_amd64.tar.gz
+```
+
+</Tab>
+<Tab value="Source">
+
+```bash title="Terminal"
+git fetch --tags
+git checkout vX.Y.Z
+task build
+```
+
+Replace the running binary with the newly built `./imgyoung` and restart.
+
+</Tab>
+</Tabs>
+
+## Database migrations
+
+Migrations are embedded in the binary and run automatically on every start, right after the database is opened:
+
+- the migration files are first checked against their checksum list, then every migration not yet applied runs in version order; when skipping several versions, all intermediate migrations are applied in turn. Applied versions are recorded in the `schema_revisions` table.
+- the replication subsystem's job queue tables are migrated at startup as well.
+- runtime settings added by a migration are filled in with their factory defaults; existing values are untouched.
+- if a migration fails, the process exits with an error naming the failing migration file. Roll back using your pre-upgrade copy (see below).
+
+There is no separate migration command, and none is needed.
+
+## Rolling back
+
+Migrations only go forward; there are no down migrations. A database migrated by a newer version must **not** be handed to an older version: the older version will not refuse it (it sees no pending migrations), but the schema has changed — some migrations drop columns or rebuild tables — and errors will follow at runtime.
+
+To roll back to an older version:
+
+<Steps>
+<Step>
+
+Stop the service.
+
+</Step>
+<Step>
+
+Switch back to the older binary or image tag.
+
+</Step>
+<Step>
+
+Replace the metadata database with your pre-upgrade copy: move `<data dir>/imgyoung.db` and any `imgyoung.db-wal` / `imgyoung.db-shm` out of the way, then put the copy in place as `imgyoung.db`. For Docker the file must be owned by `65532:65532`; use the throwaway-container approach shown in [Backup & restore](./backup.mdx).
+
+</Step>
+<Step>
+
+Start the service.
+
+</Step>
+</Steps>
+
+Metadata written since the upgrade is lost, with the same effects as restoring a snapshot: images uploaded in the meantime are deleted by reconciliation GC as orphans. See [Backup & restore](./backup.mdx).

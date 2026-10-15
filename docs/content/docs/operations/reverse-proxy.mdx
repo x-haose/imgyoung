@@ -1,0 +1,116 @@
+---
+title: 反向代理与 HTTPS
+description: 用 Caddy 或 Nginx 前置 ImgYoung,正确配置 IMGYOUNG_TRUSTED_PROXIES、base_url 与上传体积上限。
+---
+
+## 为什么要前置反向代理
+
+ImgYoung 只监听明文 HTTP,不终结 TLS。对公网提供服务时应在前面放一个反向代理:
+
+- 由反代申请证书、提供 HTTPS;
+- 会话 cookie 是否带 `Secure`、未配置 `base_url` 时返回链接的协议,都依据反代传来的 `X-Forwarded-Proto`;
+- 在入口层拦掉 `/metrics`,指标只留给内网抓取;
+- ImgYoung 本身改为只监听回环地址,不直接暴露。
+
+## Caddy
+
+Caddy 自动申请并续期证书,默认就会设置 `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`,并原样转发 `Host`。
+
+<include cwd lang="text" meta='title="deploy/Caddyfile"'>../deploy/Caddyfile</include>
+
+## Nginx
+
+<include cwd lang="nginx" meta='title="deploy/nginx.conf"'>../deploy/nginx.conf</include>
+
+示例里的几行 `proxy_set_header` 都不能省:
+
+- `Host $host`:S3 协议面的签名校验包含 `Host` 头,反代改写它会导致 S3 客户端签名不匹配;
+- `X-Forwarded-For`:缺了它,所有请求都会被当成来自 Nginx 本机,见下一节;
+- `X-Forwarded-Proto` 与 `X-Forwarded-Host`:ImgYoung 取它们的第一个值,所以要用覆盖写法(`proxy_set_header`),不能把自己的值追加在客户端传来的值后面。
+
+## 信任的反代:IMGYOUNG_TRUSTED_PROXIES
+
+ImgYoung 从请求推导三件事:**客户端地址**(登录限速的键、`/metrics` 的放行判定)、**第一跳是否 HTTPS**(会话 cookie 的 `Secure`)、**对外域名**(未配置 `base_url` 时拼返回链接)。只有 TCP 连接的对端地址落在 `IMGYOUNG_TRUSTED_PROXIES` 网段内时,才会采信 `X-Forwarded-*` 头;默认值 `127.0.0.0/8,::1/128` 只信任同机的反代。
+
+对端受信任时:
+
+1. 依次收集全部 `X-Forwarded-For` 头里逗号分隔的地址,无法解析的项跳过。
+2. **自右向左**逐个检查,跳过落在信任网段内的地址,遇到的第一个不在信任网段内的地址就是客户端地址。
+3. 整条链都是信任网段内的地址(内网客户端)时,取最左边那个;头缺失或没有可用地址时,取连接对端。
+4. `X-Forwarded-Proto` 取第一个值,等于 `https`(不区分大小写)即视为 HTTPS 访问。
+5. `X-Forwarded-Host` 取第一个值,用于推导对外域名。
+
+对端不受信任时,`X-Forwarded-*` 一律忽略:客户端地址就是连接对端,HTTPS 判定看连接本身(ImgYoung 不终结 TLS,所以恒为否)。
+
+**为什么伪造无效。**每一级代理都把它看到的对端追加到 `X-Forwarded-For` 末尾,客户端能控制的只有最左边的部分。例如客户端 `203.0.113.7` 自带 `X-Forwarded-For: 1.2.3.4`,经同机 Nginx 后变成 `1.2.3.4, 203.0.113.7`;自右向左第一个非信任地址是 `203.0.113.7`,伪造的 `1.2.3.4` 不起作用。直接连 ImgYoung 的请求,对端不在信任网段内,带什么转发头都不会被采信。
+
+按部署拓扑取值:
+
+| 拓扑 | ImgYoung 看到的连接对端 | `IMGYOUNG_TRUSTED_PROXIES` |
+|---|---|---|
+| 反代与 ImgYoung(二进制或 systemd)在同一台主机 | `127.0.0.1` / `::1` | 默认值即可 |
+| ImgYoung 跑在 Docker 里,反代在宿主机上 | Docker 网桥的网关地址,不是回环 | 网关所在网段,如 `172.16.0.0/12`;用 `docker network inspect` 查看实际网关 |
+| 反代与 ImgYoung 是同一 Compose 项目里的两个容器 | 反代容器在项目网络里的地址 | 项目网络的网段 |
+| 反代在另一台主机 | 反代主机的内网地址 | 该地址或其网段 |
+| 反代前面还有 CDN | 反代地址;`X-Forwarded-For` 里最右边一跳是 CDN 节点 | 反代网段加上 CDN 的回源网段,客户端地址才会解析到真实访客 |
+
+<Callout type="warn" title="信任配错的表现">
+连接对端不在信任网段内时,所有经反代的请求都被当成来自反代自身:全站访客共用一个登录限速额度;如果反代地址恰好在 `IMGYOUNG_METRICS_ALLOW` 内(Docker 网段默认就在),而反代又转发了 `/metrics`,任何人都能读到指标。反代没有设置 `X-Forwarded-For` 时也是同样的后果。
+</Callout>
+
+## 只监听回环
+
+有了反代,就不要让 ImgYoung 的端口直接对外:
+
+<Tabs items={['二进制 / systemd', 'Docker', 'Compose']}>
+<Tab value="二进制 / systemd">
+
+设置 `IMGYOUNG_LISTEN=127.0.0.1:8721`。systemd 部署用 `sudo systemctl edit imgyoung` 加一行 `Environment=IMGYOUNG_LISTEN=127.0.0.1:8721` 后重启,见[配置](../configuration.mdx)。
+
+</Tab>
+<Tab value="Docker">
+
+容器内保持默认监听,只把端口发布到宿主机回环:
+
+```bash title="终端"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
+  -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+写成 `-p 8721:8721` 会发布到所有网卡,而且 Docker 自己管理的端口转发规则不受 ufw 等主机防火墙约束。
+
+</Tab>
+<Tab value="Compose">
+
+```yaml title="compose.yaml"
+services:
+  imgyoung:
+    ports:
+      - "127.0.0.1:8721:8721"
+    environment:
+      IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
+```
+
+反代也在同一 Compose 项目里时,可以去掉 `ports`,让反代直接访问 `imgyoung:8721`。
+
+</Tab>
+</Tabs>
+
+## 什么时候必须设置 base_url
+
+`base_url`(后台「设置 → 运行配置 → 访问与链接 → 对外站点地址」)为空时,ImgYoung 按请求推导对外地址:协议取 HTTPS 判定,域名在对端受信任时取 `X-Forwarded-Host`,否则取 `Host`。以下情况必须显式设置:
+
+- **对外域名与 ImgYoung 收到的域名不一致**:CDN 用另一个域名回源、反代改写了 `Host` 又没传 `X-Forwarded-Host`、反代不在信任网段内等。此时上传接口返回的 `url`、后台复制的分享链接、「S3 客户端配置」弹窗里的端点与链接前缀都会是错的。
+- **启用 CDN 缓存清除**:清除任务在后台异步执行,没有请求可推导,只认 `base_url`,见 [CDN](./cdn.mdx)。
+- **网盘渠道一键授权**:授权回调地址必须与开放平台登记的地址逐字一致,只用 `base_url` 拼出,见[网盘渠道](../channels/cloud-drives.mdx)。
+
+## 上传体积上限要与反代一致
+
+ImgYoung 的单图上限(`max_upload_mb`,出厂 50 MB)按整个请求体计算。反代的请求体上限应略大于它,给 multipart 表单开销留出余量:
+
+- Nginx 默认只允许 1 MB,示例里设为 `client_max_body_size 60m;`;
+- Caddy 示例没有限制请求体;如果你用 `request_body` 设置了 `max_size`,不要小于单图上限。
+
+在后台调大单图上限后,记得同步调大反代的限制,否则大图会在反代处直接被 413 拒掉,请求到不了 ImgYoung。

@@ -1,0 +1,116 @@
+---
+title: Reverse proxy & HTTPS
+description: Put Caddy or Nginx in front of ImgYoung and get IMGYOUNG_TRUSTED_PROXIES, base_url and the upload size limit right.
+---
+
+## Why a reverse proxy
+
+ImgYoung listens on plain HTTP and does not terminate TLS. When serving the public internet, put a reverse proxy in front of it:
+
+- the proxy obtains certificates and serves HTTPS;
+- whether the session cookie gets `Secure`, and which scheme returned links use when `base_url` is not set, both come from the proxy's `X-Forwarded-Proto`;
+- the proxy blocks `/metrics` at the edge so metrics stay on the internal network;
+- ImgYoung itself can then listen on loopback only.
+
+## Caddy
+
+Caddy obtains and renews certificates automatically, sets `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host` by default, and forwards `Host` unchanged.
+
+<include cwd lang="text" meta='title="deploy/Caddyfile"'>../deploy/Caddyfile</include>
+
+## Nginx
+
+<include cwd lang="nginx" meta='title="deploy/nginx.conf"'>../deploy/nginx.conf</include>
+
+None of the `proxy_set_header` lines in the example are optional:
+
+- `Host $host`: S3 signature verification covers the `Host` header, so a proxy that rewrites it breaks S3 clients with signature mismatches;
+- `X-Forwarded-For`: without it every request looks like it came from Nginx itself; see the next section;
+- `X-Forwarded-Proto` and `X-Forwarded-Host`: ImgYoung reads their first value, so overwrite them with `proxy_set_header` instead of appending your value after whatever the client sent.
+
+## Trusted proxies: IMGYOUNG_TRUSTED_PROXIES
+
+ImgYoung derives three things from each request: the **client address** (the login rate limit key and the `/metrics` allow check), **whether the first hop was HTTPS** (the session cookie's `Secure` flag), and the **public host** (for returned links when `base_url` is not set). `X-Forwarded-*` headers are honored only when the TCP peer address is inside `IMGYOUNG_TRUSTED_PROXIES`; the default `127.0.0.0/8,::1/128` trusts a proxy on the same host only.
+
+When the peer is trusted:
+
+1. All addresses from every `X-Forwarded-For` header are collected in order, split on commas; entries that do not parse are skipped.
+2. They are checked **from right to left**, skipping addresses inside trusted networks. The first address outside them is the client.
+3. If every hop is inside a trusted network (an internal client), the leftmost one is used; if the header is missing or has no usable address, the peer address is used.
+4. The first value of `X-Forwarded-Proto` decides HTTPS: `https` (case-insensitive) means secure.
+5. The first value of `X-Forwarded-Host` is used as the public host.
+
+When the peer is not trusted, all `X-Forwarded-*` headers are ignored: the client is the TCP peer, and HTTPS is judged from the connection itself (always false, since ImgYoung does not terminate TLS).
+
+**Why spoofing does not work.** Each proxy appends the peer it saw to the end of `X-Forwarded-For`; a client can only control the leftmost part. A client at `203.0.113.7` sending `X-Forwarded-For: 1.2.3.4` arrives through a local Nginx as `1.2.3.4, 203.0.113.7`; scanning from the right, the first untrusted address is `203.0.113.7`, and the forged `1.2.3.4` is ignored. A request that connects to ImgYoung directly has an untrusted peer, so none of its forwarding headers are believed.
+
+Values by topology:
+
+| Topology | Peer address ImgYoung sees | `IMGYOUNG_TRUSTED_PROXIES` |
+|---|---|---|
+| Proxy and ImgYoung (binary or systemd) on the same host | `127.0.0.1` / `::1` | The default |
+| ImgYoung in Docker, proxy on the host | The Docker bridge gateway, not loopback | The gateway's network, e.g. `172.16.0.0/12`; check the actual gateway with `docker network inspect` |
+| Proxy and ImgYoung as two containers in one Compose project | The proxy container's address on the project network | The project network's subnet |
+| Proxy on another host | The proxy host's internal address | That address or its network |
+| A CDN in front of the proxy | The proxy; the rightmost `X-Forwarded-For` hop is a CDN node | The proxy's network plus the CDN's origin-pull ranges, so the client resolves to the real visitor |
+
+<Callout type="warn" title="What a wrong trust setting looks like">
+If the peer is outside the trusted networks, every proxied request appears to come from the proxy itself: all visitors share one login rate limit, and if the proxy's address happens to be in `IMGYOUNG_METRICS_ALLOW` (Docker networks are by default) and the proxy forwards `/metrics`, anyone can read the metrics. A proxy that does not set `X-Forwarded-For` has the same effect.
+</Callout>
+
+## Listen on loopback only
+
+With a proxy in front, do not expose ImgYoung's port directly:
+
+<Tabs items={['Binary / systemd', 'Docker', 'Compose']}>
+<Tab value="Binary / systemd">
+
+Set `IMGYOUNG_LISTEN=127.0.0.1:8721`. For systemd, add `Environment=IMGYOUNG_LISTEN=127.0.0.1:8721` with `sudo systemctl edit imgyoung` and restart; see [Configuration](../configuration.mdx).
+
+</Tab>
+<Tab value="Docker">
+
+Keep the default listen address inside the container and publish the port on host loopback only:
+
+```bash title="Terminal"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
+  -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+`-p 8721:8721` publishes on every interface, and Docker's own forwarding rules bypass host firewalls such as ufw.
+
+</Tab>
+<Tab value="Compose">
+
+```yaml title="compose.yaml"
+services:
+  imgyoung:
+    ports:
+      - "127.0.0.1:8721:8721"
+    environment:
+      IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
+```
+
+If the proxy runs in the same Compose project, drop `ports` entirely and let the proxy reach `imgyoung:8721`.
+
+</Tab>
+</Tabs>
+
+## When base_url is required
+
+With `base_url` (**Settings → Runtime settings → Access & links → Public site address**) empty, ImgYoung derives the public address from each request: the scheme from the HTTPS check, the host from `X-Forwarded-Host` when the peer is trusted, otherwise from `Host`. Set it explicitly when:
+
+- **the public domain differs from what reaches ImgYoung**: a CDN pulls from a different hostname, the proxy rewrites `Host` without sending `X-Forwarded-Host`, the proxy is not trusted, and so on. Otherwise the `url` returned by uploads, links copied in the admin console, and the endpoint and link prefix in the **S3 client settings** dialog are all wrong.
+- **CDN cache purging is enabled**: purge jobs run in the background with no request to derive from, so they use `base_url` only; see [CDN](./cdn.mdx).
+- **one-click cloud drive authorization is used**: the callback URL must match what is registered with the provider character for character and is built from `base_url` only; see [Cloud drives](../channels/cloud-drives.mdx).
+
+## Keep the upload size limit in step with the proxy
+
+ImgYoung's max image size (`max_upload_mb`, 50 MB out of the box) applies to the whole request body. Give the proxy a slightly larger body limit to leave room for multipart overhead:
+
+- Nginx allows only 1 MB by default; the example sets `client_max_body_size 60m;`.
+- The Caddy example sets no body limit; if you add `request_body` with `max_size`, keep it at or above the max image size.
+
+When you raise the max image size in the admin console, raise the proxy limit too, or large images are rejected with 413 by the proxy before they ever reach ImgYoung.

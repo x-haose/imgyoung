@@ -1,0 +1,31 @@
+---
+title: 安装方式
+description: 五种安装方式的对比:一行脚本、Docker 镜像、Docker Compose、发布包与源码构建。
+---
+
+ImgYoung 是一个纯 Go 的单二进制,管理后台的前端已经编进去,运行时不需要数据库服务、缓存或其他进程。五种安装方式装出来的是同一个程序,区别只在怎么拿到它、由谁托管它。
+
+## 对比
+
+| 方式 | 适合谁 | 需要 root | 如何升级 | 数据在哪 |
+|---|---|---|---|---|
+| [一行安装脚本](./script.mdx) | Linux / macOS 主机直接运行;Linux 上想交给 systemd 托管 | 装到 `/usr/local/bin` 或加 `--service` 时需要;装到 `~/.local/bin` 不需要 | 重新执行同一条命令 | 加 `--service`:`/var/lib/imgyoung`;否则为启动时当前目录下的 `data/` |
+| [Docker 镜像](./docker.mdx) | 已经在用 Docker 的主机 | 取决于主机上 Docker 的权限设置 | 拉取新镜像后重建容器 | 挂到容器 `/data` 的卷 |
+| [Docker Compose](./compose.mdx) | 想把部署写成文件,或与反向代理一起编排 | 同上 | `docker compose pull` 后 `docker compose up -d` | 卷 `imgyoung-data`(Compose 会加项目名前缀) |
+| [发布包](./binary.mdx) | Windows;不便执行安装脚本;想手动掌控每一步 | 不需要 | 下载新包,替换二进制后重启 | 启动时当前目录下的 `data/`,可用 `IMGYOUNG_DATA_DIR` 指定 |
+| [源码构建](./source.mdx) | 要改代码或自己构建的开发者 | 不需要 | 拉取新代码后重新构建 | 同发布包 |
+
+不确定选哪个:有 Docker 就用 [Docker Compose](./compose.mdx);没有 Docker 的 Linux 主机用 [一行安装脚本](./script.mdx) 加 `--service`。
+
+## 各方式共同的部分
+
+- **监听**:默认 `:8721`(所有网卡的 8721 端口),可用环境变量 `IMGYOUNG_LISTEN` 改。
+- **首次登录**:浏览器打开 `http://<主机>:8721/`,用 `admin` / `imgyoung123` 登录,后台会要求立即改密。
+- **数据目录**:元数据库 `imgyoung.db`、主密钥 `master.key`、内置 local 渠道的 `blobs/` 与衍生图缓存 `variants/` 都在里面。备份它,尤其是单独备份 `master.key`。
+- **配置**:启动所需的少量引导配置走 `IMGYOUNG_*` 环境变量,其余运营配置都在后台改、保存即生效,没有配置文件。见 [配置](../configuration.mdx)。
+- **进程管理器**:后台「设置 → 备份与导出」里的「恢复」会让服务主动正常退出,由进程管理器重新拉起时换入快照。长期运行务必交给 systemd 或 Docker 这类会在进程退出后自动重启的托管方式(Docker 用 `--restart unless-stopped`,systemd 用 `Restart=always`),仓库 `deploy/` 下的示例已经这样配置。
+
+<Callout type="info" title="为什么没有 go install">
+  `go install` 只拿仓库源码现场编译,而管理后台的前端是构建产物、不在仓库里,这样装出来的二进制只有接口、没有后台页面。本机安装请用一行脚本或发布包,无需 Go 工具链。
+  Go 开发者要复用的通常是存储引擎,它是可以 `go get` 的公开包,见 [Go 库](../library/index.mdx)。
+</Callout>

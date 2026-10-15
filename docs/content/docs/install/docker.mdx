@@ -1,0 +1,141 @@
+---
+title: Docker 镜像
+description: 用 GHCR 上的多架构镜像运行 ImgYoung:启动命令、镜像标签、数据卷、环境变量与反向代理下的设置。
+---
+
+## 启动
+
+```bash title="终端"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+浏览器打开 `http://<主机>:8721/`,用 `admin` / `imgyoung123` 登录,首次登录会要求立即改密。
+
+| 参数 | 作用 |
+|---|---|
+| `-d --name imgyoung` | 后台运行,容器名 `imgyoung`,后续命令都用这个名字 |
+| `--restart unless-stopped` | 进程退出后自动拉起,原因见下文「重启策略」 |
+| `-p 8721:8721` | 发布服务端口。只经本机反向代理对外时改成 `-p 127.0.0.1:8721:8721`,不把 8721 直接暴露出去 |
+| `-v imgyoung-data:/data` | 具名卷,保存全部状态 |
+
+镜像提供 `linux/amd64` 与 `linux/arm64` 两种架构,Docker 按主机自动选择。查看镜像里的版本:
+
+```bash title="终端"
+docker run --rm ghcr.io/x-haose/imgyoung:latest -version
+```
+
+## 镜像标签
+
+镜像在 `ghcr.io/x-haose/imgyoung`,标签不带 `v` 前缀:
+
+| 标签 | 指向 | 适合 |
+|---|---|---|
+| `1.2.3` | 一个具体版本,发布后不再变化 | 生产环境,何时升级完全由你决定 |
+| `1.2` | 1.2 系列的最新正式版,发布补丁版本时随之更新 | 想自动拿到修复、又不想跨次版本 |
+| `latest` | 最新正式版 | 试用与个人实例 |
+
+预发布版本只打具体版本标签,不会移动 `1.2` 这类主次版本标签和 `latest`,钉这两类标签的实例不会拉到预发布版。
+
+## 数据卷
+
+容器内的数据目录是 `/data`(镜像已设 `IMGYOUNG_DATA_DIR=/data`),里面有:
+
+| 路径 | 内容 |
+|---|---|
+| `imgyoung.db` | 元数据库(SQLite,WAL 模式,运行时旁边还有 `imgyoung.db-wal` 与 `imgyoung.db-shm`):用户、图片记录、渠道配置(凭证经主密钥加密)、运营配置与任务队列 |
+| `master.key` | 主密钥,首次启动时生成,权限 0600。设置了 `IMGYOUNG_MASTER_KEY` 时既不生成也不读取这个文件 |
+| `blobs/` | 内置 local 渠道的对象。local 是主渠道时,元数据库快照也在其中的 `_imgyoung/backup/` |
+| `variants/` | 按需处理产生的衍生图缓存,出厂上限 10240 MB,超出按最近访问淘汰 |
+
+从快照恢复时,数据目录里还会出现暂存文件 `imgyoung.db.restore`,以及换入后留存的原库 `imgyoung.db.pre-restore-<时刻>`。
+
+<Callout type="warn" title="单独备份 master.key">
+  渠道凭证和加密渠道里的数据都靠主密钥解开。它不包含在元数据库快照与数据导出里,丢失后无法恢复。启动后立即复制一份到别处保存:
+
+  ```bash
+  docker cp imgyoung:/data/master.key ./imgyoung-master.key
+  ```
+</Callout>
+
+### 改用宿主机目录
+
+想把数据放在宿主机的某个目录,先把目录属主改成镜像里的运行用户(uid 65532):
+
+```bash title="终端"
+sudo mkdir -p /srv/imgyoung
+sudo chown 65532:65532 /srv/imgyoung
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v /srv/imgyoung:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+具名卷第一次挂载时会沿用镜像里 `/data` 的属主,宿主机目录不会;属主不对时进程无法在里面创建数据库,启动即失败。
+
+## 环境变量
+
+都是引导配置,用 `-e` 传入,修改后要重建容器才生效。完整说明见 [配置](../configuration.mdx)。
+
+| 变量 | 镜像内默认 | 说明 |
+|---|---|---|
+| `IMGYOUNG_DATA_DIR` | `/data` | 镜像已设好,保持不变 |
+| `IMGYOUNG_LISTEN` | `:8721` | 容器内的监听地址,一般不用改 |
+| `IMGYOUNG_MASTER_KEY` | 空(使用 `/data/master.key`) | 64 位十六进制主密钥,可用 `openssl rand -hex 32` 生成。已有数据的实例改用它时,必须填现有 `master.key` 里的同一个值 |
+| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | 信任其转发头的反向代理网段,见下文 |
+| `IMGYOUNG_METRICS_ALLOW` | 回环与私网网段 | 允许抓取 `/metrics` 的网段 |
+
+## 以 nonroot 运行
+
+镜像基于 `gcr.io/distroless/static-debian12:nonroot`,以 nonroot 用户(uid 65532)运行,里面没有 shell 和包管理器。所以 `docker exec -it imgyoung sh` 用不了;需要直接操作数据(比如 [忘记密码](../operations/password-reset.mdx) 时改数据库)的话,停掉容器,把同一个卷挂到另一个带工具的容器里操作。
+
+## 前面有反向代理
+
+ImgYoung 只在连接对端属于 `IMGYOUNG_TRUSTED_PROXIES` 网段时,才采信 `X-Forwarded-For`、`X-Forwarded-Proto` 与 `X-Forwarded-Host`。默认只信回环地址,而在容器里看到的对端几乎不会是回环:
+
+- 反向代理在另一个容器里(同一 Docker 网络):对端是代理容器的地址。
+- 反向代理装在宿主机上、经 `-p` 发布的端口转发进来:对端一般是 Docker 网桥的网关地址(如 `172.17.0.1`),不是 `127.0.0.1`。
+
+这两种情况都要把代理所在网段设为可信:
+
+```bash title="终端"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 127.0.0.1:8721:8721 \
+  -v imgyoung-data:/data \
+  -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+`172.16.0.0/12` 覆盖 Docker 默认分配的大部分网段;实际网段用 `docker network inspect <网络名>` 查看。不设的话:
+
+- 登录限速按代理的地址计算,所有访客共用同一份额度(突发 5 次,之后每 12 秒恢复 1 次):有人连续输错密码,其他人也会暂时无法登录。
+- 没有配置 `base_url` 时,上传返回的链接按 `http://` 生成,即使对外是 HTTPS;会话 cookie 也不带 `Secure`。
+- `/metrics` 的网段判定看到的也是代理地址(私网),经代理访问的任何人都能抓到指标,除非代理侧屏蔽了 `/metrics`(仓库 `deploy/` 里的 Caddy 与 Nginx 示例已经屏蔽)。
+
+代理本身的配置见 [反向代理](../operations/reverse-proxy.mdx);与 Caddy 一起编排见 [Docker Compose](./compose.mdx)。
+
+## 重启策略
+
+后台「设置 → 备份与导出」里的「恢复」会先把快照暂存到数据目录,再让服务正常退出(退出码 0),等进程重新启动时在开库前换入快照。因此:
+
+- 重启策略要用 `unless-stopped` 或 `always`。`on-failure` 不会拉起正常退出的容器,默认的 `no` 更不会。
+- 没有合适的重启策略时,恢复后容器停在已退出状态,手动 `docker start imgyoung` 时才换入快照。
+
+重启策略同时保证主机重启、Docker 服务重启之后 ImgYoung 自动恢复运行。
+
+## 升级
+
+拉取新镜像,用同样的参数重建容器;数据都在卷里,不受影响,数据库结构在新版本启动时自动迁移:
+
+```bash title="终端"
+docker pull ghcr.io/x-haose/imgyoung:latest
+docker stop imgyoung && docker rm imgyoung
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+升级前建议在后台「设置 → 备份与导出」点「立即备份」。更多注意事项见 [升级](../operations/upgrade.mdx)。

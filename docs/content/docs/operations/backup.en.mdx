@@ -1,0 +1,193 @@
+---
+title: Backup & restore
+description: Automatic metadata snapshots, restoring from a snapshot, disaster recovery after losing the host, the metadata export, and reconciliation GC.
+---
+
+## What to back up
+
+Objects in channels are named by content hash; which image belongs to which short link, user and token lives only in the metadata database. Lose the metadata database and the images in your channels can no longer be matched up. Lose the master key and channel credentials and encrypted channel data can no longer be decrypted.
+
+| What | Where | How |
+|---|---|---|
+| Master key | `<data dir>/master.key`, or the `IMGYOUNG_MASTER_KEY` variable | Copy it offline right after the first start and keep it apart from the snapshots; see [Configuration](../configuration.mdx#master-key) |
+| Metadata database | `<data dir>/imgyoung.db` | Automatic snapshots (stored on a channel), plus a downloaded copy kept somewhere else |
+| Images | Your channels | Configure several channels so replication keeps more than one copy of each image; the built-in local channel stores its data in `<data dir>/blobs/` |
+| Deployment configuration | Environment variables, systemd drop-ins, `compose.yaml`, proxy configuration | Your own configuration management |
+
+`<data dir>/variants/` is the variant cache; it is regenerated on demand and needs no backup. Do not copy `imgyoung.db` while the service is running: the database runs in WAL mode and recent writes may still be in `imgyoung.db-wal`. For a consistent copy, download a snapshot from the admin console, or stop the service first.
+
+## Automatic metadata snapshots
+
+- **How**: SQLite's `VACUUM INTO` writes a consistent snapshot to `<data dir>/backup-snapshot.tmp` (needs free space of roughly the database size), which is uploaded and then deleted.
+- **Where**: the current **primary channel** — the healthy, not-being-deleted channel with the highest priority. The object key is `_imgyoung/backup/imgyoung-<UTC time>.db` (e.g. `imgyoung-20261015-083000.123.db`) under the channel's path; when the primary is the built-in local channel, that is `<data dir>/blobs/_imgyoung/backup/`. There is exactly one copy; snapshots are not replicated to other channels.
+- **Encryption**: if the primary channel is encrypted, snapshots are encrypted along with everything else on it.
+- **When**: every **Backup interval** (`backup_interval_hours`, 24 hours by default), counted from process start; changing the interval restarts the countdown from the moment of the change.
+- **At startup**: if the newest snapshot on the primary channel is older than one interval (or there is none), a backup runs immediately; otherwise it is skipped, so frequent restarts do not push the rotated history out with same-day snapshots.
+- **Retention**: after each successful backup, only the newest **Backups to keep** (`backup_keep`, 7 by default) snapshots are kept on the primary channel; older ones are deleted.
+- **Failure**: no healthy channel, or a failed snapshot or upload, opens a `backup_failed` alert, which resolves after the next success; see [Monitoring & alerts](./monitoring.mdx).
+
+<Callout type="warn" title="Snapshots on the same disk as the images">
+With only the built-in local channel, snapshots land in `<data dir>/blobs/` on the same host and are lost together with it; the dashboard warns about this. Adding an off-site channel alone is not enough: snapshots always go to the healthy channel with the highest priority. To get snapshots off the host, give the off-site channel a higher priority than local (100 by default), or download snapshots regularly.
+</Callout>
+
+<Callout type="warn" title="When the primary channel is encrypted">
+An encrypted channel's crypt keys are derived from the master key together with the channel's ID and creation time recorded in the metadata database. Once the metadata database is gone, snapshots stored on an encrypted channel cannot be decrypted, even with `master.key`. If your primary channel is encrypted, download snapshots to somewhere else regularly.
+</Callout>
+
+## Managing snapshots in the admin console
+
+**Settings → Backups & export → Metadata snapshots** lists the snapshots on the primary channel, newest first:
+
+- **Back up now**: take a snapshot immediately (this also prunes snapshots beyond the retention count);
+- **Download**: download the snapshot file, which is a complete SQLite database;
+- **Restore**: replace the current metadata database with that snapshot; see the next section.
+
+Only the **current** primary channel's snapshots are listed. After the primary changes (failover or a priority change), snapshots on the previous primary stay where they are but are no longer listed or rotated. With no healthy channel, the list and all actions fail.
+
+## Restoring from a snapshot
+
+A live SQLite file cannot be replaced safely, so a restore happens in two steps: stage the snapshot, then swap it in on the next start, before the database is opened.
+
+<Steps>
+<Step>
+
+**Stage and shut down**: click **Restore** on a snapshot row and confirm with **Restore and restart**. The service downloads the snapshot to `<data dir>/imgyoung.db.restore` (via a temporary file renamed once complete), writes a `backup.restore` audit entry, responds, and shuts down gracefully: HTTP connections and replication jobs each get up to 30 seconds to finish.
+
+</Step>
+<Step>
+
+**Restart via the process manager**: the process exits normally and needs a process manager to start it again — `--restart unless-stopped` for Docker, `restart: unless-stopped` for Compose, `Restart=always` for systemd (the examples in `deploy/` are set up this way). A binary started by hand in a terminal simply exits, and the staged file is swapped in the next time you start it.
+
+</Step>
+<Step>
+
+**Swap in**: at startup, before the database is opened, the current `imgyoung.db` and its `-wal` and `-shm` files are renamed to `imgyoung.db.pre-restore-<UTC time>`, and the staged file is renamed to `imgyoung.db`. Database migrations then run as usual, so a snapshot from an older version is brought up to date.
+
+</Step>
+<Step>
+
+**Sign in again**: the admin console reloads once the service is back. Sessions and passwords are as they were at snapshot time, so use the password you had then.
+
+</Step>
+</Steps>
+
+The kept `imgyoung.db.pre-restore-*` files are never deleted automatically; remove them once you are satisfied with the restore.
+
+A restore takes the metadata back to snapshot time, so anything that happened afterwards no longer matches the objects in your channels:
+
+- **images uploaded after the snapshot** are unknown to the metadata; their objects become orphans that reconciliation GC deletes (see below) and cannot be recovered through ImgYoung;
+- **images deleted after the snapshot** are back in the metadata, but their objects are gone; they fail to load and show up as **Replication failed** alerts, so delete them in the admin console;
+- **everything else** — channels, users and tokens created, runtime settings and hotlink rules changed — goes back to snapshot time.
+
+## Disaster recovery after losing the host
+
+Prerequisites: a backup of `master.key`, and a snapshot file — either one you downloaded, or one fetched straight from an **unencrypted** channel (use the provider's console or rclone to download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path).
+
+<Steps>
+<Step>
+
+**Install the same or a newer version on the new machine**; see [Installation](../install/index.mdx). It does not matter if it has already started once: the fresh instance's database is renamed and kept when the snapshot is swapped in. The `master.key` it generated on first start, however, must be replaced with the original in the next step.
+
+</Step>
+<Step>
+
+**Stop the service and put the master key and the snapshot in place**: put the original `master.key` in the data directory and the snapshot file as `imgyoung.db.restore`.
+
+<Tabs items={['Binary', 'Docker', 'Compose', 'systemd']}>
+<Tab value="Binary">
+
+```bash title="Terminal"
+mkdir -p data
+cp imgyoung-master.key data/master.key && chmod 600 data/master.key
+cp imgyoung-20261015-083000.123.db data/imgyoung.db.restore
+```
+
+</Tab>
+<Tab value="Docker">
+
+The image runs as uid 65532 and has no shell, so use a throwaway container to write into the volume and fix ownership:
+
+```bash title="Terminal"
+# If the container is running, docker stop imgyoung first; if there is none yet, create it with your usual options (without starting it)
+docker create --name imgyoung --restart unless-stopped -p 8721:8721 \
+  -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+docker run --rm --volumes-from imgyoung -v "$PWD":/in:ro alpine:3.24 sh -c '
+  cp /in/imgyoung-master.key /data/master.key &&
+  cp /in/imgyoung-20261015-083000.123.db /data/imgyoung.db.restore &&
+  chmod 600 /data/master.key &&
+  chown 65532:65532 /data /data/master.key /data/imgyoung.db.restore'
+docker start imgyoung
+```
+
+</Tab>
+<Tab value="Compose">
+
+```bash title="Terminal"
+docker compose stop        # if it has never been started, use docker compose create instead
+docker run --rm --volumes-from "$(docker compose ps -a -q imgyoung)" -v "$PWD":/in:ro alpine:3.24 sh -c '
+  cp /in/imgyoung-master.key /data/master.key &&
+  cp /in/imgyoung-20261015-083000.123.db /data/imgyoung.db.restore &&
+  chmod 600 /data/master.key &&
+  chown 65532:65532 /data /data/master.key /data/imgyoung.db.restore'
+docker compose up -d
+```
+
+</Tab>
+<Tab value="systemd">
+
+After `install.sh --service` the service has already started once, so systemd has created `/var/lib/imgyoung` and handed it to the service user. Give the new files the same owner as the existing database:
+
+```bash title="Terminal"
+sudo systemctl stop imgyoung
+sudo cp imgyoung-master.key /var/lib/imgyoung/master.key
+sudo cp imgyoung-20261015-083000.123.db /var/lib/imgyoung/imgyoung.db.restore
+sudo chown --reference=/var/lib/imgyoung/imgyoung.db \
+  /var/lib/imgyoung/master.key /var/lib/imgyoung/imgyoung.db.restore
+sudo chmod 600 /var/lib/imgyoung/master.key
+sudo systemctl start imgyoung
+```
+
+</Tab>
+</Tabs>
+
+If you provide the master key through `IMGYOUNG_MASTER_KEY`, set the variable instead of placing the file.
+
+</Step>
+<Step>
+
+**Start and check**: for the binary, start `imgyoung` now. The log line 已用暂存快照换入元数据库,原库留存 confirms the swap. Sign in with the credentials from snapshot time and check on **Storage channels** that the channels are healthy again.
+
+</Step>
+</Steps>
+
+Images that existed only on the local channel are gone with the old host. Images with replicas on other channels load as usual, and the missing local replicas are detected by reconciliation GC and copied back from the other channels.
+
+<Callout type="warn" title="Do not leave a fresh instance attached to old channels">
+Another route is to start a fresh instance, add the channel holding the snapshots in the admin console with its original parameters and the highest priority, and restore from **Metadata snapshots**. But the fresh instance's metadata contains no images: reconciliation GC first runs 24 hours after process start and treats every object on the channel older than the grace period as an orphan and deletes it. If you go this way, restore immediately after adding the channel, and do not click **Back up now** before restoring.
+</Callout>
+
+## Metadata export
+
+**Settings → Backups & export → Data export → Export JSON** downloads `imgyoung-export.json` (each export writes a `data.export` audit entry). Contents:
+
+| Field | Contents |
+|---|---|
+| `users` | Users: ID, username, role, quota, default lifetime, disabled flag, usage and image count; no password hashes |
+| `channels` | Channels: name, driver, priority, health, encrypted flag, direct-link flag, replica counts; no configuration parameters or credentials |
+| `tokens` | Tokens: name, owner, plaintext prefix, scopes, revocation and issue times; no hashes |
+| `images` | Every image reference: short ID, stored image, owner and token, original file name, object key alias, lifetime, access statistics, cleanup flags |
+| `blobs` | Every stored image: SHA-256, perceptual hash, object key in the channels, MIME type, size, dimensions, reference count, deletion state |
+| `blob_channels` | Which channel holds each replica, its state and last error |
+
+The export is readable and self-contained: even without running ImgYoung you can use it to match the objects in your channels back to images. It is not a restore format; restores use snapshots. Runtime settings, hotlink rules, audit logs and alerts are not included.
+
+## Reconciliation GC
+
+Every 24 hours (the first run 24 hours after process start), the replication subsystem reconciles each healthy channel in both directions. System objects under the `_imgyoung/` prefix (including snapshots) and health check objects are left alone:
+
+- **Orphans**: objects on the channel that the metadata database does not record as a completed replica on that channel. Those last modified more than 48 hours ago are deleted, so pay-per-use channels do not bill you for ownerless objects; the grace period covers the normal window between writing to a channel and recording it in the database.
+- **Phantoms**: replicas the metadata database records as completed but that are missing from the channel. They are reset to pending and queued to be copied from another channel.
+
+Each channel's reconciliation logs a 渠道对账完成 line with the object count, orphans deleted and phantoms requeued.
+
+Separately, replica reconciliation runs every 10 minutes (without listing channel objects): failed replicas on channels that are healthy again are reset to pending, and unfinished replicas are queued again.

@@ -4,6 +4,7 @@ import { i18nProvider } from 'fumadocs-ui/i18n'
 import { RootProvider } from 'fumadocs-ui/provider/next'
 import type { Metadata } from 'next'
 
+import { i18n } from '@/lib/i18n'
 import { translations } from '@/lib/layout.shared'
 import { SITE_URL } from '@/lib/site'
 
@@ -12,6 +13,11 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: { template: '%s · ImgYoung', default: 'ImgYoung' },
   icons: { icon: '/favicon.svg' },
+}
+
+/** 各语言的首页与外框在构建期预渲染。 */
+export function generateStaticParams() {
+  return i18n.languages.map((lang) => ({ lang }))
 }
 
 export default async function Layout({ params, children }: LayoutProps<'/[lang]'>) {

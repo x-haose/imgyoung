@@ -1,0 +1,221 @@
+---
+title: Uploading
+description: Upload images through the HTTP API, URL fetch or the admin console, plus format and size limits, EXIF handling, idempotency keys, how duplicates are handled and what a successful upload guarantees.
+---
+
+## Upload entry points
+
+| Entry point | Authentication | Good for |
+|---|---|---|
+| `POST /api/upload` (multipart form) | Upload token | Scripts, PicGo / PicList custom uploaders |
+| `POST /api/upload/url` (JSON) | Upload token | Letting the server fetch an image from another address |
+| "Upload" on the **Images** page of the admin console | Console session | Drag and drop, file picker, clipboard paste, fetch from URL |
+| S3 protocol `/s3/…` | S3 credential derived from an upload token | Clients that can upload to S3, see [Upload clients](./clients.mdx) |
+
+All four go through the same upload pipeline: format check, pixel budget, quota pre-check, EXIF handling, channel writes, then the database record.
+They differ only in where the bytes come from and which options they accept: the S3 entry point cannot set the lifetime or EXIF policy per request and has no idempotency key.
+
+Upload tokens are issued on the **Upload tokens** page of the console, see [Admin console](./admin.mdx#upload-tokens).
+
+## Uploading through the API
+
+```bash title="Terminal"
+curl -H "Authorization: Bearer imgy_xxxxxxxx" \
+  -F "file=@photo.jpg" \
+  https://img.example.com/api/upload
+```
+
+With every optional parameter:
+
+```bash title="Terminal"
+curl -H "Authorization: Bearer imgy_xxxxxxxx" \
+  -H "Idempotency-Key: 7d0c6a2e-photo-0001" \
+  -F "file=@photo.jpg" \
+  -F "ttl=604800" \
+  -F "exif_policy=strip" \
+  https://img.example.com/api/upload
+```
+
+| Form field | Required | Meaning |
+|---|---|---|
+| `file` | Yes | The image file. The file name is metadata only (shown and searchable in the console); control characters are removed and it is truncated to 255 bytes |
+| `ttl` | No | Lifetime in whole seconds (0 to 3153600000) or `never`. Both `0` and `never` mean the image never expires. When omitted, the per-user default applies, then the global default; see [Lifecycle and deduplication](./lifecycle.mdx) |
+| `exif_policy` | No | `strip` or `passthrough`. When omitted, the global default applies (`passthrough` out of the box); see [EXIF handling](#exif-handling) |
+
+The `Idempotency-Key` request header is optional, see [Idempotency keys](#idempotency-keys).
+
+A successful upload returns 200:
+
+```json
+{
+  "id": "R0RjUyP1UW",
+  "url": "https://img.example.com/i/R0RjUyP1UW"
+}
+```
+
+- `id` is a 10-character short ID drawn from `0-9A-Za-z`.
+- `url` is always absolute. If the **Public site address** (`base_url`) is set, it is used; otherwise the address is derived from the request: the scheme from whether the connection uses TLS, the host from the `Host` header.
+  When the request arrives through a trusted reverse proxy, `X-Forwarded-Proto` and `X-Forwarded-Host` are used instead (which proxies are trusted is set by the `IMGYOUNG_TRUSTED_PROXIES` environment variable).
+  If the public domain behind a reverse proxy or CDN differs from the host in the request, you must set `base_url`; see [Configuration](../configuration.mdx) and [Reverse proxy](../operations/reverse-proxy.mdx).
+
+Errors come back as `{"error": "…"}`; see [Status codes](#status-codes). The full API definition is in [API reference: data plane](../api/data-plane.mdx).
+
+## Idempotency keys
+
+On a flaky network a client may send the same upload twice. Sending an `Idempotency-Key` header keeps the retry from creating a second image:
+
+- Keys are scoped per user; two users can use the same key without affecting each other.
+- Within the retention period, a request from the same user with the same key returns the `id` and `url` of the first successful upload and writes nothing to the channels. The retention period is `idempotency_key_ttl_hours`, 24 hours out of the box, counted from that first success.
+- A hit does not compare the request content: if you reuse a key with a different file, you still get the first image back. Use a different key for every distinct image.
+- Only successful uploads record their key, so a failed request can safely be retried with the same key.
+- Of several concurrent requests with the same key, only one is stored; the others return the same result.
+- Keys past their retention period are reclaimed by the cleanup sweep, and deleting an image also deletes the keys that point to it. After that, the same key is treated as a new upload.
+
+Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3 entry point does not.
+
+## Fetching from a URL
+
+Give the server an image address and it downloads and stores the image for you, which is handy for pulling images back from other image hosts:
+
+```bash title="Terminal"
+curl -H "Authorization: Bearer imgy_xxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com/photo.png", "ttl": "never"}' \
+  https://img.example.com/api/upload/url
+```
+
+The body is a JSON object of at most 8 KiB containing only the fields below (any other field returns 400):
+
+| Field | Required | Meaning |
+|---|---|---|
+| `url` | Yes | Image address, `http` / `https` only |
+| `file_name` | No | File name; defaults to the last segment of the URL path, or `fetched` if there is none |
+| `exif_policy` | No | Same as the form upload |
+| `ttl` | No | Same as the form upload; the number `3600` and the strings `"3600"` and `"never"` are all accepted |
+
+The response and the use of `Idempotency-Key` are the same as for the form upload. The format of the fetched bytes is determined from their content; the `Content-Type` declared by the remote server plays no part.
+
+### Fetch restrictions
+
+This entry point makes the server issue an outbound request on the caller's behalf, so fetching is bound by a fixed set of rules that keep it from being used to probe your internal network:
+
+| Rule | Detail | When violated |
+|---|---|---|
+| Scheme | Only `http` / `https`, checked again on every redirect hop | 400 |
+| Destination | Public addresses only. The check runs right before each connection, against the IP actually resolved, so DNS rebinding and redirects into private networks are both caught | 400 |
+| Redirects | At most 5 | 502 |
+| Size | Same as the per-image limit (`max_upload_mb`). A declared `Content-Length` over the limit is rejected up front; without one, reading stops once the limit is exceeded | 413 |
+| Time | 30 seconds for the whole fetch; establishing the TCP connection, the TLS handshake and waiting for response headers are each capped at 10 seconds | 502 |
+| Remote status | 2xx only | 502 |
+
+Rejected address ranges:
+
+- IPv4: `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16` (including the cloud metadata address `169.254.169.254`), `172.16.0.0/12`, `192.0.0.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `224.0.0.0/4`, `240.0.0.0/4`.
+- IPv6: `::/128`, `::1/128`, `::/96`, `64:ff9b::/96`, `64:ff9b:1::/48`, `2002::/16`, `fc00::/7`, `fe80::/10`, `ff00::/8`. IPv4-mapped addresses (such as `::ffff:127.0.0.1`) are judged by the IPv4 address they contain.
+
+A few more details:
+
+- The server connects to the target directly and ignores proxy environment variables such as `HTTP_PROXY`.
+- The request carries no `Referer`, and its `User-Agent` is the Go standard library default. Sources with hotlink protection or bot blocking may refuse it, which shows up as a 502.
+- A fetch occupies one upload concurrency slot while it runs (see [Formats and limits](#formats-and-limits)).
+
+## Uploading in the admin console
+
+On the **Images** page, click **Upload**. The dialog has two tabs:
+
+- **Local files**: click to pick files or drag images onto the dashed area; multiple files are fine. While the dialog is open, Ctrl / ⌘ + V pastes images straight from the clipboard. At most two files upload at the same time; the rest wait in a queue.
+- **Fetch from URL**: enter an image address and click **Fetch**; this is the same as [fetching from a URL](#fetching-from-a-url).
+
+The **Expiry** (Default / Never / Custom hours) and **EXIF** (Default / Strip / Keep) options below apply to files added afterwards; **Default** means the field is not sent.
+Closing the dialog does not interrupt uploads in progress; each finished upload shows its link with a copy button.
+
+Console uploads belong to the signed-in account and need no token; the image details show the source as "Console upload / token removed". They share the rate limit and the concurrency gate with token uploads.
+
+## Formats and limits
+
+Only JPEG, PNG, GIF and WebP are accepted. The format is determined from the file content (magic bytes) and cross-checked against what the decoder recognizes; file extensions and the type declared by the client are ignored.
+
+- SVG is not accepted (it can embed scripts).
+- Animated GIFs can be uploaded; they are stored as is and always served as the original, so the animation is kept.
+- Animated WebP is not supported; the upload returns 400.
+
+| Limit | Setting | Default | When exceeded |
+|---|---|---|---|
+| Image size | `max_upload_mb` | 50 MB | 413. Measured over the whole request body, so multipart boundaries and other fields count too |
+| Pixel budget | `max_pixels_mp` | 50 megapixels (width × height) | 422. Judged from the image header alone, so an oversized image is never fully decoded |
+| Concurrent uploads | `max_concurrent_uploads` | 8 | 429 with `Retry-After: 1` |
+| Upload rate | `upload_rate_per_min` | 0 (off) | 429 with `Retry-After: 60` |
+| Storage quota | Set per user | Unlimited | 403 |
+
+- The **concurrency gate** is a single global gate shared by data plane uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once, which bounds the peak memory of decoding; when it is full, requests get 429 immediately instead of queueing.
+- The **rate limit** is per user, and uploads by the same user through tokens, the console and S3 PutObject share one allowance. It is a token bucket: up to N uploads can go through back to back (N being the per-minute allowance), after which one more is allowed every 60/N seconds. The buckets live in process memory and reset on restart.
+- The **quota** counts every reference in full: each image record counts the full size of its physical file against its owner, and background deduplication does not reduce usage. The pre-check uses the size of the uploaded bytes.
+
+All of these are changed under **Settings → Runtime settings** and take effect on save, see [Configuration](../configuration.mdx). Per-user quotas are set on the **Users** page.
+
+### Status codes
+
+| Status | Meaning |
+|---|---|
+| 200 | Success (an idempotency key hit is also 200) |
+| 400 | Missing `file` field or unreadable body; image content cannot be decoded (including animated WebP); invalid `ttl` or `exif_policy`; for URL fetches, an invalid body, a scheme other than http/https, or a destination that is not a public address |
+| 401 | Token missing, invalid, revoked or expired, or its owner is disabled |
+| 403 | Token lacks the upload scope, or the storage quota is full |
+| 413 | Over the per-image size limit (for URL fetches, the remote content is too large) |
+| 415 | Not a supported image format |
+| 422 | Resolution exceeds the pixel budget |
+| 429 | The concurrency gate is full or the user is uploading too fast; retry after `Retry-After` |
+| 502 | URL fetch only: the remote server returned non-2xx, redirected too often, timed out or could not be reached |
+| 503 | No healthy channel to write to, or fewer synchronous copies than the minimum succeeded |
+
+## EXIF handling
+
+| Policy | Behavior |
+|---|---|
+| `passthrough` | Stored byte for byte; no metadata is touched. The global default out of the box |
+| `strip` | Metadata is removed before storing, as listed below |
+
+The policy for an upload is the form (or JSON) field if given, otherwise the global default `exif_policy`. S3 uploads always use the global default.
+`spoof` (fake metadata) is not available yet; sending it returns 400, and it cannot be the global default either.
+
+`strip` works at the byte level: nothing is re-encoded and no pixel changes:
+
+| Format | Removed | Kept |
+|---|---|---|
+| JPEG | Every APPn segment except APP0 (JFIF), APP2 (ICC color profile) and APP14 (Adobe), which covers EXIF, XMP, IPTC and vendor segments; COM comment segments; any data after EOI (such as the video in a Motion Photo) | Entropy-coded data is kept untouched. Segments between the scans of a progressive JPEG are not inspected |
+| PNG | `eXIf`, `tEXt`, `zTXt` and `iTXt` chunks; any data after IEND | `gAMA`, `iCCP` and other chunks that affect color rendering |
+| WebP | `EXIF` and `XMP` chunks, clearing the matching flags in the VP8X header and fixing the RIFF length; any data beyond the declared RIFF length | Pixel chunks (including animation frames) |
+| GIF | Nothing | GIF has no standard container for EXIF / XMP |
+
+<Callout type="warn" title="strip removes the JPEG orientation tag">
+JPEGs from phones often rely on the EXIF Orientation tag to tell the browser how to rotate the picture, while the pixels stay in the sensor's native orientation.
+`strip` removes this tag along with the rest and does not rotate the pixels, so such photos display in their native orientation (often sideways) after stripping.
+If you need stripping and care about orientation, rotate the photo upright and save it before uploading.
+</Callout>
+
+- An image's SHA-256 (the hash shown in the console and the basis of deduplication) is computed over the bytes actually stored, after stripping.
+- With `passthrough`, GPS and other metadata in the original can be read by anyone who has the link and fetches the original bytes.
+  The variants produced by [on-demand processing](./access.mdx#on-demand-processing) are re-encoded and carry no metadata, but the original itself stays reachable.
+
+## Uploading the same image more than once
+
+Uploads are not deduplicated on the way in: uploading the same file twice gives two short IDs, and two copies are written to the channels at first.
+
+The background deduplication loop (every 300 seconds out of the box, `dedup_scan_seconds`) merges physical files whose stored bytes are identical into one, and removes the extra copy after the delete grace period. After a merge:
+
+- Each upload keeps its own short ID, lifetime, access count and owner, and every link keeps working.
+- Quotas count every reference in full, so a merge does not reduce usage.
+
+The same photo uploaded with different EXIF policies is stored as different bytes and is not merged automatically; its perceptual hashes are close, so the pair lands in **Duplicates** for an administrator to decide.
+See [Lifecycle and deduplication](./lifecycle.mdx#deduplication). Duplicates caused by client retries are best avoided at the source with [idempotency keys](#idempotency-keys).
+
+## What a successful upload means
+
+Before returning, an upload writes to healthy channels one after another in priority order until the number of successful writes reaches `min_success` (**Minimum synced replicas**, 1 out of the box):
+
+1. If a write fails or times out (each write gets at most 10 minutes), the next healthy channel is tried; the first channel that succeeds is the primary channel for this upload.
+2. Once enough copies exist, the record is written to the metadata database and the upload returns. The remaining channels are marked as pending and filled by background replication, which does not slow the upload down.
+3. If there are not enough healthy channels, or not enough writes succeed after trying them all, the upload returns 503. Objects already written become orphans, which reconciliation reclaims after a 48-hour grace period.
+
+With `min_success` above 1, an upload waits until several channels have the bytes before returning, in exchange for having multiple replicas from the start; if fewer channels are healthy than that number, every upload returns 503.
+Channel priority, health checks and replication are covered in [Storage channels](../channels/index.mdx).

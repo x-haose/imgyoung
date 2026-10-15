@@ -1,0 +1,251 @@
+---
+title: 配置
+description: 引导配置(环境变量)与运营配置(后台设置)的全部配置项、默认值、取值范围与生效方式,以及主密钥的保管。
+---
+
+## 两类配置
+
+ImgYoung 的配置只分两类,没有配置文件,命令行参数只有 `-version`(打印版本、提交与构建时刻后退出)。
+
+| | 引导配置 | 运营配置 |
+|---|---|---|
+| 内容 | 进程启动前就必须知道的:监听地址、数据目录、主密钥、信任的反代、指标放行网段 | 其余全部运营参数 |
+| 来源 | 只认环境变量 `IMGYOUNG_*` | 元数据库里的 `settings` 表,不接受环境变量 |
+| 修改 | 改环境变量后重启进程 | 后台「设置」修改,保存即生效,无需重启 |
+| 查看 | 后台「设置 → 运行配置」底部的「引导配置」卡片(只读) | 后台「设置」 |
+
+运营配置随元数据库持久化,也随元数据库快照一起备份与恢复。新实例在后台配置一次即可;升级新增的配置项由数据库迁移以出厂默认值补齐。
+
+## 引导配置
+
+| 环境变量 | 默认 | 格式 | 作用 |
+|---|---|---|---|
+| `IMGYOUNG_LISTEN` | `:8721` | `host:port`,如 `127.0.0.1:8721`、`[::1]:8721`;端口为 `0` 时由系统分配 | HTTP 监听地址。ImgYoung 只提供明文 HTTP,HTTPS 由前置反向代理负责 |
+| `IMGYOUNG_DATA_DIR` | `data`(相对进程工作目录) | 目录路径;不存在时以 `0750` 权限创建 | 数据目录:元数据库 `imgyoung.db`、主密钥文件 `master.key`、内置 local 渠道的 `blobs/`、衍生图缓存 `variants/` |
+| `IMGYOUNG_MASTER_KEY` | 空(使用数据目录下的 `master.key`) | 64 个十六进制字符(32 字节),前后不能有空白 | 主密钥,见下文[主密钥](#主密钥) |
+| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | 逗号分隔的 CIDR 或单个 IP;单个 IP 视为只含该地址的网段 | 连接对端落在这些网段时才采信 `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`,见[反向代理与 HTTPS](./operations/reverse-proxy.mdx) |
+| `IMGYOUNG_METRICS_ALLOW` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | 同上 | 客户端地址落在这些网段时才放行 `/metrics`,其余一律 403,见[监控与告警](./operations/monitoring.mdx) |
+
+- 变量未设置或设为空串(含只有空白)时取默认值,因此无法用空值表达「不信任任何反代」或「谁都不放行」;要收紧,写一个更小的网段,如 `IMGYOUNG_METRICS_ALLOW=127.0.0.1,::1`。
+- 两个网段清单在启动时解析,任一项既不是 CIDR 也不是 IP 时启动失败,错误信息给出变量名与出错的条目。监听地址在绑定端口时校验,主密钥在解析时校验,非法同样启动失败。
+- Docker 镜像已设置 `IMGYOUNG_DATA_DIR=/data`;`deploy/imgyoung.service` 把它设为 `/var/lib/imgyoung`。
+
+各部署方式设置环境变量的位置:
+
+<Tabs items={['二进制', 'Docker', 'Compose', 'systemd']}>
+<Tab value="二进制">
+
+```bash title="终端"
+IMGYOUNG_LISTEN=127.0.0.1:8721 IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
+```
+
+</Tab>
+<Tab value="Docker">
+
+```bash title="终端"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
+  -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+容器内应保持默认的 `:8721` 监听,只在宿主机一侧用 `-p 127.0.0.1:8721:8721` 收紧。
+
+</Tab>
+<Tab value="Compose">
+
+```yaml title="compose.yaml"
+services:
+  imgyoung:
+    environment:
+      IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
+```
+
+改完执行 `docker compose up -d` 重建容器。
+
+</Tab>
+<Tab value="systemd">
+
+用 drop-in 覆盖,不要直接改 `/etc/systemd/system/imgyoung.service`:安装脚本带 `--service` 重新执行时会覆盖该文件。
+
+```bash title="终端"
+sudo systemctl edit imgyoung
+```
+
+```ini title="编辑器中填入"
+[Service]
+Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
+```
+
+```bash title="终端"
+sudo systemctl restart imgyoung
+```
+
+</Tab>
+</Tabs>
+
+## 运营配置
+
+运营配置在后台「设置」页修改,只有管理员可见。除「空 Referer 放行」在「防盗链」页签外,其余都在「运行配置」页签,按下列分组排列。
+
+- 保存时只提交改动过的项;整组改动一起校验,任一项非法则全部不生效并提示原因。
+- 生效即时:各后台循环的间隔改动后立刻按新值重新计时,不必等旧周期走完。
+- 每次实际生效的修改记一条审计日志(动作 `config.update`,含新旧值),Cloudflare API Token 只记「已配置 / 空」。
+- 同样的操作可经 `GET /api/admin/config/full` 与 `PUT /api/admin/config` 完成,请求体为「配置键 → 新值」的 JSON 对象,见[接口参考](./api/admin-overview.mdx)。
+
+下表的「默认」即出厂值,「取值」即服务端校验的范围。
+
+### 访问与链接
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `access_mode` | 访问模式 | `proxy` | `proxy` / `redirect` | `proxy`:图片由本服务从渠道读出后输出,渠道读取失败即时换下一个渠道。`redirect`:原图请求 302 到允许直链的渠道,见 [CDN](./operations/cdn.mdx) |
+| `base_url` | 对外站点地址 | 空 | 带协议的站点根地址,如 `https://img.example.com`;保存时去掉末尾的 `/` | 空则按请求推导。经 CDN 或反代后对外域名与请求域名不一致、启用 CDN 缓存清除、网盘渠道一键授权时必须设置,见[反向代理与 HTTPS](./operations/reverse-proxy.mdx) |
+| `min_success` | 最少同步副本 | `1` | ≥ 1 | 上传返回成功前必须同步写入的渠道数;健康渠道写不够这么多份时上传失败(503) |
+| `encrypt_new_channels` | 新渠道默认加密 | 关 | 开 / 关 | 新建渠道未显式选择时是否加密;加密属性在渠道创建时确定,之后不可改 |
+
+### 上传限制
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `max_upload_mb` | 单图上限 | `50` | ≥ 1,MB(1 MB = 1024 × 1024 字节) | 按整个请求体计(multipart 表单开销也算在内),超出返回 413。同时是 URL 转存的抓取上限,也是按需处理读取源图的上限:调小后,超过新上限的旧图做缩放或转格式时会回退原图 |
+| `max_pixels_mp` | 像素预算 | `50` | ≥ 1,百万像素 | 宽 × 高超过 `max_pixels_mp × 1,000,000` 的图片拒收(422) |
+| `max_concurrent_uploads` | 上传并发上限 | `8` | ≥ 1 | 全局共享:数据面上传、URL 转存、后台上传与 S3 协议面的全部请求共用一个上限;满载立即返回 429(`Retry-After: 1`) |
+| `upload_rate_per_min` | 上传频率上限 | `0` | ≥ 0,次 / 分钟 | 按用户计,同一用户经 Token 与后台上传共享额度,突发额度等于每分钟额度;超出返回 429(`Retry-After: 60`)。`0` 不限制 |
+
+### 生命周期
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `default_ttl_hours` | 默认有效期 | `0` | ≥ 0,小时 | 上传未指定 `ttl`、用户也没有自己的默认有效期时使用。`0` 永不过期 |
+| `ttl_renew_on_access` | 访问即续期 | 开 | 开 / 关 | 带有效期的图片被公开访问时,到期时刻按其有效时长顺延 |
+| `cold_cleanup_days` | 冷图清理阈值 | `90` | ≥ 0,天 | 超过该天数未被公开访问的图片进入「待清理」等待人工裁决,不会自动删除。`0` 不标记 |
+| `delete_grace_minutes` | 删除宽限 | `0` | ≥ 0,分钟 | 物理图引用归零到删除渠道对象之间的等待。删除时刻在引用归零那一刻按当时的取值排定,之后修改不影响已排定的。`0` 表示下一轮清理扫描即删除 |
+| `cleanup_sweep_seconds` | 清理扫描间隔 | `60` | ≥ 1,秒 | 到期回收、物理删除、冷图标记、幂等键与审计日志回收的执行节奏 |
+| `activity_flush_seconds` | 活跃度落库间隔 | `60` | ≥ 1,秒 | 访问次数、最近访问时刻与衍生图缓存访问时间批量写库的间隔 |
+| `idempotency_key_ttl_hours` | 幂等键保留期 | `24` | ≥ 1,小时 | 带 `Idempotency-Key` 的上传重试在此期限内返回首次结果,超期的键被回收 |
+
+### 按需处理
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `process_widths` | 宽度档 | `[100,200,400,800,1600]` | 正整数数组,像素;可为空 | `?w=` 只接受这些值,其余返回 400;为空时不允许缩放 |
+| `process_formats` | 目标格式 | `["webp","jpeg","png"]` | `webp`、`jpeg`、`png` 的非空子集 | `?format=` 只接受这些值。包含 `webp` 时,支持 WebP 的浏览器访问 JPEG / PNG 会自动得到 WebP |
+| `exif_policy` | EXIF 默认档 | `passthrough` | `passthrough`(保留)/ `strip`(剥离元数据) | 上传时的默认 EXIF 处理;单次上传可用表单字段 `exif_policy` 覆盖 |
+| `process_quality_webp` | WebP 质量档 | `80` | 0–100 | |
+| `process_quality_jpeg` | JPEG 质量档 | `85` | 1–100 | |
+| `process_webp_method` | WebP 速度权衡 | `4` | 0–6 | 越大编码越慢、体积越小 |
+| `process_workers` | 处理并发上限 | `4` | ≥ 1 | 同时进行的处理数;排队等待也计入处理超时 |
+| `process_timeout_ms` | 处理超时 | `5000` | ≥ 1,毫秒 | 含排队时间;超时回退原图,该响应带 `Cache-Control: no-store` |
+| `variants_cache_mb` | 衍生图缓存上限 | `10240` | ≥ 1,MB | 衍生图缓存在 `<数据目录>/variants/`,超出按最近访问时间淘汰 |
+
+### 查重
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `dedup_scan_seconds` | 查重扫描间隔 | `300` | ≥ 1,秒 | 每轮先自动合并内容完全相同的图片,再做相似扫描 |
+| `dedup_phash_max_distance` | 相似判定阈值 | `10` | ≥ 0,汉明距离 | 感知哈希距离不超过该值的图片进入「疑似重复」等待人工裁决。`0` 不做相似扫描,完全相同的图片仍自动合并 |
+
+### 可靠性与渠道
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `health_check_seconds` | 健康检查间隔 | `60` | ≥ 1,秒 | 渠道健康探测与告警评估的节奏 |
+| `backup_interval_hours` | 备份间隔 | `24` | ≥ 1,小时 | 元数据库自动快照的间隔,见[备份与恢复](./operations/backup.mdx) |
+| `backup_keep` | 备份保留份数 | `7` | ≥ 1 | 每次备份成功后,备份渠道上只保留最新的这么多份 |
+| `usage_report_seconds` | 用量上报间隔 | `300` | ≥ 1,秒 | 只决定指标 `imgyoung_channel_storage_bytes` 的刷新节奏;用量告警按健康检查间隔评估 |
+| `channel_quota_gb` | 渠道用量告警阈值 | `0` | ≥ 0,GB(1 GB = 2³⁰ 字节) | 任一渠道已存数据(按已就绪副本的图片大小求和)超过阈值即开启告警,不限制写入。`0` 不告警 |
+
+### CDN 缓存清理
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `cdn_cloudflare_zone_id` | Cloudflare Zone ID | 空 | 文本 | |
+| `cdn_cloudflare_api_token` | Cloudflare API Token | 空 | 文本 | 需要 Cache Purge 权限。以主密钥加密后入库,任何接口、页面与日志都不回显。表单留空表示不修改,用「清除 Token」清空 |
+
+Zone ID、API Token 与 `base_url` 三项齐备才启用缓存清除,分组标题旁的徽标显示「purge 已启用 / purge 未启用」,启动日志也会打印一行启用状态。详见 [CDN](./operations/cdn.mdx)。
+
+### 告警与审计
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `alert_webhook_url` | 告警 Webhook 地址 | 空 | 空,或带主机的 `http` / `https` 地址 | 告警开启与恢复时 POST 一条 JSON,负载格式见[监控与告警](./operations/monitoring.mdx)。空则只记录不外发 |
+| `audit_retention_days` | 审计日志保留天数 | `0` | ≥ 0,天 | 清理扫描时删除早于该天数的审计记录。`0` 永久保留 |
+
+### 防盗链页签
+
+| 配置键 | 界面名称 | 默认 | 取值 | 说明 |
+|---|---|---|---|---|
+| `allow_empty_referer` | 空 Referer 放行 | 开 | 开 / 关 | Referer 白名单非空时,不带 Referer 的请求(地址栏直接打开、下载工具)是否放行。白名单为空时防盗链整体不启用,本项不起作用 |
+
+白名单规则本身在同一页签增删,不属于 `settings` 表。
+
+## 主密钥
+
+主密钥是 32 字节的随机数,用于:
+
+- 加密渠道配置(含各渠道的凭证)与 Cloudflare API Token 后入库;
+- 为每个加密渠道派生 crypt 密码与盐;
+- 为每枚上传 Token 派生 S3 协议面的 secret(不落库,按需重算)。
+
+上传 Token 与登录密码只存哈希,不依赖主密钥。
+
+### 生成
+
+- 没有设置 `IMGYOUNG_MASTER_KEY` 时,首次启动在数据目录生成 `master.key`(64 个十六进制字符加换行,权限 `0600`,先写临时文件再改名),并打印一条警告日志提醒备份。之后每次启动读取该文件。
+- 文件存在但内容不是合法的 64 位十六进制时启动失败,不会重新生成:重新生成会让所有已有密文作废。
+- 设置了 `IMGYOUNG_MASTER_KEY` 时以它为准,不读也不生成 `master.key`。想自己生成一把:
+
+  ```bash title="终端"
+  openssl rand -hex 32
+  ```
+
+  从文件方式改用环境变量时,把 `master.key` 的内容原样填进变量;两者不一致时,用文件那把密钥加密的数据全部无法解密。
+
+### 保管
+
+主密钥**不在**元数据库快照里,也不在元数据导出里,必须单独备份到与服务器、快照都不同的地方。首次启动后立即复制一份:
+
+<Tabs items={['二进制', 'Docker', 'Compose', 'systemd']}>
+<Tab value="二进制">
+
+```bash title="终端"
+cp data/master.key /安全位置/imgyoung-master.key
+```
+
+</Tab>
+<Tab value="Docker">
+
+```bash title="终端"
+docker cp imgyoung:/data/master.key ./imgyoung-master.key
+```
+
+</Tab>
+<Tab value="Compose">
+
+```bash title="终端"
+docker compose cp imgyoung:/data/master.key ./imgyoung-master.key
+```
+
+</Tab>
+<Tab value="systemd">
+
+```bash title="终端"
+sudo cp /var/lib/imgyoung/master.key ./imgyoung-master.key
+```
+
+</Tab>
+</Tabs>
+
+### 丢失或换错的后果
+
+主密钥不支持更换。丢失,或者启动时用了另一把密钥(例如数据目录里的 `master.key` 被删后自动生成了新的),后果相同且无法挽回:
+
+- 渠道配置无法解密,这些渠道在启动时被跳过(日志「渠道配置无法解密,本渠道跳过」),其上的图片无法访问;
+- 加密渠道上的数据(含存放在加密渠道上的元数据库快照)永久无法解密;
+- 已配置 Cloudflare API Token 时,运营配置无法加载,进程启动失败;
+- 全部上传 Token 的 S3 secret 随之改变,已配置的 S3 客户端需要重新填写。
+
+<Callout type="error" title="先备份 master.key">
+元数据库快照、数据导出和渠道里的图片都救不回丢失的主密钥。灾难恢复时,新机器必须在首次启动前放入同一个主密钥,见[备份与恢复](./operations/backup.mdx)。
+</Callout>

@@ -1,0 +1,142 @@
+---
+title: 监控与告警
+description: /healthz 与 /metrics、Prometheus 抓取、告警条件与 Webhook 负载格式、日志。
+---
+
+## /healthz
+
+`GET /healthz` 返回 200 与纯文本 `ok`,不需要认证。它只表示进程在运行、HTTP 服务能响应,**不检查**数据库、渠道或任务队列。适合做进程存活检查与外部可用性探测;渠道是否健康看指标与告警。
+
+`/healthz` 与 `/metrics` 自身的请求不计入 HTTP 指标。
+
+## /metrics
+
+`GET /metrics` 以 Prometheus 文本格式输出指标,与业务共用同一个端口。
+
+**访问控制**:只有客户端地址落在 `IMGYOUNG_METRICS_ALLOW` 内的请求才放行(出厂为回环与私网段),其余返回 403。客户端地址按[反向代理与 HTTPS](./reverse-proxy.mdx)里的规则解析。指标里有路由模板、渠道名与用量,不应对公网开放:
+
+- 公网入口(反代)一律不转发 `/metrics`,`deploy/` 里的 Caddy 与 Nginx 示例都对它返回 404;
+- 让 Prometheus 从内网直接访问 ImgYoung 的监听地址;
+- `IMGYOUNG_TRUSTED_PROXIES` 要配对。配错时经反代的请求都显得来自反代自身,反代地址又在放行网段内的话,转发了 `/metrics` 的反代会把指标暴露给所有人。
+
+### 指标清单
+
+全部业务指标以 `imgyoung_` 为前缀:
+
+| 指标 | 类型 | 标签 | 含义 |
+|---|---|---|---|
+| `imgyoung_http_requests_total` | counter | `method`、`route`、`status` | HTTP 请求数。`route` 是路由模板(如 `/i/{id}`),不是原始路径 |
+| `imgyoung_http_request_duration_seconds` | histogram | `method`、`route` | HTTP 请求处理时延(秒) |
+| `imgyoung_upload_duration_seconds` | histogram | `outcome` | 上传管道耗时(秒)。`ok` 成功;`rejected` 输入或配额不合规;`failed` 基础设施失败 |
+| `imgyoung_channel_puts_total` | counter | `channel`、`result` | 向渠道写对象的次数,含上传时的同步写入与异步补齐;`result` 为 `ok` / `error` |
+| `imgyoung_channel_storage_bytes` | gauge | `channel` | 渠道逻辑用量(字节),按已就绪副本的图片大小求和;每隔「用量上报间隔」刷新 |
+| `imgyoung_channels_total` | gauge | | 已装载的渠道数,含不健康的,不含清理中和装载失败的 |
+| `imgyoung_channels_healthy_total` | gauge | | 当前健康的渠道数 |
+| `imgyoung_variant_lookups_total` | counter | `result` | 衍生图缓存查找次数;`result` 为 `hit` / `miss` |
+| `imgyoung_queue_jobs_waiting` | gauge | | 任务队列里等待执行的任务数(可认领、已排程与待重试);抓取时查询,查询失败为 `NaN` |
+| `imgyoung_queue_jobs_running` | gauge | | 任务队列里正在执行的任务数;同上 |
+
+此外还有 Prometheus Go 客户端自带的 `go_*`(运行时)与 `process_*`(进程)指标。
+
+### Prometheus 抓取配置
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: imgyoung
+    static_configs:
+      - targets: ["10.0.0.5:8721"]   # ImgYoung 的内网地址与端口
+```
+
+Prometheus 不在默认放行的私网段内时,把它的地址加进 `IMGYOUNG_METRICS_ALLOW`(连同仍需要的默认网段一起写,设置后会整体替换默认值)。
+
+几条常用的告警表达式:
+
+```text title="PromQL"
+# 有渠道不健康
+imgyoung_channels_healthy_total < imgyoung_channels_total
+
+# 渠道写入持续出错
+sum by (channel) (rate(imgyoung_channel_puts_total{result="error"}[10m])) > 0
+
+# 上传因基础设施失败
+sum(rate(imgyoung_upload_duration_seconds_count{outcome="failed"}[10m])) > 0
+
+# 任务队列积压
+imgyoung_queue_jobs_waiting > 1000
+```
+
+## 告警
+
+告警由评估循环产生:启动时评估一次,之后每隔「健康检查间隔」(`health_check_seconds`,出厂 60 秒)评估一次。每轮按现状判断哪些条件成立,与未恢复的告警对账——新成立的开启,不再成立的自动恢复。同一类型、同一对象至多有一条未恢复的告警;条件持续成立期间,详情会随每轮评估更新。
+
+| 类型 | 界面名称 | 对象 | 成立条件 |
+|---|---|---|---|
+| `channel_unhealthy` | 渠道不健康 | 渠道名 | 在役渠道最近一次健康探测失败;详情为失败原因 |
+| `replication_failed` | 副本补齐失败 | 渠道名 | 该渠道上有补齐失败的副本;详情含份数。渠道恢复健康后失败的副本会被重试 |
+| `channel_quota_exceeded` | 渠道用量超阈值 | 渠道名 | 设置了「渠道用量告警阈值」且该渠道用量超过它 |
+| `drain_failed` | 渠道排空失败 | 渠道名 | 删除渠道时清理渠道上对象的任务失败,已停止重试 |
+| `backup_failed` | 备份失败 | 空 | 最近一次元数据库备份失败;详情为失败原因 |
+
+`backup_failed` 依据的是本进程内最近一次备份的结果,进程重启后在下一次备份失败之前不会再出现。
+
+**在哪里看**:后台「总览」页的「告警」卡片列出当前未恢复的告警,点「历史记录」进入「设置 → 告警历史」,那里分页列出包括已恢复在内的全部告警。告警的开启与恢复也会写入日志(「告警开启」「告警恢复」)。
+
+### Webhook
+
+在「设置 → 运行配置 → 告警与审计 → 告警 Webhook 地址」填入一个 `http` / `https` 地址后,每条告警在**开启**与**恢复**时各 POST 一次 JSON(`Content-Type: application/json`):
+
+```json title="开启"
+{
+  "kind": "channel_unhealthy",
+  "target": "r2-main",
+  "message": "连接超时",
+  "status": "open",
+  "opened_at": "2026-10-15 08:30:00"
+}
+```
+
+```json title="恢复"
+{
+  "kind": "channel_unhealthy",
+  "target": "r2-main",
+  "message": "连接超时",
+  "status": "resolved",
+  "opened_at": "2026-10-15 08:30:00",
+  "resolved_at": "2026-10-15 09:05:00"
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `kind` | 告警类型,取值见上表 |
+| `target` | 告警对象(渠道名);`backup_failed` 为空串 |
+| `message` | 最近一次评估得到的描述(中文) |
+| `status` | `open`(开启)或 `resolved`(恢复) |
+| `opened_at` | 开启时刻,UTC,格式 `YYYY-MM-DD HH:MM:SS` |
+| `resolved_at` | 恢复时刻,同上格式;只在 `resolved` 时出现 |
+
+投递规则:
+
+- 接收方返回 2xx 即视为成功;连接失败、超时(10 秒)或非 2xx 都会在下一轮评估时重试,直到成功;
+- 同一条告警总是先投递开启、再投递恢复;
+- 请求不带签名或认证头,需要校验来源时把密钥放进 URL(如查询参数),并使用 `https`;
+- 告警开启时没有配置 Webhook 的,该次转折直接记为已投递,之后再配置也不会补发;
+- 负载格式是固定的。要推送到即时通讯工具,需要一个转换格式的中转服务。
+
+## 日志
+
+- 日志写到标准错误,格式是 Go `log/slog` 的文本格式:每行以 `time=`、`level=`、`msg=` 开头,后接 `key=value` 形式的字段,消息为中文。级别固定为 INFO 及以上,没有调整级别的配置项。
+- 查看:systemd 用 `journalctl -u imgyoung`,Docker 用 `docker logs imgyoung`,Compose 用 `docker compose logs imgyoung`。
+- 凭证不进日志:渠道配置参数不出现在任何日志与错误信息里,Cloudflare API Token 只在内存中以明文存在,配置修改的审计记录也只写「已配置 / 空」;上传 Token 与会话只存哈希。唯一会打印的密码是首次启动(或[重置密码](./password-reset.mdx)后)播种的出厂密码,它本就是公开值。
+
+排障时值得留意的几行:
+
+| 日志 | 含义 |
+|---|---|
+| `ImgYoung 已启动` | 启动完成,附版本、提交、实际监听地址与数据目录 |
+| `已生成主密钥文件,请立即备份……` | 本次启动新生成了 `master.key`;不是首次部署时出现它,说明原来的主密钥丢了 |
+| `CDN purge 已启用(Cloudflare)` / `CDN purge 未启用……` | 启动时 CDN 缓存清除的配置状态 |
+| `渠道配置无法解密,本渠道跳过` | 主密钥与写入渠道配置时用的不是同一把 |
+| `告警开启` / `告警恢复` | 告警状态变化 |
+| `收到停机请求,优雅停机后由进程管理器拉起` | 后台触发了从快照恢复 |
+| `已用暂存快照换入元数据库,原库留存` | 快照已换入,附原库留存路径 |

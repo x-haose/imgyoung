@@ -3,6 +3,19 @@
   "icon": "Braces",
   "pages": [
     "index",
+    "data-plane",
+    "image-access",
+    "system",
+    "admin-session",
+    "admin-overview",
+    "admin-upload",
+    "admin-images",
+    "admin-tokens",
+    "admin-channels",
+    "admin-users",
+    "admin-referer",
+    "admin-review",
+    "admin-operations",
     "..."
   ]
 }

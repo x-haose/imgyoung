@@ -1,0 +1,193 @@
+---
+title: Channels and failover
+description: What a channel is, where uploads go, how replicas are filled in, how reads fail over, and the rules for health checks, editing, deleting and usage alerts.
+---
+
+## What a channel is
+
+A channel is one rclone backend instance: a backend type (`s3`, `webdav`, `local`…) plus its parameters, plus a few ImgYoung attributes:
+
+| Attribute | Meaning |
+|---|---|
+| Channel name | Unique, up to 64 bytes; used in the UI, logs, metrics and alerts |
+| Priority | Integer, higher wins; the admin console accepts 0–1000 and defaults to 100 |
+| Server-side encryption | Whether data is stored through rclone crypt; fixed at creation, see [Channel encryption](./encryption.mdx) |
+| Allow 302 direct links | Whether reads may be redirected to the channel's public URL, see [Object storage and WebDAV](./object-storage.mdx) |
+
+Backend parameters are handed to rclone as a map, never through `rclone.conf`; the whole parameter set is encrypted with the master key (AES-256-GCM) and stored in the metadata database. Channels are managed on the **Storage channels** page of the admin console, which only admins can see; the API is under [admin channels](../api/admin-channels.mdx).
+
+**Every channel ends up holding a replica of every image.** Channels mirror each other in full; nothing is sharded. Size each channel for the whole library.
+
+<Callout type="warn" title="Give ImgYoung a dedicated root">
+The daily reconciliation lists every object under the channel root (the bucket or bucket prefix, the drive folder) and deletes, as orphans, objects that the metadata database does not record as a ready replica and that were last modified more than 48 hours ago (the `_imgyoung/` folder is exempt). Do not point a channel at a bucket or folder that holds other files.
+</Callout>
+
+## The built-in local channel
+
+On first start with a fresh metadata database (an empty channels table), ImgYoung creates a channel named `local`: backend `local`, priority 100, stored under `<data dir>/blobs`. Uploads work with no configuration at all.
+
+- It is only seeded while the channels table is empty. Once you delete or rename it, restarts do not bring it back.
+- It lives on the same machine as the metadata database and the master key, so losing the host loses everything. While it is the only channel, the Storage channels page shows "Only the local disk is configured". Add an off-site channel and existing images are replicated to it automatically.
+
+## Priority: primary and backup channels
+
+There is no separate "primary" switch; priority alone expresses primary and backup:
+
+- **Primary channel**: the highest-priority channel that is healthy and not draining. The list marks it **Primary**.
+- **Backup channels**: everything else. Normally uploads do not write to them directly and asynchronous replication copies replicas over; they are written synchronously only when a higher channel fails mid-upload or when `min_success` is above 1.
+- On equal priority, the channel created first wins.
+
+When the primary turns unhealthy, the next healthy channel takes over with no manual step; once the original recovers, it is primary again.
+
+## Upload writes
+
+Each upload walks the currently healthy channels from highest to lowest priority and writes synchronously until `min_success` copies have succeeded:
+
+1. If a write fails (including the 10-minute per-write timeout), the next healthy channel is tried.
+2. As soon as enough copies exist, the upload succeeds. The first channel that accepted the write holds the image's first replica.
+3. Every other channel, including temporarily unhealthy ones, gets a pending replica for asynchronous replication.
+
+`min_success` lives under **Settings → Runtime settings → Access & links → Minimum synced replicas** (default 1, minimum 1). When there are not enough healthy channels or every write fails, the upload returns 503 with "存储渠道暂不可用,请稍后重试" ("storage channels temporarily unavailable, retry later") and no metadata is recorded; copies that did get written become orphans and are removed by the daily reconciliation.
+
+<Callout type="info">
+If `min_success` exceeds the number of healthy channels, every upload fails. Setting it to 2 means an upload only succeeds once two channels hold it, at the cost of write latency and a dependency on several channels being up.
+</Callout>
+
+## Asynchronous replication
+
+Replica state lives in a replica table in the metadata database, and that table is the single source of truth. The job queue (River, in the same SQLite database) only triggers work, and at most one job per image and channel is in flight.
+
+| Replica state | Meaning |
+|---|---|
+| `pending` | Waiting to be replicated |
+| `uploading` | Replication in progress |
+| `done` | Ready to serve reads |
+| `failed` | Still failing after all retries |
+
+- **Copying**: the replica is read from the highest-priority healthy channel that already has it and streamed into the target channel. The queue runs 4 jobs at a time (shared with delete and drain jobs); one replication job may run for at most 15 minutes.
+- **Retries**: a failed job goes back to `pending` and River retries it with exponential backoff, roughly n⁴ seconds after the n-th failure (1 s, 16 s, 81 s…), up to 25 attempts spanning about 20 days. If the last attempt fails, the replica becomes `failed`.
+- **Periodic reconciliation**: at startup and every 10 minutes after, ImgYoung adds missing replica rows for every channel in service, resets `failed` replicas on healthy channels to `pending`, and re-queues every unfinished replica (jobs already queued are de-duplicated). The "Replica reconciliation every … s" line under **Settings → Runtime settings → Bootstrap configuration** shows this interval.
+- **Survives restarts**: jobs and replica states are in SQLite. The startup reconciliation re-queues unfinished replicas; jobs that were running when the process was killed are rescheduled by River after about 16 minutes.
+- **Backfilling a new channel**: creating a channel registers a pending replica for every existing image in the same transaction, and replication starts right away. If an upload racing with the creation missed the new channel, the periodic reconciliation fills the gap.
+- **Daily reconciliation GC**: every 24 hours each healthy channel is compared with the database in both directions. Objects present on the channel, not recorded as a ready replica and older than 48 hours are deleted (orphans); replicas the database marks ready but the channel no longer has go back to `pending` and are replicated again (phantoms).
+
+## Read failover
+
+To serve an image, the candidate channels are those that are **healthy, not draining, and hold a ready replica of that image**, ordered by priority.
+
+- **Proxy mode** (`access_mode = proxy`, the default): candidates are read in order; if one fails, the next is tried, invisibly to the visitor. With no candidates, or when all of them fail, the response is 503 with "渠道暂不可用" ("channel temporarily unavailable").
+- **Redirect mode** (`access_mode = redirect`): the first candidate that allows 302 direct links, is not encrypted and has a public URL gets a 302; if there is none, the image is proxied. Requests with processing parameters (such as `?w=`) are always proxied.
+
+A channel the replica has not reached yet is not a candidate for that image. Access modes and caching are covered in [Access and links](../guides/access.mdx).
+
+## Health checks
+
+Health decides whether a channel takes uploads and reads. There are two kinds of check:
+
+| | Light check | Deep check |
+|---|---|---|
+| What it does | Stats an object that never exists, `.imgyoung-health-probe` (never written); either a result or "not found" counts as reachable | Writes a small object under a random key `.imgyoung-probe-<random hex>`, reads it back and compares, then deletes it |
+| Cost | Read-only, no writes or deletes | One write, read and delete |
+| Timeout | 10 s | 20 s for the write and read, plus 10 s for the delete |
+| When | Periodic loop every `health_check_seconds` (default 60 s) | After creating a channel, after saving an edit, on **Probe again**, on **Test connection**; and in the periodic loop when an unhealthy channel passes its light check |
+
+The periodic loop follows one rule: **a light check can only mark a channel down, never up.**
+
+- Healthy channels get only a light check each round; a failure marks them unhealthy.
+- Unhealthy channels get a light check first; if it passes, a deep check follows, and only a full write–read–delete pass restores them.
+- A read-only success never overrides a failed deep check. Read-only credentials, for example, pass the light check but cannot write; such a channel is not revived by light checks.
+
+Channels are checked in parallel with independent timeouts, so one slow channel never drags the others down. Draining channels are not checked. A round in progress at shutdown is discarded rather than recorded.
+
+Results are written back to the database and shown in the **Status** column of the Storage channels page: **Healthy**, **Unhealthy** or **Draining**. Hovering **Unhealthy** shows the failure reason (translated into a troubleshooting hint, never containing credentials); the small text below shows when the last check ran, or **Not probed yet**. Common reasons are listed under "Common errors" in [Object storage and WebDAV](./object-storage.mdx).
+
+<Callout type="info" title="When a channel cannot be loaded">
+If a channel's configuration cannot be decrypted or its backend fails to initialize at startup, that channel is skipped (log line `渠道配置无法解密,本渠道跳过` or `渠道驱动构造失败,本渠道跳过`) and the rest keep serving. If no channel can be loaded, startup fails.
+</Callout>
+
+## Replica watermark
+
+The **Replicas** column shows the channel's replica counts: ready, pending (including in progress) and failed. A pending count that never drops, or any failures, means writes to that channel are failing: check the reason in the Status column and run **Probe again**. Once the channel is healthy, failed replicas are retried at the next periodic reconciliation.
+
+## Test connection
+
+**Test connection** at the bottom of the create and edit forms runs a deep check with the current form contents, **without saving or creating anything**:
+
+- Success shows "Connection OK (write, read and delete probes passed)"; failure shows "Connection failed:" followed by the reason, translated the same way and with the credentials you typed scrubbed out.
+- It never creates a bucket and never applies encryption: it verifies connectivity and write, read and delete permissions on the backend.
+- When editing, masked credentials are restored from the stored values before the check runs.
+
+## Creating a channel
+
+On the Storage channels page click **New channel**, choose a storage type, then fill in the form:
+
+<Steps>
+<Step>
+Choose a type: **Object storage** and **Cloud drives** hold the built-in templates, **Advanced** holds **Custom** (an rclone backend name plus raw parameters). Template fields are described in [Object storage and WebDAV](./object-storage.mdx) and [Cloud drives and OAuth](./cloud-drives.mdx).
+</Step>
+<Step>
+Fill in the channel name, the template fields and the priority, and choose **Server-side encryption**; object storage also offers **Allow 302 direct links** and **Create the bucket automatically**.
+</Step>
+<Step>
+Click **Test connection**, and once it passes, **Create**.
+</Step>
+</Steps>
+
+Creation first builds the backend once from the parameters and rejects invalid ones outright; after the channel is stored, a deep check runs immediately. A failed deep check does not undo the creation: the channel stays, marked **Unhealthy**, with the notice "Channel created, but the probe failed:" plus the reason. Fix the configuration and click **Probe again**.
+
+## Editing a channel
+
+**Edit** in the row menu opens the same form as creation. You can change the channel name, the template fields (or custom parameters), the priority and **Allow 302 direct links**.
+
+- **Fixed**: server-side encryption (the form only shows **Encrypted** or **Not encrypted**; the API rejects changes with 409); the storage type (an edit keeps the template the channel was created with; custom channels and the built-in local channel open in the custom form); **Create the bucket automatically** only exists at creation.
+- **Masked credentials**: credentials are never sent back to the form; they are replaced with the fixed placeholder `__imgyoung_secret_keep__`. This applies to password and authorization fields in template forms, and to custom parameters whose name contains `key`, `secret`, `password`, `token` or `credential`. Submitting the placeholder unchanged keeps the stored value; typing a new value replaces it.
+- The configuration is replaced as a whole, not merged. Saving rebuilds only this channel's driver, so in-flight reads and writes on other channels are unaffected; a deep check follows immediately, and a failure shows "Channel saved, but the probe failed:" plus the reason.
+
+<Callout type="warn" title="Do not move storage by editing">
+Editing never triggers a backfill. After changing the bucket, prefix or endpoint, the channel's existing replicas are still recorded as ready; reads from it fail and fall through to other channels until the daily reconciliation notices the missing objects and replicates them again. To move storage, create a new channel, wait until its pending replica count reaches zero, then delete the old one.
+</Callout>
+
+## Deleting a channel
+
+**Delete** in the row menu opens a confirmation dialog; the checkbox "Also delete the objects stored on this channel" picks the path:
+
+| | Delete and purge (checked, default) | Remove only (unchecked) |
+|---|---|---|
+| Immediately | The channel turns **Draining** and leaves upload routing, replication and health checks | The channel and its replica records are deleted |
+| Remote objects | A background drain job deletes them one by one, then removes the channel | Left as they are; clean them up at the provider if needed |
+| Use it when | Retiring a channel normally | Credentials are revoked, the bucket is gone, or draining is stuck |
+
+Both paths are protected against deleting **the only replica**: if any image has no ready replica on another channel (draining channels do not count), the delete is refused with 409 and "该渠道持有部分图片的唯一副本,删除会丢数据;请先迁移或删除相关图片" ("this channel holds the only replica of some images; deleting it would lose data"). The check and the delete run in one transaction, so deleting two channels one after the other can never remove every copy of an image. Replicas still pending on other channels do not count; wait until they are ready.
+
+Draining in detail:
+
+- The drain job deletes objects batch by batch according to the replica records and removes each record as it goes. Progress is kept in the database, so an interrupted drain resumes where it stopped.
+- Only image objects listed in the replica records are deleted; metadata snapshots (`_imgyoung/backup/`) and other system objects are left in place.
+- One drain run may last up to an hour; timeouts and errors are retried by River with backoff. When retries are exhausted, the reason is written to the Status column (starting with "清理渠道对象失败,已停止重试", "draining failed, retries stopped") and a **Channel drain failed** alert opens. For a draining channel the row menu offers only **Remove now**: it stops draining and removes the channel at once, leaving any remaining remote objects untouched.
+
+## Usage monitoring and alerts
+
+Channel usage is the total size of the images whose replicas on that channel are ready. It is a logical figure: it excludes metadata snapshots and orphans, and it is not your provider's bill.
+
+- It is refreshed every `usage_report_seconds` (default 300 s) into the metric `imgyoung_channel_storage_bytes{channel="…"}`; the **Storage channels** card on the **Dashboard** shows bytes per channel and each channel's share.
+- The alert threshold is **Settings → Runtime settings → Reliability & channels → Channel usage alert threshold** (`channel_quota_gb`, in GB of 2³⁰ bytes); 0 reports without alerting. Exceeding it opens a **Channel over quota** alert.
+
+Four alert kinds concern channels. They are evaluated on the health check cadence, recorded under **Settings → Alert history**, and delivered to the alert webhook when one is configured:
+
+| Alert | Opens when | Resolves when |
+|---|---|---|
+| Channel unhealthy | A channel in service is marked unhealthy | It passes its health check again |
+| Replication failed | The channel has `failed` replicas | It has none left (on a healthy channel, the periodic reconciliation resets them for another try) |
+| Channel over quota | Usage exceeds the threshold | Usage drops or the threshold is raised |
+| Channel drain failed | A draining channel's drain job ran out of retries | The channel is removed |
+
+Other relevant metrics: `imgyoung_channels_healthy_total` (healthy channels), `imgyoung_channels_total` (loaded channels that are not draining, unhealthy ones included) and `imgyoung_channel_puts_total{channel, result}` (object writes to a channel, `result` being `ok` or `error`, counting both upload writes and replication). Scraping and alert delivery are covered in [Monitoring and alerts](../operations/monitoring.mdx).
+
+## Next
+
+<Cards>
+  <Card title="Object storage and WebDAV" href="./object-storage.mdx" />
+  <Card title="Cloud drives and OAuth" href="./cloud-drives.mdx" />
+  <Card title="Channel encryption" href="./encryption.mdx" />
+  <Card title="Metadata backups" href="../operations/backup.mdx" />
+</Cards>

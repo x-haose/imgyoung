@@ -1,0 +1,149 @@
+---
+title: Release archives
+description: Download the archive for your platform, verify its sha256 and run it directly; suited to Windows and to environments where the install script is inconvenient.
+---
+
+## Picking an archive
+
+Download the archive for your platform from the [releases page](https://github.com/x-haose/imgyoung/releases). The version in file names has no `v` (e.g. `1.0.0`); the tag in download paths does (e.g. `v1.0.0`):
+
+| OS | amd64 | arm64 |
+|---|---|---|
+| Linux | `imgyoung_<version>_linux_amd64.tar.gz` | `imgyoung_<version>_linux_arm64.tar.gz` |
+| macOS | `imgyoung_<version>_darwin_amd64.tar.gz` (Intel) | `imgyoung_<version>_darwin_arm64.tar.gz` (Apple silicon) |
+| Windows | `imgyoung_<version>_windows_amd64.zip` | `imgyoung_<version>_windows_arm64.zip` |
+
+`checksums.txt` next to them lists the sha256 of every archive. Each archive contains:
+
+<Files>
+  <File name="imgyoung (imgyoung.exe on Windows)" />
+  <File name="LICENSE" />
+  <File name="README.md, README.en.md" />
+  <Folder name="deploy" defaultOpen>
+    <File name="compose.yaml" />
+    <File name="Caddyfile" />
+    <File name="nginx.conf" />
+    <File name="imgyoung.service" />
+  </Folder>
+  <Folder name="web">
+    <Folder name="licenses" />
+  </Folder>
+</Files>
+
+`deploy/` holds sample configurations for Docker Compose, reverse proxies and systemd; `web/licenses/` holds the licenses of third-party code used by the admin console. The binary depends on none of the other files and can be copied on its own.
+
+## Download and verify
+
+Using 1.0.0 as an example; substitute the version and architecture you want:
+
+<Tabs items={['Linux', 'macOS', 'Windows']}>
+<Tab value="Linux">
+
+```bash title="Terminal"
+VERSION=1.0.0
+FILE=imgyoung_${VERSION}_linux_amd64.tar.gz
+BASE=https://github.com/x-haose/imgyoung/releases/download/v${VERSION}
+curl -fLO "$BASE/$FILE"
+curl -fLO "$BASE/checksums.txt"
+grep " $FILE\$" checksums.txt | sha256sum -c -
+tar -xzf "$FILE"
+```
+
+</Tab>
+<Tab value="macOS">
+
+```bash title="Terminal"
+VERSION=1.0.0
+FILE=imgyoung_${VERSION}_darwin_arm64.tar.gz
+BASE=https://github.com/x-haose/imgyoung/releases/download/v${VERSION}
+curl -fLO "$BASE/$FILE"
+curl -fLO "$BASE/checksums.txt"
+grep " $FILE\$" checksums.txt | shasum -a 256 -c -
+tar -xzf "$FILE"
+```
+
+The binary has no developer signature and is not notarized by Apple. Files downloaded with `curl` carry no quarantine attribute and run as is; if you downloaded the archive in a browser, remove the quarantine attribute after extracting, or macOS will block it:
+
+```bash title="Terminal"
+xattr -d com.apple.quarantine imgyoung
+```
+
+</Tab>
+<Tab value="Windows">
+
+```powershell title="PowerShell"
+$Version = "1.0.0"
+$File = "imgyoung_${Version}_windows_amd64.zip"
+$Base = "https://github.com/x-haose/imgyoung/releases/download/v$Version"
+Invoke-WebRequest "$Base/$File" -OutFile $File -UseBasicParsing
+Invoke-WebRequest "$Base/checksums.txt" -OutFile checksums.txt -UseBasicParsing
+$Expected = foreach ($Line in Get-Content checksums.txt) {
+  $Hash, $Name = $Line -split '\s+'
+  if ($Name -eq $File) { $Hash }
+}
+$Actual = (Get-FileHash $File -Algorithm SHA256).Hash
+if (-not $Expected -or $Actual -ne $Expected) { throw "sha256 mismatch: expected $Expected, got $Actual" }
+Expand-Archive $File -DestinationPath imgyoung
+```
+
+</Tab>
+</Tabs>
+
+On success Linux and macOS print `<file name>: OK` and PowerShell reports no error. On a mismatch, do not use the archive; download it again.
+
+## Running it
+
+<Tabs items={['Linux / macOS', 'Windows']}>
+<Tab value="Linux / macOS">
+
+```bash title="Terminal"
+./imgyoung
+```
+
+</Tab>
+<Tab value="Windows">
+
+```powershell title="PowerShell"
+cd imgyoung
+.\imgyoung.exe
+```
+
+</Tab>
+</Tabs>
+
+Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away. `Ctrl+C` shuts it down gracefully.
+
+- **Data directory**: by default `data/` under the **current directory at startup**, not the directory of the binary. Start it from somewhere else and you get a fresh, empty instance. Pin the location with `IMGYOUNG_DATA_DIR`:
+
+  ```bash
+  IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
+  ```
+
+  ```powershell
+  $env:IMGYOUNG_DATA_DIR = "D:\imgyoung-data"; .\imgyoung.exe
+  ```
+
+- **Listening address**: `:8721` by default, i.e. every interface; set `IMGYOUNG_LISTEN=127.0.0.1:8721` when only a local reverse proxy should reach it. Other environment variables are listed in [Configuration](../configuration.mdx).
+- **Version**: `./imgyoung -version`. This is the only command-line flag; everything else is configured through environment variables and the console.
+
+On Windows the firewall may ask whether `imgyoung.exe` may access the network on first run; for local-only use you can decline.
+
+## Running under a process supervisor
+
+For long-running use, do not just leave it open in a terminal. A supervisor starts it on boot and restarts it after a crash. Also, "Restore" under "Settings → Backups & export" in the console makes the service exit cleanly and relies on the supervisor to start it again so the snapshot can be swapped in; without one, the restore only completes when you start it by hand. Configure the supervisor to **always restart the process when it exits**, including clean exits.
+
+- **Linux**: use the systemd sample in the archive. The result is the same as `--service` of the [install script](./script.mdx), with data in `/var/lib/imgyoung`; that page also explains each setting:
+
+  ```bash title="Terminal"
+  sudo install -m 0755 imgyoung /usr/local/bin/imgyoung
+  sudo install -m 0644 deploy/imgyoung.service /etc/systemd/system/imgyoung.service
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now imgyoung
+  ```
+
+- **macOS**: write a launchd service, or use [Docker](./docker.mdx) instead.
+- **Windows**: register `imgyoung.exe` as a Windows service with a tool such as WinSW or NSSM, set the working directory or `IMGYOUNG_DATA_DIR`, and configure it to restart on exit.
+
+## Upgrading
+
+Download and verify the new archive, stop the service, replace the old binary with the new one, and start it again. Leave the data directory as is; the database schema is migrated automatically when the new version starts. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for more.

@@ -1,0 +1,168 @@
+---
+title: Channel encryption
+description: Store only ciphertext at your provider with rclone crypt — what it protects against, how to turn it on, why it is fixed at creation, where the keys come from, and how to decrypt a channel with stock rclone without ImgYoung.
+---
+
+## What it protects against
+
+Channel encryption is aimed at the **storage provider**. Free or third-party storage may scan or review what you store, sometimes closing accounts over false positives. With encryption on, both object contents and object names on the channel are ciphertext.
+
+It does **not** protect against the server itself. ImgYoung holds the master key, and format checks, metadata stripping, hashing, deduplication and on-demand processing all run on plaintext before encryption, so none of them are affected; anyone with the server and the master key can read everything.
+
+The provider can still see the number of objects, their sizes (the plaintext size can be worked out from the ciphertext size to within 16 bytes), modification times and access patterns.
+
+## How it works
+
+An encrypted channel wraps its backend in rclone's `crypt` backend:
+
+- **Contents** are split into 64 KiB blocks and encrypted with XSalsa20-Poly1305, which also authenticates them.
+- **Object names** use the `standard` mode: each path segment is encrypted with AES-256 in EME mode and written as lower-case base32; folder names are encrypted too. A given name always encrypts to the same ciphertext, which is what makes lookups by name possible.
+- **Key material**: rclone derives the actual keys with scrypt from a password and a salt. ImgYoung derives a separate password and salt for every channel, see [Where the keys come from](#where-the-keys-come-from).
+
+Uploads, proxied reads, replication and health checks all pass through this layer transparently. Everything on the channel is encrypted: images, deep-check temporary objects, and the metadata snapshots (`_imgyoung/backup/`) written while the channel is the primary.
+
+## Turning it on
+
+There are two levels, and the channel level wins:
+
+| Where | Values | Default |
+|---|---|---|
+| **Settings → Runtime settings → Access & links → Encrypt new channels by default** (`encrypt_new_channels`) | On / off | Off |
+| **Server-side encryption** in the new-channel form | **Inherit the global default**, **Force on**, **Force off** | Inherit the global default |
+
+"Inherit the global default" is resolved at the moment of creation; changing the global setting later does not affect existing channels. Through the API, omitting the `encrypted` field means inherit.
+
+Encrypted channels carry an **Encrypted** badge in the list; the edit form only shows **Encrypted** or **Not encrypted**.
+
+## Fixed at creation
+
+The encryption attribute is set at creation and cannot change afterwards. The API rejects changes with 409 and "加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据" ("encryption cannot change after creation; create a new channel and migrate").
+
+The reason: after flipping the switch, one channel would hold objects written under the old setting next to objects written under the new one, and the old objects could not be read back under the new setting.
+
+To change encryption, let replication do the migration:
+
+<Steps>
+<Step>
+Create a new channel with the encryption setting you want. It backfills a replica of every existing image on its own.
+</Step>
+<Step>
+Wait until the new channel's **Replicas** column shows zero pending and no failures.
+</Step>
+<Step>
+Delete the old channel. Every image now has a ready replica on the new channel, so the only-replica protection does not block it.
+</Step>
+</Steps>
+
+## No 302 direct links on encrypted channels
+
+Ciphertext cannot be handed to a browser, so encryption and **Allow 302 direct links** exclude each other:
+
+- In the new-channel form, choosing **Force on** disables **Allow 302 direct links**; with direct links on, **Force on** cannot be selected.
+- The same applies when you choose **Inherit the global default** while the global default is on.
+- The API rejects a request asking for both with 400 and "渠道参数非法: 加密渠道不允许直链(密文无法直出)" ("invalid channel parameters: encrypted channels cannot serve direct links").
+- With `access_mode = redirect`, images on encrypted channels are always proxied.
+
+## Where the keys come from
+
+Each encrypted channel's password and salt are derived from the **master key** and never stored on their own:
+
+| Item | Value |
+|---|---|
+| Algorithm | HKDF-SHA256, empty salt (equivalent to 32 zero bytes), 32 bytes of output |
+| Input key | The 32 bytes of the master key |
+| Password info | `channel:<channel ID>:<created at>:crypt:password` |
+| Salt info | `channel:<channel ID>:<created at>:crypt:salt` |
+| Given to rclone | The lower-case hex string of the 32-byte result (64 characters), as crypt's `password` and `password2` respectively |
+
+- The **channel ID** and **created at** come from the `id` and `created_at` columns of the `channels` table in the metadata database. `created_at` is UTC text written by SQLite, such as `2026-10-15 08:00:00`, and is used verbatim.
+- The creation time is part of the input because SQLite reuses IDs of deleted channels; binding to the ID alone would let a new channel derive the same keys as a deleted one.
+- Keys of different channels are independent; leaking one channel's keys does not expose the others.
+
+The **master key** comes from the environment variable `IMGYOUNG_MASTER_KEY` (64 hex characters) or, when that is unset, from `<data dir>/master.key` (generated on first start with permissions 0600). It encrypts the channel configurations as well as deriving the channel keys. It is not part of the data export or of metadata snapshots.
+
+<Callout type="error" title="Losing the master key loses encrypted channels for good">
+Without the master key no encrypted channel's password can be derived, so the ciphertext stays unreadable, and the stored channel configurations cannot be decrypted either. Keep a copy of the master key somewhere separate from the server. Configuration is covered in the [configuration reference](../configuration.mdx), backup strategy in [Metadata backups](../operations/backup.mdx).
+</Callout>
+
+## Self-rescue: decrypting a channel with stock rclone
+
+crypt is a published rclone format. Even with ImgYoung gone, stock rclone can read every object on an encrypted channel. You need:
+
+- the master key (64 hex characters);
+- the channel's ID and creation time (the `channels` table of the metadata database);
+- the backend credentials and the channel's storage path (bucket and prefix, drive folder, and so on).
+
+ImgYoung has no command that prints the derived password, and neither the admin console nor the data export includes a channel's creation time. Read the ID and creation time straight from the database file and compute the password with the rules above.
+
+<Callout type="warn" title="When the snapshots are on an encrypted channel too">
+If the primary channel is encrypted, metadata snapshots on it are encrypted as well. Should the server be lost together with `<data dir>/imgyoung.db`, and the only snapshot sit on an encrypted channel, you need that channel's ID and creation time to open the snapshot — and those two values are recorded inside the snapshot. Keep each encrypted channel's ID and creation time offline together with the master key.
+</Callout>
+
+<Steps>
+<Step>
+### Read the channel ID and creation time
+
+The metadata database is `<data dir>/imgyoung.db`; snapshot files are SQLite databases of the same shape. Query it with `sqlite3`:
+
+```bash title="Terminal"
+sqlite3 imgyoung.db "SELECT id, name, created_at FROM channels WHERE encrypted = 1;"
+```
+
+```text title="Example output"
+3|r2-backup|2026-10-15 08:00:00
+```
+</Step>
+<Step>
+### Compute the password and salt
+
+This script uses only the Python standard library to compute the password and salt with HKDF-SHA256:
+
+```python title="derive.py"
+import hashlib, hmac, sys
+
+master = bytes.fromhex(sys.argv[1].strip())
+channel_id, created_at = sys.argv[2], sys.argv[3]
+prk = hmac.new(b"\x00" * 32, master, hashlib.sha256).digest()
+for usage in ("password", "salt"):
+    info = f"channel:{channel_id}:{created_at}:crypt:{usage}".encode()
+    print(usage, hmac.new(prk, info + b"\x01", hashlib.sha256).hexdigest())
+```
+
+```bash title="Terminal"
+python3 derive.py "$(cat master.key)" 3 "2026-10-15 08:00:00"
+```
+
+It prints two lines: `password <64 hex characters>` and `salt <64 hex characters>`.
+</Step>
+<Step>
+### Configure rclone
+
+First create a plain remote for the channel's backend, using the same parameters as the channel (Cloudflare R2 as an example):
+
+```bash title="Terminal"
+rclone config create imgyoung-r2 s3 provider=Cloudflare \
+  access_key_id=<Access Key> secret_access_key=<Secret Key> \
+  endpoint=https://<account ID>.r2.cloudflarestorage.com region=auto
+```
+
+Then layer a crypt remote on top. `remote` points at the channel's storage path (the value of the bucket field in the template, prefix included). Do not drop `--obscure`: it tells rclone to treat both hex strings as plain passwords and encode them:
+
+```bash title="Terminal"
+rclone config create imgyoung-crypt crypt \
+  remote=imgyoung-r2:<bucket>/<prefix> \
+  password=<password from the previous step> password2=<salt from the previous step> \
+  filename_encryption=standard --obscure
+```
+</Step>
+<Step>
+### Read the data
+
+```bash title="Terminal"
+rclone ls imgyoung-crypt:
+rclone copy imgyoung-crypt: ./imgyoung-restore
+```
+
+Image objects are named `<short ID>_<first 8 hex digits of SHA-256>`, without an extension; the short ID is the ID in the image link. Metadata snapshots are under `_imgyoung/backup/`.
+</Step>
+</Steps>

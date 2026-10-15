@@ -1,0 +1,225 @@
+---
+title: 架构
+description: 单实例设计、分层与依赖方向、数据模型、上传与访问的数据流、outbox 围栏、周期任务,以及为什么在进程内集成 rclone。
+---
+
+## 单实例设计
+
+ImgYoung 明确按单实例设计:一个进程、一个数据目录。
+
+- **元数据库是一个 SQLite 文件**(数据目录下的 `imgyoung.db`,WAL 模式)。写操作走单连接排队,读操作走连接池;驱动是纯 Go 的 `modernc.org/sqlite`。
+- **任务队列在同一个库里**:异步任务由 River 执行,它的任务表与业务表在同一个 SQLite 文件中,不需要额外的队列服务。
+- **其余状态都在本机**:上传并发闸、按用户的上传频控、登录限速、访问活跃度的聚合都在进程内存里,衍生图缓存在本地磁盘上。不使用 Redis。
+- **单个静态二进制**:全程 `CGO_ENABLED=0`,管理后台的前端产物与 OpenAPI 文档都编译进二进制。
+
+因此 ImgYoung 不支持多个进程共享同一个数据目录,也不支持水平扩展。需要高可用时,升级路径是把数据库换成 PostgreSQL
+(River 本身支持 PostgreSQL,任务队列随之迁过去),进程内的共享状态届时再外置;当前代码只有 SQLite 实现。
+
+## 分层与依赖方向
+
+```text
+http ──→ core ──→ infra
+  │        └────→ store
+  └─────────────→ infra
+```
+
+| 层 | 目录 | 职责 |
+|---|---|---|
+| store | `store/` | 公开的存储引擎:`driver` 接口、`rclone` 实现、`failover` 容灾原语。见 [作为 Go 库使用](./library/index.mdx) |
+| infra | `internal/infra/` | 基础设施与出站适配:`config`(引导配置与运营配置)、`db`(schema、查询、迁移、sqlc 生成代码)、`secret`(主密钥与加密)、`id`(短 ID)、`imaging`(图像处理)、`cdn`、`urlfetch`(URL 转存的抓取)、`observability`(指标)、`version` |
+| core | `internal/core/` | 业务核心:`channel`(渠道与健康探测)、`replication`(补齐、对账、排空、CDN purge)、`upload`、`variants`(按需处理)、`dedup`、`lifecycle`、`reliability`(备份恢复)、`auth`、`audit`、`referer`、`usage`、`alert` |
+| http | `internal/http/` | HTTP 入站:`publicapi`(上传与图片访问)、`s3api`(S3 协议面)、`adminapi`(管理后台)、`middleware`、`httpx`、`router` |
+| 装配根 | `cmd/imgyoung/` | `build.go` 按「基础设施 → 业务服务 → HTTP」顺序手工构造对象图,`serve.go` 用 oklog/run 编排启停,`loops.go` 放周期循环 |
+
+`store` 与 `infra` 是两个并列的叶子:`store` 不依赖任何 `internal/` 包,`infra` 不依赖 core、store 与 http;`core` 同时依赖二者。
+依赖方向由 golangci-lint 的 depguard 规则强制,CI 不通过即不能合并:
+
+| 规则 | 禁止导入 | 原因 |
+|---|---|---|
+| `store/**` | `internal/` 下的任何包 | store 是公开的可复用存储引擎,不能依赖应用代码 |
+| `internal/infra/**` | `internal/core`、`store`、`internal/http` | infra 是基础设施叶子 |
+| `internal/core/**` | `internal/http` | 业务核心不知道传输层,可以脱离 HTTP 测试 |
+| `internal/http/**` | `store` | 选路与容灾属于 core,传输层只拿 core 给出的结果 |
+
+另外两条约定:
+
+- **接口由使用方定义**:各包在自己内部声明只含所需方法的小接口(如 `upload.ChannelSelector`、`publicapi.BlobChannels`),由具体类型隐式满足。
+  `store/driver.Driver` 是唯一的一等抽象。
+- **身份显式传参**:中间件解析出认证主体放进请求上下文,handler 取出后作为参数传给 core;core 不读 context 里的身份,按用户隔离在 core 中强制执行。
+
+HTTP handler 与 River worker 都只是把外部触发翻译成服务调用的薄适配;周期任务是各服务自带的 `Run(ctx, wait)` 循环,由装配根统一编排,没有单独的调度层。
+
+## 数据模型
+
+数据模型的核心是**物理图与上传引用两层分离**:
+
+```text
+images(上传引用)──→ blobs(物理图)──→ blob_channels(各渠道的副本)──→ channels
+       N : 1                  1 : N                          N : 1
+```
+
+- **`blobs`** 是一份实际存储的字节。每次上传都新建一个 blob;后台查重把字节完全相同的 blob 合并后,一个 blob 可以被多条引用指向。
+  它记录净化后字节的 `sha256`、感知哈希 `phash`、渠道内对象键 `storage_key`(形如 `{short_id}_{sha256 前 8 位}`)、MIME、大小、尺寸,
+  以及引用计数 `ref_count` 与待删标记。
+- **`images`** 是一次上传产生的引用,对外的短 ID(10 位)就是它的主键。归属用户、来源 Token、S3 对象键别名、到期时刻与访问活跃度、
+  冷图标签与清理豁免都挂在引用上,不挂在 blob 上。
+- **`blob_channels`** 记录某个 blob 在某个渠道上的副本,兼作补齐任务的状态:`pending → uploading → done / failed`,另有尝试次数与最近错误。
+
+两层分离让几件事各得其所:查重合并只是把引用改指到保留的 blob;TTL、冷图与配额按引用计算;副本、补齐与物理删除按 blob 进行。
+
+**引用计数**:`ref_count` 的增减都是原子的 `UPDATE … SET ref_count = ref_count ± 1`。删除引用与递减计数在同一个事务里;
+计数归零的 blob 被标记待删,并按运营配置 `delete_grace_minutes` 记下物理删除时刻。到点后清理任务先清掉它的衍生图缓存,
+再在一个事务里删除业务行并复查删除条件(期间又被引用就放弃本次删除),最后为每个持有副本的渠道入队对象删除任务。
+
+其余的表:
+
+| 表 | 内容 |
+|---|---|
+| `channels` | 渠道:rclone 后端名、用主密钥 AES-GCM 加密的参数 JSON、优先级、健康标记与最近探测结果、是否加密、是否允许直链、清理中标记 |
+| `variants` | 衍生图缓存的索引:一个 blob 一种处理参数一行,字节存在本地磁盘,按最近访问时间做 LRU 淘汰 |
+| `settings` | 运营配置,单行宽表;每列的 DEFAULT 就是出厂值。见 [配置](./configuration.mdx) |
+| `users`、`tokens`、`sessions` | 用户与配额、上传 Token(只存哈希)、后台会话(只存 session id 的哈希与绑定的 CSRF 令牌) |
+| `idempotency_keys` | 上传幂等键,按用户隔离 |
+| `dedup_candidates` | 相似重复的候选对,人工裁决的工作队列 |
+| `referer_whitelist`、`audit_log`、`alerts` | 防盗链白名单、管理操作审计、告警记录 |
+
+表结构以 `internal/infra/db/schema/` 下每表一个文件的声明式 SQL 为准,每张表与每一列都有注释。版本化迁移由 Atlas 据此生成,
+随二进制内嵌,进程启动时按顺序自动应用,已应用的版本记在 `schema_revisions` 表里,跨多个版本升级也会补齐中间的迁移。
+
+## 上传数据流
+
+数据面上传、后台上传、URL 转存与 S3 PutObject 只在「字节从哪来」上不同,拿到字节之后走同一条管道。上传路径不查重:每次上传都新建 blob,
+查重在后台进行,上传路径因此是一条没有分支的直线。
+
+<Steps>
+<Step>
+
+**入口与防护**:认证(上传 Token、会话或 S3 签名),并通过两道闸:按用户的上传频控(`upload_rate_per_min`)与全局上传并发闸
+(`max_concurrent_uploads`,满载直接返回 429)。随后把图片字节完整读进内存,超过 `max_upload_mb` 即拒绝。
+
+</Step>
+<Step>
+
+**幂等**:带 `Idempotency-Key` 且同一用户已用过这个键时,直接返回已有的图。
+
+</Step>
+<Step>
+
+**格式与像素预算**:按文件头的 magic bytes 判定真实格式,只接受 JPEG、PNG、GIF、WebP;只读图片头取得尺寸,并与嗅探出的格式交叉核对;
+宽 × 高超过 `max_pixels_mp` 直接拒绝,不进入完整解码。解码后的内存由分辨率决定,与文件字节数无关,所以这道闸必须在解码之前。
+
+</Step>
+<Step>
+
+**配额预检**:按引用计全额,超出用户配额返回 403,不写渠道。
+
+</Step>
+<Step>
+
+**净化**:EXIF 档位为 `strip` 时剥离元数据(JPEG、PNG、WebP;GIF 没有标准元数据段,原样通过)。
+
+</Step>
+<Step>
+
+**哈希**:完整解码一次计算感知哈希 pHash,再对将要存储的字节计算 SHA-256。净化在哈希之前,所以 `sha256` 永远对应渠道里实际存的字节。
+
+</Step>
+<Step>
+
+**写渠道**:对象键为 `{short_id}_{sha256 前 8 位}`,嵌入短 ID 是元数据库全部丢失时从存储端反查的最后手段。
+用 `failover.Write` 按优先级向健康渠道写入,凑够 `min_success` 份即止,单次写入超时 10 分钟,失败顺延下一个渠道。
+
+</Step>
+<Step>
+
+**落库**:一个事务内写入 blob、引用、每个在役渠道的副本记录(写成功的为 `done`,其余为 `pending`)与幂等键。
+
+</Step>
+<Step>
+
+**入队补齐**:为 `pending` 的渠道入队补齐任务后返回。入队失败只记日志,由对账补上。
+
+</Step>
+</Steps>
+
+整个上传在内存中完成,不写临时文件;峰值内存约为「并发数 × max(单图上限, 像素预算对应的解码内存)」,调低这几项即可适配小内存机器。
+渠道写入成功而落库失败时会留下孤儿对象,由对账 GC 回收,不回滚渠道写入。
+
+## 访问数据流
+
+`GET /i/{id}`(以及 S3 对象键别名 `/o/{user_id}/{key}`):
+
+1. 防盗链中间件按 Referer 白名单放行或返回 403。
+2. 查引用,查不到返回 404(到期的引用被清理任务回收后即查不到)。公开访问在内存中累计活跃度,按 `activity_flush_seconds` 批量落库。
+3. 需要缩放或转格式时走按需处理:带 `w`、显式 `format`,或未指定格式而浏览器接受 WebP、档位允许且原图不是 WebP。GIF 一律输出原图。
+   命中衍生图缓存直接返回;未命中则在 `process_workers` 并发上限内处理并写入缓存,相同参数的并发请求合并为一次处理;
+   处理繁忙或失败时降级输出原图,并带 `Cache-Control: no-store`。
+4. 否则输出原图:候选渠道为「健康、不在清理中、该图副本为 `done`」的渠道,按优先级排序。访问模式为 `redirect` 且候选中有允许直链、
+   未加密并配置了公开地址的渠道时,302 到该渠道;否则用 `failover.Open` 代理读取,第一个渠道读不到立即切下一个。
+5. 原图与衍生图内容不可变,带强 ETag 与 `Cache-Control: public, max-age=31536000, immutable`。
+
+## outbox 围栏:业务表是唯一真相
+
+异步补齐由 River 执行,但 River 的任务只是**幂等的触发器**,副本状态的唯一真相是业务表 `blob_channels`:
+
+- 补齐任务的含义是「确保 blob X 在渠道 Y 上有副本」。worker 先读业务表:已是 `done` 直接返回;开始复制前置为 `uploading`,
+  失败退回 `pending` 交给 River 重试,最后一次尝试仍失败置为 `failed`,成功置为 `done`。
+- 入队按 (blob, 渠道) 去重,只对尚未结束的任务去重,同一副本不会在队列里出现两份。
+- **对账**在启动时与之后每 10 分钟执行一次:为清理中的渠道补入排空任务;为每个渠道补种缺失的副本行;把健康渠道上 `failed` 的副本复位为 `pending`;
+  再分页扫描全部 `pending` / `uploading` 副本,重新入队。
+
+所以即使 River 的任务表丢失或损坏,队列也能从业务表完整重建;进程被强制杀死时正在执行的任务,超过 16 分钟仍停在运行态会被 River 重新排程。
+新建渠道时为存量 blob 播种 `pending` 副本行,同样由这套机制自然收敛,没有额外的回填逻辑。
+
+其他异步任务遵循同一原则:删除渠道上的对象(`delete_object`)、排空清理中的渠道(`drain_channel`,进度就是剩余的副本行)、
+清理 CDN 缓存(`cdn_purge`)。它们都是幂等的,失败由 River 退避重试:对象删除最终失败留下的孤儿由对账 GC 回收;
+排空任务在每轮对账时为仍处于清理中的渠道重新入队;CDN 清理最终失败时,边缘缓存在 CDN 自身的缓存期满后过期。
+
+## 周期任务
+
+周期任务都是服务自带的循环,由装配根统一启停。间隔取自运营配置的,在后台修改后立即按新值重新计时,不必等旧的周期走完。
+
+| 任务 | 间隔 | 内容 |
+|---|---|---|
+| 健康探测 | `health_check_seconds`(默认 60 秒) | 各渠道并行轻探测;不健康的渠道轻探测通过后,再经深探测确认才恢复。见 [多存储容灾](./library/failover.mdx) |
+| 告警评估 | 同健康探测 | 渠道不健康、补齐失败、渠道用量超阈值、排空失败、备份失败;可推送到 Webhook |
+| 生命周期清理 | `cleanup_sweep_seconds`(默认 60 秒) | 回收到期引用 → 物理删除过了宽限期的 blob → 冷图打标 → 回收过期幂等键 → 回收超期审计日志 |
+| 活跃度落库 | `activity_flush_seconds`(默认 60 秒) | 把公开访问时刻与计数批量写库;衍生图的最近访问时间按同一间隔落库 |
+| 查重 | `dedup_scan_seconds`(默认 300 秒) | 精确重复(SHA-256 相同)自动合并,再做 pHash 相似扫描,结果进人工裁决队列 |
+| 用量上报 | `usage_report_seconds`(默认 300 秒) | 统计各渠道存储用量并更新指标 |
+| 元数据库备份 | `backup_interval_hours`(默认 24 小时) | 用 `VACUUM INTO` 做一致性快照,上传到主渠道的 `_imgyoung/backup/`,保留 `backup_keep` 份。见 [备份与恢复](./operations/backup.mdx) |
+| 认证维护 | 1 分钟 / 1 小时(固定) | 批量回写 Token 最近使用时刻 / 回收过期会话 |
+| 补齐对账 | 10 分钟(固定) | 见上一节 |
+| 对账 GC | 24 小时(固定) | 列举每个健康渠道,与 `done` 副本双向比对:渠道有、库里没有且修改时间超过 48 小时的孤儿对象删除;库里记为 `done`、渠道上缺失的幻影副本退回 `pending` 重新补齐。系统目录 `_imgyoung/` 与轻探测键不参与 |
+
+停机(收到 SIGINT / SIGTERM,或在后台恢复备份快照后请求重启)时各组件依次收尾:各循环把内存中待落库的数据写完,
+River 等待在途任务,HTTP 停止接收新请求并等待在途请求;River 与 HTTP 的等待各以 30 秒为上限,随后关闭渠道驱动与数据库。
+
+## 两条升级缝
+
+技术选型里只有两处预期会被替换,其余都是定死的,不预留替换点:
+
+- **图像处理引擎**:按需处理的唯一入口是 `internal/infra/imaging` 的 `Processor.Process(src, params)`。当前是纯 Go 实现:标准库解码
+  JPEG / PNG / GIF,WebP 编解码用 `gen2brain/webp`,只输出 WebP、JPEG、PNG,GIF 只收发原图不处理。需要更多格式或更快的处理时,替换的是这个处理器。
+- **数据库**:当前是 SQLite。表结构以声明式 SQL 为准,迁移由 Atlas 生成,查询代码由 sqlc 生成;换 PostgreSQL 时替换的是这一层与 River 的驱动。
+
+两处目前都只有一个实现,没有为它们预先定义接口类型。
+
+## 为什么在进程内集成 rclone
+
+存储层的原则是:rclone 只负责「把字节存到某个后端、取回、查询、列举、删除」,主备切换、补齐、引用计数、查重、TTL、健康判断全部由 ImgYoung 自己实现,
+两者之间隔着 `store/driver.Driver` 接口。
+
+集成方式是直接 import rclone 的 `fs` 与后端包,在进程内以参数映射构造 `fs.Fs`,而不是调用 rclone 命令行、librclone 的 RPC 接口或 rclone 配置文件:
+
+- **流式、不落盘**:上传用 `fs.Fs.Put` 直接写内存里的字节,读取直接把对象流转给 HTTP 响应。
+- **配置在自己的库里**:渠道参数用主密钥加密后存在 `channels` 表,运行时解密成映射交给后端;参数含凭证,不写日志,错误链也不携带参数。
+- **令牌写回只有一个刷新者**:rclone 自己刷新 OAuth 令牌,经参数写回钩子交给应用,立即加密落库;应用不另起刷新循环。
+- **一个句柄完成全部操作**:读、写、探测、列举、删除走同一个 `fs.Fs`,错误映射只维护一套(对象缺失统一收敛为 `driver.ErrNotFound`)。
+- **渠道加密零额外代码**:加密渠道在后端之上叠加 rclone 的 crypt 层,上传与访问路径无需改动;crypt 是公开格式,持密码可以用标准 rclone 独立解密。见 [渠道存储加密](./channels/encryption.mdx)。
+- **测试不需要云账号**:rclone 的 `local` 与 `memory` 后端让整条存储链路可以在本机做集成测试。
+
+注册全部 rclone 后端(`backend/all`)意味着任何 rclone 支持的存储都能直接作为渠道使用,rclone 升级即带来新后端;代价是二进制体积达到百 MB 量级。
+这里用的是 rclone 的内部 API,它不承诺稳定,所以 `go.mod` 固定了 rclone 版本,升级由人工进行并跑完整测试。
+
+把 `Driver` 接口与 rclone 实现拆成两个包,也让应用之外的 Go 项目可以单独复用这套存储引擎,见 [作为 Go 库使用](./library/index.mdx)。

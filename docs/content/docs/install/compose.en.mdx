@@ -1,0 +1,107 @@
+---
+title: Docker Compose
+description: Run ImgYoung with the compose.yaml from the repository, and pair it with Caddy for automatic HTTPS.
+---
+
+## The sample file
+
+`deploy/compose.yaml` in the repository (release archives include a copy too):
+
+<include cwd lang="yaml" meta='title="deploy/compose.yaml"'>../deploy/compose.yaml</include>
+
+Put it in an empty directory and start it:
+
+```bash title="Terminal"
+mkdir imgyoung && cd imgyoung
+curl -fsSLO https://raw.githubusercontent.com/x-haose/imgyoung/main/deploy/compose.yaml
+docker compose up -d
+```
+
+Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away.
+
+Image tags, the contents of the data volume, environment variables and the restart policy are explained on [Docker image](./docker.mdx) and not repeated here.
+
+## Day-to-day operations
+
+Run these in the directory that holds `compose.yaml`:
+
+| Task | Command |
+|---|---|
+| Start, or apply changes to `compose.yaml` | `docker compose up -d` |
+| Show status | `docker compose ps` |
+| Follow the logs | `docker compose logs -f imgyoung` |
+| Stop and remove the container (the volume is kept) | `docker compose down` |
+| Upgrade | `docker compose pull && docker compose up -d` |
+
+<Callout type="error" title="Do not add -v">
+  `docker compose down -v` also deletes the data volume, and with it the database, the images and `master.key`.
+</Callout>
+
+The volume's real name carries the project name as a prefix, and the project name defaults to the directory name: inside an `imgyoung` directory it is `imgyoung_imgyoung-data`. Check with `docker volume ls`.
+
+To pin a version, change `image:` to a major.minor tag such as `ghcr.io/x-haose/imgyoung:1.0`, or to an exact version, then run `docker compose up -d`. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for more.
+
+## Serving HTTPS with Caddy
+
+Caddy obtains and renews certificates automatically. Put the two files below in one directory, replace the domain with yours, point its DNS at this host, and open ports 80 and 443:
+
+<Files>
+  <Folder name="imgyoung" defaultOpen>
+    <File name="compose.yaml" />
+    <File name="Caddyfile" />
+  </Folder>
+</Files>
+
+```yaml title="compose.yaml"
+services:
+  imgyoung:
+    image: ghcr.io/x-haose/imgyoung:latest
+    restart: unless-stopped
+    # No published port: Caddy is the only entry point
+    volumes:
+      - imgyoung-data:/data
+    environment:
+      # Caddy runs in another container on the same Docker network; use that network's range
+      IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - imgyoung
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  imgyoung-data:
+  caddy-data:
+  caddy-config:
+```
+
+```text title="Caddyfile"
+img.example.com {
+	# Metrics are for internal scraping only; never forward them from the public entry point
+	respond /metrics 404
+
+	reverse_proxy imgyoung:8721
+}
+```
+
+The only difference from `deploy/Caddyfile` in the repository is the upstream: Caddy runs in a container, so it reaches ImgYoung by service name, `imgyoung:8721`, instead of `127.0.0.1:8721`.
+
+Notes:
+
+- **Why `IMGYOUNG_TRUSTED_PROXIES` is needed.** By default ImgYoung trusts forwarding headers only from loopback, but Caddy connects from a private address on the Docker network. Without it, login rate limiting treats every visitor as the same client, returned image links use `http://` instead of `https://`, and the session cookie is not marked `Secure`.
+- **Check the subnet.** The network Compose creates for the project usually falls inside `172.16.0.0/12`, but once Docker's default pools there are used up it allocates from `192.168.0.0/16` as well. Run `docker network inspect imgyoung_default` (when the project is named after the directory) and look at `Subnet`; if it is outside `172.16.0.0/12`, use the actual subnet.
+- **Certificates and Caddy's data.** Certificates live in the `caddy-data` volume; deleting it makes Caddy request new ones.
+- **Upload size.** Caddy does not limit request body size by default, so the only limit is "Max image size" in the console (50 MB by default).
+- **Link addresses.** With the proxy trusted and no `base_url` configured, links are built from the host and scheme Caddy forwards, i.e. `https://img.example.com/i/...`. You only need `base_url` when the public domain differs from the one Caddy receives (for example with a CDN in front); see [Configuration](../configuration.mdx).
+- **Metrics.** The public entry point blocks `/metrics`; a Prometheus on the same network can scrape `imgyoung:8721/metrics` directly, since private addresses are allowed by default. See [Monitoring](../operations/monitoring.mdx).
+
+For Nginx and other proxies, see [Reverse proxy](../operations/reverse-proxy.mdx).

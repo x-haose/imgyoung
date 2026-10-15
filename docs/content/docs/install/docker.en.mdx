@@ -1,0 +1,141 @@
+---
+title: Docker image
+description: Run ImgYoung from the multi-arch image on GHCR - the run command, image tags, the data volume, environment variables and settings behind a reverse proxy.
+---
+
+## Running it
+
+```bash title="Terminal"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away.
+
+| Flag | Purpose |
+|---|---|
+| `-d --name imgyoung` | Run in the background as a container named `imgyoung`, which later commands refer to |
+| `--restart unless-stopped` | Start the process again after it exits; see "Restart policy" below |
+| `-p 8721:8721` | Publish the service port. If a reverse proxy on the same host is the only entry point, use `-p 127.0.0.1:8721:8721` so 8721 is not exposed directly |
+| `-v imgyoung-data:/data` | A named volume holding all state |
+
+The image is published for `linux/amd64` and `linux/arm64`; Docker picks the right one for the host. To see the version inside an image:
+
+```bash title="Terminal"
+docker run --rm ghcr.io/x-haose/imgyoung:latest -version
+```
+
+## Image tags
+
+The image is `ghcr.io/x-haose/imgyoung`. Tags have no `v` prefix:
+
+| Tag | Points to | Good for |
+|---|---|---|
+| `1.2.3` | One specific version; never changes after release | Production, where you decide exactly when to upgrade |
+| `1.2` | The latest stable release in the 1.2 series; moves when a patch release ships | Getting fixes automatically without crossing a minor version |
+| `latest` | The latest stable release | Trying it out and personal instances |
+
+Pre-releases get only their exact version tag and never move the major.minor tags or `latest`, so instances pinned to those never pull a pre-release.
+
+## The data volume
+
+The data directory inside the container is `/data` (the image sets `IMGYOUNG_DATA_DIR=/data`). It contains:
+
+| Path | Contents |
+|---|---|
+| `imgyoung.db` | The metadata database (SQLite in WAL mode, so `imgyoung.db-wal` and `imgyoung.db-shm` sit next to it while running): users, image records, channel configuration (credentials encrypted with the master key), runtime settings and the job queue |
+| `master.key` | The master key, generated on first start with mode 0600. When `IMGYOUNG_MASTER_KEY` is set, this file is neither created nor read |
+| `blobs/` | Objects of the built-in local channel. While local is the primary channel, metadata snapshots are stored here too, under `_imgyoung/backup/` |
+| `variants/` | The cache of variants produced by on-demand processing, capped at 10240 MB by default and evicted least-recently-used first |
+
+During a restore from snapshot you may also see the staged file `imgyoung.db.restore`, and afterwards the previous database kept as `imgyoung.db.pre-restore-<time>`.
+
+<Callout type="warn" title="Back up master.key separately">
+  Channel credentials and the data on encrypted channels can only be decrypted with the master key. It is not included in metadata snapshots or data exports, and it cannot be recovered once lost. Copy it somewhere safe right after the first start:
+
+  ```bash
+  docker cp imgyoung:/data/master.key ./imgyoung-master.key
+  ```
+</Callout>
+
+### Using a host directory instead
+
+To keep the data in a directory on the host, first give it to the user the image runs as (uid 65532):
+
+```bash title="Terminal"
+sudo mkdir -p /srv/imgyoung
+sudo chown 65532:65532 /srv/imgyoung
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v /srv/imgyoung:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+A named volume inherits the ownership of `/data` from the image the first time it is mounted; a host directory does not. With the wrong owner the process cannot create the database and fails at startup.
+
+## Environment variables
+
+These are all bootstrap settings. Pass them with `-e`; changes take effect only after the container is recreated. See [Configuration](../configuration.mdx) for the full reference.
+
+| Variable | Default in the image | Description |
+|---|---|---|
+| `IMGYOUNG_DATA_DIR` | `/data` | Set by the image; leave it alone |
+| `IMGYOUNG_LISTEN` | `:8721` | Listening address inside the container; rarely needs changing |
+| `IMGYOUNG_MASTER_KEY` | Empty (uses `/data/master.key`) | A 64-character hex master key, e.g. from `openssl rand -hex 32`. When switching an existing instance to it, use the exact value from its current `master.key` |
+| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Reverse proxy networks whose forwarding headers are trusted; see below |
+| `IMGYOUNG_METRICS_ALLOW` | Loopback and private ranges | Networks allowed to scrape `/metrics` |
+
+## Running as nonroot
+
+The image is based on `gcr.io/distroless/static-debian12:nonroot` and runs as the nonroot user (uid 65532). It contains no shell and no package manager, so `docker exec -it imgyoung sh` does not work. When you need to work on the data directly (for example editing the database to [reset a forgotten password](../operations/password-reset.mdx)), stop the container and mount the same volume into another container that has the tools.
+
+## Behind a reverse proxy
+
+ImgYoung trusts `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` only when the connecting peer is inside `IMGYOUNG_TRUSTED_PROXIES`. The default trusts loopback only, but inside a container the peer is almost never loopback:
+
+- The proxy runs in another container on the same Docker network: the peer is the proxy container's address.
+- The proxy runs on the host and reaches the container through a port published with `-p`: the peer is usually the Docker bridge gateway (such as `172.17.0.1`), not `127.0.0.1`.
+
+In both cases, mark the proxy's network as trusted:
+
+```bash title="Terminal"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 127.0.0.1:8721:8721 \
+  -v imgyoung-data:/data \
+  -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+`172.16.0.0/12` covers most networks Docker allocates by default; check the actual subnet with `docker network inspect <network>`. If you leave it unset:
+
+- Login rate limiting is keyed on the proxy's address, so every visitor shares one allowance (a burst of 5, then 1 more every 12 seconds): when someone keeps mistyping a password, everyone else is temporarily locked out too.
+- Without `base_url`, links returned by uploads use `http://` even though the site is served over HTTPS, and the session cookie is not marked `Secure`.
+- The `/metrics` allowlist also sees the proxy's (private) address, so anyone going through the proxy can scrape metrics unless the proxy blocks `/metrics`. The Caddy and Nginx samples under `deploy/` in the repository already block it.
+
+For the proxy itself, see [Reverse proxy](../operations/reverse-proxy.mdx); for running it together with Caddy, see [Docker Compose](./compose.mdx).
+
+## Restart policy
+
+"Restore" under "Settings → Backups & export" in the console first stages the snapshot in the data directory, then makes the service exit cleanly (exit code 0); the snapshot is swapped in before the database is opened on the next start. Therefore:
+
+- Use `unless-stopped` or `always`. `on-failure` does not restart a container that exited cleanly, and the default `no` never restarts it.
+- Without a suitable policy, the container stays exited after a restore, and the snapshot is swapped in only when you run `docker start imgyoung` yourself.
+
+The restart policy also brings ImgYoung back after the host or the Docker daemon restarts.
+
+## Upgrading
+
+Pull the new image and recreate the container with the same flags. All data lives in the volume and is untouched; the database schema is migrated automatically when the new version starts:
+
+```bash title="Terminal"
+docker pull ghcr.io/x-haose/imgyoung:latest
+docker stop imgyoung && docker rm imgyoung
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+Before upgrading, consider clicking "Back up now" under "Settings → Backups & export". See [Upgrading](../operations/upgrade.mdx) for more.

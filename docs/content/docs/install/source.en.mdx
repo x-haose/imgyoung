@@ -1,0 +1,83 @@
+---
+title: Build from source
+description: Build the single binary with the admin console from source, and why the build flags are what they are.
+---
+
+## Prerequisites
+
+| Tool | Version | Used for |
+|---|---|---|
+| Go | The version in the `go` directive of `go.mod`, or newer | Compiling the server |
+| Node.js | 22 | Building the admin console front end |
+| pnpm | The `packageManager` field of `web/package.json`; after `corepack enable` that version is used automatically | Front-end dependencies and build |
+| [Task](https://taskfile.dev) | 3 | Build entry point; `task --list` lists every task |
+| Git | Any | Getting the source; the Go toolchain derives the version from Git when building |
+
+That is all you need to build. Tools for contributing (linters and so on) are listed in the repository's [CONTRIBUTING.en.md](https://github.com/x-haose/imgyoung/blob/main/CONTRIBUTING.en.md).
+
+## Build and run
+
+```bash title="Terminal"
+git clone https://github.com/x-haose/imgyoung.git
+cd imgyoung
+task build
+./imgyoung
+```
+
+`task build` first builds the front end (`pnpm install --frozen-lockfile` and `pnpm build` in `web/`, output in `web/dist`), then compiles `imgyoung` into the repository root. `task run` builds and then runs it.
+
+Open `http://localhost:8721/` and sign in with `admin` / `imgyoung123`. Data goes to `data/` under the current directory, just like with a [release archive](./binary.mdx), and supervising and upgrading work the same way.
+
+The version shown by `./imgyoung -version` is derived from Git by the Go toolchain: the tag when the checkout sits on one, a pseudo-version otherwise, with a dirty marker when the working tree has uncommitted changes. The build time is written in only by the release pipeline and the `Dockerfile`; binaries from `task build` leave it empty.
+
+## Build flags
+
+The Taskfile sets two environment variables for every task:
+
+```yaml title="Taskfile.yml (excerpt)"
+env:
+  CGO_ENABLED: '0'
+  GOFLAGS: -tags=nodynamic
+```
+
+Without Task, the equivalent manual steps are:
+
+```bash title="Terminal"
+(cd web && pnpm install --frozen-lockfile && pnpm build)
+CGO_ENABLED=0 go build -trimpath -tags nodynamic -o imgyoung ./cmd/imgyoung
+```
+
+- **`CGO_ENABLED=0`**: pure Go throughout. The SQLite driver and image codecs are pure Go or WASM, so no C toolchain is needed; Linux binaries do not depend on libc, cross-compile directly (e.g. with `GOOS=linux GOARCH=arm64`), and run in minimal images without libc such as distroless/static.
+- **`-tags nodynamic`**: by default the WebP codec library tries to load the system's libwebp shared library at runtime, which makes the Linux binary depend on the system's dynamic linker, so it cannot even start in minimal images such as distroless/static. With this tag it uses only its bundled WASM implementation; the result is a truly static binary whose behavior does not depend on whether the host has libwebp installed.
+- **`-trimpath`**: strips local source paths from the binary.
+
+The release pipeline (`.goreleaser.yaml`) and the image build (`Dockerfile`) use the same flags.
+
+## Build the front end first
+
+The admin console's front end is compiled into the binary with `go:embed`, but the build output is not committed; `web/dist` in the repository holds only a placeholder file. If you skip the front end and run `go build` directly, compilation still succeeds and the API works, but there is no console: `/` returns 404, and the startup log contains a warning:
+
+```text
+level=WARN msg="前端产物缺少 index.html,后台页面不可用(API 不受影响)"
+```
+
+(The message says the front-end build is missing index.html, so the console is unavailable while the API is unaffected.) When you see it, run `task web` (or the two `pnpm` steps above) and compile again. This is also why ImgYoung does not offer `go install` as an installation method.
+
+## Building an image with Docker
+
+If you have Docker but neither Go nor Node.js, build with the multi-stage `Dockerfile` in the repository root; both the front end and the Go binary are compiled inside build containers:
+
+```bash title="Terminal"
+task docker
+```
+
+It is equivalent to the command below and produces the local image `imgyoung:dev`:
+
+```bash title="Terminal"
+docker build \
+  --build-arg VERSION=$(git describe --tags --always --dirty) \
+  --build-arg COMMIT=$(git rev-parse HEAD) \
+  -t imgyoung:dev .
+```
+
+The build context excludes `.git`, so the version and commit can only come in through `--build-arg`; without them the version shows as `devel`. The image is used exactly like the released one; see [Docker image](./docker.mdx).

@@ -1,0 +1,224 @@
+---
+title: Multi-store failover
+description: The write, read, and health check primitives in store/failover, a complete primary/backup example, and building replication on top of them.
+---
+
+`store/failover` provides four stateless functions over a list of drivers. **The order of the driver slice is the
+priority**: which drivers take part, which are healthy, and which ones hold a copy of an object are all decided by the
+caller, who passes them in already sorted. The package itself keeps no state.
+
+```go
+func Write(ctx context.Context, ds []driver.Driver, key string, r io.ReaderAt, size int64,
+	opts WriteOptions) ([]Attempt, error)
+func Open(ctx context.Context, ds []driver.Driver, key string) (io.ReadCloser, []Attempt, error)
+func Probe(ctx context.Context, d driver.Driver) error
+func DeepProbe(ctx context.Context, d driver.Driver) error
+```
+
+`Write` and `Open` both return `[]Attempt`, recording every driver actually tried, in the order tried:
+
+<TypeTable
+  type={{
+    Index: { type: 'int', description: 'Index of the driver in the slice you passed' },
+    Err: { type: 'error', description: 'Error from this attempt; nil means it succeeded' },
+  }}
+/>
+
+## Write: write in order until N copies succeed
+
+```go
+attempts, err := failover.Write(ctx, ds, key, bytes.NewReader(data), int64(len(data)),
+	failover.WriteOptions{Need: 2, AttemptTimeout: time.Minute})
+```
+
+<TypeTable
+  type={{
+    Need: { type: 'int', required: true, description: 'Minimum number of successful copies, must be >= 1. Writing stops as soon as it is reached; remaining drivers are not written' },
+    AttemptTimeout: { type: 'time.Duration', description: 'Timeout for one write to one driver; 0 means only ctx applies', default: '0' },
+  }}
+/>
+
+- **Drivers are written one at a time in slice order, never concurrently.** When a driver fails, the next one is tried;
+  once `Need` copies succeed the call returns and later drivers are not touched.
+- **Each attempt reads the data from the beginning.** The source is an `io.ReaderAt` plus `size`, and every attempt
+  reads `[0, size)` independently, so a driver that fails halfway does not affect the next one. `*bytes.Reader` and
+  `*os.File` both satisfy `io.ReaderAt`.
+- **Cancelling `ctx` stops immediately**: `ctx` is checked before each attempt; once it is cancelled no further drivers
+  are tried and `ctx.Err()` is returned, not `ErrInsufficient`. A failure caused by cancellation says nothing about the drivers.
+- **Attempts with `Err == nil` are the drivers that now hold a copy.** Even on success, `attempts` may include failed attempts.
+- **Failed writes are not cleaned up**: a failed driver may be left with a partial object. Delete it yourself if
+  needed, or let reconciliation deal with it.
+- A `Need` larger than the number of drivers is not rejected up front; all drivers are tried, then `ErrInsufficient` is returned.
+
+| Error | Meaning |
+|---|---|
+| `ErrInvalidNeed` | `opts.Need` is less than 1; checked first |
+| `ErrNoDrivers` | The driver slice is empty |
+| `ErrInsufficient` | Every driver was tried and there are still too few copies; the same error also wraps the cause of each failure |
+| The `ctx` error | `ctx` was cancelled or hit its deadline partway through |
+
+## Open: read from the first readable driver
+
+```go
+rc, attempts, err := failover.Open(ctx, ds, key)
+if err != nil {
+	return err
+}
+defer func() { _ = rc.Close() }()
+```
+
+- Drivers are opened in slice order and **the first successful open is returned immediately**; later drivers are not
+  touched. The caller closes the reader.
+- On success, the last element of `attempts` is the driver serving the reader; the earlier ones are failed attempts,
+  useful for logs and metrics.
+- **Fallback only happens while opening.** If the reader fails partway through reading, it does not switch to another driver.
+- There is no per-attempt timeout, only `ctx`; `ctx` is checked before each attempt, and once it is cancelled
+  `ctx.Err()` is returned. With rclone drivers, `ctx` usually also governs the returned reader (for HTTP-based backends,
+  cancelling `ctx` aborts the response body), so do not cancel it before you finish reading.
+
+When every driver fails, there are two kinds of error:
+
+| Situation | Error returned | Meaning |
+|---|---|---|
+| Every driver reports the object does not exist | Wraps `driver.ErrNotFound` | The object really is missing |
+| At least one driver failed for a reason other than "not found" | Wraps `ErrUnavailable`, plus the cause of each failure | Some driver is broken; the object may still exist |
+
+An empty driver slice returns `ErrNoDrivers`.
+
+<Callout type="warn" title="Check ErrUnavailable first">
+An `ErrUnavailable` error wraps every failure cause, which can include `driver.ErrNotFound` reported by some of the
+drivers, so `errors.Is(err, driver.ErrNotFound)` is also true in that case. To tell "really missing" from
+"temporarily unreadable", check `ErrUnavailable` first:
+
+```go
+rc, _, err := failover.Open(ctx, ds, key)
+switch {
+case errors.Is(err, failover.ErrUnavailable):
+	// Some driver is broken and the object may still exist: treat as temporarily unavailable, e.g. HTTP 503
+case errors.Is(err, driver.ErrNotFound):
+	// Every driver confirmed the object does not exist: e.g. HTTP 404
+case err != nil:
+	// ErrNoDrivers, or ctx was cancelled
+default:
+	defer func() { _ = rc.Close() }()
+	// read from rc
+}
+```
+</Callout>
+
+## Probe and DeepProbe: health checks
+
+| | `Probe` (light check) | `DeepProbe` (deep check) |
+|---|---|---|
+| What it does | One `Stat` on the reserved key `ProbeKey` | Writes a small object under a random key, reads it back and compares byte for byte, then deletes it |
+| Healthy when | `Stat` succeeds or returns `driver.ErrNotFound` | Write, read, and delete all succeed |
+| Cost | One read-only request; no writes or deletes | A write and a delete every time |
+| What it catches | Unreachable store, invalid credentials | Additionally catches "readable but not writable": read-only credentials, a full bucket, an exhausted quota |
+| Good for | Periodic checks | Event-driven checks: creation, configuration changes, manual rechecks, confirming recovery |
+
+`Probe`'s timeout is entirely up to `ctx`, so always call it with a deadline. `ProbeKey` is `.imgyoung-health-probe`; by
+convention it is never written, so do not store data under that key.
+
+Details of `DeepProbe`:
+
+- The temporary object key is `.imgyoung-probe-` followed by 16 random hex characters, and the content is a fixed 19
+  bytes; random keys keep concurrent deep checks from interfering with each other.
+- The write and the read-back are bound by `ctx`. The delete uses its own 10-second timeout detached from `ctx`
+  cancellation, so it still tries to clean up after a failed read-back or an expired `ctx`.
+- A failure in the write, the read-back, or the content comparison returns the corresponding error. If the read-back
+  already failed, the delete result no longer affects the return value; if the read-back succeeded but the delete
+  failed (with anything other than `driver.ErrNotFound`), the delete error is returned.
+- A temporary object left behind by a failed delete is an ordinary orphan; clean it up yourself by the `.imgyoung-probe-` prefix.
+
+A successful read-only check does not mean the store accepts writes. A safe combination, and the one the application
+uses, is "downgrade only": periodic light checks can only mark a healthy store unhealthy; an unhealthy store whose light
+check passes must also pass a deep check (write, read, and delete all succeed) before it is marked healthy again. That
+way a store with read-only credentials, which passes the light check but rejects writes, is not mistaken for recovered
+on the next light check.
+
+## Complete example
+
+This is `store/failover/example_test.go` from the repository. Two local directories act as the primary and backup
+stores. The primary's root path sits under a regular file, so every write to it fails, simulating a broken primary;
+the write falls through to the backup, and the read switches to the backup as well. It runs with
+`go test ./store/failover` and prints exactly what the `Output` comment at the end lists (the comments in the source are in Chinese):
+
+<include cwd lang="go" meta='title="store/failover/example_test.go"'>../store/failover/example_test.go</include>
+
+## Building your own replication [#replication]
+
+A common pattern is "return once the primary write succeeds and fill in the other stores in the background": call
+`Write` with `Need: 1`, remember the drivers that were not written, and copy to them later.
+
+```go
+// writePrimary returns once one copy is written, reporting which drivers hold it and which still need it.
+func writePrimary(ctx context.Context, ds []driver.Driver, key string, data []byte) (holders, pending []int, err error) {
+	attempts, err := failover.Write(ctx, ds, key, bytes.NewReader(data), int64(len(data)),
+		failover.WriteOptions{Need: 1, AttemptTimeout: time.Minute})
+	if err != nil {
+		return nil, nil, err
+	}
+	done := map[int]bool{}
+	for _, a := range attempts {
+		if a.Err == nil {
+			done[a.Index] = true
+			holders = append(holders, a.Index)
+		}
+	}
+	for i := range ds {
+		if !done[i] {
+			pending = append(pending, i)
+		}
+	}
+	return holders, pending, nil
+}
+```
+
+Replicating one copy means reading it from a driver that holds it and writing it to the target driver, and the read
+step can use `Open`'s fallback directly:
+
+```go
+// Replicate copies key from holders (drivers that hold a copy, in priority order) to target.
+// size is the object size in bytes, normally taken from your own metadata; without it, Stat a source driver first.
+func Replicate(ctx context.Context, holders []driver.Driver, target driver.Driver, key string, size int64) error {
+	rc, attempts, err := failover.Open(ctx, holders, key)
+	if err != nil {
+		return fmt.Errorf("no readable source copy: %w", err)
+	}
+	for _, a := range attempts[:len(attempts)-1] {
+		log.Printf("source driver %d unreadable, moved on: %v", a.Index, a.Err)
+	}
+	err = target.Put(ctx, key, rc, size)
+	if cerr := rc.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+```
+
+These two functions only perform the work. To turn them into reliable replication you also need:
+
+- **Persisted replica state**: store `holders` and `pending` in your own database so unfinished replication can resume after a restart.
+- **Retries with backoff**: retry a failed `Replicate` later, mark it failed and alert after repeated failures, and try again once the store recovers.
+- **Reconciliation**: periodically `List` every store and compare with your records in both directions. Objects in the
+  store but not in your records are orphans (produced when the write succeeded but recording it failed); delete them
+  after a grace period. Copies your records claim but the store lacks need to be replicated again.
+- **Concurrency limits**: replication shares the stores' bandwidth and request quotas with regular traffic, so cap how many copies run at once.
+
+The application records replica state in the `blob_channels` table and runs replication on the River task queue; see
+[Architecture](../architecture.mdx).
+
+## How the application uses these primitives
+
+The application's channels are a set of rclone drivers, and upload, image access, and health checks all call this package directly:
+
+| Scenario | Call | Arguments and handling |
+|---|---|---|
+| Upload | `Write` | Drivers are the healthy channels in priority order; `Need` is the runtime setting `min_success` (values below 1 count as 1); `AttemptTimeout` is 10 minutes. Channels that succeeded are recorded as holding a ready replica; the rest are recorded as pending and replication jobs are queued. Too few copies returns 503 |
+| Image access | `Open` | Drivers are the channels that are healthy, not being cleaned up, and hold a ready replica of the image, in priority order; each failed attempt is logged; if all fail, 503 is returned |
+| Periodic health check | `Probe` / `DeepProbe` | Every `health_check_seconds` seconds, all channels get a light check in parallel, with a 10-second timeout per channel; an unhealthy channel whose light check passes is confirmed with a deep check (20-second timeout) before it recovers |
+| Event-driven deep check | `DeepProbe` | After a channel is created or edited, on manual recheck, and on connection test, with a 20-second timeout |
+
+Replication jobs try the source channels one by one and write to the target channel, the same idea as `Replicate`
+above. The daily reconciliation skips `ProbeKey` and the system directory `_imgyoung/`, and temporary objects left by deep
+checks are reclaimed as orphans after a 48-hour grace period. For runtime settings, see [Configuration](../configuration.mdx).

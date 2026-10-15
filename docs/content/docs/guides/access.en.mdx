@@ -1,0 +1,175 @@
+---
+title: Accessing images
+description: The two forms of image links, caching and conditional requests, on-demand resizing and WebP negotiation, the proxy and 302 access modes, hotlink protection, and how accesses are counted.
+---
+
+## Link forms
+
+| Link | Available for | Notes |
+|---|---|---|
+| `/i/<short ID>` | Every image | The `url` from the upload response; the short ID has 10 characters from `0-9A-Za-z` |
+| `/o/<user id>/<object key>` | Images uploaded over S3 | An alias by object key, which may contain `/`; see [Upload clients](./clients.mdx#object-key-aliases) |
+
+Both links are public and need no sign-in. They share one serving pipeline: hotlink protection, access counting, on-demand processing and failover reads across channels are identical.
+
+- A missing or deleted image returns 404 (plain text). Links stop working as soon as an image is deleted.
+- An image with a lifetime is deleted on the next cleanup sweep after it expires (every 60 seconds out of the box); until then the link still works. See [Lifecycle and deduplication](./lifecycle.mdx).
+- If no healthy channel holds a usable replica, or every candidate channel fails to read, the response is 503 (plain text).
+- Only GET requests are accepted.
+
+The full API definition is in [API reference: image access](../api/image-access.mdx).
+
+## Caching and conditional requests
+
+The content behind a short ID never changes, so normal responses may be cached for a long time:
+
+| Header | Original | Variant (on-demand processing result) |
+|---|---|---|
+| `Cache-Control` | `public, max-age=31536000, immutable` | Same |
+| `ETag` | `"<SHA-256>"` | `"<SHA-256>-<width>-<format>"` |
+| `Last-Modified` | Upload time | Not set |
+| `Content-Type` | The type detected from the content at upload | The type of the target format |
+| `X-Content-Type-Options` | `nosniff` | `nosniff` |
+
+A request whose `If-None-Match` exactly equals the current `ETag` gets 304. Only `If-None-Match` is evaluated; `If-Modified-Since` is ignored.
+
+Two things can change what a link serves without browser and CDN caches noticing until they expire:
+
+- The object key behind an `/o/` alias is overwritten, see [Upload clients](./clients.mdx).
+- An administrator merges a near-duplicate pair, and the links of the merged image start serving the kept image's content; see [Lifecycle and deduplication](./lifecycle.mdx#deduplication).
+
+## On-demand resizing and formats [#on-demand-processing]
+
+Add query parameters to a link to get a resized or converted version:
+
+```text
+https://img.example.com/i/R0RjUyP1UW?w=400
+https://img.example.com/i/R0RjUyP1UW?w=800&format=webp
+https://img.example.com/i/R0RjUyP1UW?format=jpeg
+```
+
+| Parameter | Values | Notes |
+|---|---|---|
+| `w` | A value in **Width tiers** (`process_widths`), `100,200,400,800,1600` out of the box | Shrinks proportionally to that width; any other width returns 400. If the target is not smaller than the original width, nothing is enlarged and the image is only re-encoded to the target format |
+| `format` | A value in **Target formats** (`process_formats`; `webp`, `jpeg`, `png` out of the box), or `auto` | Forces the output format; values not in the list return 400 |
+
+Widths and formats are allowlists: accepting arbitrary values would let anyone saturate the CPU and the disk cache, so only a few presets are offered. Change them in the **On-demand processing** group under **Settings → Runtime settings**; changes apply immediately.
+
+### WebP negotiation
+
+Without `format`, or with `format=auto`, the output format follows the request's `Accept` header:
+
+- If `Accept` contains `image/webp` and `webp` is among the target formats, the output is WebP.
+- Otherwise the original format is kept. Negotiation only ever upgrades to WebP; a WebP original is never converted for older clients.
+- Processed responses whose format came from negotiation carry `Vary: Accept`; responses with an explicit `format`, and originals served unprocessed after negotiation, do not.
+
+Every modern browser lists `image/webp` in `Accept`, so opening the `/i/` link of a JPEG or PNG in a browser yields WebP by default.
+To get the original bytes, ask for the original's own format, for example `?format=jpeg` on a JPEG: when the target format equals the original format and there is no resizing, the original is served without re-encoding.
+
+### Processing rules
+
+- If there is no resizing and the format equals the original's, nothing is processed and the original is served.
+- GIFs are always served as the original; `w` and `format` are ignored (invalid values do not cause a 400 either), so animations survive.
+- A JPEG original with an EXIF orientation tag is turned upright before resizing, so the width applies to the image as displayed.
+- Encoding: WebP quality `process_quality_webp` (80 out of the box) and effort `process_webp_method` (4); JPEG quality `process_quality_jpeg` (85); PNG is lossless at maximum compression. Output carries no metadata.
+- Results are cached under `variants/` in the data directory, up to `variants_cache_mb` in total (10240 MB out of the box); beyond that the least recently used entries are evicted. Changing the encoding settings makes later requests produce new cache entries, and the old ones age out.
+- Concurrent first requests for the same image and parameters are processed once and share the result.
+- At most `process_workers` requests (4 out of the box) are processed at the same time; waiting for a slot and reading the original share one timeout, `process_timeout_ms` (5000 ms out of the box).
+- Originals over the pixel budget, or larger in bytes than the current per-image size limit, are not processed.
+
+When processing fails (no slot within the timeout, a decoding error and so on), the original is served instead, with `Cache-Control: no-store` and no `ETag`, so that the full-size original is never cached as the content of the parameterized link.
+
+## Access modes: proxy and 302
+
+**Access mode** (`access_mode`) under **Settings → Runtime settings** has two values:
+
+- **proxy** (default): ImgYoung reads the image from the healthy channels holding a ready replica, in priority order, and relays it; if a read fails it moves straight on to the next channel.
+- **redirect**: for channels that allow direct links, ImgYoung answers with a 302 and visitors download straight from the channel's public address, bypassing this host.
+
+In redirect mode, ImgYoung goes through the healthy channels holding a ready replica in priority order and picks the first one that:
+
+- has **Allow 302 direct links** turned on in its channel settings;
+- is not encrypted (ciphertext cannot be handed to visitors);
+- has `public_base_url` configured.
+
+The 302 target is `<public_base_url>/<object key in the channel>`, where the in-channel key looks like `<short ID>_<first 8 hex digits of the SHA-256>` with no file extension. `public_base_url` must point at the directory that corresponds to the channel's `path`.
+If no channel qualifies, the request is proxied as usual. Direct link and encryption settings are covered in [Storage channels](../channels/index.mdx).
+
+Even in redirect mode, these requests are still proxied by this host:
+
+- Requests that need on-demand processing: those with `w`, an explicit `format` different from the original's, or a negotiated WebP. Since browsers all declare WebP support, browser requests for JPEG / PNG are transcoded through the proxy by default; to send browsers through the 302 as well, remove `webp` from **Target formats**.
+- The fallback response after a processing failure.
+- Requests matching `If-None-Match`, which get a 304 from this host instead of a redirect.
+
+| | proxy | redirect |
+|---|---|---|
+| Image traffic | Goes through this host | Served by the channel directly |
+| Failover | Every request can switch channels | If the channel behind the 302 fails, visitors see its error; this host only redirects elsewhere once a health check marks that channel unhealthy |
+| On-demand processing | Available | Requests that need it are still proxied |
+| Hotlink protection | Checked on every access | Only the 302 step is checked; the channel's public address itself is unprotected |
+| Encrypted channels | Work | Cannot be linked directly; requests fall back to the proxy |
+
+302 responses carry no cache headers, so every visit reaches this host first and access counting works as usual.
+
+## Hotlink protection [#hotlink-protection]
+
+Hotlink protection allows or rejects a request based on its `Referer` header. Rules are managed under **Settings → Hotlink protection** (administrators only).
+
+### Rule syntax
+
+| Rule | Matches |
+|---|---|
+| `example.com` | Only `example.com` itself |
+| `*.example.com` | Any subdomain of `example.com` (such as `blog.example.com` or `a.b.example.com`), but not `example.com` itself |
+
+- Rules contain only a host name, with no scheme, port or path; they are case-insensitive and stored in lower case.
+- Single-label host names (such as `localhost`) and IPv4 addresses are allowed; a rule is at most 253 characters.
+- Only the host name in the `Referer` is compared; the port plays no part.
+- Adding a duplicate returns 409. Adding and removing rules take effect immediately without a restart, and both are recorded in the audit log.
+
+### How a request is judged
+
+- With no rules, hotlink protection is off and every request is allowed.
+- With rules:
+  - With a `Referer`: the request is allowed only if its host matches a rule; a `Referer` that cannot be parsed counts as no match.
+  - Without a `Referer` (typed into the address bar, download tools, pages with `Referrer-Policy: no-referrer`): the **Allow empty referer** switch decides, which is the `allow_empty_referer` setting, on out of the box.
+- Rejected requests get 403 (plain text) and are not counted as accesses.
+
+Only the two public entrances, `/i/` and `/o/`, are covered. Thumbnails and previews in the admin console and S3 GetObject are not affected.
+
+Rules live only in the metadata database and are managed through the console or the [API](../api/admin-referer.mdx); there is no environment variable or config file for them.
+Remember to add the sites where you use your images (blog, documentation site), including any subdomains you need.
+
+<Callout type="info" title="Hotlink protection is a light measure">
+A `Referer` can be forged or left out, and with **Allow empty referer** on, every request without one gets the image.
+When images go through a CDN, cache hits never reach this host, so its rules cannot see them and you need equivalent rules on the CDN; in redirect mode, channel public addresses are outside its reach as well.
+</Callout>
+
+## Browsing in the console is not counted [#console-browsing]
+
+Thumbnails and previews in the admin console are served from `/api/admin/images/<short ID>/thumb`, which:
+
+- requires a console session and ignores hotlink protection;
+- runs the same pipeline as `/i/` (including `w` and `format`);
+- does not count accesses, update the last access time, extend lifetimes, or take the image off the cleanup list.
+
+So administrators browsing images do not skew access statistics or cold-image decisions. Share links copied from the console are still `/i/` addresses.
+
+## Access counts and top images
+
+An access is counted for every `/i/` or `/o/` request that reaches an image (after passing hotlink protection), including 304 and 302 responses. Console thumbnails and previews, S3 GetObject and requests rejected by hotlink protection are not counted.
+
+Counts are kept in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box). However often an image is accessed within one window, it gains 1, so **Accesses** reflects the number of windows with at least one access, not exact page views.
+Each batch write also:
+
+- updates the **Last access** time;
+- removes the pending-cleanup mark;
+- with **Renew on access** on, pushes back the expiry of images that have a lifetime; see [Lifecycle and deduplication](./lifecycle.mdx).
+
+In the console you can see:
+
+- **Accesses** and **Last access** in the image details;
+- on the administrator's **Dashboard**, the total **Accesses** with an **Est. traffic** figure, and the 10 **Top images** by access count.
+  The traffic estimate is accesses × original size: 304, 302 and variant responses all count as the full original (an overestimate), while repeat accesses within one window count once (an underestimate).
+
+For exact request counts and traffic, use your reverse proxy or CDN logs and the [metrics](../operations/monitoring.mdx).

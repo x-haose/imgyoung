@@ -1,0 +1,113 @@
+---
+title: Quick start
+description: Run ImgYoung with Docker, sign in to the console, upload your first image and get its Markdown link.
+---
+
+You need a machine with Docker installed (Linux, macOS or Windows) whose port 8721 you can reach from a browser. For installs without Docker, see [Install](./install/index.mdx).
+
+<Steps>
+<Step>
+
+### Start the service
+
+```bash title="Terminal"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+- `-v imgyoung-data:/data`: the database, the images in the built-in local channel and the master key `master.key` all live in this volume. Deleting the volume deletes everything.
+- `--restart unless-stopped`: restoring the metadata database from a snapshot in the console makes the service exit on purpose; Docker starts it again and the snapshot is swapped in on startup. Without a restart policy the container stays stopped after a restore.
+
+Check that it started:
+
+```bash title="Terminal"
+docker logs imgyoung
+```
+
+Look for a line with `msg="ImgYoung 已启动"` (log messages are in Chinese). The first start also prints two `level=WARN` lines, one saying a master key file was generated and one saying the default admin password was initialized. Both are expected.
+
+</Step>
+<Step>
+
+### Sign in and change the password
+
+Open `http://<server address>:8721/` in a browser (`http://localhost:8721/` on the same machine) and sign in with the factory account:
+
+| Username | Password |
+|---|---|
+| `admin` | `imgyoung123` |
+
+The factory password is public. After the first sign-in you land on the "Set the admin password" page, and no other page opens until the password is changed. The new password needs at least 8 characters; click "Save and sign in again", then sign in with the new password.
+
+</Step>
+<Step>
+
+### Upload your first image
+
+Pick one: upload in the console, or issue an upload token and upload with curl.
+
+<Tabs items={['Console', 'curl']}>
+<Tab value="Console">
+
+1. Open "Images" in the sidebar and click "Upload".
+2. Drag images into the dialog, or press Ctrl / ⌘ + V to paste a screenshot from the clipboard. JPEG, PNG, GIF and WebP are accepted, up to 50 MB per image by default.
+3. When the upload finishes, close the dialog, click the image card to open "Image details", and under "Share link" pick **Markdown** next to "Copy as".
+
+</Tab>
+<Tab value="curl">
+
+1. Open "Upload tokens" in the sidebar, click "Issue token", enter `curl` as the purpose, leave the expiry at "Never", and click "Issue".
+2. Copy the token shown in the dialog; it starts with `imgy_`. It is shown only this once, and the dialog only closes after you tick "I have stored this secret safely".
+3. Upload:
+
+```bash title="Terminal"
+curl -H "Authorization: Bearer imgy_your_token" \
+  -F "file=@screenshot.png" \
+  http://localhost:8721/api/upload
+```
+
+```json title="Response"
+{"id":"R0RjUyP1UW","url":"http://localhost:8721/i/R0RjUyP1UW"}
+```
+
+`url` is the image address. With jq installed you can get the Markdown directly:
+
+```bash title="Terminal"
+curl -s -H "Authorization: Bearer imgy_your_token" -F "file=@screenshot.png" \
+  http://localhost:8721/api/upload | jq -r '"![](\(.url))"'
+```
+
+</Tab>
+</Tabs>
+
+The Markdown looks like this:
+
+```md
+![](http://localhost:8721/i/R0RjUyP1UW)
+```
+
+Paste it into your blog or notes and the image shows up.
+
+</Step>
+</Steps>
+
+<Callout type="info" title="Where the host name in the link comes from">
+  Until the public site address (`base_url`) is configured, links are built from the address of the current request: if you opened the console via `localhost`, the copied link points to `localhost` and will not work on other machines.
+  To share links, open the console through its public domain or IP, or set `base_url` under "Settings → Runtime settings". See [Configuration](./configuration.mdx).
+</Callout>
+
+## Next steps
+
+<Callout type="warn" title="Right now everything sits on one disk">
+  A fresh instance has only the built-in `local` channel, which stores images under `blobs/` in the data volume. Metadata snapshots go to the highest-priority healthy channel, so for now they are on the same disk too.
+  If that disk fails, the images and the snapshots are lost together. Open "Storage channels" in the sidebar soon and click "New channel" to add an off-site object storage or cloud drive channel; existing images are replicated to it automatically.
+  Snapshots go to the primary channel only: give the new channel a higher priority than `local` (100 by default; on a tie the older channel wins) so that snapshots move off-site as well.
+</Callout>
+
+- [Storage channels](./channels/index.mdx): add an off-site channel, set priority and encryption.
+- [Backup and restore](./operations/backup.mdx): back up the master key `master.key` separately. It is not part of the snapshots, and without it the channel credentials and encrypted data cannot be recovered.
+- [Reverse proxy](./operations/reverse-proxy.mdx): serve it over HTTPS on your own domain.
+- [Clients](./guides/clients.mdx): set up PicGo, PicList, Typora and other clients.
+- [Docker image](./install/docker.mdx): image tags, the data volume and environment variables in full.

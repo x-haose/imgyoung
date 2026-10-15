@@ -1,0 +1,142 @@
+---
+title: Monitoring & alerts
+description: /healthz and /metrics, scraping with Prometheus, alert conditions and the webhook payload, and logs.
+---
+
+## /healthz
+
+`GET /healthz` returns 200 with the plain-text body `ok` and needs no authentication. It only means the process is running and its HTTP server responds; it does **not** check the database, channels or the job queue. Use it for liveness checks and external uptime probes; for channel health, use metrics and alerts.
+
+Requests to `/healthz` and `/metrics` themselves are not counted in the HTTP metrics.
+
+## /metrics
+
+`GET /metrics` serves metrics in the Prometheus text format on the same port as everything else.
+
+**Access control**: only clients whose address is inside `IMGYOUNG_METRICS_ALLOW` (loopback and private ranges by default) are allowed; everyone else gets 403. The client address is resolved by the rules in [Reverse proxy & HTTPS](./reverse-proxy.mdx). Metrics expose route templates, channel names and usage and should not be public:
+
+- the public entry point (the reverse proxy) must never forward `/metrics`; the Caddy and Nginx examples in `deploy/` answer it with 404;
+- let Prometheus reach ImgYoung's listen address directly over the internal network;
+- get `IMGYOUNG_TRUSTED_PROXIES` right. If it is wrong, every proxied request appears to come from the proxy, and if the proxy's address is in the allowed networks, a proxy that forwards `/metrics` exposes the metrics to everyone.
+
+### Metrics
+
+All application metrics are prefixed with `imgyoung_`:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `imgyoung_http_requests_total` | counter | `method`, `route`, `status` | HTTP requests. `route` is the route template (such as `/i/{id}`), not the raw path |
+| `imgyoung_http_request_duration_seconds` | histogram | `method`, `route` | HTTP request latency in seconds |
+| `imgyoung_upload_duration_seconds` | histogram | `outcome` | Upload pipeline duration in seconds. `ok` succeeded; `rejected` invalid input or over quota; `failed` infrastructure failure |
+| `imgyoung_channel_puts_total` | counter | `channel`, `result` | Object writes to channels, both synchronous writes during upload and asynchronous replication; `result` is `ok` / `error` |
+| `imgyoung_channel_storage_bytes` | gauge | `channel` | Logical channel usage in bytes: the sum of image sizes of completed replicas; refreshed every **Usage report interval** |
+| `imgyoung_channels_total` | gauge | | Loaded channels, including unhealthy ones, excluding channels being deleted or that failed to load |
+| `imgyoung_channels_healthy_total` | gauge | | Currently healthy channels |
+| `imgyoung_variant_lookups_total` | counter | `result` | Variant cache lookups; `result` is `hit` / `miss` |
+| `imgyoung_queue_jobs_waiting` | gauge | | Jobs waiting in the job queue (available, scheduled and retryable); queried at scrape time, `NaN` if the query fails |
+| `imgyoung_queue_jobs_running` | gauge | | Jobs currently running; same as above |
+
+The Prometheus Go client's own `go_*` (runtime) and `process_*` (process) metrics are exported as well.
+
+### Prometheus scrape configuration
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: imgyoung
+    static_configs:
+      - targets: ["10.0.0.5:8721"]   # ImgYoung's internal address and port
+```
+
+If Prometheus is outside the default private ranges, add its address to `IMGYOUNG_METRICS_ALLOW` (together with any default ranges you still need — setting the variable replaces the default list).
+
+A few useful alerting expressions:
+
+```text title="PromQL"
+# A channel is unhealthy
+imgyoung_channels_healthy_total < imgyoung_channels_total
+
+# Writes to a channel keep failing
+sum by (channel) (rate(imgyoung_channel_puts_total{result="error"}[10m])) > 0
+
+# Uploads failing because of infrastructure
+sum(rate(imgyoung_upload_duration_seconds_count{outcome="failed"}[10m])) > 0
+
+# Job queue backlog
+imgyoung_queue_jobs_waiting > 1000
+```
+
+## Alerts
+
+Alerts come from an evaluation loop that runs once at startup and then every **Health check interval** (`health_check_seconds`, 60 seconds by default). Each round checks which conditions currently hold and reconciles them with the open alerts: new conditions open an alert, conditions that no longer hold resolve theirs automatically. There is at most one open alert per kind and target; while a condition persists, its details are refreshed every round.
+
+| Kind | UI label | Target | Condition |
+|---|---|---|---|
+| `channel_unhealthy` | Channel unhealthy | Channel name | The latest health check of an in-service channel failed; details give the reason |
+| `replication_failed` | Replication failed | Channel name | The channel has replicas whose replication failed; details give the count. Failed replicas are retried once the channel is healthy again |
+| `channel_quota_exceeded` | Channel over quota | Channel name | A **Channel usage alert threshold** is set and the channel's usage exceeds it |
+| `drain_failed` | Channel drain failed | Channel name | The job removing objects from a channel being deleted failed and stopped retrying |
+| `backup_failed` | Backup failed | Empty | The most recent metadata backup failed; details give the reason |
+
+`backup_failed` reflects the most recent backup in the current process, so after a restart it does not reappear until a backup fails again.
+
+**Where to see them**: the **Alerts** card on the **Dashboard** lists open alerts; **History** leads to **Settings → Alert history**, which pages through every alert including resolved ones. Opening and resolving are also logged (告警开启 / 告警恢复).
+
+### Webhook
+
+With an `http` / `https` URL in **Settings → Runtime settings → Alerts & audit → Alert webhook URL**, every alert is POSTed as JSON (`Content-Type: application/json`) once when it **opens** and once when it **resolves**:
+
+```json title="Opened"
+{
+  "kind": "channel_unhealthy",
+  "target": "r2-main",
+  "message": "连接超时",
+  "status": "open",
+  "opened_at": "2026-10-15 08:30:00"
+}
+```
+
+```json title="Resolved"
+{
+  "kind": "channel_unhealthy",
+  "target": "r2-main",
+  "message": "连接超时",
+  "status": "resolved",
+  "opened_at": "2026-10-15 08:30:00",
+  "resolved_at": "2026-10-15 09:05:00"
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `kind` | Alert kind, see the table above |
+| `target` | Alert target (a channel name); empty string for `backup_failed` |
+| `message` | Description from the latest evaluation (in Chinese) |
+| `status` | `open` or `resolved` |
+| `opened_at` | When the alert opened, UTC, formatted `YYYY-MM-DD HH:MM:SS` |
+| `resolved_at` | When it resolved, same format; present only when `status` is `resolved` |
+
+Delivery rules:
+
+- any 2xx response counts as delivered; connection errors, timeouts (10 seconds) and non-2xx responses are retried on the next evaluation round until they succeed;
+- for any one alert, the opening is always delivered before the resolution;
+- requests carry no signature or authentication header; if the receiver needs to verify the sender, put a secret in the URL (for example as a query parameter) and use `https`;
+- a transition that happens while no webhook is configured is marked as delivered and is not sent later, even if a webhook is configured afterwards;
+- the payload format is fixed; to post to a chat tool, put a small relay in between that converts the format.
+
+## Logs
+
+- Logs go to standard error in Go's `log/slog` text format: each line starts with `time=`, `level=` and `msg=`, followed by `key=value` fields; messages are in Chinese. The level is fixed at INFO and above; there is no setting to change it.
+- To read them: `journalctl -u imgyoung` for systemd, `docker logs imgyoung` for Docker, `docker compose logs imgyoung` for Compose.
+- Credentials stay out of the logs: channel configuration parameters never appear in logs or error messages, the Cloudflare API token exists in plaintext only in memory, and audit entries for configuration changes only say whether it is set. Upload tokens and sessions are stored as hashes only. The one password ever logged is the factory password seeded on first start (or after a [password reset](./password-reset.mdx)), which is public anyway.
+
+Log lines worth knowing when troubleshooting:
+
+| Message | Meaning |
+|---|---|
+| `ImgYoung 已启动` | Startup finished; includes version, commit, actual listen address and data directory |
+| `已生成主密钥文件,请立即备份……` | A new `master.key` was generated on this start; outside a first deployment this means the original master key is gone |
+| `CDN purge 已启用(Cloudflare)` / `CDN purge 未启用……` | Whether CDN cache purging was configured at startup |
+| `渠道配置无法解密,本渠道跳过` | The master key differs from the one the channel configuration was written with |
+| `告警开启` / `告警恢复` | An alert opened or resolved |
+| `收到停机请求,优雅停机后由进程管理器拉起` | A restore from snapshot was triggered in the admin console |
+| `已用暂存快照换入元数据库,原库留存` | The snapshot was swapped in; includes where the previous database was kept |

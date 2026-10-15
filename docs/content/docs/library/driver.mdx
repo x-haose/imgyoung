@@ -1,0 +1,372 @@
+---
+title: 驱动接口与 rclone 实现
+description: Driver 接口的契约、rclone.Open 的参数、密码类参数编码、OAuth 令牌写回、crypt 加密层,以及如何自带驱动。
+---
+
+## Driver 接口
+
+`store/driver` 只定义一件事:把字节存到某个后端、取回、查询、删除、列举。
+
+```go
+type Driver interface {
+	Put(ctx context.Context, key string, r io.Reader, size int64) error
+	Open(ctx context.Context, key string) (io.ReadCloser, error)
+	Stat(ctx context.Context, key string) (*ObjectInfo, error)
+	Delete(ctx context.Context, key string) error
+	List(ctx context.Context, dir string) ([]ObjectInfo, error)
+}
+```
+
+| 方法 | 语义 | 对象不存在时 |
+|---|---|---|
+| `Put` | 把 `r` 中的 `size` 个字节流式写入 `key`。`size` 必须事先已知;`r` 由调用方负责关闭 | — |
+| `Open` | 返回对象的读取流,调用方负责 `Close` | 返回包裹 `ErrNotFound` 的错误 |
+| `Stat` | 返回对象信息 | 返回包裹 `ErrNotFound` 的错误 |
+| `Delete` | 删除对象 | 返回包裹 `ErrNotFound` 的错误,由调用方决定是否当作成功 |
+| `List` | 递归列举 `dir` 下的全部对象,`dir` 为空表示整个存储;返回的键是相对存储根的完整路径 | 目录不存在时返回空结果,不报错 |
+
+对全部实现都成立的约定:
+
+- **并发安全**:同一个驱动实例可以被多个 goroutine 同时使用。
+- **尊重 `ctx`**:每个方法都受 `ctx` 的取消与超时约束。
+- **用 `errors.Is` 判断缺失**:实现会给 `ErrNotFound` 包上对象键等上下文,不要用 `==` 比较。
+- **键用 `/` 分隔**,形如 `photos/2026/a.png`,相对于驱动的根路径。
+
+`ObjectInfo` 是 `Stat` 与 `List` 的返回结构:
+
+<TypeTable
+  type={{
+    Key: { type: 'string', description: '对象键,相对存储根的路径' },
+    Size: { type: 'int64', description: '对象大小,字节' },
+    ModTime: { type: 'time.Time', description: '对象的修改时间' },
+  }}
+/>
+
+## rclone 实现
+
+`store/rclone` 用 rclone 的后端实现 `Driver`。它直接在进程内构造 rclone 的 `fs.Fs`:参数以映射传给后端,
+不读写 rclone 配置文件,不拼连接字符串,也不启动 rclone 子进程。
+
+### 打开驱动
+
+```go
+d, err := rclone.Open(ctx, rclone.Options{
+	Backend: "s3",
+	Params: map[string]string{
+		"provider":          "Cloudflare",
+		"access_key_id":     "<access key>",
+		"secret_access_key": "<secret key>",
+		"endpoint":          "https://<account id>.r2.cloudflarestorage.com",
+	},
+	Path: "my-bucket/images",
+})
+if err != nil {
+	return err
+}
+defer func() { _ = d.Close(ctx) }()
+```
+
+`rclone.Options` 的字段:
+
+<TypeTable
+  type={{
+    Backend: {
+      type: 'string',
+      required: true,
+      description: 'rclone 后端名,如 local、s3、webdav、drive、onedrive;与 rclone.conf 中的 type 相同。不认识的名字让 Open 返回错误',
+    },
+    Params: {
+      type: 'map[string]string',
+      description: '后端参数,键名与 rclone.conf 中的写法相同(如 access_key_id)。值为空串视为未设置,取后端默认值。密码类参数须事先编码,见下文。Open 不修改传入的映射',
+      default: 'nil',
+    },
+    Path: {
+      type: 'string',
+      description: '后端内的根路径:对象存储为「桶名」或「桶名/前缀」,文件类后端为目录。空表示后端根',
+      default: '""',
+    },
+    Crypt: {
+      type: '*rclone.CryptOptions',
+      description: '非 nil 时在后端之上叠加 crypt 加密层',
+      default: 'nil',
+    },
+    OnChange: {
+      type: 'func(key, value string)',
+      description: '后端运行期写回参数(刷新后的 OAuth 令牌等)时调用,用来持久化新值。nil 表示写回只留在内存',
+      default: 'nil',
+    },
+  }}
+/>
+
+`Open` 返回的错误不携带参数映射,参数里的凭证不会经错误消息泄露到日志。
+
+### s3 默认跳过桶检查
+
+`Backend` 为 `s3` 且 `Params` 里没有 `no_check_bucket` 时,驱动自动补上 `no_check_bucket=true`;显式给出的值不会被覆盖。
+
+原因:R2、MinIO 等 S3 兼容存储常用只授权到桶内的凭证,没有建桶权限。rclone 默认在上传前尝试建桶,
+桶已存在而凭证无权建桶时返回 403,写入失败;而只读的健康探测(见 [多存储容灾](./failover.mdx))照常通过,
+表现为「探测健康却写不进」。跳过桶检查的代价是**桶必须事先存在**。
+
+### EnsureBucket
+
+需要由程序建桶时,用 `(*rclone.Driver).EnsureBucket`:它对根路径执行一次建目录,对 s3 即创建 `Path` 所在的桶,桶已存在不报错。
+
+```go
+b, err := rclone.Open(ctx, rclone.Options{
+	Backend: "s3",
+	Params: map[string]string{
+		"provider":          "Cloudflare",
+		"access_key_id":     "<access key>",
+		"secret_access_key": "<secret key>",
+		"endpoint":          "https://<account id>.r2.cloudflarestorage.com",
+		"no_check_bucket":   "false", // 必须显式关闭,否则建桶被跳过,EnsureBucket 什么也不做
+	},
+	Path: "my-bucket",
+})
+if err != nil {
+	return err
+}
+defer func() { _ = b.Close(ctx) }()
+if err := b.EnsureBucket(ctx); err != nil {
+	return err // 多为凭证没有建桶权限
+}
+```
+
+`EnsureBucket` 不在 `Driver` 接口里,因为它只对对象存储有意义。应用的做法是:建桶时临时打开一个 `no_check_bucket=false`
+的驱动调用它,日常读写仍用默认配置的驱动。
+
+### 密码类参数的编码
+
+rclone 要求一部分参数以 `rclone obscure` 的编码形式提供,例如 webdav、sftp、ftp 的 `pass`。哪些参数属于这一类,
+由后端自己的选项元数据标明。驱动把 `Params` 原样交给后端,所以这些值必须**事先编码**:漏编码的明文会被后端当作编码值解出乱码,
+表现为凭证正确却认证失败。不是所有密钥都属于这一类,例如 s3 的 `secret_access_key` 就以原文传入。
+
+包里提供两个函数完成编码。两者都按后端元数据挑出密码类参数、原地修改传入的映射、跳过空值,后端名不认识时返回错误:
+
+| | `ObscureSecrets` | `ObscurePlainSecrets` |
+|---|---|---|
+| 编码哪些值 | 全部密码类参数 | 密码类参数中尚未编码的值 |
+| 适用场景 | 值确定是明文,例如来自表单输入 | 来源不确定,可能是明文,也可能是从 rclone.conf 复制来的编码值 |
+| 误判后果 | 已编码的值被再编码一次,认证失败 | 恰好形似编码产物的明文被原样放过,认证失败 |
+
+`ObscurePlainSecrets` 判断「已编码」的规则与 rclone 相同:能被 rclone 解码的值即视为已编码,与不带 `--obscure` / `--no-obscure`
+执行 `rclone config create` 时的行为一致。遇到它误判的明文,先用 `rclone obscure` 编码再传入即可。应用的渠道配置接受两种形式,用的就是它。
+
+```go
+params := map[string]string{
+	"url":    "https://dav.example.com/remote.php/dav/files/me",
+	"vendor": "nextcloud",
+	"user":   "me",
+	"pass":   "明文密码",
+}
+if err := rclone.ObscureSecrets("webdav", params); err != nil {
+	return err
+}
+d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Path: "images"})
+```
+
+### OAuth 令牌写回与 OnChange
+
+Google Drive、OneDrive、Dropbox 等网盘后端用 OAuth 授权。库不包含授权流程:在本机执行 `rclone authorize "drive"`
+(后端名按实际替换)取得 JSON 令牌,放进 `Params["token"]`。
+
+令牌临近过期时,rclone 自己刷新,并把新值写回参数;OneDrive 在构造时还会写回 `drive_id` 等参数。驱动收到写回后先更新内存中的参数,
+再调用 `OnChange(key, value)`。
+
+- `OnChange` 为 nil 时,新值只活在内存里,进程重启后又从旧令牌开始。对刷新时会轮换刷新令牌的服务商,旧令牌此时已经作废,
+  重启后授权随之失效。用网盘后端时应当提供 `OnChange` 并把值持久化。
+- 回调可能在任意 goroutine 中调用,也可能在 `Open` 返回之前就被调用(构造期写回);它同步执行在 rclone 的调用路径上,应尽快返回,并自行保证并发安全。
+- 回调没有返回值,持久化失败只能由你自己记录。
+- 不要再另起一个刷新令牌的循环。两个刷新者会让对方的刷新令牌失效。定期调用一次只读操作(例如 [`failover.Probe`](./failover.mdx))就足以让 rclone 按时刷新。
+
+```go
+d, err := rclone.Open(ctx, rclone.Options{
+	Backend: "drive",
+	Params:  map[string]string{"token": tokenJSON},
+	Path:    "imgyoung",
+	OnChange: func(key, value string) {
+		if err := saveParam(key, value); err != nil { // saveParam:你的持久化函数
+			log.Printf("持久化参数 %s 失败: %v", key, err)
+		}
+	},
+})
+```
+
+### crypt 加密层
+
+`Crypt` 不为 nil 时,驱动在后端之上叠加 rclone 的 crypt 层:对象内容流式加密,文件名按 rclone 的 `standard` 方式加密。
+经驱动的读写自动加解密,`List` 返回的是解密后的键;存储服务商只能看到密文与加密后的文件名。
+
+<TypeTable
+  type={{
+    Password: { type: 'string', description: '内容加密密码,明文;由本包按 rclone 要求编码' },
+    Salt: { type: 'string', description: '文件名加密的盐,明文;即 rclone crypt 的 password2' },
+  }}
+/>
+
+实现上,`Open` 先构造内层后端,以随机名(形如 `imgyoung-0123abcd`)登记进 rclone 的进程级 fs 缓存,再构造以该名为 `remote` 的 crypt 层。
+
+<Callout type="warn" title="丢失密码等于丢失数据">
+Password 与 Salt 是解密的唯一依据,丢失后存储里的对象无法还原。
+</Callout>
+
+crypt 是 rclone 的公开格式,不依赖本库也能用标准 rclone 解密。按下面的方式在 rclone.conf 里配置一个 crypt 远端,
+其中 `password` 与 `password2` 分别填 `rclone obscure <Password>` 与 `rclone obscure <Salt>` 的输出,
+其余选项保持 rclone 默认值(本库只设置了 `filename_encryption`):
+
+```ini title="rclone.conf"
+[mystore]
+type = s3
+provider = Cloudflare
+access_key_id = <access key>
+secret_access_key = <secret key>
+endpoint = https://<account id>.r2.cloudflarestorage.com
+
+[mystore-crypt]
+type = crypt
+remote = mystore:my-bucket/images
+filename_encryption = standard
+password = <rclone obscure 的输出>
+password2 = <rclone obscure 的输出>
+```
+
+之后 `rclone ls mystore-crypt:` 列出的就是明文文件名,`rclone copy mystore-crypt: ./out` 可取回明文内容。
+应用的渠道存储加密也基于这一层,密码由主密钥派生,见 [渠道存储加密](../channels/encryption.mdx)。
+
+### Close
+
+驱动用完必须调用 `Close(ctx)`:后端提供了关闭钩子(rclone 的 `Shutdowner`)时,它关闭后端的后台任务与连接池;
+加密驱动还会把内层后端从 rclone 的 fs 缓存中移除,移除时由缓存负责关闭内层。`Close` 之后不能再使用该驱动。
+
+`Close` 是 `*rclone.Driver` 的方法,不在 `Driver` 接口里。以 `driver.Driver` 接口传递驱动时,要另外保留具体类型的指针用于关闭。
+
+### 完整示例
+
+下面是仓库里的 `store/rclone/example_test.go`,用 rclone 的 `memory` 后端走一遍写入、查询、读回、删除,
+随 `go test ./store/rclone` 执行,输出与末尾的 `Output` 注释一致:
+
+<include cwd lang="go" meta='title="store/rclone/example_test.go"'>../store/rclone/example_test.go</include>
+
+`memory` 与 `local` 后端很适合写集成测试:前者数据只在进程内存里,后者配合 `t.TempDir()` 使用,都不需要任何云账号。
+
+## 自带驱动
+
+不用 rclone 时,自己实现 `driver.Driver` 即可与 `store/failover` 配合。要点:
+
+1. **对象缺失返回 `ErrNotFound`**:`Open`、`Stat`、`Delete` 找不到对象时,返回能被 `errors.Is(err, driver.ErrNotFound)` 命中的错误。
+   `failover.Open` 靠它区分「对象不存在」与「存储故障」,`failover.Probe` 把 `Stat` 返回的 `ErrNotFound` 视为存储可达。
+2. **`Put` 读满 `size` 个字节**,读不够时返回错误;不要关闭 `r`。失败后调用方可能以同一个键重试,再次 `Put` 应整体覆盖之前留下的内容。
+3. **`List` 递归列举**:`dir` 为空表示全部对象;返回相对根的完整键;目录不存在时返回空结果与 nil。
+4. **`ModTime` 填真实的修改时间**:调用方会据此判断对象新旧,例如应用的对账只回收修改时间早于宽限期的未知对象。
+5. **并发安全、尊重 `ctx`**。用编译期断言确认实现完整:`var _ driver.Driver = (*MemDriver)(nil)`。
+
+下面是一个把对象存在进程内存里的实现,可直接用于测试:
+
+```go
+package memstore
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/x-haose/imgyoung/store/driver"
+)
+
+// MemDriver 把对象存在进程内存里的 Driver 实现。
+type MemDriver struct {
+	mu      sync.RWMutex
+	objects map[string]memObject
+}
+
+type memObject struct {
+	data    []byte
+	modTime time.Time
+}
+
+var _ driver.Driver = (*MemDriver)(nil)
+
+func New() *MemDriver {
+	return &MemDriver{objects: map[string]memObject{}}
+}
+
+func (m *MemDriver) Put(ctx context.Context, key string, r io.Reader, size int64) error {
+	data, err := io.ReadAll(io.LimitReader(r, size))
+	if err != nil {
+		return fmt.Errorf("读取 %q: %w", key, err)
+	}
+	if int64(len(data)) != size {
+		return fmt.Errorf("写入 %q: 期望 %d 字节,实际 %d: %w", key, size, len(data), io.ErrUnexpectedEOF)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.objects[key] = memObject{data: data, modTime: time.Now()}
+	return nil
+}
+
+func (m *MemDriver) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	o, ok := m.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("对象 %q: %w", key, driver.ErrNotFound)
+	}
+	return io.NopCloser(bytes.NewReader(o.data)), nil
+}
+
+func (m *MemDriver) Stat(ctx context.Context, key string) (*driver.ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	o, ok := m.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("对象 %q: %w", key, driver.ErrNotFound)
+	}
+	return &driver.ObjectInfo{Key: key, Size: int64(len(o.data)), ModTime: o.modTime}, nil
+}
+
+func (m *MemDriver) Delete(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.objects[key]; !ok {
+		return fmt.Errorf("对象 %q: %w", key, driver.ErrNotFound)
+	}
+	delete(m.objects, key)
+	return nil
+}
+
+func (m *MemDriver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	prefix := ""
+	if dir != "" {
+		prefix = strings.TrimSuffix(dir, "/") + "/"
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var out []driver.ObjectInfo
+	for k, o := range m.objects {
+		if strings.HasPrefix(k, prefix) {
+			out = append(out, driver.ObjectInfo{Key: k, Size: int64(len(o.data)), ModTime: o.modTime})
+		}
+	}
+	return out, nil
+}
+```

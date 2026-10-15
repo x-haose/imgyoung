@@ -1,0 +1,100 @@
+---
+title: Using it as a Go library
+description: ImgYoung's storage layer ships as three public packages you can go get — a driver interface, an rclone implementation, and multi-store failover primitives.
+---
+
+ImgYoung's multi-store reads and writes, channel encryption, and failover are exposed as public Go packages, and the
+application itself reaches storage through these same packages. If your own Go project needs to write one object to
+several stores, fall back automatically when reading, or check whether a store is usable, you can reuse them directly.
+
+## The three packages
+
+| Package | What it provides | Depends on |
+|---|---|---|
+| `store/driver` | The `Driver` interface (`Put` / `Open` / `Stat` / `Delete` / `List`), `ObjectInfo`, and the sentinel `ErrNotFound` | Standard library only |
+| `store/rclone` | A `Driver` backed by any rclone backend, with an optional crypt layer, OAuth token write-back, and password parameter encoding | `store/driver` and rclone |
+| `store/failover` | Stateless failover primitives over a list of `Driver`s: write until N copies succeed, read from the first readable one, light and deep health checks | `store/driver` only |
+
+```text
+store/failover ──→ store/driver ←── store/rclone ──→ github.com/rclone/rclone
+```
+
+- `store/driver` imports neither rclone nor any concrete backend. You can implement `Driver` yourself and never touch rclone.
+- `store/rclone` is an optional implementation: rclone is compiled in only if you import it. It registers every
+  rclone backend, so `Backend` accepts any backend name rclone supports.
+- `store/failover` works purely against the `driver.Driver` interface and treats rclone drivers and your own drivers the same way.
+
+None of the three packages depend on the application's `internal/` code; a lint rule (depguard) enforces that boundary.
+
+## Installation
+
+```bash title="Terminal"
+# Interface and failover primitives only (bring your own driver)
+go get github.com/x-haose/imgyoung/store/failover@latest
+
+# Plus the rclone implementation
+go get github.com/x-haose/imgyoung/store/rclone@latest
+```
+
+The module's `go.mod` declares Go 1.26.9; your toolchain must be at least that version.
+
+## One module, only the packages you use get compiled
+
+`store/` lives in the same module as the application, `github.com/x-haose/imgyoung`; it is not split into a separate
+module. Go compiles only imported packages: if you import just `store/driver` and `store/failover`, neither rclone nor
+any application code ends up in your binary.
+
+The size difference is substantial. A minimal program that prints one line, built on darwin/arm64 (not stripped):
+
+| Imported package | Binary size |
+|---|---|
+| `store/failover` (pulls in `store/driver`) | about 2.7 MB |
+| `store/rclone` | about 100 MB |
+
+The second one is large because `store/rclone` imports rclone's `backend/all`, which registers every backend at once.
+
+<Callout type="info" title="Dependency versions can be raised">
+Once you import any `store` package, this module joins your dependency graph, and the module versions listed in its
+`go.mod` take part in Go's minimal version selection (MVS). If your project also depends on one of those modules (the
+AWS SDK, `golang.org/x/...`, and so on), its version may be raised to at least what this module requires. This only
+affects version selection; what gets compiled, and how large the binary is, still depends only on the packages you import.
+</Callout>
+
+## Compatibility promise
+
+Exported identifiers in all three packages stay backward compatible within major version v1: types, functions,
+methods, fields, and sentinel errors will not be removed or change signature.
+
+- Error message text is written in Chinese; do not depend on its content. Classify errors with `errors.Is` against the
+  exported sentinels (`driver.ErrNotFound`, `failover.ErrUnavailable`, and so on).
+- Backend parameter names and behavior in `store/rclone` come from rclone itself and follow the rclone version pinned in
+  this module's `go.mod`.
+- Packages under `internal/` cannot be imported from outside the module (a Go rule) and are not covered.
+
+## What the library does not include
+
+`store` only performs one operation against an ordered list of drivers. It keeps no state and runs nothing in the
+background. The following pieces are implemented in the application, layered on top of the same primitives; if your
+project needs them, you build them yourself:
+
+| Capability | Description | Where the application implements it |
+|---|---|---|
+| Replica state persistence | Which drivers hold a copy of which object. `failover.Write` only returns the outcome of each attempt; recording it is up to you | `blob_channels` table |
+| Asynchronous replication | Return once N copies are written and fill in the remaining drivers in the background. See [Failover · Building your own replication](./failover.mdx#replication) | `internal/core/replication` |
+| Reconciliation | Periodically `List` each store, compare against your records in both directions, delete orphans, and re-copy missing replicas | `internal/core/replication` |
+| Scheduling | Health check intervals, retries with backoff, a task queue | `cmd/imgyoung`, the River task queue |
+| Driver instance management | Rebuild a driver and `Close` the old one when its configuration changes; keep health state and switching policy | `internal/core/channel` |
+| Cloud drive authorization | The library only writes back refreshed tokens; obtain the initial token with `rclone authorize` | `internal/core/channel` |
+
+For how the application puts these pieces together, see [Architecture](../architecture.mdx).
+
+## Next steps
+
+<Cards>
+  <Card title="Driver interface and rclone implementation" href="./driver.mdx">
+    The Driver contract, rclone.Open options, password encoding, OAuth token write-back, the crypt layer, and writing your own driver.
+  </Card>
+  <Card title="Multi-store failover" href="./failover.mdx">
+    Semantics of Write / Open / Probe / DeepProbe, a complete primary/backup example, and building replication on top of the primitives.
+  </Card>
+</Cards>

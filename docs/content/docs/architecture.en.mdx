@@ -1,0 +1,285 @@
+---
+title: Architecture
+description: Single-instance design, layers and dependency direction, the data model, upload and access data flows, the outbox fence, periodic tasks, and why rclone is integrated in-process.
+---
+
+## Single-instance design
+
+ImgYoung is deliberately designed as a single instance: one process, one data directory.
+
+- **The metadata database is one SQLite file** (`imgyoung.db` in the data directory, in WAL mode). Writes queue on a
+  single connection and reads use a pool; the driver is the pure-Go `modernc.org/sqlite`.
+- **The task queue lives in the same database**: asynchronous work runs on River, whose job tables sit in the same
+  SQLite file as the business tables, so no separate queue service is needed.
+- **All other state is local**: the upload concurrency gate, per-user upload rate limits, login rate limiting, and access
+  activity aggregation live in process memory, and the variant cache lives on local disk. There is no Redis.
+- **One static binary**: everything is built with `CGO_ENABLED=0`, and the admin console's frontend assets and the
+  OpenAPI document are compiled into the binary.
+
+As a result, ImgYoung does not support several processes sharing one data directory, nor horizontal scaling. The path
+to high availability is replacing the database with PostgreSQL (River supports PostgreSQL itself, so the task queue
+moves along with it) and moving the in-process shared state out at that point; the current code only implements SQLite.
+
+## Layers and dependency direction
+
+```text
+http ──→ core ──→ infra
+  │        └────→ store
+  └─────────────→ infra
+```
+
+| Layer | Directory | Responsibility |
+|---|---|---|
+| store | `store/` | The public storage engine: the `driver` interface, the `rclone` implementation, and the `failover` primitives. See [Using it as a Go library](./library/index.mdx) |
+| infra | `internal/infra/` | Infrastructure and outbound adapters: `config` (bootstrap and runtime settings), `db` (schema, queries, migrations, sqlc-generated code), `secret` (master key and encryption), `id` (short IDs), `imaging` (image processing), `cdn`, `urlfetch` (fetching for URL imports), `observability` (metrics), `version` |
+| core | `internal/core/` | Business core: `channel` (channels and health checks), `replication` (replication, reconciliation, draining, CDN purge), `upload`, `variants` (on-demand processing), `dedup`, `lifecycle`, `reliability` (backup and restore), `auth`, `audit`, `referer`, `usage`, `alert` |
+| http | `internal/http/` | Inbound HTTP: `publicapi` (uploads and image access), `s3api` (the S3 protocol surface), `adminapi` (admin console), `middleware`, `httpx`, `router` |
+| Composition root | `cmd/imgyoung/` | `build.go` constructs the object graph by hand in the order infrastructure → services → HTTP, `serve.go` orchestrates startup and shutdown with oklog/run, and `loops.go` holds the periodic loops |
+
+`store` and `infra` are two parallel leaves: `store` depends on no `internal/` package, and `infra` depends on neither
+core, store, nor http; `core` depends on both. The dependency direction is enforced by golangci-lint's depguard rules,
+and nothing merges while CI is red:
+
+| Rule | Must not import | Why |
+|---|---|---|
+| `store/**` | Any package under `internal/` | store is a public, reusable storage engine and cannot depend on application code |
+| `internal/infra/**` | `internal/core`, `store`, `internal/http` | infra is the infrastructure leaf |
+| `internal/core/**` | `internal/http` | The business core knows nothing about transport and can be tested without HTTP |
+| `internal/http/**` | `store` | Channel selection and failover belong to core; the transport layer only uses the results core gives it |
+
+Two more conventions:
+
+- **Interfaces are defined by their consumers**: each package declares small interfaces with only the methods it uses
+  (such as `upload.ChannelSelector` and `publicapi.BlobChannels`), satisfied implicitly by concrete types.
+  `store/driver.Driver` is the only first-class abstraction.
+- **Identity is passed explicitly**: middleware resolves the authenticated principal into the request context, and the
+  handler takes it out and passes it to core as an argument; core never reads identity from the context, and per-user
+  isolation is enforced in core.
+
+HTTP handlers and River workers are thin adapters that translate an external trigger into a service call. Periodic
+tasks are `Run(ctx, wait)` loops owned by each service and orchestrated by the composition root; there is no separate scheduler layer.
+
+## Data model
+
+At the heart of the data model is the **separation of physical images from upload references**:
+
+```text
+images (references) ──→ blobs (physical images) ──→ blob_channels (replicas per channel) ──→ channels
+        N : 1                      1 : N                                 N : 1
+```
+
+- **`blobs`** are the bytes actually stored. Every upload creates a new blob; after background deduplication merges
+  byte-identical blobs, one blob can be referenced by several images. A blob records the `sha256` of the sanitized
+  bytes, the perceptual hash `phash`, the object key inside channels `storage_key` (of the form
+  `{short_id}_{first 8 hex chars of sha256}`), MIME type, size, dimensions, the reference count `ref_count`, and the deletion markers.
+- **`images`** are the references created by uploads; the public 10-character short ID is the primary key. Owner,
+  source token, S3 object key alias, expiry time and access activity, the cold-image label, and cleanup exemption all
+  live on the reference, not on the blob.
+- **`blob_channels`** records a blob's replica on a channel and doubles as the state of its replication task:
+  `pending → uploading → done / failed`, plus the attempt count and the last error.
+
+Keeping the two layers apart puts each concern in its place: merging duplicates just repoints references at the
+surviving blob; TTL, cold images, and quotas are computed per reference; replicas, replication, and physical deletion work per blob.
+
+**Reference counting**: every change to `ref_count` is an atomic `UPDATE … SET ref_count = ref_count ± 1`. Deleting a
+reference and decrementing the count happen in the same transaction. A blob whose count reaches zero is marked for
+deletion with a physical deletion time based on the runtime setting `delete_grace_minutes`. When that time comes, the
+cleanup task first removes its variant cache, then deletes the business rows in one transaction while re-checking the
+deletion condition (if the blob was referenced again in the meantime, the deletion is abandoned), and finally queues an
+object deletion job for every channel holding a replica.
+
+The remaining tables:
+
+| Table | Contents |
+|---|---|
+| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest check result, whether encrypted, whether direct links are allowed, the being-cleaned-up flag |
+| `variants` | Index of the variant cache: one row per blob and processing parameter set; the bytes live on local disk and are evicted LRU by last access |
+| `settings` | Runtime settings in a single-row wide table; each column's DEFAULT is the factory value. See [Configuration](./configuration.mdx) |
+| `users`, `tokens`, `sessions` | Users and quotas, upload tokens (hashes only), admin sessions (only a hash of the session id plus its bound CSRF token) |
+| `idempotency_keys` | Upload idempotency keys, scoped per user |
+| `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
+| `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records |
+
+The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
+table and every column. Versioned migrations are generated from it by Atlas, embedded in the binary, and applied in
+order at startup; applied versions are recorded in the `schema_revisions` table, so upgrading across several versions
+also applies every migration in between.
+
+## Upload data flow
+
+Data plane uploads, admin console uploads, URL imports, and S3 PutObject differ only in where the bytes come from;
+once the bytes are in hand they all go through the same pipeline. The upload path does not deduplicate: every upload
+creates a new blob and deduplication happens in the background, which keeps the upload path a straight line with no branches.
+
+<Steps>
+<Step>
+
+**Entry and guards**: authenticate (upload token, session, or S3 signature) and pass two gates: the per-user upload
+rate limit (`upload_rate_per_min`) and the global upload concurrency gate (`max_concurrent_uploads`, which returns 429
+immediately when full). The image bytes are then read fully into memory, and anything over `max_upload_mb` is rejected.
+
+</Step>
+<Step>
+
+**Idempotency**: if `Idempotency-Key` is present and the same user has already used that key, the existing image is returned.
+
+</Step>
+<Step>
+
+**Format and pixel budget**: the real format is decided by the magic bytes at the start of the file, and only JPEG,
+PNG, GIF, and WebP are accepted. Only the image header is read to get the dimensions, and they are cross-checked
+against the sniffed format; if width × height exceeds `max_pixels_mp` the upload is rejected without a full decode.
+Decoded memory depends on resolution, not on file size, so this gate has to come before decoding.
+
+</Step>
+<Step>
+
+**Quota pre-check**: quota is charged in full per reference; exceeding the user's quota returns 403 and nothing is written to channels.
+
+</Step>
+<Step>
+
+**Sanitizing**: with the EXIF policy `strip`, metadata is removed (JPEG, PNG, WebP; GIF has no standard metadata segment and passes through unchanged).
+
+</Step>
+<Step>
+
+**Hashing**: one full decode computes the perceptual hash (pHash), then SHA-256 is computed over the bytes that will be
+stored. Sanitizing happens before hashing, so `sha256` always matches the bytes actually stored in channels.
+
+</Step>
+<Step>
+
+**Writing to channels**: the object key is `{short_id}_{first 8 hex chars of sha256}`; embedding the short ID is the
+last resort for rebuilding from storage if the metadata database is lost entirely. `failover.Write` writes to the
+healthy channels in priority order until `min_success` copies succeed, with a 10-minute timeout per write, moving on to
+the next channel on failure.
+
+</Step>
+<Step>
+
+**Recording**: one transaction writes the blob, the reference, a replica row for every active channel (`done` for the
+ones written, `pending` for the rest), and the idempotency key.
+
+</Step>
+<Step>
+
+**Queuing replication**: replication jobs are queued for the `pending` channels and the upload returns. If queuing
+fails, it is only logged; reconciliation picks it up.
+
+</Step>
+</Steps>
+
+The whole upload happens in memory without temporary files. Peak memory is roughly "concurrency × max(per-image size
+limit, decoded memory at the pixel budget)", so lowering these settings adapts ImgYoung to small machines. If the
+channel write succeeds but recording fails, an orphan object is left behind; reconciliation GC reclaims it, and the
+channel write is never rolled back.
+
+## Access data flow
+
+`GET /i/{id}` (and the S3 object key alias `/o/{user_id}/{key}`):
+
+1. Hotlink protection middleware allows the request or returns 403 based on the Referer allowlist.
+2. The reference is looked up; if it cannot be found, 404 is returned (an expired reference can no longer be found
+   once the cleanup task reclaims it). Public access is counted in memory and flushed to the database in batches every
+   `activity_flush_seconds`.
+3. On-demand processing kicks in when the image needs resizing or converting: a `w` parameter, an explicit `format`, or
+   no format with a browser that accepts WebP, WebP allowed by the settings, and an original that is not WebP already.
+   GIFs are always served as originals. A variant cache hit is returned directly; on a miss the image is processed
+   within the `process_workers` concurrency limit and cached, with concurrent requests for the same parameters merged
+   into one processing run. When processing is busy or fails, the original is served instead, with `Cache-Control: no-store`.
+4. Otherwise the original is served. Candidate channels are those that are healthy, not being cleaned up, and hold a
+   `done` replica of the image, in priority order. In `redirect` access mode, if a candidate allows direct links, is not
+   encrypted, and has a public URL configured, the response is a 302 to that channel; otherwise `failover.Open` proxies
+   the read, switching to the next channel as soon as one cannot be read.
+5. Originals and variants are immutable and carry a strong ETag and `Cache-Control: public, max-age=31536000, immutable`.
+
+## The outbox fence: business tables are the single source of truth
+
+Asynchronous replication runs on River, but River jobs are only **idempotent triggers**. The single source of truth for
+replica state is the business table `blob_channels`:
+
+- A replication job means "make sure blob X has a replica on channel Y". The worker reads the business table first: if
+  the replica is already `done` it returns; before copying it sets `uploading`; on failure it goes back to `pending` and
+  River retries; if the last attempt still fails it becomes `failed`; on success it becomes `done`.
+- Jobs are deduplicated by (blob, channel), counting only unfinished jobs, so the same replica never appears in the queue twice.
+- **Reconciliation** runs at startup and every 10 minutes after that: it queues drain jobs for channels being cleaned
+  up, seeds missing replica rows for every channel, resets `failed` replicas on healthy channels to `pending`, and then
+  pages through every `pending` / `uploading` replica and queues it again.
+
+So even if River's job tables are lost or corrupted, the queue can be rebuilt completely from the business table; a job
+that was running when the process was killed is rescheduled by River once it has been stuck in the running state for
+16 minutes. When a channel is created, `pending` replica rows are seeded for every existing blob, and the same
+machinery brings them in line, with no separate backfill logic.
+
+The other asynchronous jobs follow the same principle: deleting objects from a channel (`delete_object`), draining a
+channel being cleaned up (`drain_channel`, whose progress is simply the remaining replica rows), and purging CDN caches
+(`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
+finally fails are reclaimed by reconciliation GC; drain jobs are queued again on every reconciliation for channels
+still being cleaned up; when a CDN purge finally fails, the edge cache expires once the CDN's own cache lifetime runs out.
+
+## Periodic tasks
+
+Periodic tasks are loops owned by each service and started and stopped by the composition root. For intervals that come
+from runtime settings, a change in the admin console reschedules the current wait immediately instead of waiting for the old interval to finish.
+
+| Task | Interval | What it does |
+|---|---|---|
+| Health check | `health_check_seconds` (default 60 seconds) | Light checks on all channels in parallel; an unhealthy channel whose light check passes recovers only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
+| Alert evaluation | Same as the health check | Unhealthy channels, failed replication, channel usage over the threshold, failed drains, failed backups; can be pushed to a webhook |
+| Lifecycle cleanup | `cleanup_sweep_seconds` (default 60 seconds) | Reclaim expired references → physically delete blobs past their grace period → label cold images → reclaim expired idempotency keys → reclaim audit entries past retention |
+| Activity flush | `activity_flush_seconds` (default 60 seconds) | Write public access times and counts to the database in batches; variants' last-access times are flushed on the same interval |
+| Deduplication | `dedup_scan_seconds` (default 300 seconds) | Merge exact duplicates (same SHA-256) automatically, then scan for pHash near-duplicates and queue them for manual decisions |
+| Usage report | `usage_report_seconds` (default 300 seconds) | Compute storage usage per channel and update metrics |
+| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take a consistent snapshot with `VACUUM INTO`, upload it to `_imgyoung/backup/` on the primary channel, and keep `backup_keep` copies. See [Backup and restore](./operations/backup.mdx) |
+| Auth maintenance | 1 minute / 1 hour (fixed) | Write back token last-used times in batches / reclaim expired sessions |
+| Replication reconciliation | 10 minutes (fixed) | See the previous section |
+| Reconciliation GC | 24 hours (fixed) | List every healthy channel and compare with its `done` replicas in both directions: objects on the channel but not in the database, with a modification time over 48 hours ago, are deleted as orphans; replicas recorded as `done` but missing from the channel are phantoms, reset to `pending` and replicated again. The system directory `_imgyoung/` and the light check key are excluded |
+
+On shutdown (SIGINT / SIGTERM, or a restart requested after restoring a backup snapshot in the admin console) the
+components wind down in turn: the loops write out any data still held in memory, River waits for in-flight jobs, and
+HTTP stops accepting new requests and waits for in-flight ones. River and HTTP each wait at most 30 seconds; then the
+channel drivers and the database are closed.
+
+## Two upgrade seams
+
+Only two technology choices are expected to be replaced; everything else is fixed, with no replacement points reserved:
+
+- **Image processing engine**: the single entry point for on-demand processing is `Processor.Process(src, params)` in
+  `internal/infra/imaging`. The current implementation is pure Go: the standard library decodes JPEG / PNG / GIF,
+  `gen2brain/webp` encodes and decodes WebP, output is limited to WebP, JPEG, and PNG, and GIFs are stored and served
+  as-is without processing. More formats or faster processing would mean replacing this processor.
+- **Database**: currently SQLite. The schema is defined in declarative SQL, migrations are generated by Atlas, and query
+  code is generated by sqlc; moving to PostgreSQL means replacing this layer along with River's driver.
+
+Each seam currently has a single implementation, and no interface type has been defined for either in advance.
+
+## Why rclone is integrated in-process
+
+The storage layer follows one rule: rclone only stores bytes in some backend, retrieves, inspects, lists, and deletes
+them. Primary/backup switching, replication, reference counting, deduplication, TTL, and health decisions are all
+ImgYoung's own code, separated from rclone by the `store/driver.Driver` interface.
+
+The integration imports rclone's `fs` and backend packages directly and builds an `fs.Fs` in-process from a parameter
+map, instead of calling the rclone command line, librclone's RPC interface, or an rclone config file:
+
+- **Streaming, no temporary files**: uploads write in-memory bytes straight through `fs.Fs.Put`, and reads stream the
+  object straight into the HTTP response.
+- **Configuration stays in ImgYoung's own database**: channel parameters are stored in the `channels` table encrypted
+  with the master key and decrypted into a map for the backend at runtime. The parameters contain credentials, so they
+  are never logged and never carried in error chains.
+- **One token refresher**: rclone refreshes OAuth tokens itself and hands them to the application through the
+  parameter write-back hook, which encrypts and stores them immediately; the application runs no refresh loop of its own.
+- **One handle for everything**: reads, writes, checks, listing, and deletion all go through the same `fs.Fs`, with
+  one set of error mappings (missing objects always become `driver.ErrNotFound`).
+- **Channel encryption with no extra code**: encrypted channels stack rclone's crypt layer on top of the backend, and
+  the upload and access paths stay unchanged; crypt is a public format, so with the password the data can be decrypted
+  by standard rclone on its own. See [Channel encryption](./channels/encryption.mdx).
+- **Tests need no cloud account**: rclone's `local` and `memory` backends let the whole storage path run as integration tests on one machine.
+
+Registering every rclone backend (`backend/all`) means any storage rclone supports can be used as a channel directly,
+and rclone upgrades bring new backends with them; the cost is a binary on the order of 100 MB. This relies on rclone's
+internal APIs, which make no stability promise, so `go.mod` pins the rclone version and upgrades are done by hand with the full test suite.
+
+Splitting the `Driver` interface and the rclone implementation into separate packages also lets Go projects outside the
+application reuse this storage engine on its own; see [Using it as a Go library](./library/index.mdx).

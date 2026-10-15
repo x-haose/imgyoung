@@ -1,0 +1,93 @@
+---
+title: 作为 Go 库使用
+description: ImgYoung 的存储层是三个可 go get 的公开包:驱动接口、rclone 实现与多存储容灾原语。
+---
+
+ImgYoung 的多存储读写、渠道存储加密与容灾能力以公开 Go 包的形式提供,应用自己也是通过这几个包访问存储的。
+如果你在自己的 Go 项目里需要「同一份数据写进多个存储、读取时自动切换、探测存储是否可用」,可以直接复用它们。
+
+## 三个包
+
+| 包 | 内容 | 依赖 |
+|---|---|---|
+| `store/driver` | `Driver` 接口(`Put` / `Open` / `Stat` / `Delete` / `List`)、`ObjectInfo`、哨兵错误 `ErrNotFound` | 仅标准库 |
+| `store/rclone` | 用 rclone 的任一后端实现 `Driver`;可叠加 crypt 加密层;OAuth 令牌写回;密码类参数编码 | `store/driver` 与 rclone |
+| `store/failover` | 在一组 `Driver` 之上的无状态容灾原语:按序写够 N 份、按序读第一个可读的、轻探测与深探测 | 仅 `store/driver` |
+
+```text
+store/failover ──→ store/driver ←── store/rclone ──→ github.com/rclone/rclone
+```
+
+- `store/driver` 不导入 rclone,也不导入任何具体后端。你可以自己实现 `Driver`,完全不用 rclone。
+- `store/rclone` 是可选实现:只有导入它才会把 rclone 编译进来。它注册了 rclone 的全部后端,所以 `Backend` 填任何 rclone 支持的后端名都能用。
+- `store/failover` 只操作 `driver.Driver` 接口,对 rclone 驱动和你自己的驱动一视同仁。
+
+三个包都不依赖应用的 `internal/` 代码,这条边界由 lint 规则(depguard)强制。
+
+## 安装
+
+```bash title="终端"
+# 只用接口与容灾原语(搭配自己实现的驱动)
+go get github.com/x-haose/imgyoung/store/failover@latest
+
+# 同时使用 rclone 实现
+go get github.com/x-haose/imgyoung/store/rclone@latest
+```
+
+本模块 `go.mod` 声明的 Go 版本是 1.26.9,你的工具链需要不低于它。
+
+## 同一个 module,只编译用到的包
+
+`store/` 与应用位于同一个 module `github.com/x-haose/imgyoung`,没有拆成独立 module。
+Go 只编译被 import 的包:只导入 `store/driver` 与 `store/failover` 时,rclone 和应用代码都不会进入你的二进制。
+
+两种导入方式的体积差别很大。在 darwin/arm64 上构建只打印一行的最小程序(未 strip):
+
+| 导入的包 | 二进制大小 |
+|---|---|
+| `store/failover`(连带 `store/driver`) | 约 2.7 MB |
+| `store/rclone` | 约 100 MB |
+
+后者大是因为 `store/rclone` 导入了 rclone 的 `backend/all`,一次注册全部后端。
+
+<Callout type="info" title="依赖版本会被抬高">
+导入任一 `store` 包后,本模块就进入了你的依赖图,它的 `go.mod` 里列出的模块版本会参与 Go 的最小版本选择(MVS)。
+如果你的项目也依赖其中某个模块(例如 AWS SDK、`golang.org/x/...`),它的版本可能被抬到不低于本模块要求的版本。
+这只影响版本选择;编译什么、二进制多大,仍只取决于你实际 import 的包。
+</Callout>
+
+## 兼容承诺
+
+三个包的导出标识符在 v1 主版本内保持向后兼容:类型、函数、方法、字段与哨兵错误不会删除或改变签名。
+
+- 错误消息文本是中文描述,不要依赖它的内容。判断错误类别一律用 `errors.Is` 匹配导出的哨兵错误
+  (`driver.ErrNotFound`、`failover.ErrUnavailable` 等)。
+- `store/rclone` 的后端参数名与行为来自 rclone 本身,以本模块 `go.mod` 中固定的 rclone 版本为准。
+- `internal/` 下的包按 Go 的规则无法从模块外导入,不在承诺范围内。
+
+## 库不包含什么
+
+`store` 只负责「对一组排好序的驱动做一次操作」,不保存任何状态,也不在后台运行任何东西。下面这些在应用里实现,
+叠加在同一组原语之上;你的项目需要的话,要自己搭:
+
+| 能力 | 说明 | 应用中的实现位置 |
+|---|---|---|
+| 副本状态持久化 | 哪个对象在哪几个驱动上有副本。`failover.Write` 只返回本次尝试的结果,由你记录 | `blob_channels` 表 |
+| 异步补齐 | 先写够 N 份就返回,其余驱动在后台补上。做法见 [多存储容灾 · 自己做补齐](./failover.mdx#replication) | `internal/core/replication` |
+| 对账 | 定期 `List` 存储内容,与你的记录双向比对,清理孤儿对象、重传缺失副本 | `internal/core/replication` |
+| 调度 | 健康探测的周期、失败重试与退避、任务队列 | `cmd/imgyoung`、River 任务队列 |
+| 驱动实例管理 | 配置变更时重建驱动并 `Close` 旧实例,健康状态的保存与切换策略 | `internal/core/channel` |
+| 网盘授权流程 | 库只负责令牌刷新后的写回;首次取得令牌请用 `rclone authorize` | `internal/core/channel` |
+
+应用如何组合这些部分,见 [架构](../architecture.mdx)。
+
+## 下一步
+
+<Cards>
+  <Card title="驱动接口与 rclone 实现" href="./driver.mdx">
+    Driver 契约、rclone.Open 的参数、密码编码、OAuth 令牌写回、crypt 加密层,以及如何自带驱动。
+  </Card>
+  <Card title="多存储容灾" href="./failover.mdx">
+    Write / Open / Probe / DeepProbe 的语义、完整的主备示例,以及在原语之上自己做补齐。
+  </Card>
+</Cards>

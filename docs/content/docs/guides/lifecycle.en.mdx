@@ -1,0 +1,153 @@
+---
+title: Lifecycle and deduplication
+description: How lifetimes are resolved across three levels and renewed on access, expiry sweeps and the three-stage delete, tagging and reviewing cold images, and automatic merging of exact duplicates alongside manual review of near-duplicates.
+---
+
+## Lifetime (TTL)
+
+Each image can have a lifetime after which it is deleted automatically. The lifetime is resolved across three levels; the first one that is defined wins:
+
+| Level | Where it is set | Values |
+|---|---|---|
+| Per upload | The `ttl` form field, the `ttl` JSON field of a URL fetch, or **Expiry** in the console upload dialog | Seconds; `0` or `never` means forever |
+| Per-user default | **Users** page → **Edit** → **Default TTL (hours)** | Empty follows the global default; `0` means forever; a positive number is hours |
+| Global default | **Default lifetime** (`default_ttl_hours`) under **Settings → Runtime settings** | `0` means forever (the default); a positive number is hours |
+
+- An explicit `0` or `never` on an upload overrides both the user and the global default, so that image never expires.
+- S3 uploads cannot set a lifetime per request and use the user default, then the global default.
+- The expiry time is computed and stored at upload. Changing the user or global default later does not affect existing images.
+- Per-upload lifetimes and per-user defaults are capped at 876000 hours (100 years).
+
+The lifetime of an existing image is changed in its details (by the image's owner or an administrator):
+
+- **Change expiry** → enter a number of days and click **Extend**: the expiry becomes N days from now, and that duration becomes the image's new lifetime (renewals use it from then on).
+- **Make permanent**: removes the expiry.
+
+## Renewal on access
+
+**Renew on access** (`ttl_renew_on_access`) is on out of the box. With it on, every public access to an image that has a lifetime pushes its expiry back to "the time the access was recorded + its lifetime".
+In effect the lifetime turns into "expires after this long without a single access": images in use stay, images nobody looks at get cleaned up. With it off, the expiry time stays fixed.
+
+- Accesses are collected in memory and written to the database in batches every `activity_flush_seconds` (60 seconds out of the box); renewal happens at that write.
+- Only public accesses through `/i/` and `/o/` count; console thumbnails and previews and S3 GetObject do not. See [Browsing in the console is not counted](./access.mdx#console-browsing).
+- Images without a lifetime are unaffected.
+
+## Expiry sweeps
+
+The cleanup sweep runs once when the process starts and then every `cleanup_sweep_seconds` (60 seconds out of the box). Each round, in order:
+
+1. deletes expired images (at most 500 per round; any backlog continues next round);
+2. physically deletes files whose grace period has passed (see the next section);
+3. tags cold images for cleanup (see [Cold images](#cold-images));
+4. reclaims upload idempotency keys past their retention period;
+5. reclaims old audit log entries if a retention period is set (`audit_retention_days`; 0, the default, keeps them forever).
+
+Between expiring and being swept, an image's link still works. Images that expire while the process is down are deleted in the first sweeps after it restarts.
+
+## The delete flow
+
+Every deletion takes the same path: expiry, deleting in the console (one image, or up to 100 at a time), deleting from the cleanup review, and S3 DeleteObject.
+
+<Steps>
+<Step>
+
+### Delete the reference
+
+In one transaction, the image record is deleted (together with any idempotency keys pointing to it) and the reference count of its physical file goes down by one. The link returns 404 from then on.
+If Cloudflare cache purging is configured, a CDN purge is queued for `/i/<short ID>` and every variant parameter combination generated for the image; `/o/` alias links are not included. See [CDN](../operations/cdn.mdx).
+
+</Step>
+<Step>
+
+### Mark for deletion
+
+When the reference count reaches 0, the physical file is marked for deletion at now + **Delete grace period** (`delete_grace_minutes`, 0 out of the box, meaning the next sweep deletes it).
+
+</Step>
+<Step>
+
+### Delete physically
+
+In the first sweep after that time, the file's variant cache is removed, the database records are deleted inside a transaction that re-checks the file is still unreferenced, and a deletion of the object is queued for every channel holding a replica.
+Channel deletions run asynchronously with retries; objects that still survive become orphans, which reconciliation reclaims.
+
+</Step>
+</Steps>
+
+**Reference counts**: one physical file can be shared by several image records (the result of deduplication merges). Deleting one record does not affect the others; the physical file enters the delete flow only once the last reference is gone. **References** in the image details shows the current count.
+
+The delete confirmations in the console tell you roughly when the physical file will go, based on the current grace period. A user can only be deleted after every image they own has been deleted.
+
+## Cold images [#cold-images]
+
+Images nobody has accessed for a long time are tagged for cleanup and wait on the **Cleanup** page for an administrator's decision. **They are never deleted automatically.**
+
+- The threshold is **Cold image threshold** (`cold_cleanup_days`), 90 days out of the box; 0 stops tagging.
+- Tagging: on each cleanup sweep, images whose last public access (or upload time, if never accessed) is older than the threshold and which are not exempt get tagged.
+- The tag is removed when:
+  - the image is publicly accessed (at the next batch write of access counts);
+  - an administrator decides to **Keep** it;
+  - an administrator removes its cleanup exemption (the next sweep judges it again);
+  - the image is deleted.
+- Raising the threshold or setting it to 0 does not remove existing tags.
+- Cold tagging and lifetimes are independent: images with a lifetime can be tagged too, and exempt images still expire.
+
+### Reviewing
+
+The **Cleanup** page (administrators only) lists images from the longest-unaccessed down, and works on single images or selections:
+
+- **Keep**: sets the cleanup exemption on the image, so it is never tagged as cold again; its lifetime and renewal are unaffected. The exemption can be removed in the image details.
+- **Delete**: runs the delete flow above.
+
+Only administrators can set cleanup exemptions. The **Cleanup exempt** switch in the image details can be turned on before an image ever goes cold; regular users see the state but cannot change it.
+The **Exempt only** filter on the **Images** page lists every exempt image.
+
+## Deduplication
+
+Deduplication never runs on the upload path, so it never slows uploads down. The background loop runs once at startup and then every `dedup_scan_seconds` (300 seconds out of the box); each round merges exact duplicates first, then scans for near-duplicates.
+
+### Exact duplicates: merged automatically
+
+Physical files whose stored bytes are identical (same SHA-256) can be merged with no risk at all, so this happens automatically:
+
+- the oldest copy is kept, the image records of the others are pointed at it, and their reference counts are added to it;
+- the extra files are marked for deletion and removed after the delete grace period;
+- files of different users are merged as well. Every image record keeps its own short ID, owner, lifetime and access count, and every link keeps working;
+- quotas count every reference in full, so merging does not reduce anyone's usage.
+
+### Near-duplicates: reviewed by hand
+
+Every physical file gets a 64-bit perceptual hash (pHash) at upload. When two files' hashes differ in no more bits (Hamming distance) than **Similarity threshold** (`dedup_phash_max_distance`, 10 out of the box), the pair becomes a candidate on the **Duplicates** page.
+
+- A higher threshold is looser and produces more false positives; 0 turns similarity scanning off. The console notes that distances of 0–2 are near identical.
+- Even a distance of 0 only makes a candidate and is never merged automatically: equal perceptual hashes do not mean equal bytes.
+- Scanning is incremental: each round compares only new files against the existing ones. After a restart everything is rescanned once, and dismissed pairs do not come back.
+
+### Deciding, and which image to keep
+
+The **Duplicates** page (administrators only) shows each candidate pair side by side as Left and Right, with format, dimensions, size, reference count and distance, closest pairs first:
+
+- **Keep this one** → confirm **Merge**: every reference of the other image now points to the kept one, the merged file is removed after the grace period, and any other candidates involving it are dropped. **This cannot be undone.**
+- **Dismiss**: the pair is never shown again; several pairs can be dismissed at once.
+
+After a merge, every link of the merged image (including other users' references) serves the kept image's content, which may differ in size, format and even picture. So keep the higher-resolution or better-format image, and choose **Dismiss** when the two are actually different pictures.
+Browsers and CDNs that already cached the old content keep showing it until their cache expires.
+
+Merges and dismissals are recorded in the audit log (actions "Merge duplicates" and "Dismiss duplicates").
+
+## Related settings
+
+| Setting | Label in the console | Default |
+|---|---|---|
+| `default_ttl_hours` | Default lifetime | 0 (forever) |
+| `ttl_renew_on_access` | Renew on access | On |
+| `cold_cleanup_days` | Cold image threshold | 90 days |
+| `delete_grace_minutes` | Delete grace period | 0 minutes |
+| `cleanup_sweep_seconds` | Cleanup sweep interval | 60 seconds |
+| `activity_flush_seconds` | Activity flush interval | 60 seconds |
+| `idempotency_key_ttl_hours` | Idempotency key retention | 24 hours |
+| `dedup_scan_seconds` | Dedup scan interval | 300 seconds |
+| `dedup_phash_max_distance` | Similarity threshold | 10 |
+| `audit_retention_days` | Audit log retention | 0 (forever) |
+
+All of them are changed under **Settings → Runtime settings** and take effect on save; see [Configuration](../configuration.mdx).

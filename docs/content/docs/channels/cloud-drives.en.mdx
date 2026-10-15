@@ -1,0 +1,184 @@
+---
+title: Cloud drives and OAuth
+description: Which drives need authorization, the two ways to authorize, how tokens are refreshed and stored, how Chinese cloud drives connect over WebDAV through a self-hosted aggregator, and the limits every drive channel shares.
+---
+
+## Supported drives
+
+In the type picker of **New channel**, the **Cloud drives** group holds the generic [WebDAV](./object-storage.mdx) template plus six templates that need OAuth authorization:
+
+| Template | rclone backend | Fields |
+|---|---|---|
+| OneDrive | `onedrive` | region, authorization, folder |
+| Google Drive | `drive` | authorization, folder |
+| Dropbox | `dropbox` | authorization, folder |
+| pCloud | `pcloud` | data region, authorization, folder |
+| Box | `box` | authorization, folder |
+| Yandex Disk | `yandex` | authorization, folder |
+
+Field labels and options come from the server in Chinese:
+
+- **Region** (区域, OneDrive): 国际版 (global), 美国政府云 (US government), 德国云 (Germany), 中国世纪互联 (China, 21Vianet). It selects the authorization and API endpoints and must match the account's region.
+- **Data region** (数据区域, pCloud): 美国 (US) or 欧洲 (EU). It must match the region chosen when the account was registered, or the token exchange fails.
+- **Folder** (存储目录): the folder on the drive that holds the images, `imgyoung` suggested; empty means the root.
+- **Authorization** (授权): the token, filled in by one of the two authorization paths below; the form cannot be saved without it.
+
+The endpoints, scopes and rclone's built-in app identity needed for authorization all come from the rclone backend's own registration; ImgYoung has no per-provider code.
+
+<Callout type="warn" title="Connect OneDrive and pCloud in custom mode">
+rclone's `onedrive` backend also needs `drive_id` and `drive_type`, which the OneDrive template does not collect, so saving fails with `unable to get drive_id and drive_type`. pCloud issues tokens without a refresh token, while the template requires one, so saving fails with "缺少刷新令牌" ("missing refresh token"). Set up both in [custom mode](#onedrive-and-pcloud-in-custom-mode) instead.
+</Callout>
+
+## Option 1: paste a token
+
+Get a token with rclone on any computer that has a browser, then paste it into the form. The ImgYoung server needs no public domain, which makes this the only option for deployments without one.
+
+<Steps>
+<Step>
+On a computer with a browser, install rclone and run the command shown in the form (Google Drive as an example):
+
+```bash title="Terminal"
+rclone authorize "drive"
+```
+
+A browser opens the provider's sign-in and consent page; complete it.
+</Step>
+<Step>
+The terminal prints something like:
+
+```text
+Paste the following into your remote machine --->
+{"access_token":"…","token_type":"Bearer","refresh_token":"…","expiry":"…"}
+<---End paste
+```
+
+Copy everything between the two marker lines.
+</Step>
+<Step>
+In the authorization field switch to **Paste a token**, paste it, fill in the remaining fields, run **Test connection** and save.
+</Step>
+</Steps>
+
+- Both a plain token JSON and rclone's encoded config blob (what `rclone authorize` prints when given a config blob argument) are accepted; ImgYoung extracts the token.
+- The token must include a refresh token, otherwise it cannot be renewed once the access token expires. Saving then fails with "渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段「授权」)"; content that cannot be parsed fails with "令牌格式非法" ("malformed token").
+- A token obtained this way is issued to rclone's built-in app, and rclone refreshes it with the same built-in app later, so the two match.
+
+## Option 2: one-click authorization in the admin console
+
+This runs the whole OAuth authorization-code flow inside the admin console. It requires an app of your own, because OAuth callback URLs must be registered with the provider in advance, and rclone's built-in apps only register a local loopback address that a browser cannot use to reach a remote server.
+
+<Steps>
+<Step>
+Set **Settings → Runtime settings → Access & links → Public site address** to ImgYoung's public address, such as `https://img.example.com`. Without it, starting authorization fails with "一键授权需先在设置中填写对外站点地址;或改用粘贴令牌方式" ("set the public site address first, or paste a token").
+</Step>
+<Step>
+Create an app on the provider's developer platform and register this callback URL — the public site address plus a fixed path:
+
+```text
+https://img.example.com/api/admin/channel-oauth/callback
+```
+
+The two must match character for character (scheme, host, port and path).
+</Step>
+<Step>
+Under **One-click authorization** in the authorization field, enter **App client ID** and **App client secret** and click **Authorize with …**. A new browser tab opens the provider's consent page.
+</Step>
+<Step>
+When it finishes, the callback page reads "授权成功,请回到后台继续。" ("authorized, return to the console"), the authorization field turns **Authorized**, and you can save.
+</Step>
+</Steps>
+
+- The callback requires an admin session, so finish the authorization **in the same browser you are signed in to the console with**.
+- An authorization session is valid for 10 minutes and the form waits for at most about 11 minutes; after that it shows "Timed out waiting for authorization, please start again".
+- The token is never written into the callback page; the form collects it with a one-time identifier, and it can be collected only once.
+- A failed token exchange reports "换取令牌失败,请核对应用凭证与回调地址" ("token exchange failed; check the app credentials and the callback URL"); refusing or cancelling on the provider's page reports "授权被拒绝或取消" plus the reason the provider returned.
+
+<Callout type="warn" title="Token renewal after one-click authorization">
+The channel configuration stores only the token, not the client ID and secret entered for one-click authorization. When the access token expires, rclone refreshes it with its built-in app, which is not the app that issued the token, so the provider rejects the refresh and the channel turns **Unhealthy**. For drive channels you want to keep, authorize by pasting a token.
+</Callout>
+
+## Token renewal and persistence
+
+- Backend parameters are handed to rclone as a map with a write-back hook. When the access token nears expiry, rclone refreshes it itself and writes the new token back through the hook; ImgYoung immediately encrypts it with the master key and stores it in the channel configuration. Any other parameter rclone writes back at runtime takes the same path.
+- If storing fails, only a log line is written (`后端写回参数无法落库`) and the new token stays in use in memory; after a restart the old token from the database is used again.
+- **There is exactly one refresher.** ImgYoung runs no refresh loop of its own: some providers invalidate the old refresh token on every refresh, so two refreshers would keep invalidating each other. The read-only requests of the periodic light check (every 60 s by default) are enough for rclone to refresh on time.
+- When editing a drive channel, the authorization field shows **Authorized · using the stored token**; leave it to keep the token, or click **Authorize again** to replace it.
+
+## OneDrive and pCloud in custom mode
+
+Both are entered under **New channel → Advanced → Custom**: put the backend name into **rclone backend** and the parameters from the tables below. Custom mode stores the token as given; to re-authorize, replace the value of `token`.
+
+<Tabs items={['OneDrive', 'pCloud']}>
+<Tab value="OneDrive">
+
+On a computer with a browser, create a temporary OneDrive remote with rclone. After authorization rclone selects the account's default drive and writes out `drive_id` and `drive_type`. For accounts outside the global cloud, append `region=us`, `region=de` or `region=cn` to the command:
+
+```bash title="Terminal"
+rclone config create onedrive-tmp onedrive
+rclone config show onedrive-tmp
+```
+
+Copy the values into the custom form:
+
+| Key | Value |
+|---|---|
+| rclone backend | `onedrive` |
+| `token` | `token` from the `rclone config show` output |
+| `drive_id` | Same source |
+| `drive_type` | Same source (`personal`, `business` or `documentLibrary`) |
+| `region` | Only outside the global cloud, as in the previous step |
+| `path` | Folder for the images, such as `imgyoung` |
+
+After saving, delete the temporary remote on your computer so that two places do not refresh the same token:
+
+```bash title="Terminal"
+rclone config delete onedrive-tmp
+```
+
+</Tab>
+<Tab value="pCloud">
+
+```bash title="Terminal"
+rclone authorize "pcloud"
+```
+
+| Key | Value |
+|---|---|
+| rclone backend | `pcloud` |
+| `token` | The token JSON printed by `rclone authorize` |
+| `hostname` | US `api.pcloud.com`, EU `eapi.pcloud.com` |
+| `path` | Folder for the images, such as `imgyoung` |
+
+pCloud tokens do not expire and need no refresh.
+
+</Tab>
+</Tabs>
+
+## Chinese cloud drives: WebDAV through a self-hosted aggregator
+
+rclone has no backends for Aliyun Drive, Baidu Netdisk, 115, Quark and similar Chinese cloud drives. The open-source aggregators that do support them (Alist and the like) are licensed AGPL-3.0: porting their code into ImgYoung would force the whole project onto the AGPL, and would leave ImgYoung chasing these drives' API and anti-abuse changes indefinitely.
+
+So ImgYoung does not port them. You deploy such an aggregator yourself and have it serve WebDAV, and ImgYoung connects with the generic WebDAV template. The two are separate processes that only talk over a network protocol, so the license does not carry over, and maintaining the drive integrations stays upstream.
+
+<Steps>
+<Step>
+Deploy the aggregator following its own documentation, mount the drive you want, and enable WebDAV.
+</Step>
+<Step>
+Create a dedicated account for ImgYoung with read, write and delete permissions. Deep checks, the daily reconciliation and channel draining all delete objects; without delete permission a channel cannot pass a deep check.
+</Step>
+<Step>
+Create a WebDAV channel in ImgYoung: set the server URL (服务地址) to the aggregator's WebDAV address (for Alist, `https://domain/dav/`), choose 其他(坚果云 / Alist / 群晖等) ("other") as the server type, enter the account and password, and set the folder (存储目录) to a dedicated folder under the drive's mount path in the aggregator.
+</Step>
+<Step>
+Run **Test connection** to confirm write, read and delete all pass, give the channel a priority below your object storage channels, and save.
+</Step>
+</Steps>
+
+## Limits of drive channels
+
+- **Always proxied**: drives rarely offer stable public direct links, so drive templates have no public URL, and the form hides **Allow 302 direct links** and **Create the bucket automatically**. Even in `redirect` access mode, images on a drive are served through ImgYoung.
+- **Rate and traffic limits**: drives limit request rates and traffic far more tightly than object storage, so heavy image traffic easily triggers throttling or anti-abuse measures. The periodic light check sends one read-only request per channel per round.
+- **Full mirror**: like any channel, a drive channel ends up storing every image in the library.
+
+That makes drives best suited as **low-priority backup channels**: give them a priority below your object storage channels so that normally they only receive asynchronous replication, and reads move to them only when the channels above are down. This trade-off is expressed entirely through priority, see [Channels and failover](./index.mdx).

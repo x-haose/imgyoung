@@ -1,0 +1,31 @@
+---
+title: Installation
+description: Five ways to install, compared - the install script, the Docker image, Docker Compose, release archives and building from source.
+---
+
+ImgYoung is a single pure-Go binary with the admin console's front end compiled in; it needs no database server, cache or other process at runtime. All five methods give you the same program. They differ only in how you get it and what supervises it.
+
+## Comparison
+
+| Method | Who it suits | Needs root | How to upgrade | Where data lives |
+|---|---|---|---|---|
+| [Install script](./script.mdx) | Running directly on a Linux / macOS host; on Linux, handing it to systemd | To install into `/usr/local/bin` or with `--service`; not for `~/.local/bin` | Run the same command again | With `--service`: `/var/lib/imgyoung`; otherwise `data/` under the directory it is started from |
+| [Docker image](./docker.mdx) | Hosts that already run Docker | Depends on how Docker permissions are set up on the host | Pull the new image and recreate the container | The volume mounted at `/data` in the container |
+| [Docker Compose](./compose.mdx) | Keeping the deployment in a file, or running it alongside a reverse proxy | Same as above | `docker compose pull`, then `docker compose up -d` | The `imgyoung-data` volume (Compose prefixes it with the project name) |
+| [Release archive](./binary.mdx) | Windows; environments where running the script is inconvenient; full manual control | No | Download the new archive, replace the binary, restart | `data/` under the directory it is started from, or `IMGYOUNG_DATA_DIR` |
+| [Build from source](./source.mdx) | Developers who change the code or build it themselves | No | Pull the new code and rebuild | Same as the release archive |
+
+Not sure? If you have Docker, use [Docker Compose](./compose.mdx). On a Linux host without Docker, use the [install script](./script.mdx) with `--service`.
+
+## What all methods share
+
+- **Listening address**: `:8721` by default (port 8721 on every interface); change it with the `IMGYOUNG_LISTEN` environment variable.
+- **First sign-in**: open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the console asks you to change the password right away.
+- **Data directory**: holds the metadata database `imgyoung.db`, the master key `master.key`, the built-in local channel's `blobs/` and the variant cache `variants/`. Back it up, and back up `master.key` separately in particular.
+- **Configuration**: a handful of bootstrap settings come from `IMGYOUNG_*` environment variables; all runtime settings are edited in the console and apply on save. There is no config file. See [Configuration](../configuration.mdx).
+- **Process supervisor**: "Restore" under "Settings → Backups & export" in the console makes the service exit cleanly so the snapshot can be swapped in when the supervisor starts it again. For long-running use, always run it under something that restarts the process after it exits, such as systemd or Docker (`--restart unless-stopped` for Docker, `Restart=always` for systemd). The samples under `deploy/` in the repository are already set up that way.
+
+<Callout type="info" title="Why there is no go install">
+  `go install` compiles straight from the repository source, but the admin console's front end is a build artifact that is not committed, so the resulting binary has the API but no console. To install on a machine, use the install script or a release archive; no Go toolchain is needed.
+  What Go developers usually want to reuse is the storage engine, which is a public package you can `go get`. See [Go library](../library/index.mdx).
+</Callout>

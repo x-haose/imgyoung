@@ -1,0 +1,72 @@
+---
+title: Introduction
+description: ImgYoung is a self-hosted image host with multi-channel failover. Every image is stored on several storage channels, so losing one does not break uploads or links.
+---
+
+## What ImgYoung is
+
+ImgYoung is a self-hosted image host. It runs as a single Go binary (or a single Docker image), ships with a web admin console, and is MIT licensed.
+Storage is built on [rclone](https://rclone.org/), so images can live on any backend rclone supports: S3 / R2 / MinIO and other object stores, WebDAV, consumer cloud drives, or the local disk.
+Each such storage configuration is called a **channel** in ImgYoung.
+
+## The problem it solves
+
+The real risk of running your own image host is not missing features, it is losing the images: a free image host shuts down, an object storage account gets suspended, a cloud drive throttles you, or the server's disk dies, and every image link in your blog and notes breaks at once.
+ImgYoung is designed to keep image links working for the long run:
+
+- **Every image is stored more than once.** An upload returns as soon as the primary channel has it; the other channels receive replicas asynchronously. Pending replication survives restarts.
+- **Reads fail over automatically.** By default ImgYoung proxies image responses itself; if one channel cannot serve the bytes, it reads from the next channel that has a replica, and the link stays the same.
+- **The ledger is backed up too.** The metadata database that records which image lives on which channel is snapshotted on a schedule and uploaded to a channel, so losing the host does not take that mapping with it.
+
+## Core capabilities
+
+| Capability | What it does |
+|---|---|
+| Multi-channel failover | The healthy channel with the highest priority is the primary channel. Periodic health checks switch away from a failing channel automatically; replicas are filled in asynchronously and replication progress is visible in the console. See [Storage channels](./channels/index.mdx) |
+| Channel encryption | Built on rclone crypt: both content and file names are encrypted, so the storage provider only sees ciphertext. With the master key you can decrypt the data yourself using stock rclone. See [Channel encryption](./channels/encryption.mdx) |
+| Automatic metadata backups | By default a snapshot is taken every 24 hours, uploaded to the highest-priority healthy channel, and the latest 7 are kept. The console can back up, download and restore on demand. See [Backup and restore](./operations/backup.mdx) |
+| TTL lifecycle and cold-image review | Expiry is resolved as per-upload > per-user default > global default, and access-based renewal is on by default. Images with no public access for 90 days (default) land in the cleanup list, where an admin decides to delete or keep them; nothing is deleted automatically. See [Lifecycle](./guides/lifecycle.mdx) |
+| Background deduplication | Byte-identical images are merged into one physical file automatically; near-duplicates (by perceptual hash) go to a review list. Deduplication runs in the background and never slows down uploads. See [Admin console](./guides/admin.mdx) |
+| On-demand processing | Append `?w=400` to resize to a preset width; browsers that accept WebP get WebP automatically. Results are cached on local disk. See [Access and links](./guides/access.mdx) |
+| Multiple users and quotas | Admins create accounts; each user has their own images, upload tokens and storage quota, and regular users cannot see each other's data. See [Admin console](./guides/admin.mdx) |
+| Many ways to upload | Drag-and-drop or paste in the console, the HTTP upload API, fetch from URL, the S3 protocol (the built-in Amazon S3 uploader of PicGo, PicList, Typora and others works as is), and PicGo / PicList custom uploaders. See [Uploading](./guides/upload.mdx) and [Clients](./guides/clients.mdx) |
+
+There is also hotlink protection (a Referer allowlist), proxy or 302 redirect access modes, Cloudflare CDN cache purging, an audit log, alert webhooks and Prometheus metrics.
+
+## When it fits, and when it does not
+
+A good fit:
+
+- Personal or small-team use: images for blogs, notes and documentation sites.
+- You have several storage options (free object storage tiers, cloud drives, VPS disks) and want them to back each other up.
+- You do not fully trust your storage providers and want them to hold only ciphertext.
+
+Not a good fit:
+
+- **Horizontal scaling or an HA cluster.** ImgYoung is a single-instance design (SQLite plus an in-process job queue); several processes cannot share one data set.
+- **A public image hosting service.** There is no open sign-up, payment or billing; only admins can create accounts.
+- **Private images.** Image links are public: anyone with the link can view the image. There are no signed URLs or per-image access control, and hotlink protection is only a light barrier.
+- **Albums, tags and similar organization.** The console offers a list, search, and filters by user, token and time.
+- **Formats beyond the common four.** Only JPEG, PNG, GIF and WebP are accepted (detected from file content, not the extension); SVG, HEIC, AVIF and others are rejected.
+
+## How to read these docs
+
+If you are new, start with the quick start and get it running in Docker; for a long-running deployment, continue with the installation options and storage channels. Before exposing it to the internet, read [Reverse proxy](./operations/reverse-proxy.mdx) and [Backup and restore](./operations/backup.mdx).
+
+<Cards>
+  <Card title="Quick start" href="./quick-start.mdx">
+    From nothing to the Markdown link of your first image in ten minutes.
+  </Card>
+  <Card title="Install" href="./install/index.mdx">
+    Install script, Docker, Docker Compose, release archives and building from source, compared.
+  </Card>
+  <Card title="Storage channels" href="./channels/index.mdx">
+    Add object storage and cloud drive channels; set priority, encryption and direct links.
+  </Card>
+  <Card title="Go library" href="./library/index.mdx">
+    Reuse the multi-channel storage engine and failover primitives in your own Go project.
+  </Card>
+  <Card title="API reference" href="./api/index.mdx">
+    Every HTTP endpoint, generated from the OpenAPI document.
+  </Card>
+</Cards>

@@ -1,0 +1,251 @@
+---
+title: Configuration
+description: Every bootstrap setting (environment variable) and runtime setting (admin console), with defaults, valid ranges and when changes take effect, plus how to keep the master key safe.
+---
+
+## Two kinds of settings
+
+ImgYoung has exactly two kinds of settings. There is no configuration file, and the only command-line flag is `-version` (prints version, commit and build time, then exits).
+
+| | Bootstrap settings | Runtime settings |
+|---|---|---|
+| What | What the process needs before it can start: listen address, data directory, master key, trusted proxies, networks allowed on `/metrics` | Every other operational parameter |
+| Source | Environment variables `IMGYOUNG_*` only | The `settings` table in the metadata database; environment variables are not read |
+| Changing | Change the variable and restart the process | Edit under **Settings** in the admin console; takes effect on save, no restart |
+| Where to see them | The read-only **Bootstrap configuration** card at the bottom of **Settings → Runtime settings** | **Settings** in the admin console |
+
+Runtime settings live in the metadata database, so they are included in metadata snapshots and restored with them. Configure a new instance once in the admin console; settings added by an upgrade are filled in with their factory defaults by the database migration.
+
+## Bootstrap settings
+
+| Variable | Default | Format | Purpose |
+|---|---|---|---|
+| `IMGYOUNG_LISTEN` | `:8721` | `host:port`, e.g. `127.0.0.1:8721` or `[::1]:8721`; port `0` lets the OS pick one | HTTP listen address. ImgYoung only speaks plain HTTP; HTTPS is the reverse proxy's job |
+| `IMGYOUNG_DATA_DIR` | `data` (relative to the working directory) | Directory path; created with mode `0750` if missing | Data directory: metadata database `imgyoung.db`, master key file `master.key`, the built-in local channel's `blobs/`, and the variant cache `variants/` |
+| `IMGYOUNG_MASTER_KEY` | Empty (use `master.key` in the data directory) | 64 hex characters (32 bytes), no surrounding whitespace | Master key, see [Master key](#master-key) below |
+| `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Comma-separated CIDRs or single IPs; a single IP means a network containing only that address | `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host` are honored only when the connecting peer is in one of these networks; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
+| `IMGYOUNG_METRICS_ALLOW` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Same as above | Clients in these networks may read `/metrics`; everyone else gets 403. See [Monitoring & alerts](./operations/monitoring.mdx) |
+
+- A variable that is unset or empty (including whitespace only) falls back to its default, so an empty value cannot express "trust no proxy" or "allow nobody". To tighten, use a narrower network, e.g. `IMGYOUNG_METRICS_ALLOW=127.0.0.1,::1`.
+- Both network lists are parsed at startup. An entry that is neither a CIDR nor an IP fails startup, and the error names the variable and the bad entry. The listen address is checked when the port is bound and the master key when it is parsed; invalid values also fail startup.
+- The Docker image sets `IMGYOUNG_DATA_DIR=/data`; `deploy/imgyoung.service` sets it to `/var/lib/imgyoung`.
+
+Where to set environment variables for each deployment:
+
+<Tabs items={['Binary', 'Docker', 'Compose', 'systemd']}>
+<Tab value="Binary">
+
+```bash title="Terminal"
+IMGYOUNG_LISTEN=127.0.0.1:8721 IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
+```
+
+</Tab>
+<Tab value="Docker">
+
+```bash title="Terminal"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
+  -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+Keep the default `:8721` listen address inside the container and restrict exposure on the host side with `-p 127.0.0.1:8721:8721`.
+
+</Tab>
+<Tab value="Compose">
+
+```yaml title="compose.yaml"
+services:
+  imgyoung:
+    environment:
+      IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
+```
+
+Run `docker compose up -d` afterwards to recreate the container.
+
+</Tab>
+<Tab value="systemd">
+
+Use a drop-in instead of editing `/etc/systemd/system/imgyoung.service` directly: rerunning the install script with `--service` overwrites that file.
+
+```bash title="Terminal"
+sudo systemctl edit imgyoung
+```
+
+```ini title="In the editor"
+[Service]
+Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
+```
+
+```bash title="Terminal"
+sudo systemctl restart imgyoung
+```
+
+</Tab>
+</Tabs>
+
+## Runtime settings
+
+Runtime settings are edited under **Settings** in the admin console, which only administrators can see. **Allow empty referer** sits on the **Hotlink protection** tab; everything else is on the **Runtime settings** tab, grouped as below.
+
+- Saving submits only the fields you changed. All changes are validated together; if any value is invalid, none of them is applied and the reason is shown.
+- Changes apply immediately: background loops re-time themselves with a new interval right away instead of finishing the old one.
+- Every applied change writes an audit log entry (action `config.update`, with old and new values); the Cloudflare API token is only recorded as set or empty.
+- The same operations are available as `GET /api/admin/config/full` and `PUT /api/admin/config`, whose body is a JSON object mapping setting keys to new values; see the [API reference](./api/admin-overview.mdx).
+
+"Default" below is the factory value; "Valid values" is what the server accepts.
+
+### Access & links
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `access_mode` | Access mode | `proxy` | `proxy` / `redirect` | `proxy`: images are read from a channel and served by ImgYoung; a failed read moves on to the next channel immediately. `redirect`: original-image requests get a 302 to a channel that allows direct links; see [CDN](./operations/cdn.mdx) |
+| `base_url` | Public site address | Empty | Site root with scheme, e.g. `https://img.example.com`; a trailing `/` is removed on save | Empty means it is derived from each request. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
+| `min_success` | Minimum synced replicas | `1` | ≥ 1 | Channels that must be written synchronously before an upload succeeds; if the healthy channels cannot provide that many, the upload fails with 503 |
+| `encrypt_new_channels` | Encrypt new channels by default | Off | On / off | Whether a new channel is encrypted when the form does not choose explicitly; encryption is fixed when the channel is created |
+
+### Upload limits
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `max_upload_mb` | Max image size | `50` | ≥ 1, MB (1 MB = 1024 × 1024 bytes) | Applies to the whole request body, multipart overhead included; larger requests get 413. Also caps URL imports and the source image read for on-demand processing: after lowering it, older images above the new limit fall back to the original instead of being resized or converted |
+| `max_pixels_mp` | Pixel budget | `50` | ≥ 1, megapixels | Images whose width × height exceeds `max_pixels_mp × 1,000,000` are rejected (422) |
+| `max_concurrent_uploads` | Concurrent uploads | `8` | ≥ 1 | One global limit shared by data-plane uploads, URL imports, admin console uploads and every request on the S3 endpoint; when full, requests get 429 (`Retry-After: 1`) immediately |
+| `upload_rate_per_min` | Upload rate limit | `0` | ≥ 0, per minute | Per user, shared between tokens and admin console uploads; burst equals the per-minute allowance. Excess requests get 429 (`Retry-After: 60`). `0` disables it |
+
+### Lifecycle
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `default_ttl_hours` | Default lifetime | `0` | ≥ 0, hours | Used when an upload sets no `ttl` and the user has no default of their own. `0` means never expires |
+| `ttl_renew_on_access` | Renew on access | On | On / off | Public access pushes a time-limited image's expiry forward by its lifetime |
+| `cold_cleanup_days` | Cold image threshold | `90` | ≥ 0, days | Images without public access for this long go to **Cleanup** for a manual decision; nothing is deleted automatically. `0` disables marking |
+| `delete_grace_minutes` | Delete grace period | `0` | ≥ 0, minutes | Wait between a stored image losing its last reference and its channel objects being deleted. The deletion time is fixed when the reference count reaches zero, using the value at that moment; later changes do not affect it. `0` deletes on the next cleanup sweep |
+| `cleanup_sweep_seconds` | Cleanup sweep interval | `60` | ≥ 1, seconds | Cadence for expiring references, physical deletion, cold-image marking, and reclaiming idempotency keys and audit log entries |
+| `activity_flush_seconds` | Activity flush interval | `60` | ≥ 1, seconds | Interval for batch-writing access counts, last-access times and variant cache access times |
+| `idempotency_key_ttl_hours` | Idempotency key retention | `24` | ≥ 1, hours | Upload retries carrying the same `Idempotency-Key` within this window return the first result; older keys are reclaimed |
+
+### On-demand processing
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `process_widths` | Width tiers | `[100,200,400,800,1600]` | Array of positive integers, pixels; may be empty | `?w=` accepts only these values, anything else gets 400; empty disallows resizing |
+| `process_formats` | Target formats | `["webp","jpeg","png"]` | Non-empty subset of `webp`, `jpeg`, `png` | `?format=` accepts only these values. With `webp` included, browsers that support WebP automatically get WebP for JPEG / PNG images |
+| `exif_policy` | Default EXIF policy | `passthrough` | `passthrough` (keep) / `strip` (remove metadata) | Default EXIF handling at upload; a single upload can override it with the `exif_policy` form field |
+| `process_quality_webp` | WebP quality | `80` | 0–100 | |
+| `process_quality_jpeg` | JPEG quality | `85` | 1–100 | |
+| `process_webp_method` | WebP effort | `4` | 0–6 | Higher is slower and smaller |
+| `process_workers` | Processing concurrency | `4` | ≥ 1 | Concurrent processing jobs; time spent waiting for a slot counts toward the timeout |
+| `process_timeout_ms` | Processing timeout | `5000` | ≥ 1, milliseconds | Includes queueing; on timeout the original is served with `Cache-Control: no-store` |
+| `variants_cache_mb` | Variant cache limit | `10240` | ≥ 1, MB | Variants are cached in `<data dir>/variants/`; beyond the limit the least recently accessed are evicted |
+
+### Deduplication
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `dedup_scan_seconds` | Dedup scan interval | `300` | ≥ 1, seconds | Each round first merges byte-identical images automatically, then scans for similar ones |
+| `dedup_phash_max_distance` | Similarity threshold | `10` | ≥ 0, Hamming distance | Images whose perceptual hashes are at most this far apart become **Duplicates** candidates for a manual decision. `0` disables similarity scanning; identical images are still merged |
+
+### Reliability & channels
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `health_check_seconds` | Health check interval | `60` | ≥ 1, seconds | Cadence of channel health checks and alert evaluation |
+| `backup_interval_hours` | Backup interval | `24` | ≥ 1, hours | Interval between automatic metadata snapshots; see [Backup & restore](./operations/backup.mdx) |
+| `backup_keep` | Backups to keep | `7` | ≥ 1 | After each successful backup, only the newest this many snapshots are kept on the backup channel |
+| `usage_report_seconds` | Usage report interval | `300` | ≥ 1, seconds | Only controls how often the `imgyoung_channel_storage_bytes` metric is refreshed; usage alerts are evaluated on the health check interval |
+| `channel_quota_gb` | Channel usage alert threshold | `0` | ≥ 0, GB (1 GB = 2³⁰ bytes) | Opens an alert when a channel's stored data (sum of image sizes of its completed replicas) exceeds this; writes are not blocked. `0` disables the alert |
+
+### CDN cache purge
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `cdn_cloudflare_zone_id` | Cloudflare Zone ID | Empty | Text | |
+| `cdn_cloudflare_api_token` | Cloudflare API token | Empty | Text | Needs the Cache Purge permission. Stored encrypted with the master key and never shown by any API, page or log. Leaving the field empty keeps the current value; **Clear token** removes it |
+
+Purging is enabled only when the Zone ID, the API token and `base_url` are all set. The badge next to the group title reads **Purge enabled** or **Purge disabled**, and the startup log prints the same state. See [CDN](./operations/cdn.mdx).
+
+### Alerts & audit
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `alert_webhook_url` | Alert webhook URL | Empty | Empty, or an `http` / `https` URL with a host | Receives a JSON POST when an alert opens or resolves; payload format in [Monitoring & alerts](./operations/monitoring.mdx). Empty means alerts are recorded but not sent |
+| `audit_retention_days` | Audit log retention | `0` | ≥ 0, days | Cleanup sweeps delete audit entries older than this. `0` keeps them forever |
+
+### Hotlink protection tab
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `allow_empty_referer` | Allow empty referer | On | On / off | With a non-empty Referer allowlist, whether requests without a Referer (typed into the address bar, download tools) are allowed. With an empty allowlist hotlink protection is off and this has no effect |
+
+The allowlist rules are managed on the same tab and are not part of the `settings` table.
+
+## Master key
+
+The master key is 32 random bytes. It is used to:
+
+- encrypt channel configurations (including each channel's credentials) and the Cloudflare API token before they are stored;
+- derive the crypt password and salt of every encrypted channel;
+- derive the S3 secret of every upload token (never stored, recomputed on demand).
+
+Upload tokens and login passwords are stored as hashes and do not depend on the master key.
+
+### Generation
+
+- Without `IMGYOUNG_MASTER_KEY`, the first start generates `master.key` in the data directory (64 hex characters plus a newline, mode `0600`, written to a temporary file and renamed) and logs a warning telling you to back it up. Later starts read that file.
+- If the file exists but is not valid 64-character hex, startup fails rather than generating a new key: a new key would make every existing ciphertext useless.
+- With `IMGYOUNG_MASTER_KEY` set, the variable wins; `master.key` is neither read nor created. To generate a key yourself:
+
+  ```bash title="Terminal"
+  openssl rand -hex 32
+  ```
+
+  When switching from the file to the variable, copy the contents of `master.key` into the variable verbatim. If the two differ, everything encrypted with the file's key can no longer be decrypted.
+
+### Keeping it safe
+
+The master key is **not** in metadata snapshots and **not** in the metadata export. Back it up separately, somewhere other than the server and the snapshots. Copy it right after the first start:
+
+<Tabs items={['Binary', 'Docker', 'Compose', 'systemd']}>
+<Tab value="Binary">
+
+```bash title="Terminal"
+cp data/master.key /safe/place/imgyoung-master.key
+```
+
+</Tab>
+<Tab value="Docker">
+
+```bash title="Terminal"
+docker cp imgyoung:/data/master.key ./imgyoung-master.key
+```
+
+</Tab>
+<Tab value="Compose">
+
+```bash title="Terminal"
+docker compose cp imgyoung:/data/master.key ./imgyoung-master.key
+```
+
+</Tab>
+<Tab value="systemd">
+
+```bash title="Terminal"
+sudo cp /var/lib/imgyoung/master.key ./imgyoung-master.key
+```
+
+</Tab>
+</Tabs>
+
+### Losing it, or starting with the wrong one
+
+The master key cannot be rotated. Losing it, or starting with a different key (for example after `master.key` was deleted and a new one was generated), has the same irreversible consequences:
+
+- channel configurations cannot be decrypted, so those channels are skipped at startup (log message 渠道配置无法解密,本渠道跳过) and their images become unreachable;
+- data on encrypted channels, including metadata snapshots stored there, can never be decrypted;
+- if a Cloudflare API token is configured, runtime settings cannot be loaded and the process fails to start;
+- the S3 secret of every upload token changes, so configured S3 clients must be set up again.
+
+<Callout type="error" title="Back up master.key first">
+Metadata snapshots, the export and the images in your channels cannot bring back a lost master key. For disaster recovery, the new machine must have the same master key in place before its first start; see [Backup & restore](./operations/backup.mdx).
+</Callout>

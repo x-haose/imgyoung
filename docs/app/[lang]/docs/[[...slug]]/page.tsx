@@ -7,7 +7,9 @@ import {
   ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/notebook/page'
 import { createRelativeLink } from 'fumadocs-ui/mdx'
+import { Card } from 'fumadocs-ui/components/card'
 import type { Metadata } from 'next'
+import type { ComponentProps } from 'react'
 import { notFound } from 'next/navigation'
 
 import { OpenAPIPage } from '@/components/api-page'
@@ -47,8 +49,15 @@ export default async function Page(props: PageProps<'/[lang]/docs/[[...slug]]'>)
         />
       </div>
       <DocsBody>
-        {/* 正文里的相对文件链接(./docker.mdx)解析为同语言页面的 URL */}
-        <MDX components={getMDXComponents({ a: createRelativeLink(source, page) })} />
+        {/* 正文与卡片里的相对文件链接(./docker.mdx)都解析为同语言页面的 URL */}
+        <MDX
+          components={getMDXComponents({
+            a: createRelativeLink(source, page),
+            Card: (props: ComponentProps<typeof Card>) => (
+              <Card {...props} href={props.href && source.resolveHref(props.href, page)} />
+            ),
+          })}
+        />
       </DocsBody>
     </DocsPage>
   )

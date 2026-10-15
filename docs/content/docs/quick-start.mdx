@@ -1,0 +1,113 @@
+---
+title: 快速开始
+description: 用 Docker 跑起 ImgYoung,登录后台,上传第一张图并拿到 Markdown 链接。
+---
+
+需要一台装好 Docker 的机器(Linux、macOS、Windows 均可),并能用浏览器访问它的 8721 端口。不用 Docker 的安装方式见 [安装](./install/index.mdx)。
+
+<Steps>
+<Step>
+
+### 启动服务
+
+```bash title="终端"
+docker run -d --name imgyoung --restart unless-stopped \
+  -p 8721:8721 \
+  -v imgyoung-data:/data \
+  ghcr.io/x-haose/imgyoung:latest
+```
+
+- `-v imgyoung-data:/data`:数据库、内置 local 渠道里的图片与主密钥 `master.key` 都在这个卷里,删掉卷就是删掉全部数据。
+- `--restart unless-stopped`:后台从快照恢复元数据库时,服务会主动退出、由 Docker 重新拉起后换入快照;没有重启策略,恢复后容器会停在已退出状态。
+
+确认启动成功:
+
+```bash title="终端"
+docker logs imgyoung
+```
+
+看到 `msg="ImgYoung 已启动"` 一行即可(日志文案为中文)。首次启动还会有两条 `level=WARN`:一条提示已生成主密钥文件,一条提示已初始化默认管理员密码,都是预期行为。
+
+</Step>
+<Step>
+
+### 登录并修改密码
+
+浏览器打开 `http://<服务器地址>:8721/`(本机就是 `http://localhost:8721/`),用出厂账号登录:
+
+| 用户名 | 密码 |
+|---|---|
+| `admin` | `imgyoung123` |
+
+出厂密码是公开的。首次登录后会直接进入「设置管理员密码」页,改掉之前不能进入其他页面。新密码至少 8 位,点「保存并重新登录」后用新密码再登录一次。
+
+</Step>
+<Step>
+
+### 上传第一张图
+
+两种方式任选其一:在后台直接上传,或者签发一个上传 Token 用 curl 上传。
+
+<Tabs items={['后台上传', 'curl 上传']}>
+<Tab value="后台上传">
+
+1. 侧栏进入「图片」,点「上传图片」。
+2. 把图片拖进对话框,或按 Ctrl / ⌘ + V 粘贴剪贴板里的截图。支持 JPEG、PNG、GIF、WebP,单图出厂上限 50 MB。
+3. 上传完成后关闭对话框,点图片卡片打开「图片详情」,在「分享链接」的「复制为」里点 **Markdown**。
+
+</Tab>
+<Tab value="curl 上传">
+
+1. 侧栏进入「上传 Token」,点「签发 Token」,用途名称填 `curl`,有效期保持「永久」,点「签发」。
+2. 复制弹窗里以 `imgy_` 开头的 Token 明文。明文只展示这一次,勾选「我已妥善保存这段明文」后才能关闭弹窗。
+3. 上传:
+
+```bash title="终端"
+curl -H "Authorization: Bearer imgy_你的Token" \
+  -F "file=@screenshot.png" \
+  http://localhost:8721/api/upload
+```
+
+```json title="响应"
+{"id":"R0RjUyP1UW","url":"http://localhost:8721/i/R0RjUyP1UW"}
+```
+
+`url` 就是图片地址。装了 jq 可以直接得到 Markdown:
+
+```bash title="终端"
+curl -s -H "Authorization: Bearer imgy_你的Token" -F "file=@screenshot.png" \
+  http://localhost:8721/api/upload | jq -r '"![](\(.url))"'
+```
+
+</Tab>
+</Tabs>
+
+拿到的 Markdown 形如:
+
+```md
+![](http://localhost:8721/i/R0RjUyP1UW)
+```
+
+贴进博客或笔记即可显示。
+
+</Step>
+</Steps>
+
+<Callout type="info" title="链接里的域名从哪来">
+  没有配置对外站点地址(`base_url`)时,链接按本次请求的地址生成:用 `localhost` 访问后台,复制出的就是 `localhost` 链接,别的机器打不开。
+  要发给别人看,请用对外的域名或 IP 访问后台,或在「设置 → 运行配置」里填写 `base_url`。详见 [配置](./configuration.mdx)。
+</Callout>
+
+## 下一步
+
+<Callout type="warn" title="现在所有数据都在一块盘上">
+  全新实例只有一个内置的 `local` 渠道,图片存在数据卷里的 `blobs/` 目录;元数据库快照上传到优先级最高的健康渠道,所以此刻也在同一块盘上。
+  这块盘坏了,图片和快照一起丢失。尽快到侧栏「存储渠道」点「新建渠道」,加一个异地的对象存储或网盘渠道,已有图片会自动补齐副本过去。
+  快照只存主渠道:新渠道的优先级要高于 `local`(出厂 100,优先级相同时先建的渠道优先),快照才会改存到异地。
+</Callout>
+
+- [存储渠道](./channels/index.mdx):添加异地渠道,设置优先级与加密。
+- [备份与恢复](./operations/backup.mdx):单独备份主密钥 `master.key`,它不在快照里,丢失后渠道凭证与加密数据都无法恢复。
+- [反向代理](./operations/reverse-proxy.mdx):用域名与 HTTPS 对外提供服务。
+- [客户端接入](./guides/clients.mdx):配置 PicGo、PicList、Typora 等客户端。
+- [Docker 镜像](./install/docker.mdx):镜像标签、数据卷与环境变量的完整说明。

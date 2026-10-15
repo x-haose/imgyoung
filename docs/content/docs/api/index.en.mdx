@@ -1,0 +1,179 @@
+---
+title: API reference
+description: Authentication, error format, and shared conventions of the ImgYoung HTTP API; per-group endpoint details are generated from the OpenAPI document.
+---
+
+## Where the API document comes from
+
+`api/openapi.yaml` in the repository (OpenAPI 3.1) is the single source of truth for ImgYoung's HTTP API. The group
+pages in this section are generated from it; the end-to-end tests check the status code and body of every `/api/`,
+`/healthz`, and `/i/` response against it; and the admin console's frontend types are generated from it too.
+
+The summaries and descriptions in that document are written in Chinese, so the generated group pages are in Chinese as well.
+
+The document is compiled into the binary, and a running instance serves a copy matching its own version at
+`GET /api/openapi.yaml`. You can import it directly into Swagger UI, Scalar, or a code generator:
+
+```bash title="Terminal"
+curl -o openapi.yaml https://img.example.com/api/openapi.yaml
+```
+
+The S3 protocol surface (`/s3/…`) follows the AWS S3 specification, returns XML error bodies, and is not part of this
+reference; see [Upload clients](../guides/clients.mdx) for how to use it.
+
+## Authentication
+
+There are exactly two authentication surfaces, and their credentials are not interchangeable:
+
+| | Data plane | Admin console |
+|---|---|---|
+| Paths | `POST /api/upload`, `POST /api/upload/url` | `/api/admin/…` |
+| Credential | An upload token in the `Authorization: Bearer <token>` header | The session cookie `imgyoung_session`; state-changing requests also send an `X-CSRF-Token` header |
+| How to obtain | Issue one on the admin console's "Upload tokens" page; the plaintext is shown only once | `POST /api/admin/auth/login` |
+| Not authenticated | 401: the token is invalid, expired, or revoked | 401: not logged in, or the session expired |
+| Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; administrator required |
+
+Upload tokens look like `imgy_…`. They only authorize the data plane; no admin console endpoint accepts them. The image
+access endpoints (`/i/…`, `/o/…`), `/healthz`, and `/api/openapi.yaml` need no authentication.
+
+### Sessions and the CSRF token
+
+<Steps>
+<Step>
+
+**Log in**: `POST /api/admin/auth/login` with the body `{"name": "<login name>", "password": "<password>"}`. On success
+the response sets the session cookie, and the body is `{"user": {…}, "csrf_token": "…"}`.
+
+</Step>
+<Step>
+
+**Call endpoints**: send the cookie with every request. `GET`, `HEAD`, and `OPTIONS` need only the cookie; every other
+method must also echo the `csrf_token` from login in the `X-CSRF-Token` header, or it gets a 403.
+
+</Step>
+<Step>
+
+**Restore the session state**: if you lose the `csrf_token` (after a page reload, say), `GET /api/admin/me` returns the
+current user and the same `csrf_token`.
+
+</Step>
+</Steps>
+
+```bash title="Terminal"
+# Log in, saving the cookie to jar.txt; note csrf_token in the response body
+curl -c jar.txt -H 'Content-Type: application/json' \
+  -d '{"name":"admin","password":"<password>"}' \
+  https://img.example.com/api/admin/auth/login
+
+# Read-only endpoints need only the cookie
+curl -b jar.txt https://img.example.com/api/admin/me
+
+# State-changing endpoints also need the CSRF token
+curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
+  https://img.example.com/api/admin/auth/logout
+```
+
+Session details:
+
+- The cookie is `HttpOnly` and `SameSite=Lax`; it is also `Secure` when the request arrives over HTTPS (TLS terminated by
+  the server itself, or reported via `X-Forwarded-Proto` by a trusted reverse proxy).
+- A session lasts 30 days from login and is not extended by use; after that you must log in again.
+- Changing a user's password invalidates all of that user's sessions.
+- Too many login attempts return 429.
+
+Channels, users, hotlink protection, audit log, alerts, backups, export, and moderation endpoints, as well as reading
+the full runtime settings and changing them, are for administrators only; a regular user gets 403.
+
+## Error format
+
+Apart from the exception below, every error response is a JSON envelope:
+
+```json
+{ "error": "存储渠道暂不可用,请稍后重试" }
+```
+
+`error` is a user-facing description (in Chinese) with no internal details or credentials. Programs should branch on
+the HTTP status code, not parse this text.
+
+**The exception is the image access endpoints** (`/i/{id}` and `/o/{user_id}/{object_key}`): apart from 400 for
+invalid processing parameters, which is still a JSON envelope, their error responses are plain text — for example 403
+when hotlink protection rejects the request, 404 when the image does not exist (including images that expired and were reclaimed, or were deleted), and 503 when no channel
+can currently serve it.
+
+Common status codes:
+
+| Status | Meaning |
+|---|---|
+| 400 | Invalid request body or parameters |
+| 401 | Not authenticated: invalid token, or not logged in / session expired |
+| 403 | Not permitted: CSRF check failed, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
+| 404 | The target does not exist or is not visible to the current user |
+| 409 | Conflicts with existing state, such as a duplicate name, or a channel that holds the only copy of some images |
+| 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
+| 415 | Not a supported image format (judged by file content) |
+| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`) |
+| 429 | Upload concurrency is full, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
+| 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |
+
+The group pages list the status codes each endpoint can actually return.
+
+## Shared conventions
+
+- **Timestamps**: unless stated otherwise, UTC text in the form `YYYY-MM-DD HH:MM:SS` (for example
+  `2026-10-15 08:30:00`), with no time zone suffix. The exceptions are `built_at` in build info and `taken_at` on
+  backup snapshots, which are RFC 3339.
+- **Lists**: list endpoints return `{"items": […], "total": N}`, where `total` counts all items after filtering.
+- **Pagination**: the image, upload token, duplicate, cleanup, audit log, and alert lists accept `page` (from 1,
+  default 1) and `page_size` (default 20, maximum 100; larger values are treated as 100).
+- **Time ranges**: the image list and the audit log accept `since` (inclusive) and `until` (exclusive), in the same format.
+- **IDs**: images use a 10-character short ID string; user IDs are strings (the built-in administrator is `default`);
+  tokens, channels, duplicate candidates, and similar records use integers; backup snapshots are identified by file name.
+- **Idempotent uploads**: uploads may send an `Idempotency-Key` header. Within the retention period (runtime setting
+  `idempotency_key_ttl_hours`, default 24 hours), retries with the same key by the same user return the same image.
+  Keys are scoped per user.
+- **Request bodies**: JSON endpoints use `application/json`; file uploads use `multipart/form-data` with the file in the `file` field.
+- **Base URL**: the API shares the site's origin, with the path prefixes shown above and no version segment.
+
+## Groups
+
+<Cards>
+  <Card title="Data plane" href="./data-plane.mdx">
+    Uploads and URL imports authenticated with an upload token
+  </Card>
+  <Card title="Image access" href="./image-access.mdx">
+    Public image endpoints, subject to hotlink protection
+  </Card>
+  <Card title="Admin · Session" href="./admin-session.mdx">
+    Log in, log out, current user, and password change
+  </Card>
+  <Card title="Admin · Overview & settings" href="./admin-overview.mdx">
+    Dashboard and runtime settings
+  </Card>
+  <Card title="Admin · Upload" href="./admin-upload.mdx">
+    Session-authenticated uploads from the admin console, through the same pipeline as the data plane
+  </Card>
+  <Card title="Admin · Images" href="./admin-images.mdx">
+    Image list, details, edits, and deletion
+  </Card>
+  <Card title="Admin · Upload tokens" href="./admin-tokens.mdx">
+    Issuing, rotating, and revoking named tokens, and their S3 credentials
+  </Card>
+  <Card title="Admin · Storage channels" href="./admin-channels.mdx">
+    Channel templates, creation, editing, health checks, deletion, and cloud drive authorization
+  </Card>
+  <Card title="Admin · Users" href="./admin-users.mdx">
+    Accounts, quotas, and password resets (administrators only)
+  </Card>
+  <Card title="Admin · Hotlink protection" href="./admin-referer.mdx">
+    The Referer allowlist (administrators only)
+  </Card>
+  <Card title="Admin · Moderation" href="./admin-review.mdx">
+    Decisions on near-duplicates and pending-cleanup cold images (administrators only)
+  </Card>
+  <Card title="Admin · Operations" href="./admin-operations.mdx">
+    Audit log, alerts, backup snapshots, and metadata export (administrators only)
+  </Card>
+  <Card title="System" href="./system.mdx">
+    Health check and the API document
+  </Card>
+</Cards>

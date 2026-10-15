@@ -1,0 +1,147 @@
+---
+title: Object storage and WebDAV
+description: What each built-in object storage template asks for, why buckets must exist beforehand, public URLs and 302 direct links, custom mode and generic WebDAV, and how to read probe errors.
+---
+
+## Choosing a storage type
+
+After **New channel** on the Storage channels page, you first pick a type:
+
+- **Object storage**: Amazon S3, Cloudflare R2, Tencent Cloud COS, Alibaba Cloud OSS, Backblaze B2, MinIO / self-hosted, and generic S3-compatible. All of them use rclone's `s3` backend and differ only in the preset `provider`, endpoint and region.
+- **Cloud drives**: WebDAV (later on this page) and the drives that need authorization (see [Cloud drives and OAuth](./cloud-drives.mdx)).
+- **Advanced**: **Custom**, where you enter an rclone backend name and raw parameters.
+
+Templates expose only the fields that matter and preset the rest. Saving merges them into the full backend parameters; editing reverses the merge to refill the form, including fields that were folded into the endpoint (account ID, region).
+
+<Callout type="info" title="Labels come from the server">
+Template names, field labels, help texts and error messages are served by the backend and appear in Chinese in both languages of the admin console. The tables below give the field key, the label you will see, and what it means.
+</Callout>
+
+## Object storage templates
+
+| Template (shown as) | Fields to fill | Set by the template |
+|---|---|---|
+| Amazon S3 | Access Key, Secret Key, region (list), bucket | `provider=AWS`; the endpoint follows from the region |
+| Cloudflare R2 | Access Key, Secret Key, account ID, bucket | `provider=Cloudflare`, `region=auto`, `endpoint=https://<account ID>.r2.cloudflarestorage.com` |
+| Tencent Cloud COS (腾讯云 COS) | SecretId, SecretKey, region (list), bucket | `provider=TencentCOS`, `endpoint=cos.<region>.myqcloud.com` |
+| Alibaba Cloud OSS (阿里云 OSS) | Access Key, Secret Key, region (list), bucket | `provider=Alibaba`, `endpoint=<region>.aliyuncs.com` |
+| Backblaze B2 | Key ID, Application Key, region (typed), bucket | `provider=Other`, `endpoint=https://s3.<region>.backblazeb2.com` |
+| MinIO / self-hosted (MinIO / 自建) | Access Key, Secret Key, endpoint, bucket | `provider=Minio` |
+| S3-compatible (S3 兼容(通用)) | Access Key, Secret Key, S3 API endpoint, bucket | `provider=Other` |
+
+Every object storage template also has an optional public URL, described below. The fields:
+
+| Key | Label shown | Meaning |
+|---|---|---|
+| `access_key_id`, `secret_access_key` | Access Key / Secret Key (COS: SecretId / SecretKey; B2: Key ID / Application Key) | Credentials |
+| `region` | 区域 | Region. AWS, COS and OSS offer a list of common regions; Alibaba values carry the `oss-` prefix (such as `oss-cn-hangzhou`). If your region is missing, use the S3-compatible template with an explicit endpoint. B2 takes free text (such as `us-west-004`) matching the endpoint shown in the B2 console |
+| `account_id` | 账户 ID | Cloudflare account ID, used to build the R2 endpoint |
+| `endpoint` | 服务端点 / S3 API 端点 | Full URL, such as `https://minio.example.com` |
+| `bucket` | 存储桶 | Bucket name, optionally followed by `/prefix` to confine the channel to a folder: `my-bucket` or `my-bucket/imgyoung`. This value is the channel's storage path. COS bucket names must include the APPID suffix, such as `mybucket-1250000000` |
+| `public_base_url` | 公开访问地址 | Optional public URL prefix, see below |
+
+## Create the bucket first
+
+ImgYoung adds `no_check_bucket=true` to every `s3` channel, so rclone neither checks for nor creates the bucket before uploading.
+
+The reason: by default rclone attempts to create the bucket before uploading. Scoped credentials, common with R2 and MinIO, can read and write one bucket but not create buckets; when the bucket already exists that attempt returns 403 and the write fails, while the read-only light check keeps passing. The channel looks healthy yet uploads fail. Buckets are expected to exist already, so the attempt is skipped by default.
+
+So:
+
+- **Create the bucket in your provider's console first**, then create the channel.
+- If your credentials can create buckets and you want ImgYoung to do it, turn on **Create the bucket automatically** in the create form. ImgYoung then tries to create the bucket once (an existing bucket is fine); if that fails the whole creation is aborted with "自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): " plus the cause ("creating the bucket failed; check the key can create buckets, or create it in the console and turn this off"). The switch only exists at creation, and **Test connection** never creates a bucket.
+- In custom mode, setting `no_check_bucket=false` explicitly restores rclone's check-and-create-if-missing before uploads.
+
+## Public URL and 302 direct links
+
+The public URL (`public_base_url`) is optional: the URL prefix under which the bucket (or a CDN in front of it) serves objects publicly, such as `https://cdn.example.com`. A channel can only issue 302 direct links once it is set.
+
+A direct link is `<public URL>/<object key>`, and the object key is relative to the channel's storage path. If the bucket field includes a prefix, the public URL must point at that prefix too: with `my-bucket/imgyoung` in the bucket field and a CDN serving the whole bucket, the public URL is `https://cdn.example.com/imgyoung`. A trailing `/` is stripped.
+
+An image is redirected only when all of these hold:
+
+1. **Settings → Runtime settings → Access & links → Access mode** is `redirect · 302 to direct links`;
+2. the channel has **Allow 302 direct links** on and is not encrypted;
+3. the channel has a public URL;
+4. the channel is healthy, holds a ready replica of the image, and is the highest-priority channel meeting the conditions above.
+
+Otherwise the image is proxied. With **Allow 302 direct links** on but no public URL, the form warns "public_base_url is not set, so direct links will not take effect and access falls back to proxying".
+
+Public read access on the bucket has to be enabled at the provider; ImgYoung does not check it. Public read also means anyone holding a direct link can fetch the object without going through ImgYoung, so hotlink protection only applies to requests that do. See [Access and links](../guides/access.mdx) for the full picture of access modes.
+
+## Custom mode
+
+**Advanced → Custom** takes an rclone backend name and its parameters directly. Use it for backends the templates do not cover — any rclone backend works, such as `sftp`, `ftp`, `azureblob`, or `local` on another disk.
+
+- **rclone backend**: the backend name, i.e. the `type` value in `rclone.conf`, such as `s3`, `sftp` or `local`.
+- **Backend parameters**: key–value pairs whose keys are the backend's option names, written as in `rclone.conf`; only letters, digits and underscores are allowed. Copying from the output of `rclone config show` works (put the `type` line into **rclone backend**).
+- Two reserved keys are not passed to rclone: `path` is the storage path inside the backend (bucket and prefix, or a folder), and `public_base_url` is the public URL. A `local` channel without `path` uses `<data dir>/blobs`.
+
+rclone stores password-type options (options rclone flags as passwords, such as `pass` for `sftp`, `ftp` and `webdav`) in an encoded form. ImgYoung handles this: plain values are encoded, and values that already are encoded (for example copied from `rclone.conf`) are kept as they are. In rare cases a plain password happens to look like an encoded value and is passed through unencoded, which shows up as an authentication failure; run `rclone obscure <password>` and enter its output instead.
+
+```text title="Example: an SFTP channel"
+rclone backend       sftp
+Backend parameters   host = files.example.com
+                     user = imgyoung
+                     pass = <password>
+                     path = /srv/imgyoung
+```
+
+## WebDAV
+
+The generic WebDAV template sits in the **Cloud drives** group of the type picker and covers Nutstore (坚果云), Nextcloud / ownCloud, Synology, Alist and the like. They all use rclone's `webdav` backend and differ only in the server URL and the server type, so there is one template for all of them.
+
+| Key | Label shown | Meaning |
+|---|---|---|
+| `url` | 服务地址 | WebDAV root URL. Nutstore `https://dav.jianguoyun.com/dav/`; Nextcloud / ownCloud `https://domain/remote.php/dav/files/username/`; Alist `https://domain/dav/`; Synology `https://domain:5006/` |
+| `vendor` | 服务类型 | Server type. A wrong choice breaks folder listing or chunked uploads; if unsure, pick 其他(坚果云 / Alist / 群晖等) ("other") |
+| `user` | 用户名 | WebDAV user name |
+| `pass` | 密码 | Password. Nutstore requires an **app password** generated in its security settings, not the login password |
+| `path` | 存储目录 | Folder for the images, `imgyoung` suggested; empty means the root |
+
+Server type options and the rclone `vendor` value each maps to:
+
+| Option | `vendor` |
+|---|---|
+| Nextcloud | `nextcloud` |
+| ownCloud 10 | `owncloud` |
+| ownCloud Infinite Scale | `infinitescale` |
+| SharePoint Online | `sharepoint` |
+| SharePoint(NTLM 自建) — self-hosted with NTLM | `sharepoint-ntlm` |
+| Fastmail Files | `fastmail` |
+| rclone serve webdav | `rclone` |
+| 其他(坚果云 / Alist / 群晖等) — other | `other` |
+
+WebDAV channels have no public URL, and the form hides **Allow 302 direct links** and **Create the bucket automatically**; reads are always proxied. Chinese cloud drives such as Aliyun Drive and Baidu Netdisk are also connected over WebDAV, see [Cloud drives and OAuth](./cloud-drives.mdx).
+
+<Callout type="warn" title="Re-enter the password when editing a WebDAV channel">
+When editing a WebDAV template channel, leaving the password field masked replaces the stored password with an invalid value on save, and the channel then fails to authenticate; **Test connection** in the edit form fails the same way. Type the password again whenever you edit.
+</Callout>
+
+## Common errors
+
+Failure reasons from **Test connection**, and the reason shown when hovering **Unhealthy** in the Status column, are translated from the underlying error into the hints below (case-insensitive, first match from the top). An error that matches nothing is shown as its first 200 characters; **Test connection** additionally scrubs the credentials you typed.
+
+| Hint shown | Underlying error contains | What to check |
+|---|---|---|
+| 认证失败(403):检查 Access Key / Secret Key 及其权限 — authentication failed | `InvalidAccessKeyId`, `SignatureDoesNotMatch`, `AccessDenied`, `access denied`, `StatusCode: 403`, `401 Unauthorized` | Mistyped or revoked keys, or missing read, write or delete permission on the bucket. Read-only keys fail at the write step of the deep check |
+| 存储桶不存在或无权访问:检查桶名与凭证权限 — bucket missing or inaccessible | `NoSuchBucket`, `no such bucket`, `BucketRegionError` | The bucket name (COS needs the APPID suffix); whether the bucket exists |
+| 区域不匹配:检查所选区域与存储桶实际所在区域 — region mismatch | `PermanentRedirect`, `AuthorizationHeaderMalformed` | The region or endpoint does not match the bucket's actual region |
+| 无法解析服务端点域名:检查 endpoint 配置 — cannot resolve the endpoint | `no such host`, `server misbehaving` | A typo in the endpoint, or DNS on the server |
+| 无法连接服务端点:检查 endpoint 地址与端口 — cannot connect | `connection refused`, `connection reset` | Port, scheme or firewall |
+| TLS 证书校验失败:检查端点证书或改用正确协议 — TLS verification failed | `certificate`, `x509`, `tls handshake` | A self-signed certificate, or `https` used for an `http` service |
+| 连接超时:检查端点地址与网络连通性 — timed out | Timeouts, including the check's own 10 s / 20 s limits | Network reachability or a very slow service |
+| 存储路径无写入权限:检查目录权限 — no write permission | `permission denied`, `read-only file system` | Folder permissions of a `local` channel; in the container image the process runs as uid 65532, so mounted folders must be writable by it |
+
+Common rejections when saving the form (returned immediately; no channel is created):
+
+| Message | Cause |
+|---|---|
+| `渠道参数非法: 字段「…」必填` | A required template field is empty |
+| 渠道名已存在 | The channel name is taken (409) |
+| `渠道参数非法: 初始化 rclone 后端 "…": …` | Building the backend from these parameters failed; the rclone message after the colon gives the cause |
+| `渠道参数非法: 未知的 rclone 后端 "…"` | A misspelt backend name in custom mode |
+| `渠道参数非法: 配置键 "…" 非法(仅允许字母数字下划线)` | A custom parameter key contains other characters (such as `-`) |
+| `渠道参数非法: 自动创建存储桶失败(…)` | **Create the bucket automatically** is on but the key cannot create buckets |
+
+Once a channel exists but shows **Unhealthy**, fix its configuration and use **Probe again** in the row menu: it runs a deep check right away and refreshes the status. The probe and status rules are in [Channels and failover](./index.mdx).

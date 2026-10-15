@@ -1,0 +1,144 @@
+---
+title: Install script
+description: Download a release on Linux or macOS, verify its sha256 and put it on the PATH; on Linux it can also register a systemd service. Running it again upgrades.
+---
+
+## Usage
+
+```bash title="Terminal"
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
+```
+
+Pass options to the script through `sh -s --`:
+
+```bash title="Terminal"
+# Install as a systemd service and start it (Linux only, needs root)
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sudo sh -s -- --service
+
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh -s -- --version v1.0.0
+```
+
+To read the script before running it:
+
+```bash title="Terminal"
+curl -fsSLo install.sh https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh
+less install.sh
+sudo sh install.sh --service
+```
+
+The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`; `--service` also needs `systemctl`.
+
+## Options and environment variables
+
+| Option | Default | Description |
+|---|---|---|
+| `--version vX.Y.Z` | Latest stable release | Install a specific version. Use the release tag exactly as shown, including the `v` prefix |
+| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable |
+| `--service` | Not installed | Linux only, needs root: also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung` |
+
+| Environment variable | Default | Description |
+|---|---|---|
+| `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | The releases address. Set it to use a mirror or internal distribution; the layout must match GitHub Releases (see "Mirrors and internal distribution" below) |
+
+An unknown option makes the script exit with an error before it changes anything.
+
+## What the script does
+
+1. **Checks prerequisites.** Confirms `curl`, `tar` and `install` exist; with `--service` it also checks for Linux, root and `systemctl`. If anything is missing it exits before downloading and leaves the system untouched.
+2. **Detects the platform.** `uname -s` must be Linux or Darwin, `uname -m` must be x86_64 / amd64 or aarch64 / arm64; anything else is an error (on Windows, use a [release archive](./binary.mdx)).
+3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect and takes the last path segment of the final URL as the tag. GitHub's latest release never points at a pre-release.
+4. **Downloads and verifies.** Downloads `imgyoung_<version>_<os>_<arch>.tar.gz` and that release's `checksums.txt` into a temporary directory and checks the sha256. On a mismatch it aborts without installing anything. The temporary directory is removed when the script exits.
+5. **Installs the binary.** Installs `imgyoung` into the target directory with mode 0755 and prints its version.
+6. **Installs the service** (`--service` only). Writes the archive's `deploy/imgyoung.service` to `/etc/systemd/system/imgyoung.service` with `ExecStart` pointing at the actual install path, runs `systemctl daemon-reload` and enables it. If the service is already running it is restarted onto the new version; otherwise it is started.
+7. **Prints next steps.** Warns if the target directory is not on `PATH`, and prints the sign-in address and factory account.
+
+Without `--service` the script only installs the binary and does not start it. Run `imgyoung` yourself; data goes to `data/` under the current directory (or `IMGYOUNG_DATA_DIR`). For long-running use, put it under a process supervisor; see [Installation](./index.mdx) for why.
+
+## The systemd service
+
+`--service` installs this sample from the repository, changing only `ExecStart`:
+
+<include cwd lang="ini" meta='title="deploy/imgyoung.service"'>../deploy/imgyoung.service</include>
+
+The settings that matter:
+
+- **Data directory.** `IMGYOUNG_DATA_DIR=%S/imgyoung` resolves to `/var/lib/imgyoung`, which `StateDirectory=imgyoung` makes systemd create and hand to the service user. With `DynamicUser` the real directory is `/var/lib/private/imgyoung` and `/var/lib/imgyoung` is a symlink to it. It holds `imgyoung.db`, `master.key`, the local channel's `blobs/` and the variant cache `variants/`.
+- **DynamicUser=yes.** systemd allocates a transient system user on every start, so no user has to be created in advance. Together with sandboxing such as `ProtectSystem=strict` and `ProtectHome=yes`, the process can write only its own data directory: if you point the local channel somewhere else, open that directory with `ReadWritePaths=`; and the binary must not live under `/home` or `/root`, or the service cannot start.
+- **Restart=always.** Restoring a snapshot in the console makes the service exit cleanly; systemd starts it again 3 seconds later and the snapshot is swapped in before the database is opened. `Restart=on-failure` does not restart a clean exit, so the restore would only complete once someone starts the service by hand.
+- **TimeoutStopSec=75s.** On stop, the service drains replication jobs and then HTTP connections, up to 30 seconds each, so it gets enough time before being killed.
+- **UMask=0077.** New files, `master.key` included, are readable and writable only by the service user.
+- **RCLONE_CONFIG=** (empty). ImgYoung hands channel parameters to rclone directly and never reads an rclone config file.
+
+Everyday commands:
+
+```bash title="Terminal"
+systemctl status imgyoung        # service status
+journalctl -u imgyoung -f        # follow the logs
+sudo systemctl restart imgyoung  # apply changed environment variables
+```
+
+### Changing the service configuration
+
+Re-running the script with `--service` overwrites `/etc/systemd/system/imgyoung.service` with the version from the release archive. Keep local changes out of that file and put them in a drop-in instead:
+
+```bash title="Terminal"
+sudo systemctl edit imgyoung
+```
+
+In the editor that opens, add the settings to override. For example, to listen on loopback only when a local reverse proxy is the sole entry point:
+
+```ini title="/etc/systemd/system/imgyoung.service.d/override.conf"
+[Service]
+Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
+```
+
+Save, then run `sudo systemctl restart imgyoung`. The available environment variables are listed in [Configuration](../configuration.mdx).
+
+## Upgrading
+
+Run the same command you installed with:
+
+- Installed with `--service`: the binary is replaced, the unit file is rewritten and the service is restarted onto the new version. You must pass `--service` again; otherwise only the file on disk changes and the running process stays on the old version.
+- Installed without `--service`: only the binary is replaced; restart the process yourself.
+
+Use `--version` to stay on a particular version. The database schema is migrated automatically when the new version starts. See [Upgrading](../operations/upgrade.mdx) for what to check beforehand.
+
+## Uninstalling
+
+With the service installed:
+
+```bash title="Terminal"
+sudo systemctl disable --now imgyoung
+sudo rm /etc/systemd/system/imgyoung.service
+sudo rm -rf /etc/systemd/system/imgyoung.service.d   # only exists if you used systemctl edit
+sudo systemctl daemon-reload
+sudo rm /usr/local/bin/imgyoung
+```
+
+The data directory is left in place. Delete it only once you are sure you no longer need the images, the database and `master.key` in it:
+
+```bash title="Terminal"
+sudo rm -rf /var/lib/private/imgyoung /var/lib/imgyoung
+```
+
+If only the binary was installed, delete it (`~/.local/bin/imgyoung` or `/usr/local/bin/imgyoung` by default), then delete whichever data directory you ran it with, if you no longer need it.
+
+## Mirrors and internal distribution
+
+If GitHub is hard to reach, host the release files on a mirror or an internal server and point `IMGYOUNG_RELEASES` at it. The variable has to reach the `sh` that runs the script, not `curl`:
+
+```bash title="Terminal"
+curl -fsSL https://mirror.example.com/imgyoung/install.sh \
+  | sudo IMGYOUNG_RELEASES=https://mirror.example.com/imgyoung/releases sh -s -- --service
+```
+
+`install.sh` itself must be reachable there too. The mirror must use the same layout as GitHub Releases:
+
+```text
+<IMGYOUNG_RELEASES>/latest                                   redirects to .../tag/vX.Y.Z
+<IMGYOUNG_RELEASES>/download/vX.Y.Z/imgyoung_X.Y.Z_linux_amd64.tar.gz
+<IMGYOUNG_RELEASES>/download/vX.Y.Z/checksums.txt
+```
+
+`/latest` is only used without `--version`: the script follows the redirect and treats the last segment of the final URL as the version, which must start with `v` followed by a digit. If the mirror cannot redirect like that, always pass `--version` when installing and upgrading.
