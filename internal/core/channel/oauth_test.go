@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"golang.org/x/oauth2"
@@ -104,6 +105,24 @@ func TestOAuthFlowAuthCodeURL(t *testing.T) {
 	}
 	if got := q.Get("state"); got != "state-123" {
 		t.Errorf("state = %q", got)
+	}
+}
+
+// TestOAuthFlowAppliesBackendDefaults 验证授权地址用上后端选项的默认值:onedrive 的 scope 取自
+// access_scopes 的默认值,缺了它微软不发刷新令牌。
+func TestOAuthFlowAppliesBackendDefaults(t *testing.T) {
+	flow, err := NewOAuthFlow(t.Context(), "onedrive", map[string]string{
+		"region": "global", ConfigKeyClientID: "my-client",
+	}, "https://img.example.com/cb")
+	if err != nil {
+		t.Fatalf("NewOAuthFlow 报错: %v", err)
+	}
+	u, err := url.Parse(flow.AuthCodeURL("state-123"))
+	if err != nil {
+		t.Fatalf("授权地址不是合法 URL: %v", err)
+	}
+	if scope := u.Query().Get("scope"); !strings.Contains(scope, "offline_access") {
+		t.Errorf("scope = %q, 期望含 offline_access", scope)
 	}
 }
 

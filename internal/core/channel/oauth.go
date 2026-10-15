@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/rclone/rclone/fs"
@@ -22,15 +23,44 @@ const (
 // oauthConfigName 取配置时传给 rclone 的远端名;不落配置文件,仅用于其日志。
 const oauthConfigName = "imgyoung"
 
-// toConfigMap 把渠道参数转成 rclone 的参数映射。
-// @param params 渠道参数
-// @return 参数映射
-func toConfigMap(params map[string]string) configmap.Simple {
-	m := configmap.Simple{}
-	for k, v := range params {
-		m.Set(k, v)
+// findBackend 按名查找 rclone 后端。
+// @param driver rclone 后端名
+// @return 后端注册信息
+// @return 后端不存在时的 ErrInvalidChannel
+func findBackend(driver string) (*fs.RegInfo, error) {
+	ri, err := fs.Find(driver)
+	if err != nil {
+		return nil, fmt.Errorf("%w: 未知的后端 %q", ErrInvalidChannel, driver)
 	}
+	return ri, nil
+}
+
+// backendParams 构造交给后端配置流程的参数映射:params 之上以后端选项默认值兜底(优先级最低)。
+// @Description: 后端按选项结构读参时不自带默认值,缺省的选项会读成零值(如 onedrive 的
+// access_scopes 读空,授权地址不带 scope);与构造驱动时的取值规则一致。后端写下的参数进入 params。
+// @param ri 后端注册信息
+// @param params 后端参数;后端写参时原地修改
+// @return 参数映射
+func backendParams(ri *fs.RegInfo, params configmap.Simple) *configmap.Map {
+	m := configmap.New()
+	m.AddGetter(params, configmap.PriorityNormal)
+	m.AddGetter(optionDefaults(ri.Options), configmap.PriorityDefault)
+	m.AddSetter(params)
 	return m
+}
+
+// optionDefaults 以后端选项元数据提供参数默认值。
+type optionDefaults fs.Options
+
+// Get 读取选项默认值。
+// @param key 参数名
+// @return 默认值与该选项是否存在
+func (d optionDefaults) Get(key string) (string, bool) {
+	opt := fs.Options(d).Get(key)
+	if opt == nil {
+		return "", false
+	}
+	return opt.String(), true
 }
 
 // ErrNotOAuthDriver 指定后端无需 OAuth 授权。
@@ -57,8 +87,14 @@ type OAuthFlow struct {
 // @return 后端不存在、无需授权或取配置失败时的错误
 func NewOAuthFlow(ctx context.Context, driver string, params map[string]string,
 	redirectURI string) (*OAuthFlow, error) {
-	m := toConfigMap(params)
-	opt, err := backendOAuthOptions(ctx, driver, m)
+	ri, err := findBackend(driver)
+	if err != nil {
+		return nil, err
+	}
+	values := configmap.Simple{}
+	maps.Copy(values, params)
+	m := backendParams(ri, values)
+	opt, err := backendOAuthOptions(ctx, ri, m)
 	if err != nil {
 		return nil, err
 	}
@@ -164,15 +200,11 @@ const configWalkLimit = 16
 // client_id 再进入授权);本函数沿无需输入的跳转一路走到授权环节。途中若后端要求
 // 交互输入(如缺 client_id 时的确认),无人可答,以明确错误返回而非猜答案。
 // @param ctx 控制取配置阶段的取消
-// @param driver rclone 后端名
+// @param ri 后端注册信息
 // @param m 后端参数,影响端点补全与状态机走向
 // @return 后端 OAuth 选项
-// @return 后端不存在、不走 OAuth 或配置流程需要交互输入时的错误
-func backendOAuthOptions(ctx context.Context, driver string, m configmap.Simple) (*oauthutil.Options, error) {
-	ri, err := fs.Find(driver)
-	if err != nil {
-		return nil, fmt.Errorf("%w: 未知的后端 %q", ErrInvalidChannel, driver)
-	}
+// @return 后端不走 OAuth 或配置流程需要交互输入时的错误
+func backendOAuthOptions(ctx context.Context, ri *fs.RegInfo, m configmap.Mapper) (*oauthutil.Options, error) {
 	if ri.Config == nil {
 		return nil, ErrNotOAuthDriver
 	}
@@ -180,9 +212,9 @@ func backendOAuthOptions(ctx context.Context, driver string, m configmap.Simple)
 	for range configWalkLimit {
 		out, err := ri.Config(ctx, oauthConfigName, m, in)
 		if err != nil {
-			return nil, fmt.Errorf("读取后端 %q 的授权配置: %w", driver, err)
+			return nil, fmt.Errorf("读取后端 %q 的授权配置: %w", ri.Name, err)
 		}
-		opt, next, err := oauthStep(driver, out)
+		opt, next, err := oauthStep(ri.Name, out)
 		if err != nil {
 			return nil, err
 		}
