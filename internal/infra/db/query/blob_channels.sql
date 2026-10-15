@@ -60,11 +60,11 @@ WHERE state IN ('pending', 'uploading')
 ORDER BY blob_id ASC, channel_id ASC
 LIMIT ? OFFSET ?;
 
--- name: ListDoneBlobChannelsForChannel :many
-SELECT bc.blob_id, b.storage_key
+-- name: ListBlobChannelKeysForChannel :many
+SELECT bc.blob_id, b.storage_key, bc.state
 FROM blob_channels bc
 JOIN blobs b ON b.id = bc.blob_id
-WHERE bc.channel_id = ? AND bc.state = 'done';
+WHERE bc.channel_id = ?;
 
 -- name: ResetFailedBlobChannels :exec
 UPDATE blob_channels

@@ -163,6 +163,42 @@ func (q *Queries) ListBlobChannelIDs(ctx context.Context, blobID int64) ([]int64
 	return items, nil
 }
 
+const listBlobChannelKeysForChannel = `-- name: ListBlobChannelKeysForChannel :many
+SELECT bc.blob_id, b.storage_key, bc.state
+FROM blob_channels bc
+JOIN blobs b ON b.id = bc.blob_id
+WHERE bc.channel_id = ?
+`
+
+type ListBlobChannelKeysForChannelRow struct {
+	BlobID     int64
+	StorageKey string
+	State      string
+}
+
+func (q *Queries) ListBlobChannelKeysForChannel(ctx context.Context, channelID int64) ([]ListBlobChannelKeysForChannelRow, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobChannelKeysForChannel, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListBlobChannelKeysForChannelRow
+	for rows.Next() {
+		var i ListBlobChannelKeysForChannelRow
+		if err := rows.Scan(&i.BlobID, &i.StorageKey, &i.State); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBlobChannels = `-- name: ListBlobChannels :many
 SELECT bc.channel_id, bc.state, c.name, c.priority, c.healthy
 FROM blob_channels bc
@@ -272,41 +308,6 @@ func (q *Queries) ListBlobChannelsForChannelPage(ctx context.Context, arg ListBl
 	var items []ListBlobChannelsForChannelPageRow
 	for rows.Next() {
 		var i ListBlobChannelsForChannelPageRow
-		if err := rows.Scan(&i.BlobID, &i.StorageKey); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listDoneBlobChannelsForChannel = `-- name: ListDoneBlobChannelsForChannel :many
-SELECT bc.blob_id, b.storage_key
-FROM blob_channels bc
-JOIN blobs b ON b.id = bc.blob_id
-WHERE bc.channel_id = ? AND bc.state = 'done'
-`
-
-type ListDoneBlobChannelsForChannelRow struct {
-	BlobID     int64
-	StorageKey string
-}
-
-func (q *Queries) ListDoneBlobChannelsForChannel(ctx context.Context, channelID int64) ([]ListDoneBlobChannelsForChannelRow, error) {
-	rows, err := q.db.QueryContext(ctx, listDoneBlobChannelsForChannel, channelID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListDoneBlobChannelsForChannelRow
-	for rows.Next() {
-		var i ListDoneBlobChannelsForChannelRow
 		if err := rows.Scan(&i.BlobID, &i.StorageKey); err != nil {
 			return nil, err
 		}

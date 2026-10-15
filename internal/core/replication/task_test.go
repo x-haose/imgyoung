@@ -249,35 +249,54 @@ func TestBackfillNewChannel(t *testing.T) {
 	}
 }
 
-// TestGCRemovesExpiredOrphans 验证孤儿回收:超宽限期的未知对象被删,
-// 新鲜对象与系统目录对象豁免。
+// TestGCRemovesExpiredOrphans 验证孤儿回收:渠道记录创建之后写入、库里没有任何副本记录且超宽限期的
+// 对象被删;新鲜对象、早于渠道记录创建的对象(别的库写出,如灾备接入的旧桶)、有未就绪副本记录的
+// 对象与系统目录对象一律保留。
 func TestGCRemovesExpiredOrphans(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := t.Context()
-	put := func(key string) {
+	now := time.Now()
+	// 渠道记录回拨到 30 天前创建,才能在它之后、宽限期之外造出本库写出的孤儿。
+	if _, err := env.conn.ExecContext(ctx, "UPDATE channels SET created_at = ? WHERE id = ?",
+		sqlc.TimeText(now.Add(-30*24*time.Hour)), env.local.ID); err != nil {
+		t.Fatalf("回拨渠道创建时刻: %v", err)
+	}
+	put := func(key string, modTime time.Time) {
 		t.Helper()
 		payload := []byte("orphan")
 		if err := env.local.Driver.Put(ctx, key, bytes.NewReader(payload), int64(len(payload))); err != nil {
 			t.Fatalf("写入对象 %s: %v", key, err)
 		}
+		// local 后端以文件 mtime 为对象修改时间。
+		if err := os.Chtimes(localObjectPath(t, env, key), modTime, modTime); err != nil {
+			t.Fatalf("设置对象 %s 修改时间: %v", key, err)
+		}
 	}
-	put("stale-orphan.bin")
-	put("fresh-orphan.bin")
-	put("_imgyoung/backup/keep.db")
-	// 把 stale 对象的修改时间拨回宽限期之外(local 后端以文件 mtime 为准)。
-	stalePath := localObjectPath(t, env, "stale-orphan.bin")
-	old := time.Now().Add(-72 * time.Hour)
-	if err := os.Chtimes(stalePath, old, old); err != nil {
-		t.Fatalf("回拨对象时间: %v", err)
+	put("stale-orphan.bin", now.Add(-72*time.Hour))
+	put("fresh-orphan.bin", now)
+	put("preexisting.bin", now.Add(-60*24*time.Hour))
+	put("pending_00000000", now.Add(-72*time.Hour))
+	put("_imgyoung/backup/keep.db", now.Add(-72*time.Hour))
+	blobID, err := env.queries.CreateBlob(ctx, sqlc.CreateBlobParams{
+		Sha256: "pendinghash", Phash: 1, StorageKey: "pending_00000000", Mime: "image/png",
+		Size: 6, Width: 1, Height: 1,
+	})
+	if err != nil {
+		t.Fatalf("创建 blob 记录: %v", err)
+	}
+	if err := env.queries.UpsertBlobChannel(ctx, sqlc.UpsertBlobChannelParams{
+		BlobID: blobID, ChannelID: env.local.ID, State: channel.StatePending,
+	}); err != nil {
+		t.Fatalf("写副本状态: %v", err)
 	}
 
 	results, err := env.runner.RunGC(ctx)
 	if err != nil {
 		t.Fatalf("RunGC 返回错误: %v", err)
 	}
-	// 盘点口径:两个业务对象各 6 字节,系统目录对象不计;回收 1 个孤儿,无幻影。
+	// 盘点口径:四个业务对象各 6 字节,系统目录对象不计;回收 1 个孤儿,1 个早于渠道记录创建,无幻影。
 	got := gcResultFor(t, results, "local")
-	want := replication.GCResult{Channel: "local", Objects: 2, Bytes: 12, OrphansDeleted: 1}
+	want := replication.GCResult{Channel: "local", Objects: 4, Bytes: 24, Preexisting: 1, OrphansDeleted: 1}
 	if got != want {
 		t.Errorf("local 对账统计 = %+v, 期望 %+v", got, want)
 	}
@@ -285,11 +304,11 @@ func TestGCRemovesExpiredOrphans(t *testing.T) {
 	if _, err := env.local.Driver.Stat(ctx, "stale-orphan.bin"); !errors.Is(err, driver.ErrNotFound) {
 		t.Errorf("过期孤儿未被回收: %v", err)
 	}
-	if _, err := env.local.Driver.Stat(ctx, "fresh-orphan.bin"); err != nil {
-		t.Errorf("宽限期内对象被误删: %v", err)
-	}
-	if _, err := env.local.Driver.Stat(ctx, "_imgyoung/backup/keep.db"); err != nil {
-		t.Errorf("系统目录对象被误删: %v", err)
+	kept := []string{"fresh-orphan.bin", "preexisting.bin", "pending_00000000", "_imgyoung/backup/keep.db"}
+	for _, key := range kept {
+		if _, err := env.local.Driver.Stat(ctx, key); err != nil {
+			t.Errorf("对象 %s 被误删: %v", key, err)
+		}
 	}
 }
 
