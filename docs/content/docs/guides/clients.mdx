@@ -11,7 +11,8 @@ description: 把 PicGo、PicList、Typora、aws CLI、rclone 等客户端接到 
 | 典型客户端 | PicGo + web-uploader 插件、PicList「高级自定义」 | PicList 内置 AWS S3、PicGo + s3 插件、aws CLI、rclone、各语言 S3 SDK |
 | 凭证 | 上传 Token 明文 | 由上传 Token 派生的 access key 与 secret |
 | 返回的链接 | 服务端返回 `/i/<短ID>` | 客户端按对象键自己拼 `/o/<用户 id>/<对象键>` |
-| 有效期、EXIF 档位 | 可以逐次指定 | 只用默认值 |
+| 有效期 | 可以逐次指定 | 只用默认值 |
+| EXIF 处理 | 可以逐次指定档位,省略时用全局默认 | 不处理,按原字节保存 |
 | 幂等键 | 支持 | 不支持 |
 | 同名文件再传 | 每次都是一张新图 | 同一对象键按 S3 语义覆盖 |
 
@@ -87,7 +88,8 @@ ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集,凭证就是上传 Toke
 上传时的取值:
 
 - 对象键是桶名之后的整段路径(URL 解码后),最长 1024 字节,不能含控制字符、不能以 `/` 开头;在同一用户内唯一。
-- 文件名取对象键最后一段;EXIF 档位用全局默认;有效期按「用户默认 > 全局默认」。
+- 文件名取对象键最后一段;有效期按「用户默认 > 全局默认」。
+- 不做 EXIF 处理,全局 EXIF 默认档对 S3 上传不生效:保存的字节与上传的完全一致,PUT 响应的 ETag 与之后 GetObject 的 ETag 相同。
 
 错误以 S3 风格的 XML 返回,客户端按 `Code` 区分:
 
@@ -274,7 +276,6 @@ rclone copyto ./photo.png imgyoung:images/blog/2026/photo.png
 
 - `no_check_bucket=true` 让 rclone 跳过上传前的建桶检查;服务端不支持建桶。
 - 只用 `copyto`、`deletefile` 这类按单个对象操作的命令;`ls`、`sync`、`copy` 目录等依赖列举对象,不可用。
-- 全局 EXIF 默认档为 `strip` 时,服务端保存的字节比上传的少,rclone 上传后核对大小会判定传输损坏并删除刚传的对象。这种情况下给命令加 `--ignore-size`,或保持全局默认为 `passthrough`。
 
 ### 其他 S3 SDK
 

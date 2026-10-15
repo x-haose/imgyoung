@@ -300,15 +300,16 @@ func s3Status(err error) int {
 	return 0
 }
 
-// TestS3HeadAndGetObject HEAD/GET 闭环:上传后 HEAD 给出长度、类型、内容哈希 ETag 与上传时刻;GET 字节一致、
-// ETag 与 HEAD 相同;If-None-Match 命中 304 且带与 200 相同的 Cache-Control;不存在的键 404。
+// TestS3HeadAndGetObject HEAD/GET 闭环:全局 EXIF 档为 strip 时 S3 上传仍按原字节保存;HEAD 给出长度、类型、
+// 内容哈希 ETag 与上传时刻;GET 字节一致、ETag 与 HEAD 相同;If-None-Match 命中 304 且带与 200 相同的
+// Cache-Control;不存在的键 404。
 func TestS3HeadAndGetObject(t *testing.T) {
 	t.Parallel()
-	env := s3Setup(t, nil)
+	env := s3Setup(t, map[string]any{"exif_policy": "strip"})
 	cred := env.cred
 	s3c := newS3Client(t, cred)
-	payload := pngBytes(t)
-	const objectKey = "album/head.png"
+	payload := jpegWithEXIF(t)
+	const objectKey = "album/head.jpg"
 	if _, err := s3c.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey), Body: bytes.NewReader(payload),
 	}); err != nil {
@@ -326,8 +327,8 @@ func TestS3HeadAndGetObject(t *testing.T) {
 	if head.ContentLength == nil || *head.ContentLength != int64(len(payload)) {
 		t.Errorf("HEAD Content-Length = %v, 期望 %d", head.ContentLength, len(payload))
 	}
-	if head.ContentType == nil || *head.ContentType != "image/png" {
-		t.Errorf("HEAD Content-Type = %v, 期望 image/png", head.ContentType)
+	if head.ContentType == nil || *head.ContentType != "image/jpeg" {
+		t.Errorf("HEAD Content-Type = %v, 期望 image/jpeg", head.ContentType)
 	}
 	if head.ETag == nil || *head.ETag != wantETag {
 		t.Errorf("HEAD ETag = %v, 期望 %s", head.ETag, wantETag)

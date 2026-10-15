@@ -5,7 +5,7 @@ info:
   summary: 自部署多渠道容灾图床的 HTTP 接口
   description: |
     ImgYoung 的全部 JSON 接口:数据面(上传、URL 转存)、图片访问入口与管理后台。
-    S3 协议面(`/s3/…`,PutObject / HeadBucket / HeadObject / GetObject / DeleteObject 五个操作,XML 错误体)按 AWS S3 规范实现,不在本文档内。
+    S3 协议面(`/s3/…`,PutObject / HeadBucket / HeadObject / GetObject / DeleteObject 五个操作,XML 错误体)按 AWS S3 规范实现,不在本文档内;PutObject 一律按原字节保存,不应用 EXIF 档位。
 
     认证面只有两个:数据面用具名上传 Token(`Authorization: Bearer <token>`,在后台签发);
     管理后台用会话 cookie,状态变更请求须以 `X-CSRF-Token` 头回传登录或 `GET /api/admin/me` 下发的 CSRF 令牌。
@@ -2181,7 +2181,7 @@ components:
         exif_policy:
           type: string
           enum: [passthrough, strip]
-          description: 全局默认 EXIF 档位
+          description: 全局默认 EXIF 档位;S3 PutObject 不适用
         encrypt_new_channels:
           type: boolean
           description: 新建渠道未显式指定时的加密默认值;为 true 时继承默认的新渠道不能开 302 直链
@@ -2257,7 +2257,7 @@ components:
         exif_policy:
           type: string
           enum: [passthrough, strip]
-          description: 全局默认 EXIF 档位,单次上传可覆盖
+          description: 全局默认 EXIF 档位,上传接口的单次表单字段可覆盖;S3 PutObject 不适用,一律按原字节保存
         min_success:
           type: integer
           description: 上传返回成功所需的最少同步副本数

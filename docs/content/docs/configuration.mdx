@@ -140,7 +140,7 @@ sudo systemctl restart imgyoung
 |---|---|---|---|---|
 | `process_widths` | 宽度档 | `[100,200,400,800,1600]` | 正整数数组,像素;可为空 | `?w=` 只接受这些值,其余返回 400;为空时不允许缩放 |
 | `process_formats` | 目标格式 | `["webp","jpeg","png"]` | `webp`、`jpeg`、`png` 的非空子集 | `?format=` 只接受这些值。包含 `webp` 时,支持 WebP 的浏览器访问 JPEG / PNG 会自动得到 WebP |
-| `exif_policy` | EXIF 默认档 | `passthrough` | `passthrough`(保留)/ `strip`(剥离元数据) | 上传时的默认 EXIF 处理;单次上传可用表单字段 `exif_policy` 覆盖 |
+| `exif_policy` | EXIF 默认档 | `passthrough` | `passthrough`(保留)/ `strip`(剥离元数据) | 上传时的默认 EXIF 处理;单次上传可用表单字段 `exif_policy` 覆盖;S3 上传不适用,一律按原字节保存 |
 | `process_quality_webp` | WebP 质量档 | `80` | 0–100 | |
 | `process_quality_jpeg` | JPEG 质量档 | `85` | 1–100 | |
 | `process_webp_method` | WebP 速度权衡 | `4` | 0–6 | 越大编码越慢、体积越小 |

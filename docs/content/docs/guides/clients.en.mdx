@@ -11,7 +11,8 @@ description: Connect PicGo, PicList, Typora, the aws CLI, rclone and other clien
 | Typical clients | PicGo with the web-uploader plugin, PicList "advanced custom" uploader | PicList's built-in AWS S3, PicGo with the s3 plugin, aws CLI, rclone, S3 SDKs |
 | Credential | The upload token itself | Access key and secret derived from an upload token |
 | Returned link | The server returns `/i/<short ID>` | The client builds `/o/<user id>/<object key>` from the key |
-| Lifetime, EXIF policy | Can be set per upload | Defaults only |
+| Lifetime | Can be set per upload | Defaults only |
+| EXIF processing | Policy can be set per upload; the global default otherwise | None; bytes are stored as uploaded |
 | Idempotency key | Supported | Not supported |
 | Uploading the same name again | Always a new image | Same object key overwrites, S3 style |
 
@@ -87,7 +88,8 @@ Signing and request bodies:
 Values used for an upload:
 
 - The object key is the whole path after the bucket name (URL-decoded), at most 1024 bytes, with no control characters and no leading `/`; it is unique within one user.
-- The file name is the last segment of the object key; the EXIF policy is the global default; the lifetime is the per-user default, then the global default.
+- The file name is the last segment of the object key; the lifetime is the per-user default, then the global default.
+- No EXIF processing is done and the global EXIF default does not apply: the stored bytes are exactly the uploaded bytes, so the ETag returned by PUT matches the one GetObject returns later.
 
 Errors come back as S3-style XML, and clients act on the `Code`:
 
@@ -274,7 +276,6 @@ rclone copyto ./photo.png imgyoung:images/blog/2026/photo.png
 
 - `no_check_bucket=true` makes rclone skip its bucket check before uploading; the server does not support creating buckets.
 - Stick to commands that act on a single object, such as `copyto` and `deletefile`. `ls`, `sync` and directory-level `copy` rely on listing objects and do not work.
-- When the global EXIF default is `strip`, the server stores fewer bytes than were uploaded, and rclone's post-upload size check reports the transfer as corrupted and deletes the object it just uploaded. In that case add `--ignore-size`, or keep the global default at `passthrough`.
 
 ### Other S3 SDKs
 

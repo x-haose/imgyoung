@@ -106,7 +106,10 @@ export const settings = {
         label: '目标格式',
         hint: '允许的 ?format= 取值;gif 只收发原图不处理',
       },
-      exif_policy: { label: 'EXIF 默认档', hint: '单次上传的表单字段可覆盖' },
+      exif_policy: {
+        label: 'EXIF 默认档',
+        hint: '单次上传的表单字段可覆盖;S3 上传不受影响,一律按原字节保存',
+      },
       process_quality_webp: { label: 'WebP 质量档', hint: '0 到 100' },
       process_quality_jpeg: { label: 'JPEG 质量档', hint: '1 到 100' },
       process_webp_method: {

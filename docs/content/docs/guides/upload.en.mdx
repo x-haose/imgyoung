@@ -13,7 +13,7 @@ description: Upload images through the HTTP API, URL fetch or the admin console,
 | S3 protocol `/s3/…` | S3 credential derived from an upload token | Clients that can upload to S3, see [Upload clients](./clients.mdx) |
 
 All four go through the same upload pipeline: format check, pixel budget, quota pre-check, EXIF handling, channel writes, then the database record.
-They differ only in where the bytes come from and which options they accept: the S3 entry point cannot set the lifetime or EXIF policy per request and has no idempotency key.
+They differ only in where the bytes come from and which options they accept: the S3 entry point cannot set the lifetime per request, does no EXIF processing, and has no idempotency key.
 
 Upload tokens are issued on the **Upload tokens** page of the console, see [Admin console](./admin.mdx#upload-tokens).
 
@@ -176,7 +176,7 @@ All of these are changed under **Settings → Runtime settings** and take effect
 | `passthrough` | Stored byte for byte; no metadata is touched. The global default out of the box |
 | `strip` | Metadata is removed before storing, as listed below |
 
-The policy for an upload is the form (or JSON) field if given, otherwise the global default `exif_policy`. S3 uploads always use the global default.
+The policy for an upload is the form (or JSON) field if given, otherwise the global default `exif_policy`. S3 uploads skip EXIF processing and are stored byte for byte: S3 clients check the upload by size and ETag, so the stored bytes must match what was sent.
 `spoof` (fake metadata) is not available yet; sending it returns 400, and it cannot be the global default either.
 
 `strip` works at the byte level: nothing is re-encoded and no pixel changes:

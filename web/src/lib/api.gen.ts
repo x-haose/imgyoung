@@ -1132,7 +1132,7 @@ export interface components {
              */
             access_mode: "proxy" | "redirect";
             /**
-             * @description 全局默认 EXIF 档位
+             * @description 全局默认 EXIF 档位;S3 PutObject 不适用
              * @enum {string}
              */
             exif_policy: "passthrough" | "strip";
@@ -1165,7 +1165,7 @@ export interface components {
             /** @description 空 Referer 是否放行 */
             allow_empty_referer: boolean;
             /**
-             * @description 全局默认 EXIF 档位,单次上传可覆盖
+             * @description 全局默认 EXIF 档位,上传接口的单次表单字段可覆盖;S3 PutObject 不适用,一律按原字节保存
              * @enum {string}
              */
             exif_policy: "passthrough" | "strip";

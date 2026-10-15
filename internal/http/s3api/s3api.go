@@ -113,6 +113,8 @@ func (h *Handlers) Authenticate(next http.Handler) http.Handler {
 // HandlePutObject 处理 S3 PutObject:读正文 → 走同一条上传管道。
 // @Description: 路径形如 /s3/<bucket>/<key...>。bucket 名不做归属绑定——本服务没有桶概念,
 // 客户端填什么都收,归属由凭证决定;对象键连同 bucket 之后的整段路径落库为访问别名。
+// 一律按原字节保存(EXIF 档位固定为 passthrough,不看全局默认):S3 语义下存下的对象就是 PUT 的字节,
+// 同步类客户端按大小与 ETag 核对,存下的字节一变就会判定传输损坏或反复重传。
 // 须挂在 Authenticate 之后,取不到主体属路由装配错误。
 func (h *Handlers) HandlePutObject(w http.ResponseWriter, r *http.Request) {
 	principal, ok := middleware.TokenPrincipalFrom(r.Context())
@@ -138,7 +140,7 @@ func (h *Handlers) HandlePutObject(w http.ResponseWriter, r *http.Request) {
 		UserID:     principal.UserID,
 		TokenID:    principal.TokenID,
 		FileName:   objectKey[strings.LastIndex(objectKey, "/")+1:],
-		EXIFPolicy: set.EXIFPolicy,
+		EXIFPolicy: imaging.PolicyPassthrough,
 		ObjectKey:  objectKey,
 	})
 	if err != nil {
@@ -288,8 +290,7 @@ func (h *Handlers) writeBodyError(w http.ResponseWriter, r *http.Request, set co
 // @param err 上传阶段的原始错误
 func (h *Handlers) writeUploadError(w http.ResponseWriter, r *http.Request, set config.Settings, err error) {
 	switch {
-	case errors.Is(err, upload.ErrUnsupportedType), errors.Is(err, upload.ErrInvalidImage),
-		errors.Is(err, imaging.ErrUnknownPolicy):
+	case errors.Is(err, upload.ErrUnsupportedType), errors.Is(err, upload.ErrInvalidImage):
 		h.writeStatus(w, r, http.StatusBadRequest, "InvalidRequest", "仅支持图片文件(jpeg/png/gif/webp)")
 	case errors.Is(err, upload.ErrTooManyPixels):
 		h.writeStatus(w, r, http.StatusBadRequest, "InvalidRequest",

@@ -142,7 +142,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 |---|---|---|---|---|
 | `process_widths` | Width tiers | `[100,200,400,800,1600]` | Array of positive integers, pixels; may be empty | `?w=` accepts only these values, anything else gets 400; empty disallows resizing |
 | `process_formats` | Target formats | `["webp","jpeg","png"]` | Non-empty subset of `webp`, `jpeg`, `png` | `?format=` accepts only these values. With `webp` included, browsers that support WebP automatically get WebP for JPEG / PNG images |
-| `exif_policy` | Default EXIF policy | `passthrough` | `passthrough` (keep) / `strip` (remove metadata) | Default EXIF handling at upload; a single upload can override it with the `exif_policy` form field |
+| `exif_policy` | Default EXIF policy | `passthrough` | `passthrough` (keep) / `strip` (remove metadata) | Default EXIF handling at upload; a single upload can override it with the `exif_policy` form field; does not apply to S3 uploads, which are stored byte for byte |
 | `process_quality_webp` | WebP quality | `80` | 0–100 | |
 | `process_quality_jpeg` | JPEG quality | `85` | 1–100 | |
 | `process_webp_method` | WebP effort | `4` | 0–6 | Higher is slower and smaller |
