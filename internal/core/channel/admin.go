@@ -160,7 +160,7 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 		return 0, err
 	}
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, nil); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 	if err := m.verifyConfig(ctx, p.Driver, config, p.AutoCreateBucket); err != nil {
 		return 0, err
@@ -298,7 +298,7 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 		return err
 	}
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", ErrInvalidChannel, err)
 	}
 	if err := m.verifyConfig(ctx, p.Driver, config, false); err != nil {
 		return err

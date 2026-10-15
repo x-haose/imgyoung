@@ -19,7 +19,7 @@ import (
 // @param submitted 提交的配置,据其令牌是否为哨兵判断授权是否沿用
 // @param config 已整理的配置
 // @param stored 渠道已存的配置;创建场景为 nil
-// @return 后端配置流程失败时的 ErrInvalidChannel
+// @return 后端配置流程失败时的错误(后端报错、提问没有默认答案、步数超限)
 func completeTemplateConfig(ctx context.Context, templateID string, submitted, config,
 	stored map[string]string) error {
 	tpl := findTemplate(templateID)
@@ -74,7 +74,7 @@ func (t *Template) ownedKeys() map[string]bool {
 // @param driver rclone 后端名
 // @param params 含授权令牌的后端参数(可入库形态);不修改
 // @return 后端写下的参数,值为空串表示清除该参数
-// @return 后端报错、提问没有默认答案或超出步数上限时的 ErrInvalidChannel
+// @return 后端不存在(ErrInvalidChannel)、后端报错、提问没有默认答案或超出步数上限时的错误
 func completeAuthorization(ctx context.Context, driver string, params map[string]string) (map[string]string, error) {
 	ri, err := findBackend(driver)
 	if err != nil {
@@ -92,7 +92,7 @@ func completeAuthorization(ctx context.Context, driver string, params map[string
 	for range configWalkLimit {
 		out, err := ri.Config(ctx, oauthConfigName, m, in)
 		if err != nil {
-			return nil, fmt.Errorf("%w: 后端 %q 授权后的配置失败: %w", ErrInvalidChannel, ri.Name, err)
+			return nil, fmt.Errorf("后端 %q 授权后的配置失败: %w", ri.Name, err)
 		}
 		next, done, err := defaultStep(ri.Name, out)
 		if err != nil {
@@ -103,7 +103,7 @@ func completeAuthorization(ctx context.Context, driver string, params map[string
 		}
 		in = next
 	}
-	return nil, fmt.Errorf("%w: 后端 %q 的配置流程超出 %d 步", ErrInvalidChannel, ri.Name, configWalkLimit)
+	return nil, fmt.Errorf("后端 %q 的配置流程超出 %d 步", ri.Name, configWalkLimit)
 }
 
 // defaultStep 解读配置状态机的一步输出,以默认答案前进:提问取默认值,授权一步跳过。
@@ -112,20 +112,20 @@ func completeAuthorization(ctx context.Context, driver string, params map[string
 // @param out 本步输出
 // @return 下一步输入
 // @return 流程是否已结束
-// @return 后端报错或提问没有默认答案时的 ErrInvalidChannel
+// @return 后端报错或提问没有默认答案时的错误
 func defaultStep(driver string, out *fs.ConfigOut) (fs.ConfigIn, bool, error) {
 	switch {
 	case out == nil:
 		return fs.ConfigIn{}, true, nil
 	case out.Error != "":
-		return fs.ConfigIn{}, false, fmt.Errorf("%w: 后端 %q 配置失败: %s", ErrInvalidChannel, driver, out.Error)
+		return fs.ConfigIn{}, false, fmt.Errorf("后端 %q 配置失败: %s", driver, out.Error)
 	case out.State == "":
 		return fs.ConfigIn{}, true, nil
 	case out.OAuth != nil:
 		return fs.ConfigIn{State: out.State}, false, nil
 	case out.Option != nil:
 		if out.Option.Default == nil {
-			return fs.ConfigIn{}, false, fmt.Errorf("%w: 后端 %q 要求填写 %s", ErrInvalidChannel, driver, out.Option.Name)
+			return fs.ConfigIn{}, false, fmt.Errorf("后端 %q 要求填写 %s", driver, out.Option.Name)
 		}
 		return fs.ConfigIn{State: out.State, Result: fmt.Sprint(out.Option.Default)}, false, nil
 	default:
