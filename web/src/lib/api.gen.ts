@@ -642,7 +642,7 @@ export interface paths {
         put?: never;
         /**
          * 手动重检
-         * @description 对已有渠道执行深探测并返回探测后的完整描述;探测可能持续数十秒。仅管理员。
+         * @description 对已有渠道执行深探测并返回探测后的完整描述;此前装载失败的渠道先重试装载,仍装不上则以装载失败作为结论。探测可能持续数十秒。仅管理员。
          */
         post: operations["checkChannel"];
         delete?: never;
@@ -1584,7 +1584,7 @@ export interface components {
             allow_direct_link: boolean;
             /** @description 最近探测时刻;空表示尚未探测 */
             last_checked_at: string;
-            /** @description 最近探测失败原因;空表示最近一次探测成功 */
+            /** @description 最近探测失败原因,渠道装载失败时以「装载失败」开头;空表示最近一次探测成功 */
             last_error: string;
             /** @description 清理中:排空任务正在删除渠道上的对象,清完即消失 */
             deleting: boolean;

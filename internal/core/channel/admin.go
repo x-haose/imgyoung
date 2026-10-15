@@ -187,7 +187,7 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if seeded > 0 {
 		m.cfg.Logger.Info("已为新渠道播种存量副本", "channel", p.Name, "count", seeded)
 	}
-	// 渠道已落库;装载失败只告警(客户端已获 ID,重启或下次 Reload 可恢复)。
+	// 渠道已落库,创建即成立;装不上的渠道原因已落库,健康检查时重试装载。
 	if err := m.Reload(ctx); err != nil {
 		m.cfg.Logger.Error("渠道已创建但装载失败", "channel", p.Name, "err", err)
 		return channelID, nil
@@ -469,7 +469,8 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 const probeTimeout = 10 * time.Second
 
 // CheckAll 对全部渠道并行做一次健康探测,结果逐渠道落库并更新内存标记。
-// @Description: 轻探测 = 只读 Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
+// @Description: 每轮先按渠道表重载:此前装载失败的渠道在此重试,装上即参与本轮探测,仍失败的
+// 原因由 Reload 落库。轻探测 = 只读 Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
 // 健康(后端可达),其余错误视为不健康。轻探测只能降级健康渠道,不能独自恢复不健康
 // 渠道——失败结论可能来自暴露写路径问题的深探测(如只读凭证),只读成功不构成推翻依据,
 // 翻回健康须经深探测确认写读删全通;健康渠道每轮维持零写删成本(周期性写删对按量
@@ -478,8 +479,12 @@ const probeTimeout = 10 * time.Second
 // 健康翻转只改标记、不重建驱动;每渠道每轮都更新 last_checked_at,失败原因人话化
 // 后存 last_error、成功清空。
 // @return 本次健康状态翻转的渠道名列表
-// @return ctx 已取消或落库失败时的错误
+// @return ctx 已取消、重载或落库失败时的错误;全部渠道无法装载时照常探测旧状态并返回该错误
 func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
+	reloadErr := m.Reload(ctx)
+	if reloadErr != nil && !errors.Is(reloadErr, errNothingLoaded) {
+		return nil, reloadErr
+	}
 	channels := m.snapshot()
 	results := make([]error, len(channels))
 	var wg sync.WaitGroup
@@ -501,7 +506,7 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 			changed = append(changed, c.handle.Name)
 		}
 	}
-	return changed, nil
+	return changed, reloadErr
 }
 
 // snapshot 返回当前在役渠道的副本(句柄与健康标记),供一轮探测使用;清理中的渠道不探测。

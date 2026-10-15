@@ -29,46 +29,39 @@ func deepProbe(ctx context.Context, d driver.Driver) error {
 }
 
 // ProbeChannel 对指定渠道执行深探测并把结果落库。
-// @Description: 渠道在库但驱动未装载(配置坏死被 Reload 跳过)时,以构造失败
-// 作为探测结果落库,坏死原因在渠道列表可见。探测失败不算方法失败——结果体现
-// 在 healthy / last_error 里。ctx 取消(请求断开、停机)时不落库并返回取消错误:
+// @Description: 渠道在库但未装载(此前装载失败)时先按渠道表重试装载:装上即对其深探测,
+// 通过后参与选路;仍装不上则失败原因已由 Reload 落库,在渠道列表可见。探测失败不算方法失败——
+// 结果体现在 healthy / last_error 里。ctx 取消(请求断开、停机)时不落库并返回取消错误:
 // 取消造成的探测失败不是渠道的结论。
 // @param channelID 渠道主键
 // @return ErrChannelNotFound、ctx 取消或查询、落库失败时的错误
 func (m *Manager) ProbeChannel(ctx context.Context, channelID int64) error {
-	var probeErr error
-	if h, ok := m.Get(channelID); ok {
-		probeErr = deepProbe(ctx, h.Driver)
-	} else {
-		row, err := m.cfg.Queries.GetChannel(ctx, channelID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return ErrChannelNotFound
+	h, ok := m.Get(channelID)
+	if !ok {
+		if err := m.Reload(ctx); err != nil && !errors.Is(err, errNothingLoaded) {
+			return err
 		}
-		if err != nil {
-			return fmt.Errorf("读取渠道 %d: %w", channelID, err)
+		if h, ok = m.Get(channelID); !ok {
+			return m.unloadedProbeResult(ctx, channelID)
 		}
-		probeErr = m.probeUnloaded(ctx, row)
 	}
+	probeErr := deepProbe(ctx, h.Driver)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return m.recordProbe(ctx, channelID, probeErr)
 }
 
-// probeUnloaded 对未装载的渠道记录做一次性构造并深探测。
-// @param row 渠道记录
-// @return 构造失败或探测失败的原因;nil 表示健康
-func (m *Manager) probeUnloaded(ctx context.Context, row sqlc.Channel) error {
-	params, err := m.unsealConfigMap(row.ConfigSealed)
-	if err != nil {
-		return fmt.Errorf("驱动构造失败: %w", err)
+// unloadedProbeResult 给出重试装载仍未装上的渠道的探测结论:渠道不存在,或装载失败原因已落库。
+// @param channelID 渠道主键
+// @return ErrChannelNotFound、ctx 取消或查询失败时的错误;装载失败已落库时为 nil
+func (m *Manager) unloadedProbeResult(ctx context.Context, channelID int64) error {
+	if _, err := m.cfg.Queries.GetChannel(ctx, channelID); errors.Is(err, sql.ErrNoRows) {
+		return ErrChannelNotFound
+	} else if err != nil {
+		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
 	}
-	d, err := m.openTrial(ctx, row.Driver, params)
-	if err != nil {
-		return fmt.Errorf("驱动构造失败: %w", err)
-	}
-	defer m.closeTrial(ctx, d, "探测未装载渠道")
-	return deepProbe(ctx, d)
+	return ctx.Err()
 }
 
 // TestParams 测试连接的参数。
@@ -129,15 +122,23 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) 
 // @param perr 探测错误,nil 表示健康
 // @return 落库失败时的错误
 func (m *Manager) recordProbe(ctx context.Context, channelID int64, perr error) error {
-	msg := humanizeProbeError(perr)
+	return m.recordResult(ctx, channelID, perr == nil, humanizeProbeError(perr))
+}
+
+// recordResult 把一条探测结论写入渠道行并同步内存健康标记;结论落库脱离调用方的取消。
+// @param channelID 渠道主键
+// @param healthy 是否健康
+// @param failure 面向用户的失败原因;健康时为空串
+// @return 落库失败时的错误
+func (m *Manager) recordResult(ctx context.Context, channelID int64, healthy bool, failure string) error {
 	if err := m.cfg.Queries.UpdateChannelProbeResult(context.WithoutCancel(ctx), sqlc.UpdateChannelProbeResultParams{
-		Healthy:   boolToInt(perr == nil),
-		LastError: sql.NullString{String: msg, Valid: msg != ""},
+		Healthy:   boolToInt(healthy),
+		LastError: sql.NullString{String: failure, Valid: failure != ""},
 		ID:        channelID,
 	}); err != nil {
 		return fmt.Errorf("写回渠道 %d 探测结果: %w", channelID, err)
 	}
-	m.setHealth(channelID, perr == nil)
+	m.setHealth(channelID, healthy)
 	return nil
 }
 

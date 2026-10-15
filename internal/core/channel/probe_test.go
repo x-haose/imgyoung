@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -128,6 +129,56 @@ func TestManagerTestConfig(t *testing.T) {
 	}); !errors.Is(err, channel.ErrChannelNotFound) {
 		t.Fatalf("编辑场景指向不存在的渠道错误 = %v, 期望 ErrChannelNotFound", err)
 	}
+}
+
+// TestLoadFailureVisibleAndRetried 验证装载失败如实落库并会被重试:配置解不开的渠道在列表里显示
+// 不健康与「装载失败」原因、不参与选路;配置恢复后,手动重检与周期健康检查都会把它装上并探测。
+func TestLoadFailureVisibleAndRetried(t *testing.T) {
+	env := testenv.New(t)
+	id, _ := env.AddLocalChannel(t, "fragile", 300, false)
+	good := mustGetChannel(t, env, id).ConfigSealed
+	setSealedConfig := func(sealed string) {
+		t.Helper()
+		if err := env.Queries.UpdateChannelConfigSealed(t.Context(), sqlc.UpdateChannelConfigSealedParams{
+			ConfigSealed: sealed, ID: id,
+		}); err != nil {
+			t.Fatalf("改写渠道配置密文: %v", err)
+		}
+	}
+	assertLoaded := func(want bool) {
+		t.Helper()
+		row := mustGetChannel(t, env, id)
+		_, loaded := env.Manager.Get(id)
+		primary, _ := env.Manager.Primary()
+		if loaded != want || (row.Healthy == 1) != want || (primary.ID == id) != want {
+			t.Fatalf("装载=%v 健康=%d 主渠道=%d, 期望装载与健康均为 %v", loaded, row.Healthy, primary.ID, want)
+		}
+		if !want && !strings.HasPrefix(row.LastError.String, "装载失败") {
+			t.Fatalf("last_error = %q, 期望以「装载失败」开头", row.LastError.String)
+		}
+	}
+
+	setSealedConfig("not-a-sealed-config")
+	if _, err := env.Manager.CheckAll(t.Context()); err != nil {
+		t.Fatalf("健康检查: %v", err)
+	}
+	assertLoaded(false)
+	setSealedConfig(good)
+	if err := env.Manager.ProbeChannel(t.Context(), id); err != nil {
+		t.Fatalf("手动重检: %v", err)
+	}
+	assertLoaded(true)
+
+	setSealedConfig("not-a-sealed-config")
+	if err := env.Manager.Reload(t.Context()); err != nil {
+		t.Fatalf("重载: %v", err)
+	}
+	assertLoaded(false)
+	setSealedConfig(good)
+	if changed, err := env.Manager.CheckAll(t.Context()); err != nil || !slices.Contains(changed, "fragile") {
+		t.Fatalf("健康检查 = %v/%v, 期望重试装载后 fragile 翻回健康", changed, err)
+	}
+	assertLoaded(true)
 }
 
 // TestManagerCheckAllPersistsProbeResult 验证轻探测落库:每轮更新 last_checked_at,

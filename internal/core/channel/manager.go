@@ -101,11 +101,15 @@ func NewManager(ctx context.Context, cfg ManagerConfig) (*Manager, error) {
 	return m, nil
 }
 
+// errNothingLoaded 渠道表非空却一个渠道也装载不了;各渠道的失败原因已作为探测结论落库。
+var errNothingLoaded = errors.New("channel: 全部渠道均无法装载")
+
 // Reload 按渠道表现状重建管理器状态。
-// @Description: 配置未变的渠道沿用既有驱动实例(在途操作不受影响);配置有变或新增的渠道
-// 构造新实例,被替换与已删除渠道的旧实例在换入后关闭。单渠道构造失败只跳过并告警,
-// 不拖垮其余渠道(一个坏渠道不能 brick 服务);全部失败才视为致命,此时保留旧状态。
-// @return 查询、解密或驱动构造失败时的错误
+// @Description: 配置未变的渠道沿用既有驱动实例(在途操作不受影响);配置有变、新增或此前装载失败的
+// 渠道构造新实例,被替换与已删除渠道的旧实例在换入后关闭。单渠道装载失败只跳过,不拖垮其余渠道
+// (一个坏渠道不能 brick 服务),失败原因作为探测结论落库,渠道列表如实显示;全部失败才视为致命,
+// 此时保留旧状态。
+// @return 查询失败、装载失败原因落库失败或全部渠道无法装载(errNothingLoaded)时的错误
 func (m *Manager) Reload(ctx context.Context) error {
 	m.reloadMu.Lock()
 	defer m.reloadMu.Unlock()
@@ -116,14 +120,24 @@ func (m *Manager) Reload(ctx context.Context) error {
 	}
 	previous := m.byID()
 	loaded := make([]managed, 0, len(rows))
+	var recordErrs []error
 	for _, row := range rows {
-		c, ok := m.loadChannel(ctx, row, previous)
-		if ok {
+		c, loadErr := m.loadChannel(ctx, row, previous)
+		if loadErr == nil {
 			loaded = append(loaded, c)
+			continue
+		}
+		m.cfg.Logger.Warn("渠道装载失败,本渠道跳过,健康检查时重试", "channel", row.Name, "err", loadErr)
+		if err := m.recordLoadFailure(ctx, row.ID, loadErr); err != nil {
+			recordErrs = append(recordErrs, err)
 		}
 	}
+	recordErr := errors.Join(recordErrs...)
 	if len(rows) > 0 && len(loaded) == 0 {
-		return fmt.Errorf("全部 %d 个渠道均无法装载", len(rows))
+		if recordErr != nil {
+			return recordErr
+		}
+		return fmt.Errorf("%w(共 %d 个)", errNothingLoaded, len(rows))
 	}
 	m.mu.Lock()
 	m.channels = loaded
@@ -133,7 +147,19 @@ func (m *Manager) Reload(ctx context.Context) error {
 			m.cfg.Logger.Warn("关闭退役渠道驱动失败", "channel", prev.handle.Name, "err", err)
 		}
 	}
-	return nil
+	return recordErr
+}
+
+// recordLoadFailure 把渠道装载失败作为探测结论落库(不健康,原因以「装载失败」开头)。
+// @Description: ctx 已取消(停机、请求断开)时不落库——取消造成的失败不是渠道的结论。
+// @param channelID 渠道主键
+// @param loadErr 装载失败原因
+// @return 落库失败时的错误
+func (m *Manager) recordLoadFailure(ctx context.Context, channelID int64, loadErr error) error {
+	if ctx.Err() != nil {
+		return nil
+	}
+	return m.recordResult(ctx, channelID, false, "装载失败:"+humanizeProbeError(loadErr))
 }
 
 // loadChannel 为一条渠道记录装配运行态:驱动输入未变则沿用既有实例并从 previous 摘除,否则构造新实例。
@@ -141,12 +167,11 @@ func (m *Manager) Reload(ctx context.Context) error {
 // @param row 渠道记录
 // @param previous 换入前的运行态索引;沿用的项会被摘除,剩余项由调用方关闭
 // @return 运行态
-// @return 是否成功;解密或构造失败时已记录错误日志
-func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous map[int64]managed) (managed, bool) {
+// @return 解密或驱动构造失败时的错误
+func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous map[int64]managed) (managed, error) {
 	params, err := m.unsealConfigMap(row.ConfigSealed)
 	if err != nil {
-		m.cfg.Logger.Error("渠道配置无法解密,本渠道跳过", "channel", row.Name, "err", err)
-		return managed{}, false
+		return managed{}, err
 	}
 	source := driverSource{
 		driver: row.Driver, encrypted: row.Encrypted != 0, createdAt: row.CreatedAt, params: params,
@@ -156,8 +181,7 @@ func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous ma
 		drv, source = prev.driver, prev.source
 		delete(previous, row.ID)
 	} else if drv, err = m.openDriver(ctx, row, params); err != nil {
-		m.cfg.Logger.Error("渠道驱动构造失败,本渠道跳过", "channel", row.Name, "err", err)
-		return managed{}, false
+		return managed{}, err
 	}
 	return managed{
 		handle: Handle{
@@ -172,7 +196,7 @@ func (m *Manager) loadChannel(ctx context.Context, row sqlc.Channel, previous ma
 		healthy: row.Healthy != 0,
 		driver:  drv,
 		source:  source,
-	}, true
+	}, nil
 }
 
 // byID 返回当前已加载渠道按主键的索引(副本)。
