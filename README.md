@@ -181,6 +181,13 @@ d, err := rclone.Open(ctx, rclone.Options{
 	Path:    "bucket/prefix",
 	Crypt:   &rclone.CryptOptions{Password: "...", Salt: "..."}, // 可选:内容与文件名加密
 })
+if err != nil {
+	return err
+}
+defer d.Close(ctx)
+if _, err := d.Stat(ctx, "photos/a.png"); errors.Is(err, driver.ErrNotFound) {
+	// 对象不存在
+}
 ```
 
 密码类参数先用 `rclone.ObscureSecrets` 按 rclone 的要求编码;对象缺失统一返回 `driver.ErrNotFound`。完整示例见 [store/rclone 的 Example](./store/rclone/example_test.go)。

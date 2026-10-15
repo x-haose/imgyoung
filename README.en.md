@@ -177,6 +177,13 @@ d, err := rclone.Open(ctx, rclone.Options{
 	Path:    "bucket/prefix",
 	Crypt:   &rclone.CryptOptions{Password: "...", Salt: "..."}, // optional: encrypts content and file names
 })
+if err != nil {
+	return err
+}
+defer d.Close(ctx)
+if _, err := d.Stat(ctx, "photos/a.png"); errors.Is(err, driver.ErrNotFound) {
+	// the object does not exist
+}
 ```
 
 Encode password-like parameters with `rclone.ObscureSecrets` first, as rclone expects; a missing object is always reported as `driver.ErrNotFound`. See the [store/rclone example](./store/rclone/example_test.go) for a complete walk-through.
