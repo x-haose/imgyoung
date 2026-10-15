@@ -89,6 +89,10 @@ func TestRcloneDriverList(t *testing.T) {
 	if len(empty) != 0 {
 		t.Fatalf("空渠道列举出 %d 个对象", len(empty))
 	}
+	missing, err := d.List(ctx, "no/such/dir")
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("列举不存在的目录 = %v, %v, 期望空且无错误", missing, err)
+	}
 
 	before := time.Now().Add(-time.Minute)
 	for _, key := range []string{"a.bin", "sub/b.bin", "_imgyoung/backup/c.db"} {

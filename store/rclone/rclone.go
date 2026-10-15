@@ -285,22 +285,28 @@ func (d *Driver) Delete(ctx context.Context, key string) error {
 }
 
 // List 递归列举 dir 目录下的全部对象(dir 为空表示整个渠道)。
+// @Description: 列举失败由回调自己接住:目录不存在视为空,其余失败记下、停止下探并由本方法返回。
+// 交给 walk 处理的失败会被它打成 ERROR 日志并计入 rclone 全局错误统计——目录不存在是正常情形
+// (如首次备份前的备份目录),不该出现在日志里。
 func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
 	var out []driver.ObjectInfo
-	err := walk.ListR(ctx, d.f, dir, false, -1, walk.ListObjects, func(entries fs.DirEntries) error {
+	var listErr error
+	err := walk.Walk(ctx, d.f, dir, false, -1, func(path string, entries fs.DirEntries, err error) error {
+		if err != nil {
+			if !errors.Is(err, fs.ErrorDirNotFound) && listErr == nil {
+				listErr = fmt.Errorf("列举目录 %q: %w", path, err)
+			}
+			return walk.ErrorSkipDir
+		}
 		entries.ForObject(func(o fs.Object) {
-			out = append(out, driver.ObjectInfo{
-				Key:     o.Remote(),
-				Size:    o.Size(),
-				ModTime: o.ModTime(ctx),
-			})
+			out = append(out, driver.ObjectInfo{Key: o.Remote(), Size: o.Size(), ModTime: o.ModTime(ctx)})
 		})
 		return nil
 	})
+	if listErr != nil {
+		return nil, listErr
+	}
 	if err != nil {
-		if errors.Is(err, fs.ErrorDirNotFound) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("列举目录 %q: %w", dir, err)
 	}
 	return out, nil
