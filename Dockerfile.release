@@ -4,7 +4,7 @@ FROM --platform=$BUILDPLATFORM alpine:3.24 AS prep
 RUN mkdir -p /out/data && chown 65532:65532 /out/data
 
 # 运行阶段:distroless 静态基底(无 shell、无包管理器,最小攻击面),nonroot 运行
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/imgyoung /imgyoung
 COPY LICENSE web/licenses/ /licenses/
