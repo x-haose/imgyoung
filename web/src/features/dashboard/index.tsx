@@ -50,7 +50,7 @@ function AdminView({ data }: { data: AdminDashboard }) {
   const m = useMessages()
   return (
     <div className='flex flex-col gap-6'>
-      {data.backup_colocated && <BackupColocatedAlert />}
+      {data.offsite_missing && <OffsiteMissingAlert />}
       {data.images === 0 && <QuickStart admin />}
       <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3'>
         <StatCard
@@ -146,15 +146,15 @@ function UserView({ data }: { data: UserDashboard }) {
   )
 }
 
-/** 快照只存在本机的警示:主机全损会连同快照一起丢失。 */
-function BackupColocatedAlert() {
+/** 缺少健康异地渠道的警示:图片副本与元数据库快照都出不了这台主机,主机全损即全部丢失。 */
+function OffsiteMissingAlert() {
   const m = useMessages()
   return (
     <Alert className='border-warning/40 bg-warning/10'>
       <TriangleAlert className='text-warning' />
-      <AlertTitle>{m.dashboard.backupColocatedTitle}</AlertTitle>
+      <AlertTitle>{m.dashboard.offsiteMissingTitle}</AlertTitle>
       <AlertDescription>
-        <p>{m.dashboard.backupColocatedDesc}</p>
+        <p>{m.dashboard.offsiteMissingDesc}</p>
         <Link
           to='/channels'
           className='inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline'

@@ -15,19 +15,27 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
-// TestManagerLoadsBuiltinLocal 验证迁移内置的默认 local 渠道被加载为主渠道。
+// firstHealthy 返回健康且不在清理中的渠道里优先级最高者(上传首选的渠道);一个都没有即失败。
+func firstHealthy(t *testing.T, m *channel.Manager) channel.Handle {
+	t.Helper()
+	healthy := m.Healthy()
+	if len(healthy) == 0 {
+		t.Fatal("没有健康渠道")
+	}
+	return healthy[0]
+}
+
+// TestManagerLoadsBuiltinLocal 验证迁移内置的默认 local 渠道被加载为唯一的健康渠道。
 func TestManagerLoadsBuiltinLocal(t *testing.T) {
 	env := testenv.New(t)
-	primary, err := env.Manager.Primary()
-	if err != nil {
-		t.Fatalf("Primary 返回错误: %v", err)
+	healthy := env.Manager.Healthy()
+	if len(healthy) != 1 || healthy[0].Name != "local" {
+		t.Fatalf("健康渠道 = %+v, 期望仅内置 local", healthy)
 	}
-	if primary.Name != "local" {
-		t.Fatalf("主渠道 = %q, 期望内置 local", primary.Name)
-	}
+	local := healthy[0]
 	// 默认 local 的存储路径应落在 dataDir/blobs 下。
 	payload := []byte("builtin-local-object")
-	if err := primary.Driver.Put(t.Context(), "probe.bin", bytes.NewReader(payload), int64(len(payload))); err != nil {
+	if err := local.Driver.Put(t.Context(), "probe.bin", bytes.NewReader(payload), int64(len(payload))); err != nil {
 		t.Fatalf("写入默认渠道: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(env.DataDir, "blobs", "probe.bin")); err != nil {
@@ -35,25 +43,21 @@ func TestManagerLoadsBuiltinLocal(t *testing.T) {
 	}
 }
 
-// TestManagerPrimaryByPriority 验证主渠道 = 健康渠道中优先级最高者。
-func TestManagerPrimaryByPriority(t *testing.T) {
+// TestManagerHealthyByPriority 验证健康渠道按优先级降序,优先级最高者在首位。
+func TestManagerHealthyByPriority(t *testing.T) {
 	env := testenv.New(t)
 	id, _ := env.AddLocalChannel(t, "backup-high", 200, false)
 
-	primary, err := env.Manager.Primary()
-	if err != nil {
-		t.Fatalf("Primary 返回错误: %v", err)
-	}
-	if primary.ID != id {
-		t.Fatalf("主渠道 ID = %d, 期望优先级更高的 %d", primary.ID, id)
+	if got := env.Manager.Healthy(); len(got) != 2 || got[0].ID != id {
+		t.Fatalf("Healthy() 顺序异常: %+v, 期望优先级更高的 %d 在前", got, id)
 	}
 	if got := env.Manager.All(); len(got) != 2 || got[0].ID != id {
 		t.Fatalf("All() 顺序异常: %+v", got)
 	}
 }
 
-// TestManagerSkipsUnhealthyPrimary 验证不健康渠道不参与主渠道选择。
-func TestManagerSkipsUnhealthyPrimary(t *testing.T) {
+// TestManagerHealthySkipsUnhealthy 验证不健康渠道不在健康渠道之列。
+func TestManagerHealthySkipsUnhealthy(t *testing.T) {
 	env := testenv.New(t)
 	id, _ := env.AddLocalChannel(t, "backup-high", 200, false)
 	if err := env.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
@@ -64,26 +68,22 @@ func TestManagerSkipsUnhealthyPrimary(t *testing.T) {
 	if err := env.Manager.Reload(t.Context()); err != nil {
 		t.Fatalf("重载管理器: %v", err)
 	}
-	primary, err := env.Manager.Primary()
-	if err != nil {
-		t.Fatalf("Primary 返回错误: %v", err)
-	}
-	if primary.Name != "local" {
-		t.Fatalf("主渠道 = %q, 期望降级回 local", primary.Name)
+	if healthy := env.Manager.Healthy(); len(healthy) != 1 || healthy[0].Name != "local" {
+		t.Fatalf("健康渠道 = %+v, 期望只剩 local", healthy)
 	}
 }
 
 // TestManagerEncryptedChannel 验证加密渠道:落盘为密文与加密文件名,经驱动读回为明文。
 func TestManagerEncryptedChannel(t *testing.T) {
 	env := testenv.New(t)
-	_, dir := env.AddLocalChannel(t, "vault", 200, true)
+	id, dir := env.AddLocalChannel(t, "vault", 200, true)
 
-	primary, err := env.Manager.Primary()
-	if err != nil {
-		t.Fatalf("Primary 返回错误: %v", err)
+	vault, ok := env.Manager.Get(id)
+	if !ok {
+		t.Fatal("加密渠道未装载")
 	}
 	plain := []byte("plaintext-image-bytes-0123456789")
-	if err := primary.Driver.Put(t.Context(), "img.bin", bytes.NewReader(plain), int64(len(plain))); err != nil {
+	if err := vault.Driver.Put(t.Context(), "img.bin", bytes.NewReader(plain), int64(len(plain))); err != nil {
 		t.Fatalf("写入加密渠道: %v", err)
 	}
 
@@ -109,7 +109,7 @@ func TestManagerEncryptedChannel(t *testing.T) {
 	}
 
 	// 经驱动读回:明文一致。
-	rc, err := primary.Driver.Open(t.Context(), "img.bin")
+	rc, err := vault.Driver.Open(t.Context(), "img.bin")
 	if err != nil {
 		t.Fatalf("读回对象: %v", err)
 	}
@@ -171,8 +171,8 @@ func TestEncryptedChannelReadableByAnotherManager(t *testing.T) {
 	if _, ok := stranger.Get(id); ok {
 		t.Fatal("换主密钥后加密渠道不应被装载")
 	}
-	if primary, perr := stranger.Primary(); perr != nil || primary.Name != "local" {
-		t.Fatalf("换主密钥后主渠道 = %v/%v, 期望内置 local 照常可用", primary.Name, perr)
+	if healthy := stranger.Healthy(); len(healthy) != 1 || healthy[0].Name != "local" {
+		t.Fatalf("换主密钥后健康渠道 = %+v, 期望内置 local 照常可用", healthy)
 	}
 }
 
@@ -188,18 +188,7 @@ func TestManagerCandidatesForBlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建 blob: %v", err)
 	}
-	local, err := env.Manager.Primary() // 此时主渠道是 backup-high
-	if err != nil {
-		t.Fatalf("Primary: %v", err)
-	}
-	if local.ID == highID {
-		// 取内置 local 的句柄
-		for _, h := range env.Manager.All() {
-			if h.ID != highID {
-				local = h
-			}
-		}
-	}
+	local := env.Local(t)
 	mustUpsert := func(chID int64, state string) {
 		t.Helper()
 		if err := env.Queries.UpsertBlobChannel(t.Context(), sqlc.UpsertBlobChannelParams{
@@ -265,9 +254,8 @@ func TestManagerCheckAll(t *testing.T) {
 	if err != nil || len(changed) != 1 || changed[0] != "flaky" {
 		t.Fatalf("故障探测 = %v/%v, 期望 flaky 状态翻转", changed, err)
 	}
-	primary, err := env.Manager.Primary()
-	if err != nil || primary.Name != "local" {
-		t.Fatalf("故障后主渠道 = %v/%v, 期望降级回 local", primary.Name, err)
+	if first := firstHealthy(t, env.Manager); first.Name != "local" {
+		t.Fatalf("故障后首选渠道 = %q, 期望降级回 local", first.Name)
 	}
 
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -277,15 +265,15 @@ func TestManagerCheckAll(t *testing.T) {
 	if err != nil || len(changed) != 1 {
 		t.Fatalf("恢复探测 = %v/%v, 期望 flaky 回归", changed, err)
 	}
-	if primary, _ := env.Manager.Primary(); primary.Name != "flaky" {
-		t.Fatalf("恢复后主渠道 = %q, 期望 flaky", primary.Name)
+	if first := firstHealthy(t, env.Manager); first.Name != "flaky" {
+		t.Fatalf("恢复后首选渠道 = %q, 期望 flaky", first.Name)
 	}
 	if _, ok := env.Manager.Get(id); !ok {
 		t.Fatal("恢复后渠道句柄丢失")
 	}
 }
 
-// TestManagerNoHealthyChannel 验证全部不健康时 Primary 返回明确错误。
+// TestManagerNoHealthyChannel 验证全部不健康时没有可选的健康渠道。
 func TestManagerNoHealthyChannel(t *testing.T) {
 	env := testenv.New(t)
 	for _, h := range env.Manager.All() {
@@ -298,8 +286,8 @@ func TestManagerNoHealthyChannel(t *testing.T) {
 	if err := env.Manager.Reload(t.Context()); err != nil {
 		t.Fatalf("重载: %v", err)
 	}
-	if _, err := env.Manager.Primary(); !errors.Is(err, channel.ErrNoHealthyChannel) {
-		t.Fatalf("错误 = %v, 期望 ErrNoHealthyChannel", err)
+	if healthy := env.Manager.Healthy(); len(healthy) != 0 {
+		t.Fatalf("健康渠道 = %+v, 期望为空", healthy)
 	}
 }
 
@@ -309,12 +297,7 @@ func TestReloadReusesUnchangedDriver(t *testing.T) {
 	env := testenv.New(t)
 	id, _ := env.AddLocalChannel(t, "stable", 200, false)
 	before, _ := env.Manager.Get(id)
-	local, _ := env.Manager.Primary()
-	for _, h := range env.Manager.All() {
-		if h.Name == "local" {
-			local = h
-		}
-	}
+	local := env.Local(t)
 
 	if err := env.Manager.Reload(t.Context()); err != nil {
 		t.Fatalf("重载: %v", err)
@@ -353,8 +336,8 @@ func TestCheckAllAbandonsOnCancel(t *testing.T) {
 	if after.Healthy != before.Healthy || after.LastCheckedAt != before.LastCheckedAt {
 		t.Fatalf("取消的探测仍落库: %+v → %+v", before, after)
 	}
-	if primary, perr := env.Manager.Primary(); perr != nil || primary.ID != id {
-		t.Fatalf("取消的探测改动了内存健康标记: %+v/%v", primary, perr)
+	if first := firstHealthy(t, env.Manager); first.ID != id {
+		t.Fatalf("取消的探测改动了内存健康标记: 首选渠道 %+v", first)
 	}
 }
 
@@ -376,8 +359,10 @@ func TestDeleteWithPurgeMarksDraining(t *testing.T) {
 			t.Fatal("清理中渠道不应出现在在役集合 All()")
 		}
 	}
-	if primary, _ := env.Manager.Primary(); primary.ID == id {
-		t.Fatal("清理中渠道不应被选为主渠道")
+	for _, c := range env.Manager.Healthy() {
+		if c.ID == id {
+			t.Fatal("清理中渠道不应出现在健康渠道之列")
+		}
 	}
 	if draining := env.Manager.Draining(); len(draining) != 1 || draining[0].ID != id {
 		t.Fatalf("Draining() = %+v, 期望仅含清理中渠道", draining)

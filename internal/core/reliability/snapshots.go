@@ -12,10 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/store/driver"
 )
 
-// ErrSnapshotNotFound 指定名字的快照不在备份渠道上。
+// ErrSnapshotNotFound 指定名字的快照不在任何健康渠道上。
 var ErrSnapshotNotFound = errors.New("reliability: 快照不存在")
 
 // ErrSnapshotName 快照名不是本服务生成的形态。
@@ -27,60 +28,97 @@ const DBFileName = "imgyoung.db"
 // restoreFileName 待换入的快照在数据目录下的文件名;启动时开库前换入。
 const restoreFileName = DBFileName + ".restore"
 
-// Snapshot 备份渠道上的一份快照。
+// Snapshot 一份元数据库快照及持有它的渠道。
 type Snapshot struct {
-	Name    string    `json:"name"`     // 对象文件名,形如 imgyoung-20060102-150405.000.db
-	Size    int64     `json:"size"`     // 字节数
-	TakenAt time.Time `json:"taken_at"` // 快照时刻,UTC
+	Name     string    `json:"name"`     // 对象文件名,形如 imgyoung-20060102-150405.000.db
+	Size     int64     `json:"size"`     // 字节数;取持有它的渠道里优先级最高者的
+	TakenAt  time.Time `json:"taken_at"` // 快照时刻,UTC,毫秒精度
+	Channels []string  `json:"channels"` // 持有该快照的渠道名,按优先级降序
 }
 
-// List 列出备份渠道上的全部快照,最新在前。
+// List 列出各健康渠道上快照的并集,最新在前。
 // @param ctx 控制超时与取消
 // @return 快照列表,可为空
-// @return 选渠道或列举失败时的错误
+// @return 没有健康渠道(包裹 channel.ErrNoHealthyChannel)或任一渠道列举失败时的错误
 func (s *Service) List(ctx context.Context) ([]Snapshot, error) {
-	primary, err := s.Target()
-	if err != nil {
-		return nil, fmt.Errorf("选择备份渠道: %w", err)
+	targets := s.cfg.Channels.Healthy()
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("选择备份渠道: %w", channel.ErrNoHealthyChannel)
 	}
-	objs, err := primary.Driver.List(ctx, Dir)
-	if err != nil {
-		return nil, fmt.Errorf("列举备份目录: %w", err)
-	}
-	out := make([]Snapshot, 0, len(objs))
-	for _, o := range objs {
-		ts, ok := snapshotTime(o.Key)
-		if !ok {
-			continue
+	byName := map[string]*Snapshot{}
+	for _, h := range targets { // 已按优先级降序,渠道名随之有序
+		snaps, err := listStored(ctx, h.Driver)
+		if err != nil {
+			return nil, fmt.Errorf("渠道 %q: %w", h.Name, err)
 		}
-		out = append(out, Snapshot{Name: strings.TrimPrefix(o.Key, Dir+"/"), Size: o.Size, TakenAt: ts})
+		for _, o := range snaps {
+			name := strings.TrimPrefix(o.key, Dir+"/")
+			snap, ok := byName[name]
+			if !ok {
+				snap = &Snapshot{Name: name, Size: o.size, TakenAt: o.takenAt}
+				byName[name] = snap
+			}
+			snap.Channels = append(snap.Channels, h.Name)
+		}
+	}
+	out := make([]Snapshot, 0, len(byName))
+	for _, snap := range byName {
+		out = append(out, *snap)
 	}
 	slices.SortFunc(out, func(a, b Snapshot) int { return b.TakenAt.Compare(a.TakenAt) })
 	return out, nil
 }
 
-// Open 打开一份快照供下载。
+// Open 打开一份快照供下载:按优先级依次尝试各健康渠道,没有该快照或读取失败的渠道换下一个。
 // @param ctx 控制超时与取消
 // @param name 快照名(List 返回的 Name)
 // @return 快照字节流,调用方负责关闭
 // @return 字节数
-// @return ErrSnapshotName / ErrSnapshotNotFound 或渠道读取失败时的错误
+// @return ErrSnapshotName;没有健康渠道时包裹 channel.ErrNoHealthyChannel;各渠道都没有该快照时包裹
+// ErrSnapshotNotFound;有渠道读取失败且没有渠道读出时为列出各渠道原因的错误
 func (s *Service) Open(ctx context.Context, name string) (io.ReadCloser, int64, error) {
 	key, err := snapshotKeyOf(name)
 	if err != nil {
 		return nil, 0, err
 	}
-	primary, err := s.Target()
-	if err != nil {
-		return nil, 0, fmt.Errorf("选择备份渠道: %w", err)
+	targets := s.cfg.Channels.Healthy()
+	if len(targets) == 0 {
+		return nil, 0, fmt.Errorf("选择备份渠道: %w", channel.ErrNoHealthyChannel)
 	}
-	info, err := primary.Driver.Stat(ctx, key)
-	if err != nil {
-		return nil, 0, snapshotError(name, err)
+	var failures []string
+	for _, h := range targets {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		rc, size, err := openStored(ctx, h.Driver, key)
+		if err == nil {
+			return rc, size, nil
+		}
+		if !errors.Is(err, driver.ErrNotFound) {
+			s.cfg.Logger.Warn("渠道读取快照失败,换下一个渠道", "channel", h.Name, "snapshot", name, "err", err)
+			failures = append(failures, fmt.Sprintf("渠道 %q: %v", h.Name, err))
+		}
 	}
-	rc, err := primary.Driver.Open(ctx, key)
+	if len(failures) == 0 {
+		return nil, 0, fmt.Errorf("%w: %s", ErrSnapshotNotFound, name)
+	}
+	return nil, 0, fmt.Errorf("读取快照 %s: %s", name, strings.Join(failures, "; "))
+}
+
+// openStored 在单个渠道上打开快照对象。
+// @param d 渠道驱动
+// @param key 快照对象键
+// @return 字节流,调用方负责关闭
+// @return 字节数
+// @return 对象缺失时包裹 driver.ErrNotFound,其余为读取失败的错误
+func openStored(ctx context.Context, d driver.Driver, key string) (io.ReadCloser, int64, error) {
+	info, err := d.Stat(ctx, key)
 	if err != nil {
-		return nil, 0, snapshotError(name, err)
+		return nil, 0, err
+	}
+	rc, err := d.Open(ctx, key)
+	if err != nil {
+		return nil, 0, err
 	}
 	return rc, info.Size, nil
 }
@@ -162,15 +200,4 @@ func snapshotKeyOf(name string) (string, error) {
 		return "", ErrSnapshotName
 	}
 	return key, nil
-}
-
-// snapshotError 把渠道的"对象不存在"翻译为 ErrSnapshotNotFound,其余原样带上下文。
-// @param name 快照名
-// @param err 渠道返回的错误
-// @return 翻译后的错误
-func snapshotError(name string, err error) error {
-	if errors.Is(err, driver.ErrNotFound) {
-		return fmt.Errorf("%w: %s", ErrSnapshotNotFound, name)
-	}
-	return fmt.Errorf("读取快照 %s: %w", name, err)
 }

@@ -955,13 +955,13 @@ export interface paths {
         };
         /**
          * 备份快照列表
-         * @description 备份渠道(最高优先级的健康渠道)上的元数据库快照,最新在前。仅管理员。
+         * @description 各健康渠道(不含清理中的渠道)上元数据库快照的并集,最新在前;每份快照列出持有它的渠道。仅管理员。
          */
         get: operations["listBackups"];
         put?: never;
         /**
          * 立即备份
-         * @description 立即做一次元数据库快照并上传到备份渠道。仅管理员。
+         * @description 立即做一次元数据库快照,同一份快照写到每个健康渠道(不含清理中的渠道),各渠道各自按保留份数清理旧快照。仅管理员。
          */
         post: operations["createBackup"];
         delete?: never;
@@ -979,7 +979,7 @@ export interface paths {
         };
         /**
          * 下载快照
-         * @description 以附件形式输出 SQLite 快照文件。仅管理员。
+         * @description 以附件形式输出 SQLite 快照文件;按优先级从持有该快照的健康渠道读取,读取失败的渠道换下一个,各健康渠道都没有该快照时 404。仅管理员。
          */
         get: operations["downloadBackup"];
         put?: never;
@@ -1001,7 +1001,7 @@ export interface paths {
         put?: never;
         /**
          * 从快照恢复
-         * @description 把快照暂存到数据目录后触发优雅停机,进程被拉起时换入,原库改名保留;没有进程管理器拉起时,暂存文件等到下次启动再换入。仅管理员。
+         * @description 按优先级从持有该快照的健康渠道取回(读取失败的渠道换下一个,各健康渠道都没有该快照时 404),暂存到数据目录后触发优雅停机,进程被拉起时换入,原库改名保留;没有进程管理器拉起时,暂存文件等到下次启动再换入。仅管理员。
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -1296,8 +1296,8 @@ export interface components {
         };
         /** @description 管理员视图:全站计数、待办、访问与流量估算、热门图与渠道水位 */
         AdminDashboard: {
-            /** @description 元数据库快照只存在本机:快照所在的渠道(健康渠道中优先级最高者)是 local 驱动,与有无其它渠道无关 */
-            backup_colocated: boolean;
+            /** @description 缺少健康的异地渠道:健康且不在清理中的渠道里没有本机磁盘(local 驱动)以外的,一个健康渠道都没有时同样为 true;此时图片副本与元数据库快照在本机以外都没有可用的一份 */
+            offsite_missing: boolean;
             /** Format: int64 */
             images: number;
             /** Format: int64 */
@@ -1903,7 +1903,7 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        /** @description 备份渠道上的一份元数据库快照 */
+        /** @description 一份元数据库快照及持有它的渠道 */
         Snapshot: {
             /** @description 对象文件名,形如 `imgyoung-20060102-150405.000.db` */
             name: string;
@@ -1914,9 +1914,11 @@ export interface components {
             size: number;
             /**
              * Format: date-time
-             * @description 快照时刻,RFC 3339
+             * @description 快照时刻,RFC 3339,毫秒精度
              */
             taken_at: string;
+            /** @description 持有该快照的健康渠道名,按优先级降序;立即备份的响应里即写入的全部渠道 */
+            channels: string[];
         };
         SnapshotList: {
             items: components["schemas"]["Snapshot"][];
@@ -3943,7 +3945,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 新快照 */
+            /** @description 新快照,已写到每个健康渠道 */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -3954,6 +3956,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description 备份失败:生成快照失败,或有渠道上传、清理旧快照失败;错误里列出失败的渠道与原因,已写成的渠道保留该快照 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description 没有健康渠道可存放快照 */
             503: {
                 headers: {

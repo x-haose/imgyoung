@@ -394,8 +394,8 @@ func TestAdminThumbSkipsAccessTracking(t *testing.T) {
 	})
 }
 
-// backupColocated 读管理员总览里的「备份与数据同盘」标记。
-func backupColocated(t *testing.T, inst *instance, client *http.Client, csrf string) bool {
+// offsiteMissing 读管理员总览里的「缺少健康异地渠道」标记。
+func offsiteMissing(t *testing.T, inst *instance, client *http.Client, csrf string) bool {
 	t.Helper()
 	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/dashboard", "")
 	defer func() { _ = resp.Body.Close() }()
@@ -403,43 +403,35 @@ func backupColocated(t *testing.T, inst *instance, client *http.Client, csrf str
 		t.Fatalf("总览状态码 = %d, 期望 200", resp.StatusCode)
 	}
 	var body struct {
-		BackupColocated bool `json:"backup_colocated"`
+		OffsiteMissing bool `json:"offsite_missing"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("解析总览: %v", err)
 	}
-	return body.BackupColocated
+	return body.OffsiteMissing
 }
 
-// TestDashboardBackupColocated 快照只写优先级最高的健康渠道:它是本机 local 时总览提示快照只存在本机;
-// 加一个优先级低于 local 的异地渠道,快照仍写本机,提示保留;异地渠道优先级最高时提示消失。
-func TestDashboardBackupColocated(t *testing.T) {
+// TestDashboardOffsiteMissing 快照与副本写到每个健康渠道:只有本机 local 时总览提示数据只在本机;
+// 加一个异地渠道,哪怕优先级低于 local,提示也消失。
+func TestDashboardOffsiteMissing(t *testing.T) {
 	t.Parallel()
 	davURL := startWebDAVServer(t)
 	inst := startInstance(t, nil)
 	admin, csrf := adminSession(t, inst)
-	if !backupColocated(t, inst, admin, csrf) {
-		t.Fatal("默认装配只有内置 local,总览应提示快照只存在本机")
+	if !offsiteMissing(t, inst, admin, csrf) {
+		t.Fatal("默认装配只有内置 local,总览应提示缺少异地渠道")
 	}
-	addOffsite := func(name string, priority int) {
-		t.Helper()
-		body, err := json.Marshal(map[string]any{
-			"name": name, "template": "webdav", "priority": priority,
-			"inputs": map[string]string{
-				"url": davURL + "/", "vendor": "other", "user": davUser, "pass": davPass, "path": name,
-			},
-		})
-		if err != nil {
-			t.Fatalf("编码请求体: %v", err)
-		}
-		createChannel(t, inst, string(body))
+	body, err := json.Marshal(map[string]any{
+		"name": "offsite-low", "template": "webdav", "priority": 10,
+		"inputs": map[string]string{
+			"url": davURL + "/", "vendor": "other", "user": davUser, "pass": davPass, "path": "offsite-low",
+		},
+	})
+	if err != nil {
+		t.Fatalf("编码请求体: %v", err)
 	}
-	addOffsite("offsite-low", 10)
-	if !backupColocated(t, inst, admin, csrf) {
-		t.Fatal("异地渠道优先级低于 local 时快照仍写本机,不应撤掉提示")
-	}
-	addOffsite("offsite-high", 500)
-	if backupColocated(t, inst, admin, csrf) {
-		t.Fatal("异地渠道优先级最高时快照写到异地,不应再提示")
+	createChannel(t, inst, string(body))
+	if offsiteMissing(t, inst, admin, csrf) {
+		t.Fatal("优先级低于 local 的异地渠道同样存放快照与副本,不应再提示")
 	}
 }

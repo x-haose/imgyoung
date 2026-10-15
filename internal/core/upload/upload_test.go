@@ -37,15 +37,11 @@ type testEnv struct {
 func newTestEnv(t *testing.T, mod func(*config.Settings)) *testEnv {
 	t.Helper()
 	env := testenv.New(t)
-	primary, err := env.Manager.Primary()
-	if err != nil {
-		t.Fatalf("取主渠道: %v", err)
-	}
 	svc := upload.New(upload.Config{
 		Conn: env.Conn, Queries: env.Queries, Channels: env.Manager,
 		Settings: testenv.Settings(mod), Logger: env.Logger,
 	})
-	return &testEnv{Env: env, svc: svc, driver: primary.Driver}
+	return &testEnv{Env: env, svc: svc, driver: env.Local(t).Driver}
 }
 
 // pngBytes 生成一张 2x2 的真实 PNG。

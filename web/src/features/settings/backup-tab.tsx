@@ -12,6 +12,7 @@ import { toast } from 'sonner'
 import { formatBytes } from '@/lib/format'
 import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -85,14 +86,16 @@ function BackupsCard() {
   const [restoring, setRestoring] = useState<Snapshot | null>(null)
   const [restarting, setRestarting] = useState(false)
 
+  // 部分渠道没写成时请求失败,但已写成的渠道上多了这份快照,成败都要刷新列表。
   const create = useMutation({
     mutationFn: createBackup,
     onSuccess: (snap) => {
       toast.success(t(b.created, { name: snap.name }))
-      return queryClient.invalidateQueries({
-        queryKey: backupsQueryOptions().queryKey,
-      })
     },
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: backupsQueryOptions().queryKey,
+      }),
   })
   const restore = useMutation({
     mutationFn: (snap: Snapshot) => restoreBackup(snap.name),
@@ -136,57 +139,7 @@ function BackupsCard() {
                 {b.empty}
               </p>
             ) : (
-              <div className='overflow-hidden rounded-lg border'>
-                <Table>
-                  <TableHeader>
-                    <TableRow className='bg-muted/60 hover:bg-muted/60'>
-                      <TableHead className='ps-4'>{b.name}</TableHead>
-                      <TableHead>{b.size}</TableHead>
-                      <TableHead>{b.takenAt}</TableHead>
-                      <TableHead className='pe-3 text-end'>
-                        {m.common.actions}
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map((snap) => (
-                      <TableRow key={snap.name}>
-                        <TableCell className='ps-4 font-mono text-xs'>
-                          {snap.name}
-                        </TableCell>
-                        <TableCell className='text-muted-foreground'>
-                          {formatBytes(snap.size)}
-                        </TableCell>
-                        <TableCell className='text-muted-foreground'>
-                          {formatInstant(snap.taken_at)}
-                        </TableCell>
-                        <TableCell className='pe-2 text-end'>
-                          <div className='flex justify-end gap-1'>
-                            <Button asChild variant='ghost' size='sm'>
-                              <a
-                                href={backupDownloadURL(snap.name)}
-                                download={snap.name}
-                              >
-                                <Download />
-                                {b.download}
-                              </a>
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='sm'
-                              className='text-destructive hover:text-destructive'
-                              onClick={() => setRestoring(snap)}
-                            >
-                              <History />
-                              {b.restore}
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <SnapshotTable items={items} onRestore={setRestoring} />
             )}
           </QueryState>
         )}
@@ -204,6 +157,79 @@ function BackupsCard() {
         className='sm:max-w-lg'
       />
     </Card>
+  )
+}
+
+type SnapshotTableProps = {
+  items: Snapshot[] // 快照,最新在前
+  onRestore: (snap: Snapshot) => void // 发起恢复确认
+}
+
+/** 快照表:每行一份快照,列出持有它的渠道,行尾下载与恢复。 */
+function SnapshotTable({ items, onRestore }: SnapshotTableProps) {
+  const m = useMessages()
+  const b = m.settings.backup
+  return (
+    <div className='overflow-hidden rounded-lg border'>
+      <Table>
+        <TableHeader>
+          <TableRow className='bg-muted/60 hover:bg-muted/60'>
+            <TableHead className='ps-4'>{b.name}</TableHead>
+            <TableHead>{b.size}</TableHead>
+            <TableHead>{b.takenAt}</TableHead>
+            <TableHead>{b.channels}</TableHead>
+            <TableHead className='pe-3 text-end'>{m.common.actions}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {items.map((snap) => (
+            <TableRow key={snap.name}>
+              <TableCell className='ps-4 font-mono text-xs'>
+                {snap.name}
+              </TableCell>
+              <TableCell className='text-muted-foreground'>
+                {formatBytes(snap.size)}
+              </TableCell>
+              <TableCell className='text-muted-foreground'>
+                {formatInstant(snap.taken_at)}
+              </TableCell>
+              <TableCell>
+                <div className='flex flex-wrap gap-1'>
+                  {snap.channels.map((name) => (
+                    <Badge
+                      key={name}
+                      variant='outline'
+                      className='font-normal text-muted-foreground'
+                    >
+                      {name}
+                    </Badge>
+                  ))}
+                </div>
+              </TableCell>
+              <TableCell className='pe-2 text-end'>
+                <div className='flex justify-end gap-1'>
+                  <Button asChild variant='ghost' size='sm'>
+                    <a href={backupDownloadURL(snap.name)} download={snap.name}>
+                      <Download />
+                      {b.download}
+                    </a>
+                  </Button>
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    className='text-destructive hover:text-destructive'
+                    onClick={() => onRestore(snap)}
+                  >
+                    <History />
+                    {b.restore}
+                  </Button>
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   )
 }
 

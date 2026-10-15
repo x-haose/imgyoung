@@ -115,11 +115,7 @@ func (ae *alertEnv) setProbe(t *testing.T, id int64, healthy bool, lastError str
 // localID 内置 local 渠道的主键。
 func (ae *alertEnv) localID(t *testing.T) int64 {
 	t.Helper()
-	primary, err := ae.Manager.Primary()
-	if err != nil {
-		t.Fatalf("取内置 local 渠道: %v", err)
-	}
-	return primary.ID
+	return ae.Local(t).ID
 }
 
 // TestEvaluateOpensAndResolvesChannelUnhealthy 验证渠道探测不健康时开启告警、描述取探测原因,

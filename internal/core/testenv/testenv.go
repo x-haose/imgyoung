@@ -87,6 +87,20 @@ func (e *Env) AddLocalChannel(t *testing.T, name string, priority int64, encrypt
 	return id, dir
 }
 
+// Local 返回迁移播种的内置 local 渠道句柄。
+// @param t 测试上下文,未装载即 Fatal
+// @return 内置 local 渠道句柄
+func (e *Env) Local(t *testing.T) channel.Handle {
+	t.Helper()
+	for _, h := range e.Manager.All() {
+		if h.Name == "local" {
+			return h
+		}
+	}
+	t.Fatal("内置 local 渠道未装载")
+	return channel.Handle{}
+}
+
 // Settings 返回在出厂默认值上按 mod 覆写后的运营配置读取口;mod 为 nil 即取默认。
 // @param mod 覆写钩子,改动默认配置副本
 // @return 逐次取值的配置读取口,每次返回同一份快照

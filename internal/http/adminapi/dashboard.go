@@ -2,8 +2,8 @@ package adminapi
 
 import (
 	"context"
-	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
@@ -114,12 +114,12 @@ func (h *Handlers) adminDashboard(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	stats, colocated, err := h.channelOverview(ctx)
+	stats, noOffsite, err := h.channelOverview(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"backup_colocated":       colocated,
+		"offsite_missing":        noOffsite,
 		"images":                 images,
 		"storage_bytes":          storage,
 		"users":                  users,
@@ -151,10 +151,10 @@ func (h *Handlers) topImages(ctx context.Context) ([]topImage, error) {
 	return items, nil
 }
 
-// channelOverview 总览里的渠道部分:各渠道水位,以及快照是否只存在本机。
+// channelOverview 总览里的渠道部分:各渠道水位,以及是否缺少健康的异地渠道。
 // @param ctx 上下文
 // @return 渠道概览列表
-// @return 快照渠道是否为 local 驱动
+// @return 是否缺少健康的异地渠道(见 offsiteMissing)
 // @return 错误
 func (h *Handlers) channelOverview(ctx context.Context) ([]channelStat, bool, error) {
 	chans, err := h.cfg.Admin.List(ctx)
@@ -165,32 +165,17 @@ func (h *Handlers) channelOverview(ctx context.Context) ([]channelStat, bool, er
 	if err != nil {
 		return nil, false, err
 	}
-	colocated, err := h.backupColocated(chans)
-	if err != nil {
-		return nil, false, err
-	}
-	return stats, colocated, nil
+	return stats, offsiteMissing(chans), nil
 }
 
-// backupColocated 判定元数据库快照是否只存在本机:快照只写一处,写入的渠道是 local 驱动时,
-// 不论还有没有其它渠道,主机全损都会连同快照一起丢失。
+// offsiteMissing 判定是否缺少健康的异地渠道:健康且不在清理中的渠道里没有本机磁盘(local 驱动)以外的。
+// @Description: 图片副本与元数据库快照都写到各个渠道,此时它们在本机以外没有可用的一份,主机损坏即全部丢失。
 // @param chans 渠道描述列表
-// @return 快照渠道是 local 驱动为 true;没有健康渠道可存快照时为 false
-// @return 选择快照渠道失败时的错误
-func (h *Handlers) backupColocated(chans []channel.Info) (bool, error) {
-	target, err := h.cfg.Backups.Target()
-	if errors.Is(err, channel.ErrNoHealthyChannel) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for _, c := range chans {
-		if c.ID == target.ID {
-			return c.Driver == "local", nil
-		}
-	}
-	return false, nil
+// @return 缺少时为 true;一个健康渠道都没有时同样为 true
+func offsiteMissing(chans []channel.Info) bool {
+	return !slices.ContainsFunc(chans, func(c channel.Info) bool {
+		return c.Healthy && !c.Deleting && c.Driver != "local"
+	})
 }
 
 // channelStats 渠道概览:每个渠道的健康状态与已存字节(副本口径)。

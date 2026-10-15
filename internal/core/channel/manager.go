@@ -277,19 +277,6 @@ func (m *Manager) setHealth(channelID int64, healthy bool) {
 	}
 }
 
-// Primary 返回主渠道:健康且不在清理中的渠道里优先级最高者。
-// @return 主渠道句柄;无健康渠道时返回 ErrNoHealthyChannel
-func (m *Manager) Primary() (Handle, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, c := range m.channels {
-		if c.healthy && !c.handle.PendingDelete {
-			return c.handle, nil
-		}
-	}
-	return Handle{}, ErrNoHealthyChannel
-}
-
 // All 返回全部在役渠道句柄(含不健康者,不含清理中者),按优先级降序。
 // @return 渠道句柄切片(副本,调用方可自由持有)
 func (m *Manager) All() []Handle {

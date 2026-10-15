@@ -60,11 +60,7 @@ func newSweeperEnv(t *testing.T, purger replication.ObjectPurger) *sweeperEnv {
 	if err != nil {
 		t.Fatalf("创建补齐子系统: %v", err)
 	}
-	local, err := env.Manager.Primary()
-	if err != nil {
-		t.Fatalf("取内置 local 渠道: %v", err)
-	}
-	return &sweeperEnv{Env: env, runner: runner, local: local}
+	return &sweeperEnv{Env: env, runner: runner, local: env.Local(t)}
 }
 
 // start 启动补齐子系统的 worker,随测试结束停止。

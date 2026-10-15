@@ -57,16 +57,14 @@ type ImageAdmin interface {
 
 // BackupAdmin 元数据库备份的管理入口(由 reliability.Service 实现)。
 type BackupAdmin interface {
-	// List 列出备份渠道上的快照,最新在前。
+	// List 列出各健康渠道上快照的并集,最新在前,每份带持有它的渠道。
 	List(ctx context.Context) ([]reliability.Snapshot, error)
-	// RunOnce 立即备份一次并返回新快照。
+	// RunOnce 立即备份一次,写到每个健康渠道并返回新快照;任一渠道未写成即返回错误。
 	RunOnce(ctx context.Context) (reliability.Snapshot, error)
-	// Open 打开一份快照供下载,返回字节流与大小。
+	// Open 按优先级从持有快照的渠道打开它供下载,返回字节流与大小。
 	Open(ctx context.Context, name string) (io.ReadCloser, int64, error)
 	// Stage 把快照暂存到数据目录,等进程重启换入。
 	Stage(ctx context.Context, name string) (string, error)
-	// Target 返回快照所在的渠道;没有健康渠道时返回 channel.ErrNoHealthyChannel。
-	Target() (channel.Handle, error)
 }
 
 // SettingsStore 运营配置存储口(由 config.Store 实现):读取当前快照、应用修改热生效。

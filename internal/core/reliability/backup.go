@@ -1,5 +1,6 @@
 // Package reliability 元数据库快照备份:
-// 定时 VACUUM INTO 产出一致性快照,上传到最高优先级健康渠道并保留最近 N 份。
+// 定时 VACUUM INTO 产出一致性快照,同一份快照写到每个健康渠道,各渠道各自保留最近 N 份;
+// 下载与恢复按优先级取第一个读得出该快照的渠道。
 // 元数据比图片本身珍贵——渠道里是哈希名对象,映射丢失即全部不可反查。
 package reliability
 
@@ -7,11 +8,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,7 +25,7 @@ import (
 // Dir 备份对象在渠道内的目录前缀;对账 GC 必须排除该前缀。
 const Dir = "_imgyoung/backup"
 
-// snapshotTmpName 快照临时文件名(数据目录下,成功上传后即删)。
+// snapshotTmpName 快照临时文件名(数据目录下,一轮备份写完各渠道即删)。
 const snapshotTmpName = "backup-snapshot.tmp"
 
 // snapshotTimeLayout 快照对象名里的时间戳格式,UTC;字典序即时间序。
@@ -31,16 +34,17 @@ const snapshotTimeLayout = "20060102-150405.000"
 // Config 备份服务依赖。
 type Config struct {
 	Conn     *sql.DB              // 数据库读句柄(执行 VACUUM INTO)
-	Channels *channel.Manager     // 渠道管理器(选择上传目标)
+	Channels *channel.Manager     // 渠道管理器;快照写到它的全部健康渠道
 	DataDir  string               // 数据目录(快照临时文件所在)
-	Keep     func() int           // 备份保留份数读取口,逐轮取值热生效;取值必须 > 0
-	Interval func() time.Duration // 备份间隔读取口,启动时据此判断上一份快照是否仍新鲜;取值必须 > 0
+	Keep     func() int           // 备份保留份数读取口,逐轮取值热生效,各渠道各自按它清理;取值必须 > 0
+	Interval func() time.Duration // 备份间隔读取口,启动时据此判断各渠道上的快照是否仍新鲜;取值必须 > 0
 	Logger   *slog.Logger         // 结构化日志
 }
 
 // Service 备份服务。
 type Service struct {
 	cfg         Config                 // 依赖
+	mu          sync.Mutex             // 串行化备份:各轮共用同一个快照临时文件,定时与手动备份不能交叠
 	lastFailure atomic.Pointer[string] // 最近一次备份的失败原因;nil 表示最近一次成功或尚未运行
 }
 
@@ -51,18 +55,15 @@ func New(cfg Config) *Service {
 	return &Service{cfg: cfg}
 }
 
-// Target 返回快照所在的渠道:健康且不在清理中的渠道里优先级最高者;备份、列举、下载与恢复都只认它。
-// @return 快照渠道
-// @return 没有健康渠道时返回 channel.ErrNoHealthyChannel
-func (s *Service) Target() (channel.Handle, error) {
-	return s.cfg.Channels.Primary()
-}
-
-// RunOnce 执行一次备份:快照 → 上传主渠道 → 清理超额旧份;结果记入 LastFailure。
-// @Description: 快照经渠道驱动写入,加密渠道自动得到密文备份;恢复经 Stage 暂存、重启时 ApplyStaged 换入。
-// @return 新快照
-// @return 快照、上传或清理失败时的错误
+// RunOnce 执行一次备份:快照一次 → 写入每个健康渠道并各自清理超额旧份;结果记入 LastFailure。
+// @Description: 快照经各渠道驱动写入,加密渠道自动得到密文备份。单个渠道失败不影响其余渠道继续写,
+// 但本轮记为失败,写成的渠道保留这份快照。恢复经 Stage 暂存、重启时 ApplyStaged 换入。
+// @return 新快照,Channels 为写入的全部渠道;失败时为零值
+// @return 没有健康渠道时包裹 channel.ErrNoHealthyChannel;生成快照失败,或任一渠道上传、清理失败时
+// 列出各失败渠道及原因的错误
 func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	snap, err := s.backup(ctx)
 	s.recordResult(err)
 	return snap, err
@@ -71,58 +72,97 @@ func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
 // backup 执行一次备份的全部步骤。
 // @param ctx 控制超时与取消
 // @return 新快照
-// @return 快照、上传或清理失败时的错误
+// @return 选渠道、生成快照失败或有渠道未写成时的错误
 func (s *Service) backup(ctx context.Context) (Snapshot, error) {
-	primary, err := s.Target()
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("选择备份目标渠道: %w", err)
+	targets := s.cfg.Channels.Healthy()
+	if len(targets) == 0 {
+		return Snapshot{}, fmt.Errorf("选择备份目标渠道: %w", channel.ErrNoHealthyChannel)
 	}
+	f, size, err := s.vacuum(ctx)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer discard(f)
 
+	taken := time.Now().UTC().Truncate(time.Millisecond)
+	key := snapshotKey(taken)
+	written := make([]string, 0, len(targets))
+	var failures []string
+	for _, h := range targets {
+		if err := s.store(ctx, h, key, io.NewSectionReader(f, 0, size), size); err != nil {
+			failures = append(failures, fmt.Sprintf("渠道 %q: %v", h.Name, err))
+			continue
+		}
+		written = append(written, h.Name)
+	}
+	name := strings.TrimPrefix(key, Dir+"/")
+	if len(failures) > 0 {
+		return Snapshot{}, fmt.Errorf("快照 %s 有 %d/%d 个渠道未写成: %s",
+			name, len(failures), len(targets), strings.Join(failures, "; "))
+	}
+	return Snapshot{Name: name, Size: size, TakenAt: taken, Channels: written}, nil
+}
+
+// vacuum 用 VACUUM INTO 在数据目录生成一致性快照文件并打开它。
+// @param ctx 控制超时与取消
+// @return 快照文件,调用方用毕经 discard 关闭并删除
+// @return 字节数
+// @return 生成、打开或读取大小失败时的错误
+func (s *Service) vacuum(ctx context.Context) (*os.File, int64, error) {
 	tmp := filepath.Join(s.cfg.DataDir, snapshotTmpName)
-	// 残留的上次临时文件会让 VACUUM INTO 失败,先清。
+	// 残留的上次临时文件会让 VACUUM INTO 失败,先清;删不掉时由 VACUUM INTO 报错。
 	_ = os.Remove(tmp)
 	if _, err := s.cfg.Conn.ExecContext(ctx, "VACUUM INTO ?", tmp); err != nil {
-		return Snapshot{}, fmt.Errorf("生成数据库快照: %w", err)
+		return nil, 0, fmt.Errorf("生成数据库快照: %w", err)
 	}
-	defer func() { _ = os.Remove(tmp) }()
-
 	f, err := os.Open(tmp)
 	if err != nil {
-		return Snapshot{}, fmt.Errorf("打开快照文件: %w", err)
+		_ = os.Remove(tmp)
+		return nil, 0, fmt.Errorf("打开快照文件: %w", err)
 	}
 	info, err := f.Stat()
 	if err != nil {
-		_ = f.Close()
-		return Snapshot{}, fmt.Errorf("读取快照大小: %w", err)
+		discard(f)
+		return nil, 0, fmt.Errorf("读取快照大小: %w", err)
 	}
-	taken := time.Now()
-	key := snapshotKey(taken)
-	err = primary.Driver.Put(ctx, key, f, info.Size())
-	if cerr := f.Close(); cerr != nil && err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("上传快照到渠道 %q: %w", primary.Name, err)
-	}
-	s.cfg.Logger.Info("元数据库快照已备份", "channel", primary.Name, "key", key, "bytes", info.Size())
-	if err := s.prune(ctx, primary); err != nil {
-		return Snapshot{}, err
-	}
-	return Snapshot{Name: strings.TrimPrefix(key, Dir+"/"), Size: info.Size(), TakenAt: taken.UTC()}, nil
+	return f, info.Size(), nil
 }
 
-// Run 周期执行备份,直至 ctx 取消;启动时上一份快照已超过一个间隔才先备份一次。
+// discard 关闭并删除快照临时文件。
+// @Description: 只读文件的关闭错误无可处理;删不掉的残留在下一轮备份前再删一次,仍删不掉则那一轮的 VACUUM INTO 报错。
+// @param f 快照文件
+func discard(f *os.File) {
+	_ = f.Close()
+	_ = os.Remove(f.Name())
+}
+
+// store 把快照写入一个渠道,再清理该渠道上超出保留份数的旧快照。
+// @param ctx 控制超时与取消
+// @param h 目标渠道
+// @param key 快照对象键
+// @param r 快照内容
+// @param size 字节数
+// @return 上传或清理失败时的错误
+func (s *Service) store(ctx context.Context, h channel.Handle, key string, r io.Reader, size int64) error {
+	if err := h.Driver.Put(ctx, key, r, size); err != nil {
+		return fmt.Errorf("上传快照: %w", err)
+	}
+	s.cfg.Logger.Info("元数据库快照已备份", "channel", h.Name, "key", key, "bytes", size)
+	return s.prune(ctx, h)
+}
+
+// Run 周期执行备份,直至 ctx 取消;启动时有健康渠道缺少备份间隔内的快照才先备份一次。
 // @Description: 每次启动都备份会让频繁重启的实例用启动快照挤掉按保留份数轮换的历史
-// (保留 7 份时一天内重启 7 次就把一周的快照全换成同一天的);上一份仍在间隔内即跳过。
+// (保留 7 份时一天内重启 7 次就把一周的快照全换成同一天的);各渠道上都有间隔内的快照即跳过。
 // @param wait 周期闸,到点放行、ctx 取消即收敛
 func (s *Service) Run(ctx context.Context, wait func(context.Context) bool) {
 	due, err := s.startupDue(ctx)
 	if err != nil {
-		s.cfg.Logger.Warn("无法判断上一份快照时刻,按需要备份处理", "err", err)
+		s.cfg.Logger.Warn("无法判断各渠道上一份快照的时刻,按需要备份处理", "err", err)
 		due = true
 	}
 	if !due {
-		s.cfg.Logger.Info("上一份元数据库快照仍在备份间隔内,启动时不重复备份")
+		s.cfg.Logger.Info("各健康渠道上都有备份间隔内的元数据库快照,启动时不重复备份")
 	} else if _, err := s.RunOnce(ctx); err != nil {
 		s.cfg.Logger.Warn("启动备份未完成", "err", err)
 	}
@@ -154,25 +194,25 @@ func (s *Service) recordResult(err error) {
 	s.lastFailure.Store(&msg)
 }
 
-// startupDue 判断启动时是否需要立即备份:主渠道上最新快照距今已超过一个备份间隔。
-// @return 需要备份为 true;主渠道上没有任何快照也为 true
-// @return 选渠道或列举失败时的错误
+// startupDue 判断启动时是否需要立即备份:任一健康渠道上没有备份间隔内的快照。
+// @return 需要备份为 true
+// @return 没有健康渠道(包裹 channel.ErrNoHealthyChannel)或任一渠道列举失败时的错误
 func (s *Service) startupDue(ctx context.Context) (bool, error) {
-	primary, err := s.Target()
-	if err != nil {
-		return false, fmt.Errorf("选择备份目标渠道: %w", err)
+	targets := s.cfg.Channels.Healthy()
+	if len(targets) == 0 {
+		return false, fmt.Errorf("选择备份目标渠道: %w", channel.ErrNoHealthyChannel)
 	}
-	objs, err := primary.Driver.List(ctx, Dir)
-	if err != nil {
-		return false, fmt.Errorf("列举备份目录: %w", err)
-	}
-	var newest time.Time
-	for _, o := range objs {
-		if ts, ok := snapshotTime(o.Key); ok && ts.After(newest) {
-			newest = ts
+	interval := s.cfg.Interval()
+	for _, h := range targets {
+		snaps, err := listStored(ctx, h.Driver)
+		if err != nil {
+			return false, fmt.Errorf("渠道 %q: %w", h.Name, err)
+		}
+		if !slices.ContainsFunc(snaps, func(o stored) bool { return time.Since(o.takenAt) < interval }) {
+			return true, nil
 		}
 	}
-	return newest.IsZero() || time.Since(newest) >= s.cfg.Interval(), nil
+	return false, nil
 }
 
 // snapshotKey 生成快照在渠道内的对象键,时间戳为 UTC。
@@ -201,24 +241,49 @@ func snapshotTime(key string) (time.Time, bool) {
 	return ts, true
 }
 
-// prune 清理超出保留份数的旧备份(文件名含时间戳,字典序即时间序)。
-// @param h 备份所在渠道
+// stored 渠道上的一份快照对象。
+type stored struct {
+	key     string    // 渠道内对象键
+	size    int64     // 字节数
+	takenAt time.Time // 快照时刻,UTC,取自对象名
+}
+
+// listStored 列出渠道上本服务生成的快照对象;按对象名识别,备份目录里的其它对象不计。
+// @param d 渠道驱动
+// @return 快照对象,顺序不定
+// @return 列举失败时的错误
+func listStored(ctx context.Context, d driver.Driver) ([]stored, error) {
+	objs, err := d.List(ctx, Dir)
+	if err != nil {
+		return nil, fmt.Errorf("列举备份目录: %w", err)
+	}
+	out := make([]stored, 0, len(objs))
+	for _, o := range objs {
+		if ts, ok := snapshotTime(o.Key); ok {
+			out = append(out, stored{key: o.Key, size: o.Size, takenAt: ts})
+		}
+	}
+	return out, nil
+}
+
+// prune 清理渠道上超出保留份数的旧快照。
+// @param h 快照所在渠道
 // @return 列举或删除失败时的错误
 func (s *Service) prune(ctx context.Context, h channel.Handle) error {
-	objs, err := h.Driver.List(ctx, Dir)
+	snaps, err := listStored(ctx, h.Driver)
 	if err != nil {
-		return fmt.Errorf("列举备份目录: %w", err)
+		return err
 	}
 	keep := s.cfg.Keep()
-	if len(objs) <= keep {
+	if len(snaps) <= keep {
 		return nil
 	}
-	slices.SortFunc(objs, func(a, b driver.ObjectInfo) int { return strings.Compare(b.Key, a.Key) })
-	for _, o := range objs[keep:] {
-		if err := h.Driver.Delete(ctx, o.Key); err != nil {
-			return fmt.Errorf("清理旧备份 %q: %w", o.Key, err)
+	slices.SortFunc(snaps, func(a, b stored) int { return b.takenAt.Compare(a.takenAt) })
+	for _, o := range snaps[keep:] {
+		if err := h.Driver.Delete(ctx, o.key); err != nil {
+			return fmt.Errorf("清理旧快照 %q: %w", o.key, err)
 		}
-		s.cfg.Logger.Info("已清理过期备份", "key", o.Key)
+		s.cfg.Logger.Info("已清理过期备份", "channel", h.Name, "key", o.key)
 	}
 	return nil
 }

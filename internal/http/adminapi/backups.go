@@ -14,7 +14,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 )
 
-// HandleBackupList 列出备份渠道上的快照,最新在前(仅管理员路由)。
+// HandleBackupList 列出各健康渠道上快照的并集,最新在前(仅管理员路由)。
 func (h *Handlers) HandleBackupList(w http.ResponseWriter, r *http.Request) {
 	snapshots, err := h.cfg.Backups.List(r.Context())
 	if err != nil {
@@ -25,8 +25,9 @@ func (h *Handlers) HandleBackupList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: snapshots, Total: int64(len(snapshots))})
 }
 
-// HandleBackupCreate 立即备份一次,返回新快照(仅管理员路由)。
-// @Description: 没有健康渠道可存放快照是外部依赖故障,回 503 供稍后重试;其余失败回 500。
+// HandleBackupCreate 立即备份一次,写到每个健康渠道并返回新快照(仅管理员路由)。
+// @Description: 没有健康渠道可存放快照是外部依赖故障,回 503 供稍后重试;其余失败回 500,
+// 含部分渠道未写成——错误里列出失败的渠道与原因,写成的渠道保留该快照。
 func (h *Handlers) HandleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	snap, err := h.cfg.Backups.RunOnce(r.Context())
 	switch {

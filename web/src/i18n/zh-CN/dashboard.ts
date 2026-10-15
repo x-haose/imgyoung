@@ -39,9 +39,9 @@ export const dashboard = {
     drain_failed: '渠道排空失败',
     backup_failed: '备份失败',
   },
-  backupColocatedTitle: '元数据库快照只存在本机',
-  backupColocatedDesc:
-    '快照只写到优先级最高的健康渠道,现在它是本机的 local 渠道,主机全损会连同快照一起丢失。把一个异地渠道的优先级调到最高即可解除,还没有就先添加一个。',
+  offsiteMissingTitle: '数据只存在这台主机上',
+  offsiteMissingDesc:
+    '本机磁盘以外没有健康的渠道,图片副本和元数据库快照都只在这台主机上,主机损坏即全部丢失。添加一个对象存储或网盘渠道即可解除;已经有了就查看它为什么不健康。',
   quickStartTitle: '快速开始',
   quickStartDesc: '站里还没有图片,三步把图床用起来',
   step1Title: '确认存储渠道',

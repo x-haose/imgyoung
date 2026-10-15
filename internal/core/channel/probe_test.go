@@ -45,13 +45,13 @@ func TestManagerUpdateChannel(t *testing.T) {
 		t.Fatalf("编辑后深探测结果异常: %+v", got)
 	}
 
-	// 驱动已重建:主渠道(优先级 300)写入应落到新目录而非旧目录。
-	primary, err := env.Manager.Primary()
-	if err != nil || primary.ID != id {
-		t.Fatalf("主渠道 = %+v/%v, 期望编辑后的渠道", primary, err)
+	// 驱动已重建:编辑后的渠道写入应落到新目录而非旧目录。
+	edited, ok := env.Manager.Get(id)
+	if !ok {
+		t.Fatal("编辑后的渠道未装载")
 	}
 	payload := []byte("post-update-object")
-	if err := primary.Driver.Put(t.Context(), "after.bin", strings.NewReader(string(payload)),
+	if err := edited.Driver.Put(t.Context(), "after.bin", strings.NewReader(string(payload)),
 		int64(len(payload))); err != nil {
 		t.Fatalf("写入编辑后渠道: %v", err)
 	}
@@ -149,9 +149,9 @@ func TestLoadFailureVisibleAndRetried(t *testing.T) {
 		t.Helper()
 		row := mustGetChannel(t, env, id)
 		_, loaded := env.Manager.Get(id)
-		primary, _ := env.Manager.Primary()
-		if loaded != want || (row.Healthy == 1) != want || (primary.ID == id) != want {
-			t.Fatalf("装载=%v 健康=%d 主渠道=%d, 期望装载与健康均为 %v", loaded, row.Healthy, primary.ID, want)
+		selectable := slices.ContainsFunc(env.Manager.Healthy(), func(h channel.Handle) bool { return h.ID == id })
+		if loaded != want || (row.Healthy == 1) != want || selectable != want {
+			t.Fatalf("装载=%v 健康=%d 参与选路=%v, 期望三者均为 %v", loaded, row.Healthy, selectable, want)
 		}
 		if !want && !strings.HasPrefix(row.LastError.String, "装载失败") {
 			t.Fatalf("last_error = %q, 期望以「装载失败」开头", row.LastError.String)
