@@ -411,17 +411,35 @@ func backupColocated(t *testing.T, inst *instance, client *http.Client, csrf str
 	return body.BackupColocated
 }
 
-// TestDashboardBackupColocated 只有内置 local 渠道时总览提示备份与数据同盘;再加一个渠道后提示消失。
+// TestDashboardBackupColocated 快照只写优先级最高的健康渠道:它是本机 local 时总览提示快照只存在本机;
+// 加一个优先级低于 local 的异地渠道,快照仍写本机,提示保留;异地渠道优先级最高时提示消失。
 func TestDashboardBackupColocated(t *testing.T) {
 	t.Parallel()
+	davURL := startWebDAVServer(t)
 	inst := startInstance(t, nil)
 	admin, csrf := adminSession(t, inst)
 	if !backupColocated(t, inst, admin, csrf) {
-		t.Fatal("默认装配只有内置 local,总览应提示备份与数据同盘")
+		t.Fatal("默认装配只有内置 local,总览应提示快照只存在本机")
 	}
-	createChannel(t, inst, fmt.Sprintf(
-		`{"name":"offsite","driver":"local","priority":10,"config":{"path":%q}}`, t.TempDir()))
+	addOffsite := func(name string, priority int) {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{
+			"name": name, "template": "webdav", "priority": priority,
+			"inputs": map[string]string{
+				"url": davURL + "/", "vendor": "other", "user": davUser, "pass": davPass, "path": name,
+			},
+		})
+		if err != nil {
+			t.Fatalf("编码请求体: %v", err)
+		}
+		createChannel(t, inst, string(body))
+	}
+	addOffsite("offsite-low", 10)
+	if !backupColocated(t, inst, admin, csrf) {
+		t.Fatal("异地渠道优先级低于 local 时快照仍写本机,不应撤掉提示")
+	}
+	addOffsite("offsite-high", 500)
 	if backupColocated(t, inst, admin, csrf) {
-		t.Fatal("有第二个渠道后不应再提示同盘")
+		t.Fatal("异地渠道优先级最高时快照写到异地,不应再提示")
 	}
 }

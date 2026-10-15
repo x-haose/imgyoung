@@ -47,11 +47,9 @@ export const dashboard = {
     drain_failed: 'Channel drain failed',
     backup_failed: 'Backup failed',
   },
-  backupColocatedTitle:
-    'The metadata snapshot lives on the same disk as your images',
+  backupColocatedTitle: 'The metadata snapshot only lives on this host',
   backupColocatedDesc:
-    'Snapshots go to the healthy channel with the highest priority, and right now that is only the local channel on this host. Losing the host loses the snapshot too. Add one off-site channel and this clears itself.',
-  addChannel: 'Add a channel',
+    'Snapshots only go to the healthy channel with the highest priority, which right now is the local channel on this host. Losing the host loses the snapshot too. Give an off-site channel the highest priority to clear this, adding one first if you have none.',
   quickStartTitle: 'Quick start',
   quickStartDesc: 'No images yet. Three steps to get going',
   step1Title: 'Check storage channels',

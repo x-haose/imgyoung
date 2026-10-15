@@ -1294,7 +1294,7 @@ export interface components {
         };
         /** @description 管理员视图:全站计数、待办、访问与流量估算、热门图与渠道水位 */
         AdminDashboard: {
-            /** @description 元数据库快照与图片数据同盘(主渠道是 local 且没有其它在役渠道) */
+            /** @description 元数据库快照只存在本机:快照所在的渠道(健康渠道中优先级最高者)是 local 驱动,与有无其它渠道无关 */
             backup_colocated: boolean;
             /** Format: int64 */
             images: number;

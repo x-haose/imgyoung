@@ -146,7 +146,7 @@ function UserView({ data }: { data: UserDashboard }) {
   )
 }
 
-/** 快照与图片同盘的警示:主机全损会连同快照一起丢失。 */
+/** 快照只存在本机的警示:主机全损会连同快照一起丢失。 */
 function BackupColocatedAlert() {
   const m = useMessages()
   return (
@@ -159,7 +159,7 @@ function BackupColocatedAlert() {
           to='/channels'
           className='inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline'
         >
-          {m.dashboard.addChannel}
+          {m.dashboard.manageChannels}
           <ArrowRight className='size-3.5' />
         </Link>
       </AlertDescription>

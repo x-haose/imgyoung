@@ -64,6 +64,8 @@ type BackupAdmin interface {
 	Open(ctx context.Context, name string) (io.ReadCloser, int64, error)
 	// Stage 把快照暂存到数据目录,等进程重启换入。
 	Stage(ctx context.Context, name string) (string, error)
+	// Target 返回快照所在的渠道;没有健康渠道时返回 channel.ErrNoHealthyChannel。
+	Target() (channel.Handle, error)
 }
 
 // SettingsStore 运营配置存储口(由 config.Store 实现):读取当前快照、应用修改热生效。

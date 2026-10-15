@@ -51,6 +51,13 @@ func New(cfg Config) *Service {
 	return &Service{cfg: cfg}
 }
 
+// Target 返回快照所在的渠道:健康且不在清理中的渠道里优先级最高者;备份、列举、下载与恢复都只认它。
+// @return 快照渠道
+// @return 没有健康渠道时返回 channel.ErrNoHealthyChannel
+func (s *Service) Target() (channel.Handle, error) {
+	return s.cfg.Channels.Primary()
+}
+
 // RunOnce 执行一次备份:快照 → 上传主渠道 → 清理超额旧份;结果记入 LastFailure。
 // @Description: 快照经渠道驱动写入,加密渠道自动得到密文备份;恢复经 Stage 暂存、重启时 ApplyStaged 换入。
 // @return 新快照
@@ -66,7 +73,7 @@ func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
 // @return 新快照
 // @return 快照、上传或清理失败时的错误
 func (s *Service) backup(ctx context.Context) (Snapshot, error) {
-	primary, err := s.cfg.Channels.Primary()
+	primary, err := s.Target()
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("选择备份目标渠道: %w", err)
 	}
@@ -151,7 +158,7 @@ func (s *Service) recordResult(err error) {
 // @return 需要备份为 true;主渠道上没有任何快照也为 true
 // @return 选渠道或列举失败时的错误
 func (s *Service) startupDue(ctx context.Context) (bool, error) {
-	primary, err := s.cfg.Channels.Primary()
+	primary, err := s.Target()
 	if err != nil {
 		return false, fmt.Errorf("选择备份目标渠道: %w", err)
 	}

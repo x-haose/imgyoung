@@ -39,7 +39,7 @@ type Snapshot struct {
 // @return 快照列表,可为空
 // @return 选渠道或列举失败时的错误
 func (s *Service) List(ctx context.Context) ([]Snapshot, error) {
-	primary, err := s.cfg.Channels.Primary()
+	primary, err := s.Target()
 	if err != nil {
 		return nil, fmt.Errorf("选择备份渠道: %w", err)
 	}
@@ -70,7 +70,7 @@ func (s *Service) Open(ctx context.Context, name string) (io.ReadCloser, int64, 
 	if err != nil {
 		return nil, 0, err
 	}
-	primary, err := s.cfg.Channels.Primary()
+	primary, err := s.Target()
 	if err != nil {
 		return nil, 0, fmt.Errorf("选择备份渠道: %w", err)
 	}

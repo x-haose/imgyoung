@@ -2,6 +2,7 @@ package adminapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -113,16 +114,12 @@ func (h *Handlers) adminDashboard(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	chans, err := h.cfg.Admin.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-	stats, err := h.channelStats(ctx, chans)
+	stats, colocated, err := h.channelOverview(ctx)
 	if err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"backup_colocated":       backupColocated(chans),
+		"backup_colocated":       colocated,
 		"images":                 images,
 		"storage_bytes":          storage,
 		"users":                  users,
@@ -154,24 +151,46 @@ func (h *Handlers) topImages(ctx context.Context) ([]topImage, error) {
 	return items, nil
 }
 
-// backupColocated 判定元数据库快照是否与图片数据同盘:快照落在最高优先级的健康渠道,
-// 当它是 local 驱动且此外没有其它在役渠道时,主机全损会连同快照一起丢失。
-// @param chans 渠道描述列表,按优先级降序
-// @return 同盘为 true;没有健康渠道时为 false
-func backupColocated(chans []channel.Info) bool {
-	var primary *channel.Info
-	inService := 0
-	for i := range chans {
-		c := &chans[i]
-		if c.Deleting {
-			continue
-		}
-		inService++
-		if primary == nil && c.Healthy {
-			primary = c
+// channelOverview 总览里的渠道部分:各渠道水位,以及快照是否只存在本机。
+// @param ctx 上下文
+// @return 渠道概览列表
+// @return 快照渠道是否为 local 驱动
+// @return 错误
+func (h *Handlers) channelOverview(ctx context.Context) ([]channelStat, bool, error) {
+	chans, err := h.cfg.Admin.List(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	stats, err := h.channelStats(ctx, chans)
+	if err != nil {
+		return nil, false, err
+	}
+	colocated, err := h.backupColocated(chans)
+	if err != nil {
+		return nil, false, err
+	}
+	return stats, colocated, nil
+}
+
+// backupColocated 判定元数据库快照是否只存在本机:快照只写一处,写入的渠道是 local 驱动时,
+// 不论还有没有其它渠道,主机全损都会连同快照一起丢失。
+// @param chans 渠道描述列表
+// @return 快照渠道是 local 驱动为 true;没有健康渠道可存快照时为 false
+// @return 选择快照渠道失败时的错误
+func (h *Handlers) backupColocated(chans []channel.Info) (bool, error) {
+	target, err := h.cfg.Backups.Target()
+	if errors.Is(err, channel.ErrNoHealthyChannel) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, c := range chans {
+		if c.ID == target.ID {
+			return c.Driver == "local", nil
 		}
 	}
-	return primary != nil && primary.Driver == "local" && inService == 1
+	return false, nil
 }
 
 // channelStats 渠道概览:每个渠道的健康状态与已存字节(副本口径)。
