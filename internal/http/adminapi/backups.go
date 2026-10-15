@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 )
@@ -25,9 +26,14 @@ func (h *Handlers) HandleBackupList(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleBackupCreate 立即备份一次,返回新快照(仅管理员路由)。
+// @Description: 没有健康渠道可存放快照是外部依赖故障,回 503 供稍后重试;其余失败回 500。
 func (h *Handlers) HandleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	snap, err := h.cfg.Backups.RunOnce(r.Context())
-	if err != nil {
+	switch {
+	case errors.Is(err, channel.ErrNoHealthyChannel):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "没有健康渠道可存放快照")
+		return
+	case err != nil:
 		h.cfg.Logger.Error("手动备份失败", "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "备份失败:"+err.Error())
 		return

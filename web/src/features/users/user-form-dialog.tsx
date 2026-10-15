@@ -43,7 +43,8 @@ import {
   type UserItem,
   type UserRole,
   usersQueryKey,
-  type UserWriteBody,
+  type UserCreateBody,
+  type UserUpdateBody,
 } from './data'
 
 /** 配额输入单位与字节换算。 */
@@ -107,17 +108,24 @@ function valuesOf(user: UserItem | null): Values {
   }
 }
 
-function bodyOf(v: Values, creating: boolean): UserWriteBody {
+/** 表单值里两种请求体共有的部分;配额换算回字节,空有效期即随全局。 */
+function sharedFields(v: Values) {
   const quota =
     v.quota === '' ? 0 : Math.round(Number(v.quota) * quotaUnits[v.quotaUnit])
   return {
     name: v.name,
-    password: creating ? v.password : undefined,
     role: v.role,
     quota_bytes: quota,
     default_ttl_hours: v.ttl === '' ? null : Number(v.ttl),
-    disabled: creating ? undefined : v.disabled,
   }
+}
+
+function createBody(v: Values): UserCreateBody {
+  return { ...sharedFields(v), password: v.password }
+}
+
+function updateBody(v: Values): UserUpdateBody {
+  return { ...sharedFields(v), disabled: v.disabled }
 }
 
 type UserFormDialogProps = {
@@ -154,8 +162,8 @@ function UserForm({
   })
   const save = useMutation({
     mutationFn: async (v: Values) => {
-      if (creating) await createUser(bodyOf(v, true))
-      else await updateUser(user.id, bodyOf(v, false))
+      if (creating) await createUser(createBody(v))
+      else await updateUser(user.id, updateBody(v))
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: usersQueryKey })

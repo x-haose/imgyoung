@@ -54,7 +54,7 @@ type imageExportItem struct {
 type blobExportItem struct {
 	ID            int64   `json:"id"`             // 物理图主键
 	Sha256        string  `json:"sha256"`         // 内容哈希
-	Phash         int64   `json:"phash"`          // 感知哈希
+	Phash         string  `json:"phash"`          // 64 位感知哈希,16 位十六进制;JSON 数字在 JavaScript 里只有 53 位精度
 	StorageKey    string  `json:"storage_key"`    // 各渠道内的对象键
 	Mime          string  `json:"mime"`           // 真实 MIME
 	Size          int64   `json:"size"`           // 字节数
@@ -181,7 +181,7 @@ func blobsExport(rows []sqlc.Blob) []blobExportItem {
 	items := make([]blobExportItem, 0, len(rows))
 	for _, b := range rows {
 		items = append(items, blobExportItem{
-			ID: b.ID, Sha256: b.Sha256, Phash: b.Phash, StorageKey: b.StorageKey, Mime: b.Mime,
+			ID: b.ID, Sha256: b.Sha256, Phash: phashHex(b.Phash), StorageKey: b.StorageKey, Mime: b.Mime,
 			Size: b.Size, Width: b.Width, Height: b.Height, RefCount: b.RefCount,
 			PendingDelete: b.PendingDelete != 0, DeleteAfter: nullableStr(b.DeleteAfter), CreatedAt: b.CreatedAt,
 		})
@@ -201,4 +201,11 @@ func blobChannelsExport(rows []sqlc.BlobChannel) []blobChannelExportItem {
 		})
 	}
 	return items
+}
+
+// phashHex 把库里按 int64 存放的 64 位感知哈希还原为 16 位十六进制。
+// @param phash 感知哈希的位模式
+// @return 零填充的十六进制文本
+func phashHex(phash int64) string {
+	return fmt.Sprintf("%016x", uint64(phash)) //nolint:gosec // 哈希取位模式,数值无语义
 }

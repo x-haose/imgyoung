@@ -732,7 +732,7 @@ export interface paths {
         get?: never;
         /**
          * 更新用户
-         * @description 全量语义;内置管理员不可禁用或降级(403)。仅管理员。
+         * @description 全量语义,须给出全部键;内置管理员不可禁用或降级(403)。仅管理员。
          */
         put: operations["updateUser"];
         post?: never;
@@ -1597,17 +1597,17 @@ export interface components {
             name: string;
             /**
              * Format: int64
-             * @description 越大越优先
+             * @description 越大越优先;缺省 0
              */
-            priority: number;
+            priority?: number;
             /** @description 是否加密渠道;缺省用全局默认,创建时固化 */
             encrypted?: boolean;
-            /** @description 是否允许 302 直链 */
-            allow_direct_link: boolean;
-            /** @description 创建时主动建桶,需凭证有建桶权限 */
-            auto_create_bucket: boolean;
+            /** @description 是否允许 302 直链;缺省 false */
+            allow_direct_link?: boolean;
+            /** @description 创建时主动建桶,需凭证有建桶权限;缺省 false */
+            auto_create_bucket?: boolean;
         };
-        /** @description 与创建同构,整体替换;配置里原样回传的哨兵值表示保留原凭证 */
+        /** @description 与创建同构,PUT 为全量语义,须给出全部键;配置里原样回传的哨兵值表示保留原凭证 */
         ChannelUpdateRequest: {
             template?: string;
             inputs?: {
@@ -1711,28 +1711,44 @@ export interface components {
             /** Format: int64 */
             total: number;
         };
-        /** @description 创建与更新共用;未知字段整体拒绝 */
-        UserWriteRequest: {
+        /** @description 建号请求;未知字段整体拒绝 */
+        UserCreateRequest: {
             /** @description 登录名 */
             name: string;
             /**
              * Format: password
-             * @description 初始密码,仅创建时使用;至少 8 个字符
+             * @description 初始密码,至少 8 个字符
              */
-            password?: string;
+            password: string;
             role?: components["schemas"]["Role"];
             /**
              * Format: int64
-             * @description 配额上限;不大于 0 表示不限
+             * @description 配额上限;缺省或不大于 0 表示不限
              */
             quota_bytes?: number;
             /**
              * Format: int64
-             * @description 上传默认有效期(小时);null 随全局,0 永久
+             * @description 上传默认有效期(小时);缺省或 null 随全局,0 永久
              */
             default_ttl_hours?: number | null;
-            /** @description 是否禁用,仅更新时使用 */
-            disabled?: boolean;
+        };
+        /** @description 更新请求,PUT 为全量语义,须给出全部键;未知字段整体拒绝 */
+        UserUpdateRequest: {
+            /** @description 登录名 */
+            name: string;
+            role: components["schemas"]["Role"];
+            /**
+             * Format: int64
+             * @description 配额上限;不大于 0 表示不限
+             */
+            quota_bytes: number;
+            /**
+             * Format: int64
+             * @description 上传默认有效期(小时);null 随全局,0 永久
+             */
+            default_ttl_hours: number | null;
+            /** @description 是否禁用;内置管理员不可禁用 */
+            disabled: boolean;
         };
         PasswordResetRequest: {
             /**
@@ -1934,11 +1950,8 @@ export interface components {
             /** Format: int64 */
             id: number;
             sha256: string;
-            /**
-             * Format: int64
-             * @description 感知哈希
-             */
-            phash: number;
+            /** @description 64 位感知哈希,16 位十六进制 */
+            phash: string;
             /** @description 各渠道内的对象键 */
             storage_key: string;
             mime: string;
@@ -3380,7 +3393,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UserWriteRequest"];
+                "application/json": components["schemas"]["UserCreateRequest"];
             };
         };
         responses: {
@@ -3422,7 +3435,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UserWriteRequest"];
+                "application/json": components["schemas"]["UserUpdateRequest"];
             };
         };
         responses: {
@@ -3840,6 +3853,15 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            /** @description 没有健康渠道可存放快照 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     downloadBackup: {

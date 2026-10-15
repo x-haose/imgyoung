@@ -1141,7 +1141,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UserWriteRequest'
+              $ref: '#/components/schemas/UserCreateRequest'
       responses:
         '201':
           description: 已创建
@@ -1168,7 +1168,7 @@ paths:
       operationId: updateUser
       tags: [后台·用户]
       summary: 更新用户
-      description: 全量语义;内置管理员不可禁用或降级(403)。仅管理员。
+      description: 全量语义,须给出全部键;内置管理员不可禁用或降级(403)。仅管理员。
       security:
         - session: []
       parameters:
@@ -1178,7 +1178,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UserWriteRequest'
+              $ref: '#/components/schemas/UserUpdateRequest'
       responses:
         '204':
           description: 已更新
@@ -1540,6 +1540,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '503':
+          description: 没有健康渠道可存放快照
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/admin/backups/{name}:
     get:
       operationId: downloadBackup
@@ -2802,7 +2808,7 @@ components:
     ChannelCreateRequest:
       type: object
       description: 配置来源二选一:模板模式给 `template` + `inputs`;自定义模式 `template` 为空或 `custom`,给 `driver` + `config`。未知字段整体拒绝
-      required: [name, priority, allow_direct_link, auto_create_bucket]
+      required: [name]
       properties:
         template:
           type: string
@@ -2826,19 +2832,19 @@ components:
         priority:
           type: integer
           format: int64
-          description: 越大越优先
+          description: 越大越优先;缺省 0
         encrypted:
           type: boolean
           description: 是否加密渠道;缺省用全局默认,创建时固化
         allow_direct_link:
           type: boolean
-          description: 是否允许 302 直链
+          description: 是否允许 302 直链;缺省 false
         auto_create_bucket:
           type: boolean
-          description: 创建时主动建桶,需凭证有建桶权限
+          description: 创建时主动建桶,需凭证有建桶权限;缺省 false
     ChannelUpdateRequest:
       type: object
-      description: 与创建同构,整体替换;配置里原样回传的哨兵值表示保留原凭证
+      description: 与创建同构,PUT 为全量语义,须给出全部键;配置里原样回传的哨兵值表示保留原凭证
       required: [name, priority, allow_direct_link]
       properties:
         template:
@@ -2995,10 +3001,10 @@ components:
         total:
           type: integer
           format: int64
-    UserWriteRequest:
+    UserCreateRequest:
       type: object
-      description: 创建与更新共用;未知字段整体拒绝
-      required: [name]
+      description: 建号请求;未知字段整体拒绝
+      required: [name, password]
       properties:
         name:
           type: string
@@ -3006,7 +3012,27 @@ components:
         password:
           type: string
           format: password
-          description: 初始密码,仅创建时使用;至少 8 个字符
+          description: 初始密码,至少 8 个字符
+        role:
+          $ref: '#/components/schemas/Role'
+        quota_bytes:
+          type: integer
+          format: int64
+          description: 配额上限;缺省或不大于 0 表示不限
+        default_ttl_hours:
+          type: [integer, 'null']
+          format: int64
+          minimum: 0
+          maximum: 876000
+          description: 上传默认有效期(小时);缺省或 null 随全局,0 永久
+    UserUpdateRequest:
+      type: object
+      description: 更新请求,PUT 为全量语义,须给出全部键;未知字段整体拒绝
+      required: [name, role, quota_bytes, default_ttl_hours, disabled]
+      properties:
+        name:
+          type: string
+          description: 登录名
         role:
           $ref: '#/components/schemas/Role'
         quota_bytes:
@@ -3021,7 +3047,7 @@ components:
           description: 上传默认有效期(小时);null 随全局,0 永久
         disabled:
           type: boolean
-          description: 是否禁用,仅更新时使用
+          description: 是否禁用;内置管理员不可禁用
     PasswordResetRequest:
       type: object
       required: [password]
@@ -3366,9 +3392,8 @@ components:
         sha256:
           type: string
         phash:
-          type: integer
-          format: int64
-          description: 感知哈希
+          type: string
+          description: 64 位感知哈希,16 位十六进制
         storage_key:
           type: string
           description: 各渠道内的对象键
