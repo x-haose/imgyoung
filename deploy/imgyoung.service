@@ -1,0 +1,51 @@
+# ImgYoung 的 systemd 服务示例;install.sh --service 安装的就是它。
+# 手动安装:二进制放到 /usr/local/bin/imgyoung,本文件复制到 /etc/systemd/system/imgyoung.service,
+# 然后 systemctl daemon-reload && systemctl enable --now imgyoung。
+# 数据在 /var/lib/imgyoung(数据库、本地存储渠道、master.key),备份它。
+[Unit]
+Description=ImgYoung 自部署图床
+Documentation=https://github.com/x-haose/imgyoung
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/imgyoung
+Environment=IMGYOUNG_DATA_DIR=%S/imgyoung
+# 渠道参数直接交给 rclone,不用 rclone 的配置文件;置空让 rclone 启动时不去寻找家目录下的配置
+Environment=RCLONE_CONFIG=
+# 只经本机反向代理对外时,改成只监听回环:
+# Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
+
+# 以临时系统用户运行,数据目录由 systemd 创建并归属该用户
+DynamicUser=yes
+StateDirectory=imgyoung
+
+# 后台「从快照恢复」会让服务优雅退出,靠这里重新拉起后换入快照;正常退出也要拉起
+Restart=always
+RestartSec=3s
+# 优雅停机依次排空补齐任务与 HTTP 连接,各有 30 秒上限
+TimeoutStopSec=75s
+
+# 数据目录里有 master.key,新建文件只给运行用户自己读写
+UMask=0077
+# 进程只能写自己的数据目录;本地存储渠道指向别处时,用 ReadWritePaths= 放开那个目录
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

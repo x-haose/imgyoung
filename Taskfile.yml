@@ -33,11 +33,12 @@ tasks:
       - go test -tags e2e -count=1 ./e2e/ -timeout 300s
 
   lint:
-    desc: lint 门禁:Go 与前端都 0 issue 才算过(质量红线);同时确认 go.mod/go.sum 已 tidy
+    desc: lint 门禁:Go、前端与安装脚本都 0 issue 才算过(质量红线);同时确认 go.mod/go.sum 已 tidy
     cmds:
       - golangci-lint run
       - go mod tidy -diff
       - cd web && pnpm lint
+      - shellcheck -s sh install.sh
 
   generate:
     desc: 重新生成 sqlc 查询代码

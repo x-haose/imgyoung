@@ -42,6 +42,9 @@ jobs:
           version: v2.11.4
       - name: Tidy
         run: go mod tidy -diff
+      # runner 自带 shellcheck;安装脚本按 POSIX sh 检查,dash / busybox 下也要能跑
+      - name: Shellcheck
+        run: shellcheck -s sh install.sh
       - name: Test
         run: go test -race ./...
       - name: E2E

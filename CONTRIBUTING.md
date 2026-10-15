@@ -10,6 +10,7 @@
 | Node.js + pnpm | Node 22;pnpm 版本见 `web/package.json` 的 `packageManager`(`corepack enable` 即可) | 管理后台前端 |
 | [Task](https://taskfile.dev) | 3 | 开发入口,`task --list` 列出全部任务 |
 | golangci-lint | `.github/workflows/ci.yml` 里钉的版本 | Go lint 门禁 |
+| ShellCheck | 近期任意版本 | 安装脚本 `install.sh` 的 lint |
 | sqlc、atlas | 近期任意版本 | 只在改数据库 schema 或查询时需要 |
 
 ```bash

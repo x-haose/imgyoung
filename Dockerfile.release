@@ -7,6 +7,7 @@ RUN mkdir -p /out/data && chown 65532:65532 /out/data
 FROM gcr.io/distroless/static-debian12:nonroot
 ARG TARGETPLATFORM
 COPY $TARGETPLATFORM/imgyoung /imgyoung
+COPY LICENSE web/licenses/ /licenses/
 COPY --from=prep --chown=nonroot:nonroot /out/data /data
 ENV IMGYOUNG_DATA_DIR=/data
 VOLUME ["/data"]

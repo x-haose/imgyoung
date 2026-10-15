@@ -45,10 +45,13 @@ archives:
       - goos: windows
         formats:
           - zip
+    # 示例配置随包分发(install.sh --service 取其中的 systemd 服务);第三方许可证随内嵌的后台代码一起分发
     files:
       - LICENSE
       - README.md
       - README.en.md
+      - deploy/*
+      - web/licenses/*
 
 checksum:
   name_template: checksums.txt
@@ -85,6 +88,9 @@ dockers_v2:
       - "{{ if not .Prerelease }}{{ .Major }}.{{ .Minor }}{{ end }}"
       - "{{ if not .Prerelease }}latest{{ end }}"
     dockerfile: Dockerfile.release
+    extra_files:
+      - LICENSE
+      - web/licenses
     platforms:
       - linux/amd64
       - linux/arm64

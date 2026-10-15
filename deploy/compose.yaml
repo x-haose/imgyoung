@@ -1,0 +1,20 @@
+# ImgYoung 的 Docker Compose 示例。
+# 用法:把本文件放进一个空目录,执行 docker compose up -d,浏览器打开 http://<主机>:8721/,
+# 用 admin / imgyoung123 登录(首次登录强制改密)。
+services:
+  imgyoung:
+    image: ghcr.io/x-haose/imgyoung:latest # 生产环境建议钉大小版本(如 1.0)或具体版本
+    # 后台「从快照恢复」会让服务优雅退出,靠重启策略重新拉起后换入快照;正常退出也要拉起
+    restart: unless-stopped
+    ports:
+      - "8721:8721"
+    volumes:
+      # 数据库、本地存储渠道与自动生成的 master.key 都在这里;丢了 master.key,渠道凭证与加密数据不可恢复
+      - imgyoung-data:/data
+    # environment:
+    #   # 前面有反向代理且代理不在本机回环上(如另一个容器)时,填代理所在网段,
+    #   # 否则登录限速与 /metrics 放行会把所有请求都当成来自代理本身
+    #   IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
+
+volumes:
+  imgyoung-data:

@@ -6,7 +6,6 @@ coverage.out
 
 # runtime data
 /data/
-/imgyoung.yml
 
 # ide / os
 .idea/

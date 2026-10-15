@@ -10,6 +10,7 @@ Thanks for helping with ImgYoung. This document covers the development setup, wh
 | Node.js + pnpm | Node 22; the pnpm version is in `packageManager` of `web/package.json` (`corepack enable` is enough) | admin console |
 | [Task](https://taskfile.dev) | 3 | development entry point, `task --list` shows every task |
 | golangci-lint | the version pinned in `.github/workflows/ci.yml` | Go lint gate |
+| ShellCheck | any recent version | lint for the install script `install.sh` |
 | sqlc, atlas | any recent version | only needed when changing the database schema or queries |
 
 ```bash
