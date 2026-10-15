@@ -33,6 +33,9 @@ export const CUSTOM = 'custom'
 /** 网盘类模板的分类值;网盘无桶也无稳定公开直链,相关开关对其不显示。 */
 export const CATEGORY_DRIVE = 'drive'
 
+/** 授权令牌参数的键,与后端 channel.ConfigKeyToken 一致;自定义模式里令牌就在这个参数下。 */
+export const TOKEN_KEY = 'token'
+
 /** 需授权模板里自建应用标识字段的 key,与后端 channel.ConfigKeyClientID 一致;一键授权须先填它。 */
 export const CLIENT_ID_KEY = 'client_id'
 

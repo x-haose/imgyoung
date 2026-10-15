@@ -96,11 +96,11 @@ func TestManagerTestConfig(t *testing.T) {
 	env := testenv.New(t)
 
 	dir := t.TempDir()
-	failure, err := env.Manager.TestConfig(t.Context(), channel.TestParams{
+	res, err := env.Manager.TestConfig(t.Context(), channel.TestParams{
 		Driver: "local", Config: map[string]string{"path": dir},
 	})
-	if err != nil || failure != "" {
-		t.Fatalf("好配置探测失败: %q / %v", failure, err)
+	if err != nil || res.Failure != "" {
+		t.Fatalf("好配置探测失败: %q / %v", res.Failure, err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -111,18 +111,18 @@ func TestManagerTestConfig(t *testing.T) {
 	}
 
 	const secret = "SUPERSECRETVALUE0123"
-	failure, err = env.Manager.TestConfig(t.Context(), channel.TestParams{Driver: "s3", Config: map[string]string{
+	res, err = env.Manager.TestConfig(t.Context(), channel.TestParams{Driver: "s3", Config: map[string]string{
 		"provider": "Minio", "endpoint": "http://127.0.0.1:1",
 		"access_key_id": "AK", "secret_access_key": secret, "path": "bkt",
 	}})
 	if err != nil {
 		t.Fatalf("探测失败不应算方法失败: %v", err)
 	}
-	if failure == "" {
+	if res.Failure == "" {
 		t.Fatal("不可达端点应探测失败")
 	}
-	if strings.Contains(failure, secret) {
-		t.Fatalf("错误文案回显了凭证: %s", failure)
+	if strings.Contains(res.Failure, secret) {
+		t.Fatalf("错误文案回显了凭证: %s", res.Failure)
 	}
 	if _, err := env.Manager.TestConfig(t.Context(), channel.TestParams{
 		ChannelID: 99999, Driver: "local", Config: map[string]string{"path": dir},

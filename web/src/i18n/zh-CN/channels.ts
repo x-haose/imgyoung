@@ -115,6 +115,8 @@ export const channels = {
   testConnection: '测试连接',
   testOk: '连接正常(写读删探测通过)',
   testFailed: '连接失败:{error}',
+  testTokenRefreshed:
+    '服务商在测试时刷新了授权令牌,表单已换用新令牌,保存时提交的就是它;原令牌可能已失效。',
   createSubmit: '创建',
   saved: '渠道已保存',
   created: '渠道已创建',

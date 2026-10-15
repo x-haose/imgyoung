@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react'
-import { z } from 'zod'
 import { useFieldArray, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation } from '@tanstack/react-query'
-import { type Messages, t } from '@/i18n'
+import { t } from '@/i18n'
 import {
   ArrowLeft,
   CheckCircle2,
+  KeyRound,
   Loader2,
-  Plus,
-  Trash2,
   XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -38,15 +36,23 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
-import { PasswordInput } from '@/components/password-input'
+import { CustomFields } from './custom-fields'
 import {
-  type ChannelSource,
   createChannel,
   testChannel,
   updateChannel,
   useInvalidateChannels,
 } from './data'
-import { OAuthField } from './oauth-field'
+import {
+  buildSchema,
+  defaultValues,
+  type EncryptChoice,
+  type EncryptionState,
+  type FormValues,
+  PRIORITY_MAX,
+  toSource,
+} from './form-model'
+import { TemplateFieldInput } from './template-field-input'
 import { TypeBadge } from './type-badge'
 import {
   CATEGORY_DRIVE,
@@ -55,158 +61,9 @@ import {
   CUSTOM,
   type EditConfig,
   SECRET_PLACEHOLDER,
-  type TemplateField,
   type TestResult,
+  TOKEN_KEY,
 } from './types'
-
-/** 创建时服务端加密的三态;继承态不提交该字段,由后端按全局默认固化。 */
-type EncryptChoice = 'inherit' | 'on' | 'off'
-
-/** 渠道最终是否加密:plain 不加密;inherited 因继承全局默认而加密;explicit 显式或固有加密。 */
-type EncryptionState = 'plain' | 'inherited' | 'explicit'
-
-type ConfigEntry = { key: string; value: string }
-
-type FormValues = {
-  name: string
-  priority: number
-  encrypted: EncryptChoice
-  allow_direct_link: boolean
-  auto_create_bucket: boolean
-  inputs: Record<string, string> // 模板字段值,键为字段 key
-  driver: string // 自定义模式
-  config: ConfigEntry[] // 自定义模式
-}
-
-const PRIORITY_MAX = 1000
-const NAME_MAX_BYTES = 64
-
-/** 校验规则随模板变化:模板必填字段逐个检查,自定义模式检查驱动名与参数键。 */
-function buildSchema(
-  m: Messages['channels'],
-  template: ChannelTemplate | null,
-  encryption: (choice: EncryptChoice) => EncryptionState
-) {
-  const priorityMessage = m.priorityRange
-  return z
-    .object({
-      name: z
-        .string()
-        .trim()
-        .min(1, m.nameRequired)
-        .refine(
-          (v) => new TextEncoder().encode(v).length <= NAME_MAX_BYTES,
-          m.nameTooLong
-        ),
-      priority: z
-        .number({ error: priorityMessage })
-        .int(priorityMessage)
-        .min(0, priorityMessage)
-        .max(PRIORITY_MAX, priorityMessage),
-      encrypted: z.enum(['inherit', 'on', 'off']),
-      allow_direct_link: z.boolean(),
-      auto_create_bucket: z.boolean(),
-      inputs: z.record(z.string(), z.string()),
-      driver: z.string(),
-      config: z.array(z.object({ key: z.string(), value: z.string() })),
-    })
-    .superRefine((v, ctx) => {
-      if (template) {
-        for (const f of template.fields) {
-          if (f.required && (v.inputs[f.key] ?? '').trim() === '') {
-            ctx.addIssue({
-              code: 'custom',
-              path: ['inputs', f.key],
-              message: t(m.fieldRequired, { label: f.label }),
-            })
-          }
-        }
-      } else {
-        if (v.driver.trim() === '') {
-          ctx.addIssue({
-            code: 'custom',
-            path: ['driver'],
-            message: m.driverRequired,
-          })
-        }
-        const seen = new Set<string>()
-        v.config.forEach((kv, i) => {
-          const key = kv.key.trim()
-          if (key === '') {
-            ctx.addIssue({
-              code: 'custom',
-              path: ['config', i, 'key'],
-              message: m.configKeyRequired,
-            })
-          } else if (seen.has(key)) {
-            ctx.addIssue({
-              code: 'custom',
-              path: ['config', i, 'key'],
-              message: m.configKeyDuplicate,
-            })
-          }
-          seen.add(key)
-        })
-      }
-      const state = encryption(v.encrypted)
-      if (state !== 'plain' && v.allow_direct_link) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['allow_direct_link'],
-          message:
-            state === 'inherited'
-              ? m.directLinkInheritEncrypted
-              : m.directLinkEncrypted,
-        })
-      }
-    })
-}
-
-/** 模板字段全部以受控空串起步,未碰过的字段不会以 undefined 进入校验。 */
-function defaultValues(
-  template: ChannelTemplate | null,
-  channel: ChannelItem | null,
-  prefill: EditConfig | undefined
-): FormValues {
-  const inputs: Record<string, string> = {}
-  for (const f of template?.fields ?? []) {
-    inputs[f.key] = prefill?.inputs?.[f.key] ?? ''
-  }
-  return {
-    name: channel?.name ?? '',
-    priority: channel?.priority ?? 100,
-    encrypted: 'inherit',
-    allow_direct_link: channel?.allow_direct_link ?? false,
-    auto_create_bucket: false,
-    inputs,
-    driver: prefill?.driver ?? '',
-    config: Object.entries(prefill?.config ?? {}).map(([key, value]) => ({
-      key,
-      value,
-    })),
-  }
-}
-
-/** 配置部分的请求体:模板模式提交字段值,自定义模式提交驱动与参数(去掉空键)。 */
-function toSource(
-  values: FormValues,
-  template: ChannelTemplate | null
-): ChannelSource {
-  if (template) {
-    const inputs: Record<string, string> = {}
-    for (const f of template.fields) {
-      const v = (values.inputs[f.key] ?? '').trim()
-      if (v !== '') inputs[f.key] = v
-    }
-    return { template: template.id, inputs }
-  }
-  const config: Record<string, string> = {}
-  for (const kv of values.config) {
-    const key = kv.key.trim()
-    if (key !== '') config[key] = kv.value
-  }
-  return { template: CUSTOM, driver: values.driver.trim(), config }
-}
 
 type ChannelFormProps = {
   template: ChannelTemplate | null // null 为自定义模式
@@ -234,6 +91,8 @@ export function ChannelForm({
   const isEdit = channel !== null
   const isDrive = template?.category === CATEGORY_DRIVE
   const [testResult, setTestResult] = useState<TestResult | null>(null)
+  // 测试连接时服务商刷新出的令牌:已换进表单,授权字段据此显示已授权。
+  const [issuedToken, setIssuedToken] = useState('')
   // 全局默认尚未取到时不据它禁用直链;冲突仍由后端拒绝。
   const inheritEncrypted = useServerConfig()?.encrypt_new_channels === true
   // 加密与 302 直链互斥(密文不能直出):编辑看渠道固有属性,创建看三态选择与全局默认。
@@ -264,6 +123,21 @@ export function ChannelForm({
     : (config.find((kv) => kv.key === 'public_base_url')?.value ?? '')
   const directLinkNeedsBaseURL = allowDirectLink && publicBaseURL.trim() === ''
 
+  // 换进刷新后的令牌:模板模式写授权字段,自定义模式写 token 参数(没有该行则补一行)。
+  const adoptToken = (token: string) => {
+    const oauthKey = template?.fields.find((f) => f.type === 'oauth')?.key
+    if (oauthKey) {
+      form.setValue(`inputs.${oauthKey}`, token)
+    } else if (!template) {
+      const index = form
+        .getValues('config')
+        .findIndex((kv) => kv.key.trim() === TOKEN_KEY)
+      if (index >= 0) form.setValue(`config.${index}.value`, token)
+      else configRows.append({ key: TOKEN_KEY, value: token })
+    }
+    setIssuedToken(token)
+  }
+
   const test = useMutation({
     mutationFn: (values: FormValues) =>
       testChannel({
@@ -274,7 +148,11 @@ export function ChannelForm({
         auto_create_bucket: values.auto_create_bucket,
         ...(channel ? { channel_id: channel.id } : {}),
       }),
-    onSuccess: setTestResult,
+    // 换令牌会触发「修改即作废测试结论」,故先换令牌、后写结论。
+    onSuccess: (result) => {
+      if (result.token) adoptToken(result.token)
+      setTestResult(result)
+    },
     onError: (err) => setTestResult({ ok: false, error: errorMessage(err) }),
   })
 
@@ -363,6 +241,7 @@ export function ChannelForm({
                 inputs={inputs}
                 channelId={channel?.id}
                 kept={prefill?.inputs?.[f.key] === SECRET_PLACEHOLDER}
+                issuedToken={issuedToken}
                 disabled={busy}
               />
             ))
@@ -529,6 +408,12 @@ export function ChannelForm({
               </AlertDescription>
             </Alert>
           )}
+          {testResult?.token && (
+            <p className='flex items-start gap-2 text-xs leading-relaxed text-muted-foreground'>
+              <KeyRound className='mt-0.5 size-3.5 shrink-0' />
+              {m.channels.testTokenRefreshed}
+            </p>
+          )}
           {form.formState.errors.root && (
             <p className='text-sm text-destructive'>
               {form.formState.errors.root.message}
@@ -593,174 +478,5 @@ function TypeHeader({
         </p>
       </div>
     </div>
-  )
-}
-
-type TemplateFieldInputProps = {
-  field: TemplateField
-  template: ChannelTemplate
-  inputs: Record<string, string>
-  channelId?: number // 编辑目标;创建时缺省
-  kept: boolean // 编辑回显为哨兵:后端掩码的敏感值,原样提交即保留
-  disabled: boolean
-}
-
-/** 按模板字段类型渲染控件;回显为哨兵的敏感字段一律掩码输入,并说明哨兵语义。 */
-function TemplateFieldInput({
-  field: f,
-  template,
-  inputs,
-  channelId,
-  kept,
-  disabled,
-}: TemplateFieldInputProps) {
-  const m = useMessages()
-  const masked = f.type === 'password' || kept
-  const help =
-    kept && f.type !== 'oauth'
-      ? [f.help, m.channels.secretKeepHint].filter(Boolean).join(';')
-      : f.help
-  return (
-    <FormField
-      name={`inputs.${f.key}`}
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>{f.label}</FormLabel>
-          {f.type === 'oauth' ? (
-            <OAuthField
-              template={template}
-              inputs={inputs}
-              channelId={channelId}
-              value={field.value ?? ''}
-              onChange={field.onChange}
-              disabled={disabled}
-            />
-          ) : f.type === 'select' ? (
-            <Select value={field.value ?? ''} onValueChange={field.onChange}>
-              <FormControl>
-                <SelectTrigger className='w-full'>
-                  <SelectValue placeholder={m.channels.selectPlaceholder} />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent>
-                {f.options?.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : masked ? (
-            <FormControl>
-              <PasswordInput
-                placeholder={f.placeholder}
-                autoComplete='off'
-                {...field}
-                value={field.value ?? ''}
-              />
-            </FormControl>
-          ) : (
-            <FormControl>
-              <Input
-                placeholder={f.placeholder}
-                {...field}
-                value={field.value ?? ''}
-              />
-            </FormControl>
-          )}
-          {help && <FormDescription>{help}</FormDescription>}
-          <FormMessage />
-        </FormItem>
-      )}
-    />
-  )
-}
-
-type CustomFieldsProps = {
-  rows: ReturnType<typeof useFieldArray<FormValues, 'config'>>
-  isEdit: boolean
-}
-
-/** 自定义模式:rclone 后端名 + 键值对参数;编辑模式说明哨兵语义。 */
-function CustomFields({ rows, isEdit }: CustomFieldsProps) {
-  const m = useMessages()
-  return (
-    <>
-      <FormField
-        name='driver'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>{m.channels.driverLabel}</FormLabel>
-            <FormControl>
-              <Input placeholder={m.channels.driverPlaceholder} {...field} />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <div className='space-y-2'>
-        <FormLabel>{m.channels.configLabel}</FormLabel>
-        <div className='space-y-2'>
-          {rows.fields.map((row, index) => (
-            <div key={row.id} className='flex items-start gap-2'>
-              <FormField
-                name={`config.${index}.key`}
-                render={({ field }) => (
-                  <FormItem className='w-2/5'>
-                    <FormControl>
-                      <Input
-                        placeholder={m.channels.configKeyPlaceholder}
-                        className='font-mono text-xs'
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                name={`config.${index}.value`}
-                render={({ field }) => (
-                  <FormItem className='flex-1'>
-                    <FormControl>
-                      <Input
-                        placeholder={m.channels.configValuePlaceholder}
-                        className='font-mono text-xs'
-                        {...field}
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-              <Button
-                type='button'
-                variant='ghost'
-                size='icon'
-                className='size-9 shrink-0 text-muted-foreground hover:text-destructive'
-                onClick={() => rows.remove(index)}
-              >
-                <Trash2 />
-                <span className='sr-only'>{m.channels.removeParam}</span>
-              </Button>
-            </div>
-          ))}
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            className='w-full border-dashed'
-            onClick={() => rows.append({ key: '', value: '' })}
-          >
-            <Plus />
-            {m.channels.addParam}
-          </Button>
-        </div>
-        <p className='text-xs leading-relaxed text-muted-foreground'>
-          {m.channels.configHint}
-          {isEdit &&
-            `;${t(m.channels.configKeepHint, { placeholder: SECRET_PLACEHOLDER })}`}
-        </p>
-      </div>
-    </>
   )
 }

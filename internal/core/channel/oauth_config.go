@@ -11,7 +11,8 @@ import (
 
 // completeTemplateConfig 补齐模板渠道随授权而来的后端参数(原地修改 config)。
 // @Description: 新提交的授权(令牌不是哨兵)跑一遍后端的配置流程,后端写下的参数并入配置——
-// onedrive 由此选定用户默认驱动器、写下 drive_id 与 drive_type。沿用已存授权时不再跑流程,
+// onedrive 由此选定用户默认驱动器、写下 drive_id 与 drive_type。流程中途失败时已写下的参数照样并入:
+// 其中可能有刷新后的令牌,刷新令牌只能用一次的服务商,丢掉它原令牌也已作废。沿用已存授权时不再跑流程,
 // 已存配置里模板不产出的参数(授权带出与运行期写回的)随授权一并保留。自定义配置不经此步:
 // 直填的 rclone 参数应自带这些值。
 // @param ctx 控制后端查询的超时与取消
@@ -36,9 +37,6 @@ func completeTemplateConfig(ctx context.Context, templateID string, submitted, c
 		return nil
 	}
 	written, err := completeAuthorization(ctx, tpl.Driver, config)
-	if err != nil {
-		return err
-	}
 	for k, v := range written {
 		if v == "" {
 			delete(config, k)
@@ -46,7 +44,7 @@ func completeTemplateConfig(ctx context.Context, templateID string, submitted, c
 		}
 		config[k] = v
 	}
-	return nil
+	return err
 }
 
 // ownedKeys 返回模板合并配置时会产出的键:固定预设、字段落位键与拼接的 endpoint。
@@ -73,7 +71,7 @@ func (t *Template) ownedKeys() map[string]bool {
 // @param ctx 控制后端查询的超时与取消
 // @param driver rclone 后端名
 // @param params 含授权令牌的后端参数(可入库形态);不修改
-// @return 后端写下的参数,值为空串表示清除该参数
+// @return 后端写下的参数,值为空串表示清除该参数;流程失败时为失败前已写下的部分
 // @return 后端不存在(ErrInvalidChannel)、后端报错、提问没有默认答案或超出步数上限时的错误
 func completeAuthorization(ctx context.Context, driver string, params map[string]string) (map[string]string, error) {
 	ri, err := findBackend(driver)
@@ -92,18 +90,18 @@ func completeAuthorization(ctx context.Context, driver string, params map[string
 	for range configWalkLimit {
 		out, err := ri.Config(ctx, oauthConfigName, m, in)
 		if err != nil {
-			return nil, fmt.Errorf("后端 %q 授权后的配置失败: %w", ri.Name, err)
+			return written, fmt.Errorf("后端 %q 授权后的配置失败: %w", ri.Name, err)
 		}
 		next, done, err := defaultStep(ri.Name, out)
 		if err != nil {
-			return nil, err
+			return written, err
 		}
 		if done {
 			return written, nil
 		}
 		in = next
 	}
-	return nil, fmt.Errorf("后端 %q 的配置流程超出 %d 步", ri.Name, configWalkLimit)
+	return written, fmt.Errorf("后端 %q 的配置流程超出 %d 步", ri.Name, configWalkLimit)
 }
 
 // defaultStep 解读配置状态机的一步输出,以默认答案前进:提问取默认值,授权一步跳过。

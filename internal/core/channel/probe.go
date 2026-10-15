@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -73,65 +74,79 @@ type TestParams struct {
 	Config    map[string]string // 渠道配置(含约定键 path / public_base_url),可为 nil
 }
 
+// TestResult 测试连接的结论。
+type TestResult struct {
+	Failure string // 探测失败的原因,已人话化并抹除凭证,可直接展示;空串表示连接可用
+	Token   string // 测试期间服务商刷新了授权令牌、新令牌又没有写回渠道时为新令牌 JSON,调用方须用它替换表单里的令牌;空串表示无需替换
+}
+
 // TestConfig 用一份未落库的渠道配置执行深探测(测试连接)。
 // @Description: 不创建渠道;配置整理规则与 Create / Update 相同。加密属性不参与——crypt 密钥派生
-// 依赖渠道 ID,本方法验证的是后端连通性与写读删权限。探测失败不算方法失败。编辑场景下,一次性驱动
-// 对沿用的已存凭证的写回落到该渠道(见 trialProbe)。
+// 依赖渠道 ID,本方法验证的是后端连通性与写读删权限。探测失败不算方法失败。访问令牌过期时,补齐授权参数
+// 或一次性驱动都会刷新它:编辑场景沿用的已存令牌刷新后写回该渠道(见 trialProbe),其余情形(新提交的令牌、
+// 写回渠道失败)交还调用方——刷新令牌只能用一次的服务商,丢掉新令牌即作废原授权,随后的保存必然失败。
+// 交还的只有令牌:其余写回的参数保存时会重新得出。
 // @param p 测试参数
-// @return 探测失败的原因,已人话化并抹除凭证(提交的明文与其编码产物都抹),可直接展示;空串表示连接可用
-// @return ErrInvalidChannel(参数非法)、ErrChannelNotFound 或读取渠道失败时的错误
-func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) {
+// @return 测试结论;失败原因抹除凭证(提交的明文与其编码产物都抹)
+// @return ErrInvalidChannel(参数非法)、ErrChannelNotFound、读取渠道或写回后重载失败时的错误
+func (m *Manager) TestConfig(ctx context.Context, p TestParams) (TestResult, error) {
 	if err := validateCreateParams(CreateParams{
 		Name: "connectivity-test", Driver: p.Driver, Config: p.Config,
 	}); err != nil {
-		return "", err
+		return TestResult{}, err
 	}
 	var stored map[string]string
 	if p.ChannelID > 0 {
 		var err error
 		if stored, err = m.storedConfig(ctx, p.ChannelID); err != nil {
-			return "", err
+			return TestResult{}, err
 		}
 	}
 	prepared, err := prepareConfig(p.Driver, p.Config, stored, p.Template != "")
 	if err != nil {
-		return "", err
+		return TestResult{}, err
 	}
 	secret, err := secretKeysOf(p.Driver)
 	if err != nil {
-		return "", err
+		return TestResult{}, err
 	}
-	redact := func(msg string) string {
-		return redactSecrets(redactSecrets(msg, p.Config, secret), prepared, secret)
-	}
+	token := prepared[ConfigKeyToken]
 	// 补齐授权带出的参数要向后端查询,查询失败与连接失败同属探测结论。
-	if err := completeTemplateConfig(ctx, p.Template, p.Config, prepared, stored); err != nil {
-		return redact(humanizeProbeError(err)), nil
+	probeErr := completeTemplateConfig(ctx, p.Template, p.Config, prepared, stored)
+	if probeErr == nil {
+		var unsaved map[string]string
+		if probeErr, unsaved, err = m.trialProbe(ctx, p, prepared); err != nil {
+			return TestResult{}, err
+		}
+		maps.Copy(prepared, unsaved)
 	}
-	probeErr, err := m.trialProbe(ctx, p, prepared)
-	if err != nil {
-		return "", err
+	failure := redactSecrets(redactSecrets(humanizeProbeError(probeErr), p.Config, secret), prepared, secret)
+	res := TestResult{Failure: failure}
+	if refreshed := prepared[ConfigKeyToken]; refreshed != "" && refreshed != token {
+		res.Token = refreshed
 	}
-	return redact(humanizeProbeError(probeErr)), nil
+	return res, nil
 }
 
-// trialProbe 用一次性驱动对整理好的配置做深探测。
-// @Description: 编辑场景下,沿用渠道已存值(提交为哨兵)的参数若被后端写回(访问令牌过期时的刷新),
-// 写回落到该渠道,随后重载让已装载的驱动换用新值——对刷新令牌只能用一次的服务商,否则库里与在用
-// 驱动手里的刷新令牌都已作废。创建场景没有可落的渠道,写回随驱动丢弃。
+// trialProbe 用一次性驱动对整理好的配置做深探测,收集后端运行期的写回(访问令牌过期时的刷新)。
+// @Description: 编辑场景下,沿用渠道已存值(提交为哨兵)的参数被写回时落到该渠道,随后重载让已装载的驱动
+// 换用新值——对刷新令牌只能用一次的服务商,否则库里与在用驱动手里的刷新令牌都已作废。其余写回(本次提交的
+// 新值被刷新,或落库失败)交还调用方。构造或探测失败时写回照样交还:刷新可能发生在失败之前。
 // @param p 测试参数
 // @param config 已整理的配置
 // @return probeErr 构造或探测失败的原因;nil 表示连接可用
+// @return unsaved 没有落到渠道的写回,参数名 → 新值
 // @return err 写回后重载失败时的错误
-func (m *Manager) trialProbe(ctx context.Context, p TestParams, config map[string]string) (probeErr, err error) {
+func (m *Manager) trialProbe(ctx context.Context, p TestParams,
+	config map[string]string) (probeErr error, unsaved map[string]string, err error) {
 	var persisted atomic.Bool
-	var onChange func(key, value string)
-	if p.ChannelID > 0 {
-		onChange = func(key, value string) {
-			if p.Config[key] == SecretPlaceholder && m.persistParam(p.ChannelID, key, value) {
-				persisted.Store(true)
-			}
+	var wb writeBacks
+	onChange := func(key, value string) {
+		if p.ChannelID > 0 && p.Config[key] == SecretPlaceholder && m.persistParam(p.ChannelID, key, value) {
+			persisted.Store(true)
+			return
 		}
+		wb.record(key, value)
 	}
 	d, probeErr := m.openTrial(ctx, p.Driver, config, onChange)
 	if probeErr == nil {
@@ -140,10 +155,12 @@ func (m *Manager) trialProbe(ctx context.Context, p TestParams, config map[strin
 	}
 	if persisted.Load() {
 		if err := m.Reload(ctx); err != nil && !errors.Is(err, errNothingLoaded) {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return probeErr, nil
+	unsaved = map[string]string{}
+	wb.applyTo(unsaved)
+	return probeErr, unsaved, nil
 }
 
 // recordProbe 把一次探测结果写入渠道行(healthy / last_checked_at / last_error)

@@ -384,8 +384,8 @@ func (m *Manager) channelOptions(row sqlc.Channel, params map[string]string) (rc
 // openTrial 用一份未落库的配置构造一次性驱动(试构造、测试连接、建桶),不套 crypt。
 // @Description: 加密属性不参与——crypt 密钥派生依赖渠道 ID 与创建时刻,试构造验证的是
 // 后端连通性与参数合法性。后端运行期写回的参数(访问令牌过期时刷新得到的新令牌等)交给
-// onChange:调用方并入将要落库的配置,或写回令牌所属的渠道;对刷新令牌只能用一次的服务商,
-// 丢掉写回即作废原有的刷新令牌。调用方用毕须 Close。
+// onChange:调用方并入将要落库的配置、写回令牌所属的渠道,或交还提交配置的表单;对刷新令牌只能
+// 用一次的服务商,丢掉写回即作废原有的刷新令牌。调用方用毕须 Close。
 // @param driverName rclone 后端名
 // @param params 明文配置(含约定键)
 // @param onChange 写回的去处;nil 表示写回随驱动丢弃,仅用于没有可落之处的场景

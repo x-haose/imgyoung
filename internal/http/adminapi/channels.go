@@ -65,6 +65,7 @@ type channelTestRequest struct {
 type channelTestResponse struct {
 	OK    bool   `json:"ok"`              // 探测是否通过
 	Error string `json:"error,omitempty"` // 失败原因(人话化,不含凭证)
+	Token string `json:"token,omitempty"` // 测试期间服务商刷新了提交的授权令牌时为新令牌 JSON;前端须用它替换表单里的令牌再保存
 }
 
 // decodeChannelBody 解码渠道管理请求体:限制体积并拒绝未知字段
@@ -239,7 +240,8 @@ func (h *Handlers) HandleChannelUpdate(w http.ResponseWriter, r *http.Request) {
 
 // HandleChannelTest 测试连接:按创建同构的请求体执行深探测,不落库、不留渠道。
 // @Description: 参数形态非法(未知模板/缺必填字段/非法配置键)返回 400;
-// 探测本身的成败以 {ok, error} 信封返回,供表单"先测后存"。凭证不回显;
+// 探测本身的成败以 {ok, error} 信封返回,供表单"先测后存"。凭证不回显,唯一例外是服务商刷新了
+// 提交的授权令牌:新令牌随 token 返回,表单换用它保存,原令牌可能已被服务商作废。
 // 编辑场景携 channel_id,配置中的哨兵值还原为该渠道原凭证后再探测。
 func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 	var req channelTestRequest
@@ -250,7 +252,7 @@ func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	failure, err := h.cfg.Admin.TestConfig(r.Context(), channel.TestParams{
+	res, err := h.cfg.Admin.TestConfig(r.Context(), channel.TestParams{
 		ChannelID: req.ChannelID, Template: spec.template, Driver: spec.driver, Config: spec.config,
 	})
 	switch {
@@ -265,7 +267,9 @@ func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
 		return
 	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, channelTestResponse{OK: failure == "", Error: failure})
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, channelTestResponse{
+		OK: res.Failure == "", Error: res.Failure, Token: res.Token,
+	})
 }
 
 // HandleChannelConfig 回读单渠道配置的编辑视图(敏感值哨兵掩码,供编辑表单预填)。

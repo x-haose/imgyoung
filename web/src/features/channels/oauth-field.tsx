@@ -27,6 +27,7 @@ type OAuthFieldProps = {
   inputs: Record<string, string> // 已填的其他字段:区域等影响授权端点的参数与自建应用凭证
   channelId?: number // 编辑目标;一键授权据此让后端还原字段中的哨兵
   value: string // 当前令牌;非空表示已授权,哨兵表示沿用已存令牌
+  issuedToken: string // 服务端交还的令牌(测试连接时刷新所得);与 value 相同即视为已授权
   onChange: (token: string) => void
   disabled?: boolean
 }
@@ -41,13 +42,14 @@ export function OAuthField({
   inputs,
   channelId,
   value,
+  issuedToken,
   onChange,
   disabled,
 }: OAuthFieldProps) {
   const m = useMessages()
   const [error, setError] = useState('')
   const [waiting, setWaiting] = useState(false)
-  // 一键授权换到的令牌;粘贴的文本在提交前只是草稿,不按「已授权」展示。
+  // 一键授权换到的令牌;粘贴的文本在提交前只是草稿,不按「已授权」展示,经测试连接刷新后才算。
   const [flowToken, setFlowToken] = useState('')
   // 当前这轮等待的取消钩子;卸载或用户取消时让轮询静默退出。
   const cancelRef = useRef<() => void>(() => {})
@@ -97,7 +99,10 @@ export function OAuthField({
 
   const hasClientId = (inputs[CLIENT_ID_KEY] ?? '').trim() !== ''
   const authorized =
-    value !== '' && (value === SECRET_PLACEHOLDER || value === flowToken)
+    value !== '' &&
+    (value === SECRET_PLACEHOLDER ||
+      value === flowToken ||
+      value === issuedToken)
   if (authorized) {
     return (
       <div className='flex flex-wrap items-center gap-3'>

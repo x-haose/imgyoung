@@ -578,7 +578,7 @@ export interface paths {
         put?: never;
         /**
          * 测试连接
-         * @description 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回,补齐授权带出的参数时向服务商查询失败也在其中。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
+         * @description 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回,补齐授权带出的参数时向服务商查询失败也在其中。授权令牌已过期时测试期间会被刷新:提交的是新令牌(创建表单,或编辑时新粘贴 / 新授权的令牌)时,刷新后的令牌随 `token` 返回;沿用已存令牌(哨兵)时直接写回该渠道,不返回。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
          */
         post: operations["testChannel"];
         delete?: never;
@@ -1676,6 +1676,8 @@ export interface components {
             ok: boolean;
             /** @description 失败原因,不含凭证 */
             error?: string;
+            /** @description 测试期间服务商刷新了提交的授权令牌时出现,值为刷新后的令牌 JSON(与 rclone 的 `token` 参数同格式); 探测失败时也可能出现。存在时前端须用它替换表单里的令牌再保存——刷新令牌只能用一次的服务商(如 Box), 原令牌已被作废。模板模式替换授权字段(`inputs.token`),自定义模式替换 `config.token`。只回传令牌,不回传其他凭证 */
+            token?: string;
         };
         /** @description 渠道配置的编辑视图,敏感值以哨兵掩码 */
         ChannelEditConfig: {
