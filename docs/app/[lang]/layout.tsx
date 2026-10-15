@@ -20,6 +20,9 @@ export function generateStaticParams() {
   return i18n.languages.map((lang) => ({ lang }))
 }
 
+/** 语言段只接受 generateStaticParams 列出的语言,其余值(如 `/install.sh` 这类带扩展名、不经语言协商的路径)一律 404。 */
+export const dynamicParams = false
+
 export default async function Layout({ params, children }: LayoutProps<'/[lang]'>) {
   const { lang } = await params
   return (
