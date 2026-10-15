@@ -50,6 +50,8 @@ cd web && pnpm dev  # 前端热更新,/api 与图片路径代理到 8721
 
 推送 `vX.Y.Z` 标签即触发 release 工作流：goreleaser 构建 linux / darwin / windows 的 amd64 与 arm64 二进制、GHCR 多架构镜像，并按提交类型分组生成 Release 说明。本地用 `goreleaser check` 验证配置。
 
+GHCR 上的镜像包第一次推送后是私有的（个人账号下新建的包默认私有，不随仓库公开），匿名 `docker pull` 会被拒绝。首次发布后到包页面的 Package settings → Danger Zone → Change visibility 改为 Public；这一步只能在网页上做，只需做一次。
+
 ## 安全问题
 
 发现安全漏洞请不要开公开 issue，通过仓库 Security 页的 Security Advisory 私下报告。

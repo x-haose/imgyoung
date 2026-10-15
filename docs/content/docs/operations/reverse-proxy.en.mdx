@@ -18,6 +18,18 @@ Caddy obtains and renews certificates automatically, sets `X-Forwarded-For` / `X
 
 <include cwd lang="text" meta='title="deploy/Caddyfile"'>../deploy/Caddyfile</include>
 
+By default Caddy trusts no upstream proxy: it drops any `X-Forwarded-For` the client sent and fills in only the peer it is directly connected to. With a CDN in front of Caddy that peer is a CDN node, so ImgYoung never sees the visitor's address. Declare the CDN's origin-pull ranges as trusted in the Caddyfile's global options; Caddy then keeps the forwarding headers the CDN sends and appends to them:
+
+```text title="Caddyfile global options"
+{
+	servers {
+		trusted_proxies static <CDN origin-pull ranges>
+	}
+}
+```
+
+The Nginx example's `$proxy_add_x_forwarded_for` already appends, so it does not have this problem.
+
 ## Nginx
 
 <include cwd lang="nginx" meta='title="deploy/nginx.conf"'>../deploy/nginx.conf</include>
@@ -52,7 +64,7 @@ Values by topology:
 | ImgYoung in Docker, proxy on the host | The Docker bridge gateway, not loopback | The gateway's network, e.g. `172.16.0.0/12`; check the actual gateway with `docker network inspect` |
 | Proxy and ImgYoung as two containers in one Compose project | The proxy container's address on the project network | The project network's subnet |
 | Proxy on another host | The proxy host's internal address | That address or its network |
-| A CDN in front of the proxy | The proxy; the rightmost `X-Forwarded-For` hop is a CDN node | The proxy's network plus the CDN's origin-pull ranges, so the client resolves to the real visitor |
+| A CDN in front of the proxy | The proxy; the rightmost `X-Forwarded-For` hop is a CDN node | The proxy's network plus the CDN's origin-pull ranges, so the client resolves to the real visitor. If the proxy is Caddy, Caddy must also trust the CDN's origin-pull ranges via `trusted_proxies`; see above |
 
 <Callout type="warn" title="What a wrong trust setting looks like">
 If the peer is outside the trusted networks, every proxied request appears to come from the proxy itself: all visitors share one login rate limit, and if the proxy's address happens to be in `IMGYOUNG_METRICS_ALLOW` (Docker networks are by default) and the proxy forwards `/metrics`, anyone can read the metrics. A proxy that does not set `X-Forwarded-For` has the same effect.
@@ -65,7 +77,20 @@ With a proxy in front, do not expose ImgYoung's port directly:
 <Tabs items={['Binary / systemd', 'Docker', 'Compose']}>
 <Tab value="Binary / systemd">
 
-Set `IMGYOUNG_LISTEN=127.0.0.1:8721`. For systemd, add `Environment=IMGYOUNG_LISTEN=127.0.0.1:8721` with `sudo systemctl edit imgyoung` and restart; see [Configuration](../configuration.mdx).
+Set `IMGYOUNG_LISTEN=127.0.0.1:8721`. For systemd, use a drop-in; see [Configuration](../configuration.mdx):
+
+```bash title="Terminal"
+sudo systemctl edit imgyoung
+```
+
+```ini title="In the editor"
+[Service]
+Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
+```
+
+```bash title="Terminal"
+sudo systemctl restart imgyoung
+```
 
 </Tab>
 <Tab value="Docker">
@@ -102,7 +127,7 @@ If the proxy runs in the same Compose project, drop `ports` entirely and let the
 
 With `base_url` (**Settings → Runtime settings → Access & links → Public site address**) empty, ImgYoung derives the public address from each request: the scheme from the HTTPS check, the host from `X-Forwarded-Host` when the peer is trusted, otherwise from `Host`. Set it explicitly when:
 
-- **the public domain differs from what reaches ImgYoung**: a CDN pulls from a different hostname, the proxy rewrites `Host` without sending `X-Forwarded-Host`, the proxy is not trusted, and so on. Otherwise the `url` returned by uploads, links copied in the admin console, and the endpoint and link prefix in the **S3 client settings** dialog are all wrong.
+- **the public domain differs from what reaches ImgYoung**: a CDN pulls from a different hostname, the proxy rewrites `Host` without sending `X-Forwarded-Host`, the proxy is not trusted, and so on. Otherwise the `url` returned by uploads and the endpoint and link prefix in the **S3 client settings** dialog are all wrong. Share links copied in the admin console are not derived by the server: they use `base_url` when it is set and otherwise the site address in the browser's address bar, so these situations do not affect them.
 - **CDN cache purging is enabled**: purge jobs run in the background with no request to derive from, so they use `base_url` only; see [CDN](./cdn.mdx).
 - **one-click cloud drive authorization is used**: the callback URL must match what is registered with the provider character for character and is built from `base_url` only; see [Cloud drives](../channels/cloud-drives.mdx).
 

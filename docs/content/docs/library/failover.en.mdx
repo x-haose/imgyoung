@@ -44,7 +44,9 @@ attempts, err := failover.Write(ctx, ds, key, bytes.NewReader(data), int64(len(d
   reads `[0, size)` independently, so a driver that fails halfway does not affect the next one. `*bytes.Reader` and
   `*os.File` both satisfy `io.ReaderAt`.
 - **Cancelling `ctx` stops immediately**: `ctx` is checked before each attempt; once it is cancelled no further drivers
-  are tried and `ctx.Err()` is returned, not `ErrInsufficient`. A failure caused by cancellation says nothing about the drivers.
+  are tried. If there are too few copies in the end and `ctx` has been cancelled or hit its deadline (including partway
+  through the last attempt), `ctx.Err()` is returned, not `ErrInsufficient`. A failure caused by cancellation says
+  nothing about the drivers.
 - **Attempts with `Err == nil` are the drivers that now hold a copy.** Even on success, `attempts` may include failed attempts.
 - **Failed writes are not cleaned up**: a failed driver may be left with a partial object. Delete it yourself if
   needed, or let reconciliation deal with it.
@@ -55,7 +57,7 @@ attempts, err := failover.Write(ctx, ds, key, bytes.NewReader(data), int64(len(d
 | `ErrInvalidNeed` | `opts.Need` is less than 1; checked first |
 | `ErrNoDrivers` | The driver slice is empty |
 | `ErrInsufficient` | Every driver was tried and there are still too few copies; the same error also wraps the cause of each failure |
-| The `ctx` error | `ctx` was cancelled or hit its deadline partway through |
+| The `ctx` error | Too few copies, and `ctx` was cancelled or hit its deadline (partway through any attempt, including the last) |
 
 ## Open: read from the first readable driver
 
@@ -73,8 +75,10 @@ defer func() { _ = rc.Close() }()
   useful for logs and metrics.
 - **Fallback only happens while opening.** If the reader fails partway through reading, it does not switch to another driver.
 - There is no per-attempt timeout, only `ctx`; `ctx` is checked before each attempt, and once it is cancelled
-  `ctx.Err()` is returned. With rclone drivers, `ctx` usually also governs the returned reader (for HTTP-based backends,
-  cancelling `ctx` aborts the response body), so do not cancel it before you finish reading.
+  `ctx.Err()` is returned. If every driver fails and `ctx` has been cancelled or hit its deadline (including partway
+  through the last attempt), `ctx.Err()` is returned as well, instead of either error below. With rclone drivers, `ctx`
+  usually also governs the returned reader (for HTTP-based backends, cancelling `ctx` aborts the response body), so do
+  not cancel it before you finish reading.
 
 When every driver fails, there are two kinds of error:
 
@@ -83,7 +87,7 @@ When every driver fails, there are two kinds of error:
 | Every driver reports the object does not exist | Wraps `driver.ErrNotFound` | The object really is missing |
 | At least one driver failed for a reason other than "not found" | Wraps `ErrUnavailable`; each driver's failure appears only in the error text and is not wrapped | Some driver is broken; the object may still exist |
 
-An empty driver slice returns `ErrNoDrivers`.
+An empty driver slice returns `ErrNoDrivers`; a cancelled or expired `ctx` returns `ctx.Err()`.
 
 The two kinds are mutually exclusive: `errors.Is(err, driver.ErrNotFound)` is true only when every driver confirmed
 the object does not exist, and always false when some driver is broken. An `ErrUnavailable` error does not wrap the
@@ -205,7 +209,9 @@ These two functions only perform the work. To turn them into reliable replicatio
 - **Retries with backoff**: retry a failed `Replicate` later, mark it failed and alert after repeated failures, and try again once the store recovers.
 - **Reconciliation**: periodically `List` every store and compare with your records in both directions. Objects in the
   store but not in your records are orphans (produced when the write succeeded but recording it failed); delete them
-  after a grace period. Copies your records claim but the store lacks need to be replicated again. Only reclaim
+  after a grace period. Copies your records claim but the store lacks need to be replicated again, but beware of the
+  race with new writes between listing and reading your records: list first, then read the records, and `Stat` each
+  apparently missing object once more before resetting it, replicating only if it really is gone. Only reclaim
   objects you can tell you wrote yourself (by your own key format, for example), and leave files other programs put
   in the same store alone; claim deep check leftovers with `IsDeepProbeKey` and delete them once past the grace period.
 - **Concurrency limits**: replication shares the stores' bandwidth and request quotas with regular traffic, so cap how many copies run at once.
@@ -219,7 +225,7 @@ The application's channels are a set of rclone drivers, and upload, image access
 
 | Scenario | Call | Arguments and handling |
 |---|---|---|
-| Upload | `Write` | Drivers are the healthy channels in priority order; `Need` is the runtime setting `min_success` (values below 1 count as 1); `AttemptTimeout` is 10 minutes. Channels that succeeded are recorded as holding a ready replica; the rest are recorded as pending and replication jobs are queued. Too few copies returns 503 |
+| Upload | `Write` | Drivers are the healthy channels whose write lease could be taken, in priority order; `Need` is the runtime setting `min_success` (values below 1 count as 1); `AttemptTimeout` is 10 minutes. Channels that succeeded are recorded as holding a ready replica; the remaining active channels are recorded as pending and replication jobs are queued. Too few copies returns 503. Copies written to a channel that is marked for cleanup during the write do not count; if fewer than `min_success` copies remain on active channels when recording, the upload also returns 503 and the written objects are deleted |
 | Image access | `Open` | Drivers are the channels that are healthy, not being cleaned up, and hold a ready replica of the image, in priority order; each failed attempt is logged; if all fail, 503 is returned |
 | Periodic health check | `Probe` / `DeepProbe` | Every `health_check_seconds` seconds, channels that previously failed to load are retried, then all channels get a light check in parallel, with a 10-second timeout per channel; an unhealthy channel whose light check passes is confirmed with a deep check (20-second timeout) before it recovers |
 | Event-driven deep check | `DeepProbe` | After a channel is created or edited, on manual recheck, and on connection test, with a 20-second timeout |
@@ -227,5 +233,5 @@ The application's channels are a set of rclone drivers, and upload, image access
 Replication jobs try the source channels one by one and write to the target channel, the same idea as `Replicate`
 above. The daily reconciliation skips `ProbeKey` and the system directory `_imgyoung/`, and only reclaims orphans whose
 keys have the application's object key format (criteria in [Architecture](../architecture.mdx)); leftovers from
-deep checks are claimed with `IsDeepProbeKey` and deleted once past the 48-hour grace period, regardless of when they
-were written. For runtime settings, see [Configuration](../configuration.mdx).
+deep checks are claimed with `IsDeepProbeKey` and deleted once written more than 48 hours ago, even if they predate the
+channel's binding time. For runtime settings, see [Configuration](../configuration.mdx).

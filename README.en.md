@@ -25,7 +25,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
 ```
 
-On Linux or macOS you can also install it as a local program in one line (`sh -s -- --service` also registers a systemd service):
+On Linux or macOS you can also install it as a local program in one line (on Linux, replace the trailing `sh` with `sudo sh -s -- --service` to also register a systemd service):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh

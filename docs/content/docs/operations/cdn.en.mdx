@@ -9,7 +9,7 @@ Let the CDN pull from ImgYoung (through your [reverse proxy](./reverse-proxy.mdx
 
 - ImgYoung reads image bytes from the channels and fails over between them on each origin pull, so the CDN sees one stable origin;
 - on-demand processing (`?w=`, `?format=`) and WebP negotiation keep working, and the CDN caches the results;
-- the public domain is the CDN's, so set `base_url` in the admin console (**Settings → Runtime settings → Access & links → Public site address**), and add the CDN's origin-pull ranges to `IMGYOUNG_TRUSTED_PROXIES` so login rate limiting counts real visitors; see [Reverse proxy & HTTPS](./reverse-proxy.mdx).
+- the public domain is the CDN's, so set `base_url` in the admin console (**Settings → Runtime settings → Access & links → Public site address**), and add the CDN's origin-pull ranges to `IMGYOUNG_TRUSTED_PROXIES` so login rate limiting counts real visitors; with the Caddy example shipped with the docs, also give Caddy the CDN's origin-pull ranges as `trusted_proxies`; see [Reverse proxy & HTTPS](./reverse-proxy.mdx).
 
 Cache only the image routes `/i/*` and `/o/*`; mark `/api/*` and `/s3/*` as not cacheable. The admin console's `index.html` is served with `no-cache`, and files under `/assets/` have content hashes in their names and a one-year cache lifetime, so the CDN's default rules are fine for them.
 
@@ -27,7 +27,7 @@ Responses from the image routes:
 | 302 (`redirect` mode) | `no-store` | none | none |
 | Invalid parameters (400), hotlink rejection (403), not found or expired (404), metadata lookup failure (500, retryable) | none | none | none |
 
-Originals also carry `Last-Modified` (the upload time). The content behind `/i/<short ID>` never changes, which is why it gets a one-year immutable lifetime.
+Originals also carry `Last-Modified` (the upload time). The content behind `/i/<short ID>` does not change, which is why it gets a one-year immutable lifetime. The one exception is merging similar images: the short ID of the image that is not kept is pointed at the kept image, so its content changes. A merge does not trigger cache purging, so CDNs and browsers keep serving the old content for as long as it stays cached (up to a year) — the two images are near-duplicates anyway. If you need it consistent right away, purge that URL on the CDN by hand.
 
 `/o/<user ID>/<object key>` is an alias chosen by an S3 client, and uploading again with the same object key points it at the new image. Its responses may therefore be cached but must be revalidated with the ETag before each use: an unchanged image gets 304, a re-pointed alias gets the new image, a deleted one gets 404. Behind a CDN, `/i/` links cache better.
 
@@ -39,7 +39,7 @@ The CDN must cache separately per `Accept` (by honoring `Vary: Accept` or adding
 
 ## Processing parameters and cache keys
 
-- `w` must be one of the width tiers and `format` one of the target formats or `auto`; anything else gets 400. The allowlist bounds how many variants an image can have, so arbitrary parameters cannot create unbounded cache entries.
+- `w` must be one of the width tiers and `format` one of the target formats or `auto`; anything else gets 400. This check comes first and does not depend on the original's format: an original that is never processed, such as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones. The allowlist bounds how many variants an image can have, so arbitrary parameters cannot create unbounded cache entries.
 - ImgYoung ignores any other query parameter, but the CDN's default cache key includes it: appending a random parameter bypasses the cache and hits the origin. Restrict the cache key's query string to `w` and `format`.
 - Always write the parameters in the order `?w=…&format=…`. Cache purging only clears URLs in that order (see below); a different order is a different cache entry as far as the CDN is concerned.
 
@@ -70,7 +70,7 @@ With all three set, the group shows **Purge enabled**; if any is missing, nothin
 In `redirect` access mode, a request for an original gets a 302 to a channel that allows direct links, is not encrypted and has a public address configured. The bytes then come from the channel (or its own domain or CDN) and do not pass through the CDN in front of ImgYoung. Without such a channel ImgYoung falls back to proxying.
 
 - Every 302 carries `Cache-Control: no-store`, so neither the CDN nor browsers cache the redirect itself: every request comes back to ImgYoung, and channel switches, deletions and expiry take effect immediately.
-- Requests that need processing (`w` / `format` parameters, or WebP negotiation) are still processed and served by ImgYoung, not redirected. To make browsers' original-image requests redirect as well, remove `webp` from the target formats.
+- Requests that actually produce a variant (resizing, converting to another format, or WebP from negotiation) are processed and served by ImgYoung, not redirected. Requests that resolve to the original still get the 302 — a GIF original, say, or a target that is the original format without resizing (a JPEG with `?format=jpeg`). To make browsers' original-image requests redirect as well, remove `webp` from the target formats.
 
 If you already have a CDN in front of ImgYoung, use `proxy` mode: the CDN already carries the traffic. `redirect` is meant for servers without a CDN and with little upstream bandwidth, or for channels that come with their own public CDN domain (such as a custom domain bound to an object storage bucket).
 

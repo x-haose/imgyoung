@@ -23,7 +23,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
 ```
 
-Linux / macOS 也可以一行装成本机程序（加 `sh -s -- --service` 同时注册 systemd 服务）：
+Linux / macOS 也可以一行装成本机程序（Linux 上把末尾的 `sh` 换成 `sudo sh -s -- --service`，同时注册 systemd 服务）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh

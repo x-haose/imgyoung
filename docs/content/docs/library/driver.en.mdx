@@ -38,7 +38,7 @@ Rules every implementation follows:
   type={{
     Key: { type: 'string', description: 'Object key, a path relative to the store root' },
     Size: { type: 'int64', description: 'Object size in bytes' },
-    ModTime: { type: 'time.Time', description: 'Last modification time of the object' },
+    ModTime: { type: 'time.Time', description: "Last modification time of the object; the application's reconciliation measures its grace period by it. Where the backend supports it, the rclone driver uses the write time recorded by the server, so listing an S3-style backend needs no separate HEAD request per object" },
   }}
 />
 
@@ -99,6 +99,12 @@ Fields of `rclone.Options`:
 />
 
 Errors returned by `Open` never carry the parameter map, so credentials in it cannot leak into logs through error messages.
+
+`ctx` only governs construction: if it is cancelled or hits its deadline before construction finishes, `Open` returns an
+error and closes any driver it already built; once construction is done, its cancellation and deadline no longer affect
+the driver. rclone backends keep the context they were constructed with and use it for later requests (such as OAuth
+token refreshes), so passing a `ctx` that belongs to a single request or job is safe; values in the context still reach
+the backend.
 
 ### Content-Type on write
 
@@ -318,8 +324,8 @@ itself is in Chinese):
 
 | Situation | Error returned | Error text |
 |---|---|---|
-| A parameter value contains a line break (`\n` or `\r`), or reads back as something other than its original value (leading or trailing whitespace, a `%(name)s` style reference, and so on) | `*rclone.UnrepresentableError`, with the section name in `Remote` and the parameter name in `Key` | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>"` |
-| The generated text cannot be parsed the way rclone reads it | An error wrapping `ErrUnrepresentable` | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
+| A parameter value contains a line break (`\n` or `\r`), makes the file unparseable on its own (such as a value starting with `"""`), or reads back as something other than its original value (leading or trailing whitespace, a `%(name)s` style reference, and so on) | `*rclone.UnrepresentableError`, with the section name in `Remote` and the parameter name in `Key` | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>"` |
+| Every value round-trips on its own, but the combined text cannot be parsed the way rclone reads it | An error wrapping `ErrUnrepresentable` | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
 
 To find out which parameter it was, extract the `*rclone.UnrepresentableError` with `errors.As`:
 
@@ -376,8 +382,8 @@ Without rclone, implement `driver.Driver` yourself and it works with `store/fail
    caller may retry with the same key, and the new `Put` should completely replace whatever was left behind.
 3. **`List` is recursive**: an empty `dir` means all objects; keys are full paths relative to the root; a missing
    directory returns an empty result and nil.
-4. **Fill `ModTime` with the real modification time**: callers use it to judge how old an object is. The application's
-   reconciliation, for example, only reclaims unknown objects whose modification time is older than its grace period.
+4. **Fill `ModTime` with the write time the store records**: callers use it to judge how old an object is. The application's
+   reconciliation, for example, only reclaims unknown objects written longer ago than its grace period.
 5. **Be safe for concurrent use and honor `ctx`.** Check that the implementation is complete with a compile-time
    assertion: `var _ driver.Driver = (*MemDriver)(nil)`.
 

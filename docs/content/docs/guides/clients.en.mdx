@@ -104,7 +104,10 @@ The endpoint and domain are built from the **Public site address**, or from the 
 | GetObject | `GET /s3/<bucket>/<object key>` | The stored original; no on-demand processing, not counted as an access, not subject to hotlink protection; same cache headers as `/o/` aliases |
 | DeleteObject | `DELETE /s3/<bucket>/<object key>` | Deletes the image the key currently points to; returns 204 even if the object does not exist |
 
-Not supported: listing buckets and objects (`ListBuckets`, `ListObjects`), multipart upload, `CopyObject`, bucket creation, ACLs, presigned URLs (query string signing) and SigV2. These requests get a 4xx error.
+Every other operation returns 501 with the S3 error code `NotImplemented` (message `不支持的 S3 操作`, unsupported S3 operation): listing buckets and objects (`ListBuckets`, `ListObjects`), bucket creation, multipart upload, batch delete, copying objects (`CopyObject`, that is any request with an `x-amz-copy-source` header), and any request with a subresource query parameter (such as `?acl`, `?tagging`, `?uploads` or `?partNumber=…&uploadId=…`; every query parameter except `x-id` counts as a subresource).
+S3 clients do not retry 501 automatically, so they report the error straight away instead of retrying. This check runs after signature verification, so a request with a bad signature gets the signature error first.
+
+Two other unsupported uses are rejected during signature verification and get 400: a presigned URL (signature in the query string) has no `Authorization` header and gets `AuthorizationHeaderMalformed`; a SigV2 signature gets `InvalidRequest`.
 ACL headers sent by a client do not cause an error and have no effect.
 
 Signing and request bodies:
@@ -133,9 +136,11 @@ Errors come back as S3-style XML, and clients act on the `Code`:
 | Object does not exist, or the image it points to has expired | 404 | `NoSuchKey` |
 | No healthy channel to write to during upload, or fewer synchronous copies than the minimum succeeded | 503 | `ServiceUnavailable` |
 | Object temporarily unreadable (GET / HEAD) | 503 | `ServiceUnavailable` |
+| Upload concurrency gate full, or the user is uploading too fast | 429 | `SlowDown` |
+| Unsupported operation | 501 | `NotImplemented` |
 | Any other server error | 500 | `InternalError` |
 
-When the upload concurrency gate is full or the rate limit is hit, the response is 429 with a JSON error envelope (error code `upload_busy` or `upload_rate_limited`) rather than XML.
+The 429 message is `上传并发已满,请稍后重试` (concurrency gate full) or `上传过于频繁,请稍后重试` (uploading too fast), with a `Retry-After` header (1 second when the gate is full, 60 seconds for the rate limit); S3 clients treat `SlowDown` as retryable and back off before retrying. Every error on the S3 surface uses this XML format; none returns the JSON error envelope.
 
 ### Object key aliases
 

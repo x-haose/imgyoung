@@ -8,6 +8,7 @@ description: Upgrade commands for each installation method, the database migrati
 1. Read the [release notes](https://github.com/x-haose/imgyoung/releases) of the target version.
 2. Keep a copy of the metadata database to roll back to: in the admin console, go to **Settings → Backups & export → Metadata snapshots**, click **Back up now**, then **Download** that snapshot and store it off the server. Alternatively, stop the service and copy `<data dir>/imgyoung.db` (only consistent once stopped).
 3. Make sure `master.key` is backed up; see [Configuration](../configuration.mdx#master-key).
+4. Check **Settings → Runtime settings → Access & links → Public site address** in the admin console. If it is not a site root starting with `http://` or `https://` (for example `img.example.com` without a scheme, or `https://example.com/img` with a path), note it down: the upgrade clears it (see [Database migrations](#database-migrations) below), and you need to enter it again as a site root afterwards.
 
 Check the running version with `imgyoung -version`, or under **Server version** in **Settings → Runtime settings → Bootstrap configuration**.
 
@@ -31,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 </Tab>
 <Tab value="Docker">
 
-Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume. If you pass the master key with `-e IMGYOUNG_MASTER_KEY=…`, do not leave it out when recreating the container: the database records a fingerprint of the master key, and the process refuses to start without it.
+Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume. If you pass the master key with `-e IMGYOUNG_MASTER_KEY=…`, do not leave it out when recreating the container: once the database holds data encrypted with a master key (or a master key fingerprint), the process refuses to start without the key rather than generate a new one.
 
 ```bash title="Terminal"
 docker pull ghcr.io/x-haose/imgyoung:latest
@@ -87,6 +88,7 @@ Migrations are embedded in the binary and run automatically on every start, righ
 - the replication subsystem's job queue tables are migrated at startup as well.
 - runtime settings added by a migration are filled in with their factory defaults; existing values are untouched.
 - the `b20_failure_reasons` migration adds a structured category to channel and replica failures: existing failures are recorded as `unclassified`, with the original sentence kept as the root-cause text, until the next check or replication attempt overwrites them.
+- the `b22_settings_constraints` migration brings stored runtime settings within the tightened ranges: a WebP quality of 0 becomes 75 (the encoder already treated 0 as 75), and a public site address `base_url` that is not an http / https site root is cleared — for example a value without a scheme, or with a path, query, fragment or user info. Once cleared, the public address is derived from each request, and CDN cache purging and one-click cloud drive authorization, which depend on it, stop working; enter it again in the admin console after upgrading, in the form `https://img.example.com`.
 - if the database records a migration version this binary does not know (it was migrated by a newer version), startup is refused; see [Rolling back](#rolling-back) below.
 - if a migration fails, the process exits with an error naming the failing migration file. Roll back using your pre-upgrade snapshot (see below).
 

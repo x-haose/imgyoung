@@ -104,7 +104,10 @@ ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集，凭证就是上传 To
 | GetObject | `GET /s3/<桶>/<对象键>` | 返回保存的原图，不做按需处理，不计访问，不受防盗链约束；缓存头与 `/o/` 别名相同 |
 | DeleteObject | `DELETE /s3/<桶>/<对象键>` | 删除该对象键当前指向的图；对象不存在也返回 204 |
 
-不支持：列举桶与对象（`ListBuckets`、`ListObjects`）、分片上传、`CopyObject`、建桶、ACL、预签名 URL（查询串签名）与 SigV2 签名。这些请求得到 4xx 错误。
+其余操作一律返回 501，S3 错误码 `NotImplemented`（文案 `不支持的 S3 操作`）：列举桶与对象（`ListBuckets`、`ListObjects`）、建桶、分段上传、批量删除、复制对象（`CopyObject`，即带 `x-amz-copy-source` 头的请求），以及带子资源查询参数的请求（如 `?acl`、`?tagging`、`?uploads`、`?partNumber=…&uploadId=…`；除 `x-id` 外的任何查询参数都视为子资源）。
+501 不在 S3 客户端的自动重试范围内，客户端会直接报错而不是反复重试。这一判断在验签之后，签名不对的请求先得到签名错误。
+
+另外两种不支持的用法在验签阶段就被拒绝，得到 400：预签名 URL（签名放在查询串里）没有 `Authorization` 头，返回 `AuthorizationHeaderMalformed`；SigV2 签名返回 `InvalidRequest`。
 客户端随请求带的 ACL 头不报错，也不起作用。
 
 签名与正文：
@@ -133,9 +136,11 @@ ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集，凭证就是上传 To
 | 对象不存在，或指向的图已到期 | 404 | `NoSuchKey` |
 | 上传时没有健康渠道可写，或同步写入的份数达不到最少同步副本数 | 503 | `ServiceUnavailable` |
 | 对象暂时读不出来（GET / HEAD）| 503 | `ServiceUnavailable` |
+| 上传并发已满，或该用户上传过于频繁 | 429 | `SlowDown` |
+| 不支持的操作 | 501 | `NotImplemented` |
 | 其余服务端错误 | 500 | `InternalError` |
 
-上传并发已满或频率超限时返回 429，响应体是 JSON 错误信封（错误码 `upload_busy` 或 `upload_rate_limited`）而不是 XML。
+429 的文案是 `上传并发已满,请稍后重试` 或 `上传过于频繁,请稍后重试`，带 `Retry-After` 头（并发满为 1 秒，频率超限为 60 秒）；S3 客户端把 `SlowDown` 当作可重试的错误，会退避后重试。S3 面的错误一律是这种 XML，不返回 JSON 错误信封。
 
 ### 对象键别名 [#object-key-aliases]
 

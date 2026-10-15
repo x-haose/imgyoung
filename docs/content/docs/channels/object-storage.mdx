@@ -27,10 +27,14 @@ description: 内置对象存储模板逐个要填什么、为什么要预先建�
 
 每个对象存储模板还有一个可选的「公开访问地址」，见下文。字段说明：
 
-- **存储桶**：桶名，可以接 `/前缀` 把渠道限定在桶内的一个目录，如 `my-bucket` 或 `my-bucket/imgyoung`。这个值就是渠道的存储路径。腾讯云 COS 的桶名要带 APPID 后缀，如 `mybucket-1250000000`。
-- **区域**：AWS、COS、OSS 的下拉只列常用区域；阿里云的取值带 `oss-` 前缀（如 `oss-cn-hangzhou`）。所需区域不在列表里时，用「S3 兼容（通用）」手填端点。B2 的区域手填（如 `us-west-004`），要与 B2 后台显示的端点一致。
-- **账户 ID**：Cloudflare 账户 ID，用来拼 R2 端点。
-- **服务端点 / S3 API 端点**：完整 URL，如 `https://minio.example.com`。
+| 键 | 界面名称 | 说明 |
+|---|---|---|
+| `access_key_id`、`secret_access_key` | Access Key / Secret Key（COS 为 SecretId / SecretKey；B2 为 Key ID / Application Key）| 凭证 |
+| `region` | 区域 | AWS、COS、OSS 的下拉只列常用区域，每项显示区域名称，后面灰字是实际取值，如「美国东部（俄亥俄）」后接 `us-east-2`；阿里云的取值带 `oss-` 前缀（如 `oss-cn-hangzhou`）。所需区域不在列表里时，用「S3 兼容（通用）」手填端点。B2 的区域手填（如 `us-west-004`），要与 B2 后台显示的端点一致 |
+| `account_id` | 账户 ID | Cloudflare 账户 ID，用来拼 R2 端点 |
+| `endpoint` | 服务端点 / S3 API 端点 | 完整 URL，如 `https://minio.example.com` |
+| `bucket` | 存储桶 | 桶名，可以接 `/前缀` 把渠道限定在桶内的一个目录，如 `my-bucket` 或 `my-bucket/imgyoung`。这个值就是渠道的存储路径。腾讯云 COS 的桶名要带 APPID 后缀，如 `mybucket-1250000000` |
+| `public_base_url` | 公开访问地址 | 可选的公开访问 URL 前缀，见下文 |
 
 ## 预先建好存储桶
 
@@ -55,7 +59,8 @@ ImgYoung 给所有 `s3` 渠道默认加上 `no_check_bucket=true`：rclone 上�
 1. 「设置 → 运行配置 → 访问与链接 → 访问模式」为 `redirect · 302 直链`；
 2. 渠道打开了「允许 302 直链」，且未加密；
 3. 渠道配置了公开访问地址；
-4. 渠道健康，这张图在它上面的副本已就绪，并且是按优先级排在最前的满足上述条件的渠道。
+4. 渠道健康，这张图在它上面的副本已就绪，并且是按优先级排在最前的满足上述条件的渠道；
+5. 这次请求不生成衍生图：带 `w`、显式指定与原图不同的 `format`，或按 `Accept` 协商到 WebP（浏览器访问 JPEG / PNG 默认如此）时，会生成衍生图并走代理。
 
 任一条件不满足就走代理。打开「允许 302 直链」却没填公开访问地址时，表单提示「未配置 public_base_url，302 直链不会生效，访问将回落代理」。
 
@@ -69,7 +74,8 @@ ImgYoung 给所有 `s3` 渠道默认加上 `no_check_bucket=true`：rclone 上�
 
 - **rclone 驱动**：后端名，即 `rclone.conf` 里 `type` 的值，如 `s3`、`sftp`、`local`。
 - **后端参数**：键值对，键是该后端的选项名，与 `rclone.conf` 里的写法一致，只允许字母、数字与下划线。从 `rclone config show` 的输出里照抄即可（`type` 一行填到「rclone 驱动」）。
-- 两个约定键不交给 rclone：`path` 是后端内的存储路径（桶名及前缀，或目录）；`public_base_url` 是公开访问地址。`local` 后端不填 `path` 时使用 `<数据目录>/blobs`。
+- 两个约定键不交给 rclone：`path` 是后端内的存储路径（桶名及前缀，或目录）；`public_base_url` 是公开访问地址。`local` 后端的 `path` 必须是绝对路径（相对路径返回 400，错误码 `channel_local_path_relative`），不填时使用 `<数据目录>/blobs`。
+- 参数值一律以掩码输入框显示，可逐栏点开查看：自定义的键哪些是凭证，界面无从判断。
 
 密码类参数（rclone 标记为密码的选项，如 `sftp`、`ftp`、`webdav` 的 `pass`）在 rclone 里要以编码后的形式保存。ImgYoung 自动处理：填明文会被编码；已经是编码结果的值（例如从 `rclone.conf` 复制来的）原样保留。极少数明文密码恰好形似编码结果，会被原样放过，表现为认证失败；遇到这种情况先执行 `rclone obscure <密码>`，把输出填进去。
 
@@ -85,13 +91,13 @@ rclone 驱动   sftp
 
 通用 WebDAV 模板在选类型的「网盘」分组里，覆盖坚果云、Nextcloud / ownCloud、群晖、Alist 等。这些服务底层都是 rclone 的 `webdav` 后端，只是服务地址与「服务类型」不同，所以只有一个模板。
 
-| 字段 | 说明 |
-|---|---|
-| 服务地址 | WebDAV 根地址。坚果云 `https://dav.jianguoyun.com/dav/`；Nextcloud / ownCloud `https://域名/remote.php/dav/files/用户名/`；Alist `https://域名/dav/`；群晖 `https://域名:5006/` |
-| 服务类型 | 选错会导致列目录或分片上传行为异常；拿不准选「其他（坚果云 / Alist / 群晖等）」 |
-| 用户名 | WebDAV 账号 |
-| 密码 | 坚果云必须用「应用密码」，不能用登录密码，在坚果云的安全选项里生成 |
-| 存储目录 | 服务内用于存放图片的目录，默认提示 `imgyoung`；留空存放在根目录 |
+| 键 | 界面名称 | 说明 |
+|---|---|---|
+| `url` | 服务地址 | WebDAV 根地址。坚果云 `https://dav.jianguoyun.com/dav/`；Nextcloud / ownCloud `https://域名/remote.php/dav/files/用户名/`；Alist `https://域名/dav/`；群晖 `https://域名:5006/` |
+| `vendor` | 服务类型 | 选错会导致列目录或分片上传行为异常；拿不准选「其他（坚果云 / Alist / 群晖等）」 |
+| `user` | 用户名 | WebDAV 账号 |
+| `pass` | 密码 | 坚果云必须用「应用密码」，不能用登录密码，在坚果云的安全选项里生成 |
+| `path` | 存储目录 | 服务内用于存放图片的目录，默认提示 `imgyoung`；留空存放在根目录 |
 
 「服务类型」的选项与 rclone `vendor` 参数的对应：
 
@@ -112,7 +118,7 @@ WebDAV 渠道没有公开访问地址，表单里也不显示「允许 302 直�
 
 ### 失败原因
 
-「测试连接」的失败原因、渠道状态列「异常」的悬停原因、图片详情里副本的补齐失败原因，都是同一种结论：按底层错误的特征归类（不区分大小写，自上而下取第一条命中），归类说明后面的括号里附根因原文。根因原文是错误链最内层的错误，多为服务商或网络库的英文原文，已抹除凭证（rclone 标记为密码或敏感信息的参数值），截断到 200 个字符。无法归类时只显示根因原文。
+「测试连接」的失败原因、渠道状态列「异常」的悬停原因、图片详情里副本的补齐失败原因，都是同一种结论：按底层错误的特征归类（不区分大小写，自上而下取第一条命中），归类说明后面的括号里附根因原文。根因原文是错误链最内层的错误，多为服务商或网络库的英文原文，已抹除凭证（rclone 标记为密码或敏感信息的参数值），最多 200 个字符，超长时截到 199 个字符再加「…」。无法归类时只显示根因原文。
 
 接口里这份结论是 `{reason, detail}`（渠道的结论另有失败环节 `stage`，见[渠道与容灾](./index.mdx)）。各归类如下，界面说明随界面语言显示：
 
@@ -127,8 +133,8 @@ WebDAV 渠道没有公开访问地址，表单里也不显示「允许 302 直�
 | `region_mismatch` | 「区域不匹配：检查所选区域与存储桶实际所在区域」| `PermanentRedirect`、`AuthorizationHeaderMalformed` | 区域或端点与桶的实际区域不一致 |
 | `dns` | 「无法解析服务端点域名：检查 endpoint 配置」| `no such host`、`server misbehaving` | 端点拼写错误，或服务器 DNS 不通 |
 | `connect` | 「无法连接服务端点：检查 endpoint 地址与端口」| `connection refused`、`connection reset` | 端口、协议或防火墙问题 |
-| `tls` | 「TLS 证书校验失败：检查端点证书或改用正确协议」| `certificate`、`x509`、`tls handshake` | 自签证书，或把 `http` 服务写成了 `https` |
-| `timeout` | 「连接超时：检查端点地址与网络连通性」| 超时（含探测自身的 10 / 20 秒超时）| 网络不通或服务过慢 |
+| `tls` | 「TLS 证书校验失败：检查端点证书或改用正确协议」| `certificate`、`x509`、`tls handshake`（握手超时 `TLS handshake timeout` 除外，归为 `timeout`）| 自签证书，或把 `http` 服务写成了 `https` |
+| `timeout` | 「连接超时：检查端点地址与网络连通性」| 超时，含 `TLS handshake timeout`、探测自身的 10 / 20 秒超时与装载的 30 秒超时 | 网络不通或服务过慢 |
 | `permission` | 「存储路径无写入权限：检查目录权限」| `permission denied`、`read-only file system` | `local` 渠道的目录权限；容器内以 uid 65532 运行时，挂载目录要对它可写 |
 | `probe_mismatch` | 「探测对象读回内容不一致：存储端改写或截断了对象」| 深探测读回的内容与写入的不同 | 存储服务在静默改写或截断对象，检查它的设置，或换一个存储服务 |
 | `config_unreadable` | 「渠道配置无法解密：主密钥与写入配置时的不同」| 装载时渠道配置解不开 | 换回写入配置时的主密钥 |
@@ -139,7 +145,7 @@ WebDAV 渠道没有公开访问地址，表单里也不显示「允许 302 直�
 
 ### 保存表单时的拒绝
 
-下列错误在提交时直接返回 400，不会建出渠道（渠道名重复与清理中渠道为 409）。接口的错误响应是 `{code, error, params}`：`code` 是稳定的错误码，`error` 是服务端的中文文案，`params` 填文案里的占位符；后台按错误码与参数显示当前界面语言的文案。
+下列错误在提交时直接返回 400，不会建出渠道（渠道名重复、清理中渠道与并发改动为 409）。接口的错误响应是 `{code, error, params}`：`code` 是稳定的错误码，`error` 是服务端的中文文案，`params` 填文案里的占位符；后台按错误码与参数显示当前界面语言的文案。
 
 | 错误码 | 服务端文案 | 原因 |
 |---|---|---|
@@ -147,10 +153,12 @@ WebDAV 渠道没有公开访问地址，表单里也不显示「允许 302 直�
 | `channel_name_exists` | `渠道名已存在` | 渠道名重复（409）|
 | `channel_backend_failed` | `渠道参数非法: 后端初始化失败: {detail}` | 用填写的参数试构造后端失败，或新授权的 OneDrive 渠道选定驱动器时向服务商查询失败；`params` 里另有归类 `reason`，`detail` 是根因原文 |
 | `channel_unknown_backend` | `渠道参数非法: 未知的后端 {driver}` | 自定义模式的驱动名拼错 |
+| `channel_local_path_relative` | `渠道参数非法: local 渠道的路径须为绝对路径,收到 {path}` | `local` 渠道的 `path` 填了相对路径 |
 | `channel_config_key_invalid` | `渠道参数非法: 配置键 {key} 非法(仅允许字母数字下划线)` | 自定义参数的键含其他字符（如 `-`）|
 | `channel_bucket_failed` | `自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): {detail}` | 打开了「自动创建存储桶」，但凭证没有建桶权限 |
 | `channel_keep_not_secret` | `渠道参数非法: 字段 {field} 不是凭证,不能沿用已存值` | 掩码值 `__imgyoung_secret_keep__` 填在了不属于凭证的参数上 |
 | `channel_keep_no_value` | `渠道参数非法: 字段 {field} 无已存原值可保留,请重新填写` | 提交了掩码值，但该参数在已存配置里没有值 |
 | `channel_deleting` | `渠道正在清理中,不能修改或探测` | 渠道已在「清理中」（409）|
+| `channel_config_changed` | `渠道配置在保存期间已被改动(另一次编辑,或服务商刷新了授权令牌),请重新保存` | 编辑保存期间渠道配置被另一次编辑或令牌写回改动（409），重新保存即可 |
 
 渠道已建好但状态为「异常」时，改好配置后在行菜单点「重新探测」，它会立即做一次深探测并刷新状态。探测与状态的规则见[渠道与容灾](./index.mdx)。

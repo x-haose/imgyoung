@@ -76,14 +76,15 @@ Each encrypted channel's password and salt are derived from the **master key** a
 | Given to rclone | The lower-case hex string of the 32-byte result (64 characters), as crypt's `password` and `password2` respectively |
 
 - The **channel ID** and **created at** come from the `id` and `created_at` columns of the `channels` table in the metadata database. `created_at` is UTC text written by SQLite, such as `2026-10-15 08:00:00`, and is used verbatim.
-- The creation time is part of the input because SQLite reuses IDs of deleted channels; binding to the ID alone would let a new channel derive the same keys as a deleted one.
+- The channel ID and the creation time are both fixed when the channel is created and never change. Channel IDs are never reused: a channel created after deleting another gets a new ID and therefore derives a different password and salt.
 - Keys of different channels are independent; leaking one channel's keys does not expose the others.
 
 The **master key** comes from the environment variable `IMGYOUNG_MASTER_KEY` (64 hex characters) or, when that is unset or empty, from `<data dir>/master.key`. It encrypts the channel configurations as well as deriving the channel keys. It is not part of the data export or of metadata snapshots.
 
 The first start with a given master key records a fingerprint derived from it in the metadata database (the key cannot be recovered from it), and every later start checks it:
 
-- `master.key` is generated (with permissions 0600) only when a brand-new metadata database finds no master key.
+- `master.key` is generated (with permissions 0600) only when a brand-new metadata database (no fingerprint and no data encrypted with a master key) finds no master key.
+- If the database has no fingerprint but already holds data encrypted with a master key (written by an older version that recorded no fingerprint, for example after restoring an old snapshot), no new key is generated either: the master key is checked by decrypting that data, startup fails if it cannot, and the fingerprint is recorded once it can.
 - Once a fingerprint is recorded, a missing master key (no environment variable and no `master.key`) or one that does not match makes startup fail with an explanation; no new key is generated.
 - When restoring a snapshot from another instance, switch to that instance's master key as well.
 
@@ -154,7 +155,7 @@ remote = imgyoung-3:my-bucket/imgyoung
 - The comments come in English and Chinese. A download from the console follows the console language; calling `GET /api/admin/channels/{id}/rclone-config` directly takes the `lang` query parameter (`zh-CN` or `en`), falls back to the request's `Accept-Language`, and defaults to Chinese without that header. The `Content-Language` response header names the language; an invalid `lang` answers 400 with error code `lang_invalid`.
 - For drive channels holding an OAuth token, the comments add a short note: rclone refreshes the token when using this file and writes it back into the file; with providers whose refresh tokens are single-use, such as Box, the file and an ImgYoung still using the channel invalidate each other's tokens, so do not use both at once. Also, once ImgYoung refreshes the token, the copy in the file is stale; with Box and the like its refresh token is invalidated and you need to export again.
 - A `local` channel exports an absolute path on the server (for the built-in local channel `<data dir>/blobs`; a relative data directory is resolved against the working directory at startup); change it to the real location when using the file on another machine.
-- If a parameter value cannot be written into an rclone config file (a line break, for example), the export returns 422 with error code `channel_unrepresentable`; the error names only the remote and the parameter key, never the value. Every download is recorded in the audit log as "Export channel rclone config".
+- If any parameter value cannot be written into an rclone config file (one containing a line break, or starting with `"""`, for example), the export returns 422 with error code `channel_unrepresentable`; the error names only the remote and the parameter key, never the value. Every download is recorded in the audit log as "Export channel rclone config".
 
 ### Without an exported file: deriving by hand
 

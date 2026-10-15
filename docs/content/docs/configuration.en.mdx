@@ -37,7 +37,7 @@ Runtime settings live in the metadata database, so they are included in metadata
     hands the container exactly that empty string; to get the default, leave the variable unset.
 
   The **Bootstrap configuration** card in the admin console shows an empty network list as "Empty: forwarded headers are never trusted" or "Empty: open to no one".
-- Both network lists are parsed at startup. An entry that is neither a CIDR nor an IP fails startup, and the error names the variable and the bad entry. The listen address is checked when the port is bound and the master key when it is parsed; invalid values also fail startup.
+- Both network lists are parsed at startup. An entry that is neither a CIDR nor an IP fails startup, and the error names the variable and the bad entry. The listen address is checked when the port is bound and the master key when it is parsed; invalid values also fail startup. Fatal runtime errors (port already in use, invalid listen address, the HTTP server exiting abnormally, the replication subsystem failing to start) log one Error line `运行失败` (run failed) and exit with code 1.
 - The Docker image sets `IMGYOUNG_DATA_DIR=/data`; `deploy/imgyoung.service` sets it to `/var/lib/imgyoung`.
 
 Where to set environment variables for each deployment:
@@ -113,7 +113,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 | Key | UI label | Default | Valid values | Notes |
 |---|---|---|---|---|
 | `access_mode` | Access mode | `proxy` | `proxy` / `redirect` | `proxy`: images are read from a channel and served by ImgYoung; a failed read moves on to the next channel immediately. `redirect`: original-image requests get a 302 to a channel that allows direct links, sent with `Cache-Control: no-store`; see [CDN](./operations/cdn.mdx) |
-| `base_url` | Public site address | Empty | Empty, or an `http` / `https` site root such as `https://img.example.com`, with no path, query, fragment or user info; a trailing `/` is removed before the check | Empty means it is derived from each request. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
+| `base_url` | Public site address | Empty | Empty, or an `http` / `https` site root such as `https://img.example.com`, with no path, query, fragment or user info, and not ending in a bare `?` or `#`; a trailing `/` is removed before the check | Empty means it is derived from each request; a stored value that does not meet these rules is cleared by a database migration on upgrade. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
 | `min_success` | Minimum synced replicas | `1` | ≥ 1 | Channels that must be written synchronously before an upload succeeds; if the healthy channels cannot provide that many, the upload fails with 503 |
 | `encrypt_new_channels` | Encrypt new channels by default | Off | On / off | Whether a new channel is encrypted when the form does not choose explicitly; encryption is fixed when the channel is created |
 
@@ -124,14 +124,14 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 | `max_upload_mb` | Max image size | `50` | ≥ 1, MB (1 MB = 1024 × 1024 bytes) | Applies to the image itself: a file exactly at the limit is accepted, anything larger gets 413; a multipart request body is additionally capped at "this limit + 64 KiB". Also caps URL imports, S3 uploads, and the source image read for on-demand processing: after lowering it, older images above the new limit fall back to the original instead of being resized or converted |
 | `max_pixels_mp` | Pixel budget | `50` | ≥ 1, megapixels | Images whose width × height exceeds `max_pixels_mp × 1,000,000` are rejected (422) |
 | `max_concurrent_uploads` | Concurrent uploads | `8` | ≥ 1 | One global limit shared by data-plane uploads, URL imports, admin console uploads and every request on the S3 endpoint; when full, requests get 429 (`Retry-After: 1`) immediately |
-| `upload_rate_per_min` | Upload rate limit | `0` | ≥ 0, per minute | Per user, shared between tokens and admin console uploads; burst equals the per-minute allowance. Excess requests get 429 (`Retry-After: 60`). `0` disables it |
+| `upload_rate_per_min` | Upload rate limit | `0` | ≥ 0, per minute | Per user, shared between tokens, admin console uploads and S3; burst equals the per-minute allowance. Excess requests get 429 (`Retry-After: 60`). `0` disables it |
 
 ### Lifecycle
 
 | Key | UI label | Default | Valid values | Notes |
 |---|---|---|---|---|
 | `default_ttl_hours` | Default lifetime | `0` | ≥ 0, hours | Used when an upload sets no `ttl` and the user has no default of their own. `0` means never expires |
-| `ttl_renew_on_access` | Renew on access | On | On / off | A public access (GET) to a time-limited image that has not yet expired moves its expiry to the time the access is flushed plus its lifetime. An image past its expiry is unreachable right away and is never renewed |
+| `ttl_renew_on_access` | Renew on access | On | On / off | After a public access (GET) to a time-limited image, if the image has not yet expired at the moment access records are flushed to the database, its expiry moves to the flush time plus its lifetime; an image already expired at flush time is not renewed. An image past its expiry is unreachable right away |
 | `cold_cleanup_days` | Cold image threshold | `90` | ≥ 0, days | Images without public access for this long go to **Cleanup** for a manual decision; nothing is deleted automatically. `0` disables marking |
 | `delete_grace_minutes` | Delete grace period | `0` | ≥ 0, minutes | Wait between a stored image losing its last reference and its channel objects being deleted. The deletion time is fixed when the reference count reaches zero, using the value at that moment; later changes do not affect it. `0` deletes on the next cleanup sweep |
 | `cleanup_sweep_seconds` | Cleanup sweep interval | `60` | ≥ 1, seconds | Cadence for expiring references, physical deletion, cold-image marking, and reclaiming idempotency keys and audit log entries |
@@ -145,11 +145,11 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 | `process_widths` | Width tiers | `[100,200,400,800,1600]` | Array of positive integers, pixels; may be empty | `?w=` accepts only these values, anything else gets 400; empty disallows resizing |
 | `process_formats` | Target formats | `["webp","jpeg","png"]` | Non-empty subset of `webp`, `jpeg`, `png` | `?format=` accepts only these values. With `webp` included, browsers that support WebP automatically get WebP for JPEG / PNG images |
 | `exif_policy` | Default EXIF policy | `passthrough` | `passthrough` (keep) / `strip` (remove metadata) | Default EXIF handling at upload; a single upload can override it with the `exif_policy` form field; does not apply to S3 uploads, which are stored byte for byte |
-| `process_quality_webp` | WebP quality | `80` | 0–100 | |
+| `process_quality_webp` | WebP quality | `80` | 1–100 | 0 is not accepted: the encoder treats 0 as its default quality of 75. A stored 0 is rewritten to 75 by a database migration on upgrade, which changes nothing in effect |
 | `process_quality_jpeg` | JPEG quality | `85` | 1–100 | |
 | `process_webp_method` | WebP effort | `4` | 0–6 | Higher is slower and smaller |
 | `process_workers` | Processing concurrency | `4` | ≥ 1 | Concurrent processing jobs; time spent waiting for a slot counts toward the timeout |
-| `process_timeout_ms` | Processing timeout | `5000` | ≥ 1, milliseconds | Includes queueing; on timeout the original is served with `Cache-Control: no-store` |
+| `process_timeout_ms` | Processing timeout | `5000` | ≥ 1, milliseconds | Covers only waiting for a processing slot and reading the original, not the encoding itself; on timeout the original is served with `Cache-Control: no-store` |
 | `variants_cache_mb` | Variant cache limit | `10240` | ≥ 1, MB | Variants are cached in `<data dir>/variants/`; beyond the limit the least recently accessed are evicted |
 
 ### Deduplication
@@ -165,7 +165,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 |---|---|---|---|---|
 | `health_check_seconds` | Health check interval | `60` | ≥ 1, seconds | Cadence of channel health checks and alert evaluation |
 | `backup_interval_hours` | Backup interval | `24` | ≥ 1, hours | Interval between automatic metadata snapshots. At startup, a backup runs right away if any healthy channel lacks a snapshot within this interval. See [Backup & restore](./operations/backup.mdx) |
-| `backup_keep` | Backups to keep | `7` | ≥ 1 | Snapshots are written to every channel that is healthy and not being cleaned up; after each write, that channel keeps only the newest this many |
+| `backup_keep` | Backups to keep | `7` | ≥ 1 | Snapshots are written to every channel that is healthy and not being cleaned up; after each write, that channel keeps only the newest this many. If any channel fails to remove old snapshots, the round counts as failed (error code `backup_prune_failed`) and opens the backup failed alert |
 | `usage_report_seconds` | Usage report interval | `300` | ≥ 1, seconds | Only controls how often the `imgyoung_channel_storage_bytes` metric is refreshed; usage alerts are evaluated on the health check interval |
 | `channel_quota_gb` | Channel usage alert threshold | `0` | ≥ 0, GB (1 GB = 2³⁰ bytes) | Opens an alert when a channel's stored data (sum of image sizes of its completed replicas) exceeds this; writes are not blocked. `0` disables the alert |
 
@@ -211,7 +211,7 @@ When `PUT /api/admin/config` refuses to save, it returns 400 with the standard e
 | `setting_range` | Outside the allowed range (quality levels, WebP speed trade-off) | `key`, `value`, `min`, `max` |
 | `setting_option` | Not one of the allowed values (access mode, default EXIF policy, target formats) | `key`, `value`, `options` |
 | `setting_url` | Not an `http` / `https` address with a host (alert webhook URL) | `key`, `value` |
-| `setting_site_root` | Not a site root: it must be an `http` / `https` address with a host and no path, query, fragment or user info (public site address) | `key`, `value` |
+| `setting_site_root` | Not a site root: it must be an `http` / `https` address with a host and no path, query, fragment or user info, and must not end in a bare `?` or `#` (public site address) | `key`, `value` |
 | `setting_empty` | Must not be empty (target formats) | `key` |
 
 If the request body is not a non-empty JSON object mapping setting keys to new values, the response is 400 with code `settings_body_invalid`. The admin console uses the code and parameters to show the message in the current UI language.
@@ -233,10 +233,15 @@ neither read nor created; otherwise it is read from `master.key` in the data dir
 against the **master key fingerprint** recorded in the database. The fingerprint lives in the single-row table
 `master_key_fingerprint`; it is derived from the master key with HKDF-SHA256 and cannot be reversed into the key.
 
-- **No fingerprint in the database yet** (a brand-new database, or one that has never recorded a fingerprint): if
-  neither source has a key, `master.key` is generated in the data directory (64 hex characters plus a newline, mode
-  `0600`, written to a temporary file and renamed) and a warning is logged telling you to back it up; the key's
-  fingerprint is then written to the database.
+- **No fingerprint and no data encrypted with a master key** (a brand-new database): if neither source has a key,
+  `master.key` is generated in the data directory (64 hex characters plus a newline, mode `0600`, written to a
+  temporary file and renamed) and a warning is logged telling you to back it up; the key's fingerprint is then
+  written to the database.
+- **No fingerprint, but data encrypted with a master key already exists** (channel configurations or the Cloudflare
+  API token, written by an older version that did not record fingerprints, or restored from such an old snapshot): no
+  new key is generated and the master key must be present. It is checked by whether it can decrypt that existing data;
+  if it cannot, startup is refused (with the same error as a key that does not match the database), and only if it
+  can is the fingerprint written to the database.
 - **A fingerprint is already recorded**: the master key must be present and must match. If `IMGYOUNG_MASTER_KEY` is
   unset or empty and there is no `master.key` in the data directory, or the key does not match the fingerprint,
   startup is refused with an explanation, and no new key is generated. Only a brand-new database ever gets a generated `master.key`.
@@ -287,7 +292,7 @@ sudo cp /var/lib/imgyoung/master.key ./imgyoung-master.key
 
 ### Losing it, or starting with the wrong one
 
-The master key cannot be rotated. Once the database has recorded the fingerprint, both a wrong key and a missing key are stopped at startup:
+The master key cannot be rotated. Once the database has recorded the fingerprint (or holds data encrypted with a master key even without a fingerprint), both a wrong key and a missing key are stopped at startup:
 
 - A different master key (for example a mistyped `IMGYOUNG_MASTER_KEY`): startup is refused and the error tells you to
   switch back to the original key; with the original key back, the process starts normally.

@@ -31,7 +31,7 @@ http ──→ core ──→ infra
 | Layer | Directory | Responsibility |
 |---|---|---|
 | store | `store/` | The public storage engine: the `driver` interface, the `rclone` implementation, and the `failover` primitives. See [Using it as a Go library](./library/index.mdx) |
-| infra | `internal/infra/` | Infrastructure and outbound adapters: `config` (bootstrap and runtime settings), `db` (schema, queries, migrations, sqlc-generated code), `secret` (master key and encryption), `id` (short IDs), `imaging` (image processing), `cdn`, `urlfetch` (fetching for URL imports), `observability` (metrics), `version` |
+| infra | `internal/infra/` | Infrastructure and outbound adapters: `config` (bootstrap and runtime settings), `db` (schema, queries, migrations, sqlc-generated code), `secret` (master key and encryption), `errcode` (error codes and their Chinese message catalog), `id` (short IDs), `imaging` (image processing), `cdn`, `urlfetch` (fetching for URL imports), `observability` (metrics), `version` |
 | core | `internal/core/` | Business core: `channel` (channels and health checks), `replication` (replication, reconciliation, draining, CDN purge), `upload`, `variants` (on-demand processing), `dedup`, `lifecycle`, `reliability` (backup and restore), `auth`, `audit`, `referer`, `usage`, `alert` |
 | http | `internal/http/` | Inbound HTTP: `publicapi` (uploads and image access), `s3api` (the S3 protocol surface), `adminapi` (admin console), `middleware`, `httpx`, `router` |
 | Composition root | `cmd/imgyoung/` | `build.go` constructs the object graph by hand in the order infrastructure → services → HTTP, `serve.go` orchestrates startup and shutdown with oklog/run, and `loops.go` holds the periodic loops |
@@ -92,14 +92,14 @@ The remaining tables:
 
 | Table | Contents |
 |---|---|
-| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest failure conclusion (stage, classification, and root cause; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
+| `channels` | Channels: an auto-increment primary key that is never reused after deletion (`AUTOINCREMENT`; replication, deletion and drain jobs refer to channels by key only), rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest failure conclusion (stage, classification, and root cause; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
 | `variants` | Index of the variant cache: one row per blob and processing parameter set; the bytes live on local disk and are evicted LRU by last access |
 | `settings` | Runtime settings in a single-row wide table; each column's DEFAULT is the factory value. See [Configuration](./configuration.mdx) |
 | `users`, `tokens`, `sessions` | Users and quotas, upload tokens (hashes only), admin sessions (only a hash of the session id plus its bound CSRF token) |
 | `idempotency_keys` | Upload idempotency keys, scoped per user |
 | `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
 | `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records (kind, target, Chinese description, and description parameters) |
-| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. See [Master key](./configuration.mdx#master-key) |
+| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. When there is no fingerprint yet but the database already holds data encrypted with a master key (written by an older version, or restored from an older snapshot), the key is checked by whether it can decrypt that data, and the fingerprint is recorded only if it can. See [Master key](./configuration.mdx#master-key) |
 
 The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
 table and every column. Versioned migrations are generated from it by Atlas, embedded in the binary, and applied in
@@ -164,15 +164,18 @@ stored. Sanitizing happens before hashing, so `sha256` always matches the bytes 
 <Step>
 
 **Writing to channels**: the object key is `{short_id}_{first 8 hex chars of sha256}`; embedding the short ID is the
-last resort for rebuilding from storage if the metadata database is lost entirely. `failover.Write` writes to the
-healthy channels in priority order until `min_success` copies succeed, with a 10-minute timeout per write, moving on to
+last resort for rebuilding from storage if the metadata database is lost entirely. The candidates are the healthy channels whose
+write lease could be taken (see [outbox fencing](#outbox)); `failover.Write` writes to them in priority order until `min_success` copies succeed, with a 10-minute timeout per write, moving on to
 the next channel on failure.
 
 </Step>
 <Step>
 
 **Recording**: one transaction writes the blob, the reference, a replica row for every active channel (`done` for the
-ones written, `pending` for the rest), and the idempotency key.
+ones written, `pending` for the rest), and the idempotency key; only then are the write leases released. A channel
+marked as draining during the write still gets its replica row (so the drain deletes the object) but does not count as
+a valid replica; if fewer than `min_success` synchronous replicas are still on active channels at that moment, the
+upload fails (503) and the objects already written are deleted.
 
 </Step>
 <Step>
@@ -185,7 +188,7 @@ fails, it is only logged; reconciliation picks it up.
 
 The whole upload happens in memory without temporary files. Peak memory is roughly "concurrency × max(per-image size
 limit, decoded memory at the pixel budget)", so lowering these settings adapts ImgYoung to small machines. If the
-channel write succeeds but recording fails, an orphan object is left behind; reconciliation GC reclaims it, and the
+channel write succeeds but recording fails for another reason (a database error, say), an orphan object is left behind; reconciliation GC reclaims it, and the
 channel write is never rolled back.
 
 ## Access data flow
@@ -197,7 +200,8 @@ channel write is never rolled back.
 2. The reference is looked up; if it cannot be found, 404 is returned. A reference past its expiry time is treated as
    missing right away, without waiting for the cleanup task to reclaim it, and an access never renews it.
 3. Processing parameters are validated: a `w` outside the width presets or an explicit `format` outside the allowed
-   formats returns 400 (GIF originals are never processed, so both parameters are ignored for them).
+   formats returns 400. This check does not depend on the original's format: an original that is never processed, such
+   as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones.
 4. Access is counted: only GET requests on the public endpoints add to the in-memory activity, flushed to the database
    in batches every `activity_flush_seconds`; HEAD requests, requests with invalid parameters, and admin console previews are not counted.
 5. On-demand processing kicks in when the image needs resizing or converting: a `w` parameter, an explicit `format`, or
@@ -241,19 +245,29 @@ replica state is the business table `blob_channels`:
   `done` during the scan cannot shift later pages and cause rows to be skipped.
 
 So even if River's job tables are lost or corrupted, the queue can be rebuilt completely from the business table; a job
-that was running when the process was killed is rescheduled by River once it has been stuck in the running state for
-16 minutes. When a channel is created, `pending` replica rows are seeded for every existing blob, and the same
+that was running when the process was killed stays in the running state, and River reschedules it once it has been stuck
+there for longer than both 16 minutes and the job's own timeout: a drain job (`drain_channel`) has a 1-hour timeout and
+is rescheduled after about an hour, every other job after 16 minutes. When a channel is created, `pending` replica rows are seeded for every existing blob, and the same
 machinery brings them in line, with no separate backfill logic.
 
+**Write lease**: uploads, replication, metadata snapshots and deep checks write objects and record them under the
+channel's write lease. Once a channel is marked as draining, new writes are refused; the drain job waits for the writes
+already in progress to finish before it lists objects and records. So a draining channel never ends up with an object
+this service wrote that the drain cannot see.
+
 The other asynchronous jobs follow the same principle: deleting objects from a channel (`delete_object`), draining a
-channel being cleaned up (`drain_channel`: it first deletes the replica objects row by row, so its progress is simply the
-remaining replica rows; then deletes the system objects under `_imgyoung/` on that channel, metadata snapshots included,
-along with deep check leftovers, leaving objects written by other programs alone; and finally deletes the channel record), and purging CDN caches
+channel being cleaned up (`drain_channel`: it first waits for writes in progress on the channel to finish, then deletes the replica objects row
+by row, so its progress is simply the remaining replica rows; then deletes the system objects under `_imgyoung/` on that
+channel, metadata snapshots included, along with deep check leftovers, leaving objects written by other programs alone;
+and finally deletes the channel record. Before each batch of replicas and each system object it checks that the channel
+is still draining, so if an administrator chooses **Remove now** midway it stops and the remaining remote objects are left
+as they are), and purging CDN caches
 (`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
 finally fails are reclaimed by reconciliation GC; only when the same drain job still fails on its 4th attempt (about
 98 seconds after the first failure with River's default backoff) does it write the failure conclusion into the channel
 and raise a `drain_failed` alert — before that the channel just shows as being cleaned up, so a single network blip does
-not trigger an open/resolve pair of alerts. It keeps retrying with backoff; once its attempts run out, reconciliation
+not trigger an open/resolve pair of alerts (a draining channel that fails to load records the conclusion and raises the
+alert immediately, since a channel that cannot be loaded cannot be drained). It keeps retrying with backoff; once its attempts run out, reconciliation
 queues a new job that counts from attempt 1 again, while the recorded conclusion and alert stay until the channel is
 cleaned out, so it never stops (the job's own timeout or a shutdown cancellation does not count as a failure); the way out is **Remove now** on the channel in the admin console (remote objects are kept). When a CDN purge finally
 fails, the edge cache expires once the CDN's own cache lifetime runs out.
@@ -274,16 +288,23 @@ human-readable text lives in the admin console's dictionaries:
   - `reason` is the classification from the contract's `FailureReason` enum, determined from the text of the whole
     error chain; it is `unclassified` when nothing matches.
   - `detail` is the root cause verbatim: the innermost error in the chain, usually the provider's or network
-    library's English message, with credentials scrubbed and truncated to 200 characters.
+    library's English message, with credentials scrubbed and at most 200 characters (cut to 199 plus "…" when longer).
 
-  Check results are only written to active channels, and drain failures only to channels being cleaned up, so the two never overwrite each other.
+  Check results are only written to active channels; a draining channel's conclusion comes only from drain failures and
+  load failures, and marking a channel as draining clears its earlier conclusion, so the two never overwrite each other.
 - **Alerts**: `message` is a Chinese description, accompanied by `params` (string keys and values); webhook payloads carry the same.
+  Alerts written before upgrading to a version with description parameters have none: `params` is `null`, and the UI
+  shows the `message` as is. Webhook deliveries keep order per kind and target: if an earlier one was not delivered, later
+  transitions for the same kind and target wait for the next round and go out in order.
 
-The server does not render text in the requester's language, the same approach as for channel template text: it only
+API errors, failure conclusions and alerts carry only error codes and parameters, and the server does not render text in the requester's language, the same approach as for channel template text: it only
 sends structure, and the text for each language is kept in the front-end dictionaries (`web/src/i18n/*/server.ts`),
 whose keys TypeScript type checking keeps in one-to-one correspondence with the contract's `ErrorCode`,
 `FailureReason`, and other enums, so a missing entry fails the build. The Chinese `error` and alert `message` remain
-for callers that bypass the admin console and for webhook receivers to show as they are.
+for callers that bypass the admin console and for webhook receivers to show as they are. The exceptions are the two
+things a browser opens directly, without the front end rendering them: the cloud drive authorization callback page picks
+Chinese or English from `Accept-Language`, and the header comments of an exported rclone config file follow the `lang`
+query parameter, falling back to `Accept-Language`.
 
 ## Periodic tasks
 
@@ -292,16 +313,16 @@ from runtime settings, a change in the admin console reschedules the current wai
 
 | Task | Interval | What it does |
 |---|---|---|
-| Health check | `health_check_seconds` (default 60 seconds) | Retry loading channels that previously failed to load, then light checks on all channels in parallel; an unhealthy channel whose light check passes recovers only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
+| Health check | `health_check_seconds` (default 60 seconds) | Retry loading channels that previously failed to load (in parallel, at most 30 seconds to build each driver; an unreachable backend is recorded as a load failure when time runs out), then light checks on all channels in parallel; an unhealthy channel whose light check passes recovers only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
 | Alert evaluation | Same as the health check | Unhealthy channels, failed replication, channel usage over the threshold, failed drains, failed backups; can be pushed to a webhook |
 | Lifecycle cleanup | `cleanup_sweep_seconds` (default 60 seconds) | Reclaim expired references → physically delete blobs past their grace period → label cold images → reclaim expired idempotency keys → reclaim audit entries past retention |
 | Activity flush | `activity_flush_seconds` (default 60 seconds) | Write public access times and counts to the database in batches; variants' last-access times are flushed on the same interval |
 | Deduplication | `dedup_scan_seconds` (default 300 seconds) | Merge exact duplicates (same SHA-256) automatically, then scan for pHash near-duplicates and queue them for manual decisions |
 | Usage report | `usage_report_seconds` (default 300 seconds) | Compute storage usage per channel and update metrics |
-| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take one consistent snapshot with `VACUUM INTO` and write it to `_imgyoung/backup/` on every channel that is healthy and not being cleaned up, each channel keeping its own `backup_keep` copies; if any channel is not written, the round counts as failed (`backup_failed` alert) and the channels that were written keep the snapshot. At startup, a backup runs right away if any healthy channel lacks a snapshot within the backup interval. See [Backup and restore](./operations/backup.mdx) |
+| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take one consistent snapshot with `VACUUM INTO` and write it to `_imgyoung/backup/` on every channel that is healthy and not being cleaned up, each channel keeping its own `backup_keep` copies; if any channel is not written, or every channel is written but pruning old snapshots fails on some, the round counts as failed (`backup_failed` alert) and the channels that were written keep the snapshot; a backup interrupted by shutdown does not count as failed. At startup, a backup runs right away if any healthy channel lacks a snapshot within the backup interval. See [Backup and restore](./operations/backup.mdx) |
 | Auth maintenance | 1 minute / 1 hour (fixed) | Write back token last-used times in batches / reclaim expired sessions |
 | Replication reconciliation | 10 minutes (fixed) | See the previous section |
-| Reconciliation GC | 24 hours (fixed) | List every healthy channel and compare with the replica records in the database in both directions: reclaim orphan objects, and reset phantom replicas to `pending` to be replicated again. Criteria below |
+| Reconciliation GC | 24 hours (fixed) | List every healthy channel (channels being cleaned up are not scanned) and compare with the replica records in the database in both directions: reclaim orphan objects, and reset phantom replicas to `pending` to be replicated again. Criteria below |
 
 ### Reconciliation GC criteria [#reconcile-gc]
 
@@ -309,14 +330,16 @@ What reconciliation GC handles (the system directory `_imgyoung/` and the light 
 
 - **Orphans**: an object is reclaimed only if all of these hold — its key has this service's object key format
   `{short_id}_{first 8 hex chars of sha256}`; the database has no replica record of it on that channel in any state;
-  its modification time is not earlier than the channel's binding time; and it is past the 48-hour grace period
-  (which covers uploads already written to the channel but not yet recorded). Every other object without a record —
+  its modification time is not earlier than the channel's binding time; and it was written more than 48 hours ago
+  (the grace period covers uploads already written to the channel but not yet recorded). The modification time is when the
+  object was written to the provider; S3-style backends take the time recorded by the server straight from the listing,
+  without reading each object's metadata. Every other object without a record —
   files written by other programs, objects in an old bucket attached by a new instance during disaster recovery
   before the metadata is restored, or objects written to the channel before a snapshot restore that the restored
   database has no record of — is only counted, never reclaimed, and appears as `foreign` in the reconciliation log.
 - **Deep check leftovers**: `.imgyoung-probe-` temporary objects left when a deep check fails to delete them are
-  deleted once past the 48-hour grace period, regardless of when they were written, and are not counted in the
-  reconciliation's object and byte totals.
+  deleted once written more than 48 hours ago, regardless of the channel's binding time (leftovers from a connection
+  test predate it), and are not counted in the reconciliation's object and byte totals.
 - **Phantoms**: replicas recorded as `done` but missing from the channel are reset to `pending` and queued for replication again.
 
 The **binding time** (`channels.bound_at`) marks when the channel record started to correspond to its current storage
@@ -444,7 +467,10 @@ map, instead of calling the rclone command line, librclone's RPC interface, or a
   with the master key and decrypted into a map for the backend at runtime. The parameters contain credentials, so they
   are never logged and never carried in error chains.
 - **One token refresher**: rclone refreshes OAuth tokens itself and hands them to the application through the
-  parameter write-back hook, which encrypts and stores them immediately; the application runs no refresh loop of its own.
+  parameter write-back hook, which encrypts and stores them immediately. Before storing, it checks that the database still
+  holds the value from before the write-back; if the channel configuration was edited in the meantime, the write-back is
+  dropped, so an old driver's write-back never overwrites a token the edit just saved. The application runs no refresh
+  loop of its own.
 - **One handle for everything**: reads, writes, checks, listing, and deletion all go through the same `fs.Fs`, with
   one set of error mappings (missing objects always become `driver.ErrNotFound`).
 - **Channel encryption with no extra code**: encrypted channels stack rclone's crypt layer on top of the backend, and

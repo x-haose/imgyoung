@@ -55,7 +55,7 @@ https://img.example.com/i/R0RjUyP1UW?format=jpeg
 | `w` | A value in **Width tiers** (`process_widths`), `100,200,400,800,1600` out of the box | Shrinks proportionally to that width; any other width returns 400. If the target is not smaller than the original width, nothing is enlarged and the image is only re-encoded to the target format |
 | `format` | A value in **Target formats** (`process_formats`; `webp`, `jpeg`, `png` out of the box), or `auto` | Forces the output format; values not in the list return 400 |
 
-Widths and formats are allowlists: accepting arbitrary values would let anyone saturate the CPU and the disk cache, so only a few presets are offered; with fixed presets, the result for a given set of parameters can also be served from the cache again and again. Change them in the **On-demand processing** group under **Settings → Runtime settings**; changes apply immediately.
+Widths and formats are allowlists: accepting arbitrary values would let anyone saturate the CPU and the disk cache, so only a few presets are offered; with fixed presets, the result for a given set of parameters can also be served from the cache again and again. Parameters are validated first, regardless of the original's format, so crafted parameters cannot produce an unbounded number of URLs and the CDN cache entries for one image stay bounded. Change them in the **On-demand processing** group under **Settings → Runtime settings**; changes apply immediately.
 
 ### WebP negotiation
 
@@ -71,7 +71,7 @@ To get the original bytes, ask for the original's own format, for example `?form
 ### Processing rules
 
 - If there is no resizing and the format equals the original's, nothing is processed and the original is served.
-- GIFs are always served as the original; `w` and `format` are ignored (invalid values do not cause a 400 either), so animations survive.
+- GIFs are always served as the original, so animations survive. Parameters are still validated against the tiers first: a `w` or `format` outside them returns 400 here too, while allowed values are ignored.
 - A JPEG original with an EXIF orientation tag is turned upright before resizing, so the width applies to the image as displayed.
 - Encoding: WebP quality `process_quality_webp` (80 out of the box) and effort `process_webp_method` (4); JPEG quality `process_quality_jpeg` (85); PNG is lossless at maximum compression. Output carries no metadata.
 - Results are cached under `variants/` in the data directory, up to `variants_cache_mb` in total (10240 MB out of the box); beyond that the least recently used entries are evicted. Changing the encoding settings makes later requests produce new cache entries, and the old ones age out.
@@ -105,7 +105,7 @@ If no channel qualifies, the request is proxied as usual. Direct link and encryp
 
 Even in redirect mode, these requests are still proxied by this host:
 
-- Requests that need on-demand processing: those with `w`, an explicit `format` different from the original's, or a negotiated WebP. Since browsers all declare WebP support, browser requests for JPEG / PNG are transcoded through the proxy by default; to send browsers through the 302 as well, remove `webp` from **Target formats**.
+- Requests that actually produce a variant: a JPEG / PNG / WebP original requested with `w`, with an explicit `format` different from the original's, or with a negotiated WebP. Since browsers all declare WebP support, browser requests for JPEG / PNG are transcoded through the proxy by default; to send browsers through the 302 as well, remove `webp` from **Target formats**. Requests that resolve to the original are still redirected, such as a GIF with allowed parameters, or a JPEG with `?format=jpeg` (target equals the original format and no resizing).
 - The fallback response after a processing failure.
 - Requests matching `If-None-Match`, which get a 304 from this host instead of a redirect.
 

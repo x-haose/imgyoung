@@ -18,7 +18,7 @@ The document is compiled into the binary, and a running instance serves a copy m
 curl -o openapi.yaml https://img.example.com/api/openapi.yaml
 ```
 
-The S3 protocol surface (`/s3/…`) follows the AWS S3 specification, returns XML error bodies, and is not part of this
+The S3 protocol surface (`/s3/…`) follows the AWS S3 specification, returns S3 XML error bodies for every error (including 429 `SlowDown` from upload throttling and 501 `NotImplemented` for unsupported operations), and is not part of this
 reference; see [Upload clients](../guides/clients.mdx) for how to use it.
 
 ## Authentication
@@ -30,8 +30,10 @@ There are exactly two authentication surfaces, and their credentials are not int
 | Paths | `POST /api/upload`, `POST /api/upload/url` | `/api/admin/…` |
 | Credential | An upload token in the `Authorization: Bearer <token>` header | The session cookie `imgyoung_session`; state-changing requests also send an `X-CSRF-Token` header |
 | How to obtain | Issue one on the admin console's "Upload tokens" page; the plaintext is shown only once | `POST /api/admin/auth/login` |
-| Not authenticated | 401: the token is invalid, expired, or revoked | 401: not logged in, or the session expired |
+| Not authenticated | 401: the token is invalid, expired, or revoked, or its owner is disabled | 401: not logged in, or the session expired |
 | Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; still on the factory default password; administrator required |
+
+A 401 only ever means a credential problem. If reading the database fails while checking a token or session, the response is 500 (error code `internal`) and can be retried later; it is never reported as an invalid credential.
 
 Upload tokens look like `imgy_…`. They only authorize the data plane; no admin console endpoint accepts them. The image
 access endpoints (`/i/…`, `/o/…`), `/healthz`, and `/api/openapi.yaml` need no authentication.
@@ -140,15 +142,15 @@ Common status codes:
 | Status | Meaning |
 |---|---|
 | 400 | Invalid request body or parameters |
-| 401 | Not authenticated: invalid token, or not logged in / session expired |
+| 401 | Not authenticated: invalid token, or not logged in / session expired; only ever a credential problem |
 | 403 | Not permitted: CSRF check failed, still on the factory default password, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
 | 404 | The target does not exist or is not visible to the current user |
-| 409 | Conflicts with existing state, such as a duplicate name, or a channel that holds the only copy of some images |
+| 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, or a channel configuration that changed while saving |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
 | 415 | Not a supported image format (judged by file content) |
 | 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`) |
 | 429 | Upload concurrency is full, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
-| 500 | Internal server error |
+| 500 | Internal server error, including database faults; error code `internal`, retry later. Every endpoint that touches the database declares 500 in the contract |
 | 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |
 
 The group pages list the status codes each endpoint can actually return.
@@ -184,7 +186,7 @@ The group pages list the status codes each endpoint can actually return.
   <Card title="Admin · Session" href="./admin-session.mdx">
     Log in, log out, current user, and password change
   </Card>
-  <Card title="Admin · Overview & settings" href="./admin-overview.mdx">
+  <Card title="Admin · Overview and settings" href="./admin-overview.mdx">
     Dashboard and runtime settings
   </Card>
   <Card title="Admin · Upload" href="./admin-upload.mdx">
@@ -205,7 +207,7 @@ The group pages list the status codes each endpoint can actually return.
   <Card title="Admin · Hotlink protection" href="./admin-referer.mdx">
     The Referer allowlist (administrators only)
   </Card>
-  <Card title="Admin · Moderation" href="./admin-review.mdx">
+  <Card title="Admin · Review" href="./admin-review.mdx">
     Decisions on near-duplicates and pending-cleanup cold images (administrators only)
   </Card>
   <Card title="Admin · Operations" href="./admin-operations.mdx">

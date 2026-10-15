@@ -59,7 +59,8 @@ An image is redirected only when all of these hold:
 1. **Settings → Runtime settings → Access & links → Access mode** is `redirect · 302 to direct links`;
 2. the channel has **Allow 302 direct links** on and is not encrypted;
 3. the channel has a public URL;
-4. the channel is healthy, holds a ready replica of the image, and is the highest-priority channel meeting the conditions above.
+4. the channel is healthy, holds a ready replica of the image, and is the highest-priority channel meeting the conditions above;
+5. the request does not produce a variant: one with `w`, with an explicit `format` other than the original's, or negotiated to WebP through `Accept` (the default for browsers opening a JPEG / PNG) is converted and proxied.
 
 Otherwise the image is proxied. With **Allow 302 direct links** on but no public URL, the form warns "public_base_url is not set, so direct links will not take effect and access falls back to proxying".
 
@@ -73,7 +74,8 @@ Public read access on the bucket has to be enabled at the provider; ImgYoung doe
 
 - **rclone backend**: the backend name, i.e. the `type` value in `rclone.conf`, such as `s3`, `sftp` or `local`.
 - **Backend parameters**: key–value pairs whose keys are the backend's option names, written as in `rclone.conf`; only letters, digits and underscores are allowed. Copying from the output of `rclone config show` works (put the `type` line into **rclone backend**).
-- Two reserved keys are not passed to rclone: `path` is the storage path inside the backend (bucket and prefix, or a folder), and `public_base_url` is the public URL. A `local` channel without `path` uses `<data dir>/blobs`.
+- Two reserved keys are not passed to rclone: `path` is the storage path inside the backend (bucket and prefix, or a folder), and `public_base_url` is the public URL. The `path` of a `local` backend must be absolute (a relative path is rejected with 400 and error code `channel_local_path_relative`); without `path` it uses `<data dir>/blobs`.
+- Parameter values are always shown as masked inputs (each can be revealed): the console cannot tell which custom keys are credentials.
 
 rclone stores password-type options (options rclone flags as passwords, such as `pass` for `sftp`, `ftp` and `webdav`) in an encoded form. ImgYoung handles this: plain values are encoded, and values that already are encoded (for example copied from `rclone.conf`) are kept as they are. In rare cases a plain password happens to look like an encoded value and is passed through unencoded, which shows up as an authentication failure; run `rclone obscure <password>` and enter its output instead.
 
@@ -116,7 +118,7 @@ WebDAV channels have no public URL, and the form hides **Allow 302 direct links*
 
 ### Failure reasons
 
-The failure reason from **Test connection**, the reason shown when hovering **Unhealthy** in the Status column, and a replica's sync failure in the image details are all the same kind of conclusion: the underlying error is classified by its text (case-insensitive, first match from the top), and the root cause follows the classification in parentheses. The root cause is the innermost error of the error chain, usually the provider's or network library's own English text, with credentials scrubbed (the values of parameters rclone flags as passwords or sensitive) and cut to 200 characters. If nothing matches, only the root cause is shown.
+The failure reason from **Test connection**, the reason shown when hovering **Unhealthy** in the Status column, and a replica's sync failure in the image details are all the same kind of conclusion: the underlying error is classified by its text (case-insensitive, first match from the top), and the root cause follows the classification in parentheses. The root cause is the innermost error of the error chain, usually the provider's or network library's own English text, with credentials scrubbed (the values of parameters rclone flags as passwords or sensitive) and at most 200 characters (a longer one is cut to 199 characters followed by "…"). If nothing matches, only the root cause is shown.
 
 In the API this conclusion is `{reason, detail}` (a channel's conclusion also carries the stage, see [Channels and failover](./index.mdx)). The classifications, with the text the console shows in English:
 
@@ -131,8 +133,8 @@ In the API this conclusion is `{reason, detail}` (a channel's conclusion also ca
 | `region_mismatch` | "Region mismatch: check that the selected region matches the bucket’s region" | `PermanentRedirect`, `AuthorizationHeaderMalformed` | The region or endpoint does not match the bucket's actual region |
 | `dns` | "Cannot resolve the endpoint host: check the endpoint setting" | `no such host`, `server misbehaving` | A typo in the endpoint, or DNS on the server |
 | `connect` | "Cannot connect to the endpoint: check its address and port" | `connection refused`, `connection reset` | Port, scheme or firewall |
-| `tls` | "TLS certificate verification failed: check the endpoint certificate or use the right protocol" | `certificate`, `x509`, `tls handshake` | A self-signed certificate, or `https` used for an `http` service |
-| `timeout` | "Connection timed out: check the endpoint address and network connectivity" | Timeouts, including the check's own 10 s / 20 s limits | Network reachability or a very slow service |
+| `tls` | "TLS certificate verification failed: check the endpoint certificate or use the right protocol" | `certificate`, `x509`, `tls handshake` (except `TLS handshake timeout`, which counts as `timeout`) | A self-signed certificate, or `https` used for an `http` service |
+| `timeout` | "Connection timed out: check the endpoint address and network connectivity" | Timeouts, including `TLS handshake timeout`, the check's own 10 s / 20 s limits and the 30 s load limit | Network reachability or a very slow service |
 | `permission` | "No write permission on the storage path: check the directory permissions" | `permission denied`, `read-only file system` | Folder permissions of a `local` channel; in the container image the process runs as uid 65532, so mounted folders must be writable by it |
 | `probe_mismatch` | "The probe object read back differently: the storage rewrote or truncated it" | The deep check read back something other than what it wrote | The storage service silently rewrites or truncates objects; check its settings or use another service |
 | `config_unreadable` | "The channel settings cannot be decrypted: the master key differs from the one they were written with" | The channel configuration cannot be decrypted while loading | Switch back to the master key the configuration was written with |
@@ -143,7 +145,7 @@ In the API this conclusion is `{reason, detail}` (a channel's conclusion also ca
 
 ### Rejections when saving the form
 
-These errors come back with 400 as soon as you submit, and no channel is created (a duplicate name and a draining channel get 409). Error responses are `{code, error, params}`: `code` is a stable error code, `error` the server's Chinese message, and `params` fills the placeholders in it; the console shows the message for the code and parameters in its own language.
+These errors come back with 400 as soon as you submit, and no channel is created (a duplicate name, a draining channel and a concurrent change get 409). Error responses are `{code, error, params}`: `code` is a stable error code, `error` the server's Chinese message, and `params` fills the placeholders in it; the console shows the message for the code and parameters in its own language.
 
 | Error code | Console text | Cause |
 |---|---|---|
@@ -151,10 +153,12 @@ These errors come back with 400 as soon as you submit, and no channel is created
 | `channel_name_exists` | "A channel with this name already exists" | The channel name is taken (409) |
 | `channel_backend_failed` | "Invalid channel settings: the backend failed to initialize: `{detail}`" | Building the backend from these parameters failed, or selecting the drive for a newly authorized OneDrive channel failed when querying the provider; `params` also carries the classification `reason`, and `detail` is the root cause |
 | `channel_unknown_backend` | "Invalid channel settings: unknown backend `{driver}`" | A misspelt backend name in custom mode |
+| `channel_local_path_relative` | "Invalid channel settings: the path of a local channel must be absolute, got `{path}`" | A relative `path` for a `local` channel |
 | `channel_config_key_invalid` | "Invalid channel settings: parameter key `{key}` is invalid (only letters, digits and underscores)" | A custom parameter key contains other characters (such as `-`) |
 | `channel_bucket_failed` | "Creating the bucket failed (check that the key may create buckets, or create the bucket in the console and turn this option off): `{detail}`" | **Create the bucket automatically** is on but the key cannot create buckets |
 | `channel_keep_not_secret` | "Invalid channel settings: field `{field}` is not a credential, so its stored value cannot be kept" | The mask value `__imgyoung_secret_keep__` was put on a parameter that is not a credential |
 | `channel_keep_no_value` | "Invalid channel settings: field `{field}` has no stored value to keep. Fill it in again" | The mask value was submitted for a parameter that has no stored value |
 | `channel_deleting` | "The channel is being cleaned up and cannot be changed or probed" | The channel is **Draining** (409) |
+| `channel_config_changed` | "The channel configuration changed while saving (another edit, or the provider refreshed the authorization token). Save again" | Another edit or a token write-back changed the channel configuration while this edit was being saved (409); just save again |
 
 Once a channel exists but shows **Unhealthy**, fix its configuration and use **Probe again** in the row menu: it runs a deep check right away and refreshes the status. The probe and status rules are in [Channels and failover](./index.mdx).

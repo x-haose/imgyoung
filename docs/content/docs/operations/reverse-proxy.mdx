@@ -18,6 +18,18 @@ Caddy 自动申请并续期证书，默认就会设置 `X-Forwarded-For` / `X-Fo
 
 <include cwd lang="text" meta='title="deploy/Caddyfile"'>../deploy/Caddyfile</include>
 
+Caddy 默认不信任任何上游代理，会丢掉客户端自带的 `X-Forwarded-For`，只填上与它直接相连的对端。Caddy 前面还有 CDN 时，这个对端就是 CDN 节点，ImgYoung 拿不到访客地址；要在 Caddyfile 的全局选项里把 CDN 的回源网段设为可信，Caddy 才会保留 CDN 传来的转发头并在末尾追加：
+
+```text title="Caddyfile 全局选项"
+{
+	servers {
+		trusted_proxies static <CDN 的回源网段>
+	}
+}
+```
+
+Nginx 示例用的 `$proxy_add_x_forwarded_for` 本身就是追加写法，没有这个问题。
+
 ## Nginx
 
 <include cwd lang="nginx" meta='title="deploy/nginx.conf"'>../deploy/nginx.conf</include>
@@ -52,7 +64,7 @@ ImgYoung 从请求推导三件事：**客户端地址**（登录限速的键、`
 | ImgYoung 跑在 Docker 里，反代在宿主机上 | Docker 网桥的网关地址，不是回环 | 网关所在网段，如 `172.16.0.0/12`；用 `docker network inspect` 查看实际网关 |
 | 反代与 ImgYoung 是同一 Compose 项目里的两个容器 | 反代容器在项目网络里的地址 | 项目网络的网段 |
 | 反代在另一台主机 | 反代主机的内网地址 | 该地址或其网段 |
-| 反代前面还有 CDN | 反代地址；`X-Forwarded-For` 里最右边一跳是 CDN 节点 | 反代网段加上 CDN 的回源网段，客户端地址才会解析到真实访客 |
+| 反代前面还有 CDN | 反代地址；`X-Forwarded-For` 里最右边一跳是 CDN 节点 | 反代网段加上 CDN 的回源网段，客户端地址才会解析到真实访客。反代是 Caddy 时，Caddy 也要把 CDN 的回源网段设为 `trusted_proxies`，见上文 |
 
 <Callout type="warn" title="信任配错的表现">
 连接对端不在信任网段内时，所有经反代的请求都被当成来自反代自身：全站访客共用一个登录限速额度；如果反代地址恰好在 `IMGYOUNG_METRICS_ALLOW` 内（Docker 网段默认就在），而反代又转发了 `/metrics`，任何人都能读到指标。反代没有设置 `X-Forwarded-For` 时也是同样的后果。
@@ -65,7 +77,20 @@ ImgYoung 从请求推导三件事：**客户端地址**（登录限速的键、`
 <Tabs items={['二进制 / systemd', 'Docker', 'Compose']}>
 <Tab value="二进制 / systemd">
 
-设置 `IMGYOUNG_LISTEN=127.0.0.1:8721`。systemd 部署用 `sudo systemctl edit imgyoung` 加一行 `Environment=IMGYOUNG_LISTEN=127.0.0.1:8721` 后重启，见[配置](../configuration.mdx)。
+设置 `IMGYOUNG_LISTEN=127.0.0.1:8721`。systemd 部署用 drop-in 覆盖，见[配置](../configuration.mdx)：
+
+```bash title="终端"
+sudo systemctl edit imgyoung
+```
+
+```ini title="编辑器中填入"
+[Service]
+Environment=IMGYOUNG_LISTEN=127.0.0.1:8721
+```
+
+```bash title="终端"
+sudo systemctl restart imgyoung
+```
 
 </Tab>
 <Tab value="Docker">
@@ -102,7 +127,7 @@ services:
 
 `base_url`（后台「设置 → 运行配置 → 访问与链接 → 对外站点地址」）为空时，ImgYoung 按请求推导对外地址：协议取 HTTPS 判定，域名在对端受信任时取 `X-Forwarded-Host`，否则取 `Host`。以下情况必须显式设置：
 
-- **对外域名与 ImgYoung 收到的域名不一致**：CDN 用另一个域名回源、反代改写了 `Host` 又没传 `X-Forwarded-Host`、反代不在信任网段内等。此时上传接口返回的 `url`、后台复制的分享链接、「S3 客户端配置」弹窗里的端点与链接前缀都会是错的。
+- **对外域名与 ImgYoung 收到的域名不一致**：CDN 用另一个域名回源、反代改写了 `Host` 又没传 `X-Forwarded-Host`、反代不在信任网段内等。此时上传接口返回的 `url`、「S3 客户端配置」弹窗里的端点与链接前缀都会是错的。后台复制的分享链接不经服务端推导：配置了 `base_url` 用它，否则用浏览器地址栏里的站点地址，所以不受这些情况影响。
 - **启用 CDN 缓存清除**：清除任务在后台异步执行，没有请求可推导，只认 `base_url`，见 [CDN](./cdn.mdx)。
 - **网盘渠道一键授权**：授权回调地址必须与开放平台登记的地址逐字一致，只用 `base_url` 拼出，见[网盘渠道](../channels/cloud-drives.mdx)。
 

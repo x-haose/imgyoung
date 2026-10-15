@@ -38,7 +38,7 @@ type Driver interface {
   type={{
     Key: { type: 'string', description: '对象键，相对存储根的路径' },
     Size: { type: 'int64', description: '对象大小，字节' },
-    ModTime: { type: 'time.Time', description: '对象的修改时间' },
+    ModTime: { type: 'time.Time', description: '对象的修改时间，应用的对账据此判断宽限期。rclone 驱动在后端支持时取服务端记下的写入时刻，S3 类后端列举时因此不必为每个对象单独发 HEAD 请求' },
   }}
 />
 
@@ -99,6 +99,9 @@ defer func() { _ = d.Close(ctx) }()
 />
 
 `Open` 返回的错误不携带参数映射，参数里的凭证不会经错误消息泄露到日志。
+
+`ctx` 只管构造过程：构造结束前它被取消或到期，`Open` 返回错误，已建好的驱动随即关闭；构造完成后，它的取消与截止时刻不再影响驱动。
+rclone 后端会留存构造时的上下文，之后的请求（如 OAuth 令牌刷新）沿用它，因此传入属于一次请求或一次任务的 `ctx` 也安全；上下文里的值照常传给后端。
 
 ### 写入时的 Content-Type
 
@@ -289,8 +292,8 @@ rclone --config rclone.conf ls mystore-crypt:
 
 | 情形 | 返回的错误 | 错误文本 |
 |---|---|---|
-| 某个参数值含换行（`\n` 或 `\r`），或读回的值与原值不同（如首尾空白、`%(name)s` 形式的引用）| `*rclone.UnrepresentableError`，字段 `Remote` 为段名、`Key` 为参数名 | `参数值无法写进 rclone 配置文件: 远端 "<段名>" 的参数 "<参数名>"` |
-| 生成的文本按 rclone 的读法无法解析 | 包裹 `ErrUnrepresentable` 的错误 | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
+| 某个参数值含换行（`\n` 或 `\r`），单独写进文件就无法解析（如以 `"""` 开头），或读回的值与原值不同（如首尾空白、`%(name)s` 形式的引用）| `*rclone.UnrepresentableError`，字段 `Remote` 为段名、`Key` 为参数名 | `参数值无法写进 rclone 配置文件: 远端 "<段名>" 的参数 "<参数名>"` |
+| 每个参数值单独写都能原样读回，合在一起的文本却按 rclone 的读法无法解析 | 包裹 `ErrUnrepresentable` 的错误 | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
 
 要知道是哪个参数，用 `errors.As` 取出 `*rclone.UnrepresentableError`：
 
@@ -337,7 +340,7 @@ case err != nil:
    `failover.Open` 靠它区分「对象不存在」与「存储故障」，`failover.Probe` 把 `Stat` 返回的 `ErrNotFound` 视为存储可达。
 2. **`Put` 读满 `size` 个字节**，读不够时返回错误；不要关闭 `r`。失败后调用方可能以同一个键重试，再次 `Put` 应整体覆盖之前留下的内容。
 3. **`List` 递归列举**：`dir` 为空表示全部对象；返回相对根的完整键；目录不存在时返回空结果与 nil。
-4. **`ModTime` 填真实的修改时间**：调用方会据此判断对象新旧，例如应用的对账只回收修改时间早于宽限期的未知对象。
+4. **`ModTime` 填存储记下的写入时刻**：调用方会据此判断对象新旧，例如应用的对账只回收写入已超过宽限期的未知对象。
 5. **并发安全、尊重 `ctx`**。用编译期断言确认实现完整：`var _ driver.Driver = (*MemDriver)(nil)`。
 
 下面是一个把对象存在进程内存里的实现，可直接用于测试：

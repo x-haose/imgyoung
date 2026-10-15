@@ -33,7 +33,7 @@ The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`; `
 
 | Option | Default | Description |
 |---|---|---|
-| `--version X.Y.Z` | Latest stable release | Install a specific version; the `v` prefix is optional |
+| `--version X.Y.Z` | Latest stable release | Install a specific version, in the form `1.2.3` or `1.2.3-rc.1`; the `v` prefix is optional |
 | `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable. With `--service` it must be an absolute path outside `/home`, `/root` and `/run/user` |
 | `--service` | Not installed | Linux only, needs root: also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung` |
 
@@ -41,13 +41,13 @@ The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`; `
 |---|---|---|
 | `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | The releases address. Set it to use a mirror or internal distribution; the layout must match GitHub Releases (see "Mirrors and internal distribution" below) |
 
-An unknown option or a malformed version makes the script exit with an error right away, before it changes anything.
+An unknown option or a malformed version (for example `--version 1.0`, which reports `版本号 1.0 无效,应形如 1.0.0`, i.e. "version 1.0 is invalid, expected something like 1.0.0") makes the script exit with an error right away, before it changes anything.
 
 ## What the script does
 
 1. **Checks prerequisites.** Confirms `curl`, `tar` and `install` exist; with `--service` it also checks for Linux, root, `systemctl`, and that any `--dir` given is an absolute path outside the home directories. If anything is missing it exits before downloading and leaves the system untouched.
 2. **Detects the platform.** `uname -s` must be Linux or Darwin, `uname -m` must be x86_64 / amd64 or aarch64 / arm64; anything else is an error (on Windows, use a [release archive](./binary.mdx)).
-3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect and takes the last path segment of the final URL as the tag. GitHub's latest release never points at a pre-release.
+3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect and takes the last path segment of the final URL as the tag, which is checked against the same format as `--version`. GitHub's latest release never points at a pre-release.
 4. **Downloads and verifies.** Downloads `imgyoung_<version>_<os>_<arch>.tar.gz` and that release's `checksums.txt` into a temporary directory and checks the sha256. On a mismatch it aborts without installing anything. The temporary directory is removed when the script exits.
 5. **Installs the binary.** Installs `imgyoung` into the target directory with mode 0755 and prints its version.
 6. **Installs the service** (`--service` only). Writes the archive's `deploy/imgyoung.service` to `/etc/systemd/system/imgyoung.service` with `ExecStart` pointing at the actual install path, saying so if the content differs from the existing file, then runs `systemctl daemon-reload` and enables it. If the service is already running it is restarted onto the new version; otherwise it is started.
@@ -143,4 +143,4 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 <IMGYOUNG_RELEASES>/download/vX.Y.Z/checksums.txt
 ```
 
-`/latest` is only used without `--version`: the script follows the redirect and treats the last segment of the final URL as the version, which must start with `v` followed by a digit. If the mirror cannot redirect like that, always pass `--version` when installing and upgrading.
+`/latest` is only used without `--version`: the script follows the redirect and treats the last segment of the final URL as the version, which must look like `v1.2.3` or `v1.2.3-rc.1`; otherwise it reports `无法从 <final URL> 解析出版本号;可用 --version 指定` (the version could not be parsed from that URL; pass `--version`). If the mirror cannot redirect like that, always pass `--version` when installing and upgrading.

@@ -105,6 +105,7 @@ img.example.com {
 - **证书与 Caddy 的数据**。证书存在 `caddy-data` 卷里，删掉它会导致重新申请证书。
 - **上传大小**。Caddy 默认不限制请求体大小，单图上限只由后台的「单图上限」（出厂 50 MB）决定。
 - **链接地址**。设好可信代理后，未配置 `base_url` 时链接按 Caddy 转发的域名与协议生成，即 `https://img.example.com/i/...`。只有对外域名与 Caddy 收到的域名不一致（比如前面还有 CDN）时才需要配置 `base_url`，见 [配置](../configuration.mdx)。
+- **前面还有 CDN**。Caddy 默认不采信客户端带来的 `X-Forwarded-For`，会把它改写成只剩 CDN 节点的地址，ImgYoung 就取不到访客的真实地址。要在 Caddy 的全局选项里把 CDN 的回源网段配成 `trusted_proxies`，同时把这些网段加进 `IMGYOUNG_TRUSTED_PROXIES`，见 [反向代理](../operations/reverse-proxy.mdx)。
 - **指标**。公网入口屏蔽了 `/metrics`；同一网络里的 Prometheus 可以直接抓 `imgyoung:8721/metrics`，私网地址默认放行。见 [监控](../operations/monitoring.mdx)。
 
 用 Nginx 或其他代理的写法见 [反向代理](../operations/reverse-proxy.mdx)。

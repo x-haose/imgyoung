@@ -105,6 +105,7 @@ Notes:
 - **Certificates and Caddy's data.** Certificates live in the `caddy-data` volume; deleting it makes Caddy request new ones.
 - **Upload size.** Caddy does not limit request body size by default, so the only limit is "Max image size" in the console (50 MB by default).
 - **Link addresses.** With the proxy trusted and no `base_url` configured, links are built from the host and scheme Caddy forwards, i.e. `https://img.example.com/i/...`. You only need `base_url` when the public domain differs from the one Caddy receives (for example with a CDN in front); see [Configuration](../configuration.mdx).
+- **A CDN in front.** By default Caddy does not trust an incoming `X-Forwarded-For` and rewrites it to contain only the CDN node's address, so ImgYoung cannot see the real visitor address. Configure the CDN's origin-pull ranges as `trusted_proxies` in Caddy's global options, and add the same ranges to `IMGYOUNG_TRUSTED_PROXIES`; see [Reverse proxy](../operations/reverse-proxy.mdx).
 - **Metrics.** The public entry point blocks `/metrics`; a Prometheus on the same network can scrape `imgyoung:8721/metrics` directly, since private addresses are allowed by default. See [Monitoring](../operations/monitoring.mdx).
 
 For Nginx and other proxies, see [Reverse proxy](../operations/reverse-proxy.mdx).
