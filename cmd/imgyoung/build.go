@@ -188,7 +188,7 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 	}
 
 	queries := sqlc.New(conn)
-	master, err := loadMasterKey(boot, logger)
+	master, err := loadMasterKey(context.Background(), boot, queries, logger)
 	if err != nil {
 		return infra{}, nil, err
 	}
@@ -348,28 +348,6 @@ func buildHTTP(in infra, s services, shutdown func(), logger *slog.Logger) *http
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 	}
-}
-
-// loadMasterKey 解析主密钥:环境变量(hex)优先,否则数据目录文件(首启生成)。
-// @return 主密钥
-// @return 密钥非法或文件读写失败时的错误
-func loadMasterKey(boot config.Bootstrap, logger *slog.Logger) (*secret.MasterKey, error) {
-	if boot.MasterKey != "" {
-		key, err := secret.MasterKeyFromHex(boot.MasterKey)
-		if err != nil {
-			return nil, fmt.Errorf("master_key 配置非法: %w", err)
-		}
-		return key, nil
-	}
-	key, created, err := secret.LoadOrCreate(boot.DataDir)
-	if err != nil {
-		return nil, err
-	}
-	if created {
-		logger.Warn("已生成主密钥文件,请立即备份——丢失将导致渠道配置与加密渠道数据永久不可恢复",
-			"path", filepath.Join(boot.DataDir, "master.key"))
-	}
-	return key, nil
 }
 
 // loadSettings 装载运营配置存储,并打一行 CDN purge 启用状态便于自助排障。

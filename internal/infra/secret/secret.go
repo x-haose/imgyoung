@@ -8,6 +8,7 @@ import (
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -109,6 +110,35 @@ func (k *MasterKey) Derive(purpose string, n int) ([]byte, error) {
 		return nil, fmt.Errorf("派生子密钥(%s): %w", purpose, err)
 	}
 	return out, nil
+}
+
+// fingerprintPurpose 主密钥指纹的派生用途;fingerprintLen 指纹字节数。
+const (
+	fingerprintPurpose = "master-key-fingerprint"
+	fingerprintLen     = 16
+)
+
+// Fingerprint 由主密钥派生的指纹,存进库里供启动时核对用的还是不是同一把主密钥;不可反推主密钥。
+// @return 32 位小写十六进制
+// @return 派生失败时的错误
+func (k *MasterKey) Fingerprint() (string, error) {
+	sum, err := k.Derive(fingerprintPurpose, fingerprintLen)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(sum), nil
+}
+
+// Matches 判断主密钥与库里记下的指纹是否相符(常数时间比较)。
+// @param stored Fingerprint 的产物
+// @return 相符为 true
+// @return 派生失败时的错误
+func (k *MasterKey) Matches(stored string) (bool, error) {
+	cur, err := k.Fingerprint()
+	if err != nil {
+		return false, err
+	}
+	return subtle.ConstantTimeCompare([]byte(cur), []byte(stored)) == 1, nil
 }
 
 // aead 构造 AES-256-GCM 实例。

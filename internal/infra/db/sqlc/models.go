@@ -100,6 +100,12 @@ type Image struct {
 	CreatedAt          string
 }
 
+type MasterKeyFingerprint struct {
+	ID          int64
+	Fingerprint string
+	CreatedAt   string
+}
+
 type RefererWhitelist struct {
 	ID        int64
 	Pattern   string

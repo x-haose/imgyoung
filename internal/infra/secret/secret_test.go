@@ -2,6 +2,7 @@ package secret
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,55 +109,40 @@ func TestMasterKeyFromHexRejectsInvalid(t *testing.T) {
 	}
 }
 
-// TestLoadOrCreateFirstRun 验证首次调用生成密钥文件(0600)并可用。
-func TestLoadOrCreateFirstRun(t *testing.T) {
+// TestCreateFileThenLoad 验证生成的密钥文件为 0600,且读回的是同一把密钥。
+func TestCreateFileThenLoad(t *testing.T) {
 	dir := t.TempDir()
-	k, created, err := LoadOrCreate(dir)
+	created, err := CreateFile(dir)
 	if err != nil {
-		t.Fatalf("LoadOrCreate 返回错误: %v", err)
+		t.Fatalf("CreateFile 返回错误: %v", err)
 	}
-	if !created {
-		t.Fatal("首次调用应报告新建")
-	}
-	info, err := os.Stat(filepath.Join(dir, keyFileName))
+	info, err := os.Stat(filepath.Join(dir, KeyFileName))
 	if err != nil {
 		t.Fatalf("密钥文件未生成: %v", err)
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("密钥文件权限 = %o, 期望 0600", info.Mode().Perm())
 	}
-	if k == nil {
-		t.Fatal("返回的主密钥为空")
+	loaded, err := LoadFile(dir)
+	if err != nil {
+		t.Fatalf("LoadFile 返回错误: %v", err)
+	}
+	if created.Hex() != loaded.Hex() {
+		t.Fatal("读回的密钥与生成的不一致")
 	}
 }
 
-// TestLoadOrCreateSecondRun 验证再次调用加载同一把密钥。
-func TestLoadOrCreateSecondRun(t *testing.T) {
+// TestLoadFileMissingOrCorrupted 验证文件不存在时报 os.ErrNotExist,损坏时报错而非静默重建。
+func TestLoadFileMissingOrCorrupted(t *testing.T) {
 	dir := t.TempDir()
-	first, _, err := LoadOrCreate(dir)
-	if err != nil {
-		t.Fatalf("首次 LoadOrCreate: %v", err)
+	if _, err := LoadFile(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("文件不存在时错误 = %v, 期望 os.ErrNotExist", err)
 	}
-	second, created, err := LoadOrCreate(dir)
-	if err != nil {
-		t.Fatalf("二次 LoadOrCreate: %v", err)
-	}
-	if created {
-		t.Fatal("二次调用不应新建")
-	}
-	if first.Hex() != second.Hex() {
-		t.Fatal("两次加载的密钥不一致")
-	}
-}
-
-// TestLoadOrCreateRejectsCorrupted 验证密钥文件损坏时报错而非静默重建。
-func TestLoadOrCreateRejectsCorrupted(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, keyFileName), []byte("corrupted"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, KeyFileName), []byte("corrupted"), 0o600); err != nil {
 		t.Fatalf("写损坏文件: %v", err)
 	}
-	if _, _, err := LoadOrCreate(dir); err == nil {
-		t.Fatal("损坏的密钥文件应报错(静默重建会让全部密文作废)")
+	if _, err := LoadFile(dir); err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("损坏的密钥文件错误 = %v, 期望损坏错误(静默重建会让全部密文作废)", err)
 	}
 }
 

@@ -834,18 +834,22 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	stopInstance(t, inst2)
 
 	// 灾难演练:抹掉本地元数据库(含 WAL 边车),用渠道快照恢复。
-	dbPath := filepath.Join(inst.dataDir, "imgyoung.db")
+	root, err := os.OpenRoot(inst.dataDir)
+	if err != nil {
+		t.Fatalf("打开数据目录: %v", err)
+	}
+	defer func() { _ = root.Close() }()
+	const dbFile = "imgyoung.db"
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if rerr := os.Remove(dbPath + suffix); rerr != nil && !os.IsNotExist(rerr) {
-			t.Fatalf("删除 %s: %v", dbPath+suffix, rerr)
+		if rerr := root.Remove(dbFile + suffix); rerr != nil && !os.IsNotExist(rerr) {
+			t.Fatalf("删除 %s: %v", dbFile+suffix, rerr)
 		}
 	}
 	snap, err := os.ReadFile(newest)
 	if err != nil {
 		t.Fatalf("读取快照: %v", err)
 	}
-	//nolint:gosec // G306:dbPath 由 t.TempDir() 派生、文件名固定,非外部输入
-	if werr := os.WriteFile(dbPath, snap, 0o600); werr != nil {
+	if werr := root.WriteFile(dbFile, snap, 0o600); werr != nil {
 		t.Fatalf("以快照恢复数据库: %v", werr)
 	}
 
