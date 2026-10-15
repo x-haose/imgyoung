@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping with ImgYoung. This document covers the development setup, what "done" means for a change, and how to submit it. The design rationale lives in the (Chinese) design document [图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md); change it first when a change touches the design. Day-to-day conventions are in [CLAUDE.md](./CLAUDE.md).
+Thanks for helping with ImgYoung. This document covers the development setup, what "done" means for a change, and how to submit it. The design rationale lives in the (Chinese) design document [图床项目_功能与设计定稿.md](./图床项目_功能与设计定稿.md); change it first when a change touches the design. Day-to-day conventions are in [AGENTS.md](./AGENTS.md).
 
 ## Environment
 
