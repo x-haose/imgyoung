@@ -15,7 +15,7 @@ export const Route = createFileRoute('/(auth)/login')({
   beforeLoad: async ({ context, search }) => {
     let session: Session
     try {
-      session = await context.queryClient.fetchQuery(sessionQueryOptions())
+      session = await context.queryClient.query(sessionQueryOptions())
     } catch (err) {
       if (hasStatus(err, 401)) return
       throw err

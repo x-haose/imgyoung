@@ -100,15 +100,12 @@ async function refreshCsrfToken(): Promise<boolean> {
 
 /** 把错误响应转成 ApiError:错误信封按错误码取当前语言的文案;非信封的错误体(如网关页)用带状态码的通用文案。 */
 async function readError(resp: Response): Promise<ApiError> {
-  const raw = await resp.text()
-  let body: unknown
-  try {
-    body = JSON.parse(raw)
-  } catch {
-    body = undefined
-  }
-  if (isErrorEnvelope(body)) {
-    return new ApiError(resp.status, errorText(body), { code: body.code, body })
+  const envelope = parseEnvelope(await resp.text())
+  if (envelope) {
+    return new ApiError(resp.status, errorText(envelope), {
+      code: envelope.code,
+      body: envelope,
+    })
   }
   return new ApiError(
     resp.status,
@@ -116,16 +113,22 @@ async function readError(resp: Response): Promise<ApiError> {
   )
 }
 
-/** 判断响应体是否为错误信封。 */
-function isErrorEnvelope(
-  body: unknown
-): body is components['schemas']['Error'] & Record<string, unknown> {
-  return (
-    typeof body === 'object' &&
-    body !== null &&
-    typeof (body as { code?: unknown }).code === 'string' &&
-    typeof (body as { error?: unknown }).error === 'string'
-  )
+/** 错误信封,连同个别接口在信封外附带的字段。 */
+type Envelope = components['schemas']['Error'] & Record<string, unknown>
+
+/** 把响应体解析为错误信封;不是 JSON 或不是信封(如网关页)时为 undefined。 */
+function parseEnvelope(raw: string): Envelope | undefined {
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+  if (typeof body !== 'object' || body === null) return undefined
+  const { code, error } = body as { code?: unknown; error?: unknown }
+  return typeof code === 'string' && typeof error === 'string'
+    ? (body as Envelope)
+    : undefined
 }
 
 /** 发起 API 请求;非 2xx 一律抛 ApiError(消息按错误码取当前语言的文案),空响应体(204、202 等)返回 undefined。 */

@@ -57,15 +57,19 @@ export function safeRedirect(target: string | undefined): string {
     : '/'
 }
 
-/** 路由守卫:取会话,未登录跳登录页并记住回跳地址。 */
+/**
+ * 路由守卫:取会话,未登录跳登录页并记住回跳地址。
+ * 缓存里有会话就直接用,不让导航等网络;同时按会话查询的保鲜期在后台重新校验,仍新鲜时不发请求。
+ */
 export async function requireSession(
   queryClient: QueryClient,
   location: ParsedLocation
 ): Promise<Session> {
+  let session: Session
   try {
-    return await queryClient.ensureQueryData({
+    session = await queryClient.query({
       ...sessionQueryOptions(),
-      revalidateIfStale: true,
+      staleTime: 'static',
     })
   } catch (err) {
     if (hasStatus(err, 401)) {
@@ -73,6 +77,16 @@ export async function requireSession(
     }
     throw err
   }
+  revalidateSession(queryClient)
+  return session
+}
+
+/**
+ * 后台重新校验会话,本次导航不等它。
+ * 校验失败已写进会话查询的缓存,由读会话的页面显示;会话失效(401)另由请求层的 onUnauthorized 处理器跳登录页。
+ */
+function revalidateSession(queryClient: QueryClient): void {
+  queryClient.query(sessionQueryOptions()).catch(() => undefined)
 }
 
 /** 路由守卫:仅管理员可进的页面,普通用户回总览。 */

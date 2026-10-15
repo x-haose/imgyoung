@@ -83,7 +83,11 @@ export function shareURL(path: string, baseURL: string | undefined): string {
 export const copyFormats = [
   { key: 'url', label: 'URL', build: (u: string) => u },
   { key: 'markdown', label: 'Markdown', build: (u: string) => `![](${u})` },
-  { key: 'html', label: 'HTML', build: (u: string) => `<img src="${u}" />` },
+  {
+    key: 'html',
+    label: 'HTML',
+    build: (u: string) => `<img src="${u}" alt="" />`,
+  },
   { key: 'bbcode', label: 'BBCode', build: (u: string) => `[img]${u}[/img]` },
 ] as const
 
