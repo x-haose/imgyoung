@@ -7,22 +7,8 @@ package sqlc
 
 import (
 	"context"
+	"database/sql"
 )
-
-const firstSealedValue = `-- name: FirstSealedValue :one
-SELECT sealed
-FROM (SELECT config_sealed AS sealed FROM channels WHERE config_sealed <> ''
-      UNION ALL
-      SELECT cdn_cloudflare_api_token AS sealed FROM settings WHERE cdn_cloudflare_api_token <> '')
-LIMIT 1
-`
-
-func (q *Queries) FirstSealedValue(ctx context.Context) (string, error) {
-	row := q.db.QueryRowContext(ctx, firstSealedValue)
-	var sealed string
-	err := row.Scan(&sealed)
-	return sealed, err
-}
 
 const getMasterKeyFingerprint = `-- name: GetMasterKeyFingerprint :one
 SELECT fingerprint
@@ -37,6 +23,17 @@ func (q *Queries) GetMasterKeyFingerprint(ctx context.Context) (string, error) {
 	return fingerprint, err
 }
 
+const hasMasterKeyDerivedData = `-- name: HasMasterKeyDerivedData :one
+SELECT EXISTS (SELECT 1 FROM tokens) OR EXISTS (SELECT 1 FROM channels WHERE encrypted = 1) AS has_derived
+`
+
+func (q *Queries) HasMasterKeyDerivedData(ctx context.Context) (sql.NullBool, error) {
+	row := q.db.QueryRowContext(ctx, hasMasterKeyDerivedData)
+	var has_derived sql.NullBool
+	err := row.Scan(&has_derived)
+	return has_derived, err
+}
+
 const insertMasterKeyFingerprint = `-- name: InsertMasterKeyFingerprint :exec
 INSERT INTO master_key_fingerprint (id, fingerprint)
 VALUES (1, ?)
@@ -45,4 +42,33 @@ VALUES (1, ?)
 func (q *Queries) InsertMasterKeyFingerprint(ctx context.Context, fingerprint string) error {
 	_, err := q.db.ExecContext(ctx, insertMasterKeyFingerprint, fingerprint)
 	return err
+}
+
+const listSealedValues = `-- name: ListSealedValues :many
+SELECT config_sealed AS sealed FROM channels WHERE config_sealed <> ''
+UNION ALL
+SELECT cdn_cloudflare_api_token AS sealed FROM settings WHERE cdn_cloudflare_api_token <> ''
+`
+
+func (q *Queries) ListSealedValues(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listSealedValues)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var sealed string
+		if err := rows.Scan(&sealed); err != nil {
+			return nil, err
+		}
+		items = append(items, sealed)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

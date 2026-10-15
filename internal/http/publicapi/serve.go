@@ -1,6 +1,7 @@
 package publicapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -199,8 +200,8 @@ var (
 
 // ServeObject 按短 ID 向已验签的客户端输出原图:元数据头、If-None-Match 协商与流式字节。
 // @Description: 客户端取回的是自己的对象,与公开浏览不同——不计活跃度、不走 302 直链、不做按需处理;
-// HEAD 只写元数据头,不打开渠道对象流,没有可服务的副本时与 GET 一样不可用。错误只在写出任何响应之前返回,
-// 调用方据此写自己的错误体。
+// HEAD 只写元数据头,不打开渠道对象流,但按优先级确认对象在某个渠道上读得到元数据,读不到时与 GET 一样不可用:
+// 同步类客户端靠 HEAD 判断对象是否落地。错误只在写出任何响应之前返回,调用方据此写自己的错误体。
 // @param w 响应写入器
 // @param r 请求,GET 或 HEAD
 // @param imageID 对外短 ID
@@ -227,8 +228,8 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 		return fmt.Errorf("查询渠道候选: %w", err)
 	}
 	if r.Method == http.MethodHead {
-		if len(candidates) == 0 {
-			return fmt.Errorf("%w: 没有可服务的副本", ErrObjectUnavailable)
+		if err := statFirst(r.Context(), candidates, row.StorageKey); err != nil {
+			return fmt.Errorf("%w: %w", ErrObjectUnavailable, err)
 		}
 		writeOriginalHeaders(w.Header(), row, opts)
 		w.WriteHeader(http.StatusOK)
@@ -248,4 +249,23 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 		h.cfg.Logger.Debug("输出对象中断", "id", row.ID, "err", err)
 	}
 	return nil
+}
+
+// statFirst 按优先级确认对象在某个候选渠道上读得到元数据。
+// @param candidates 候选渠道,按优先级降序
+// @param key 渠道内对象键
+// @return 没有候选或全部读不到时的错误,含各渠道的原因
+func statFirst(ctx context.Context, candidates []channel.Handle, key string) error {
+	if len(candidates) == 0 {
+		return errors.New("没有可服务的副本")
+	}
+	errs := make([]error, 0, len(candidates))
+	for _, c := range candidates {
+		if _, err := c.Driver.Stat(ctx, key); err != nil {
+			errs = append(errs, fmt.Errorf("渠道 %q: %w", c.Name, err))
+			continue
+		}
+		return nil
+	}
+	return errors.Join(errs...)
 }

@@ -67,8 +67,8 @@ func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 // Work 删除本服务写在渠道上的全部对象并删除渠道记录。
 // @Description: 先等标记清理中之前开始的写入(上传、补齐、快照、深探测)写完,它们写下的对象与记录这时都已
 // 可见;再逐行"删副本对象 → 删副本行",进度持久在业务表,中断重试从剩余行继续;最后删系统目录下的对象(含
-// 元数据库快照)与深探测残留,别的程序写的对象不动。每批副本与每个系统对象删除前都确认渠道仍在清理中:管理员
-// 中途直接移除即停下,剩下的远端对象原样保留。对象已不存在视为已删。任一对象删不掉即整体报错交 River 退避重试;
+// 元数据库快照)与深探测残留,别的程序写的对象不动。每个对象删除前都按渠道表确认渠道仍在清理中:管理员
+// 中途直接移除即停下,除了正在删的那一个,剩下的远端对象原样保留。对象已不存在视为已删。任一对象删不掉即整体报错交 River 退避重试;
 // 同一任务第 drainFailureReportAttempt 次起仍失败,才把原因写进渠道的失败栏(随之开启 drain_failed 告警)。
 // 尝试次数用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除。任务自身
 // 超时或停机取消不算渠道失败,不写原因。
@@ -78,14 +78,11 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 		return river.JobCancel(fmt.Errorf("渠道 %d 不在清理中", job.Args.ChannelID))
 	}
 	w.cfg.Manager.AwaitWrites(h.ID)
-	draining := func() bool {
-		cur, found := w.cfg.Manager.Get(h.ID)
-		return found && cur.PendingDelete
-	}
-	replicas, err := w.drain(ctx, h.ID, h.Driver, draining)
+	still := func() error { return w.stillDraining(ctx, h.ID) }
+	replicas, err := w.drain(ctx, h.ID, h.Driver, still)
 	system := 0
 	if err == nil {
-		system, err = purgeSystemObjects(ctx, h.Driver, draining)
+		system, err = purgeSystemObjects(ctx, h.Driver, still)
 	}
 	if errors.Is(err, errStopped) {
 		w.cfg.Logger.Info("渠道已被直接移除,排空停止,剩余远端对象保留", "channel", h.Name, "objects", replicas)
@@ -107,20 +104,33 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 	return nil
 }
 
+// stillDraining 按渠道表确认渠道仍在清理中。
+// @param channelID 渠道主键
+// @return 渠道已删除或已不在清理中时为 errStopped;查询失败时的错误
+func (w *drainChannelWorker) stillDraining(ctx context.Context, channelID int64) error {
+	row, err := w.cfg.Queries.GetChannel(ctx, channelID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return errStopped
+	case err != nil:
+		return fmt.Errorf("确认渠道仍在清理中: %w", err)
+	case row.PendingDelete == 0:
+		return errStopped
+	}
+	return nil
+}
+
 // drain 逐批删除渠道上的副本对象与副本行,直到没有副本行。
 // @param channelID 渠道主键
 // @param d 渠道驱动
-// @param draining 渠道是否仍在清理中;每批开始前确认
+// @param still 确认渠道仍在清理中(见 stillDraining);每个对象删除前调用
 // @return 本次删除的对象数
 // @return 渠道已不在清理中时为 errStopped;列举、删对象或删行失败时的错误
 func (w *drainChannelWorker) drain(ctx context.Context, channelID int64, d driver.Driver,
-	draining func() bool) (int, error) {
+	still func() error) (int, error) {
 	q := w.cfg.Queries
 	deleted := 0
 	for {
-		if !draining() {
-			return deleted, errStopped
-		}
 		rows, err := q.ListBlobChannelsForChannelPage(ctx, sqlc.ListBlobChannelsForChannelPageParams{
 			ChannelID: channelID, Limit: drainBatch,
 		})
@@ -130,7 +140,7 @@ func (w *drainChannelWorker) drain(ctx context.Context, channelID int64, d drive
 		if len(rows) == 0 {
 			return deleted, nil
 		}
-		n, err := w.deleteReplicas(ctx, channelID, d, rows)
+		n, err := w.deleteReplicas(ctx, channelID, d, rows, still)
 		deleted += n
 		if err != nil {
 			return deleted, err
@@ -142,11 +152,15 @@ func (w *drainChannelWorker) drain(ctx context.Context, channelID int64, d drive
 // @param channelID 渠道主键
 // @param d 渠道驱动
 // @param rows 一批副本行
+// @param still 确认渠道仍在清理中;每个对象删除前调用
 // @return 删除的对象数
-// @return 删对象或删行失败时的错误
+// @return 渠道已不在清理中时为 errStopped;删对象或删行失败时的错误
 func (w *drainChannelWorker) deleteReplicas(ctx context.Context, channelID int64, d driver.Driver,
-	rows []sqlc.ListBlobChannelsForChannelPageRow) (int, error) {
+	rows []sqlc.ListBlobChannelsForChannelPageRow, still func() error) (int, error) {
 	for i, row := range rows {
+		if err := still(); err != nil {
+			return i, err
+		}
 		if err := d.Delete(ctx, row.StorageKey); err != nil && !errors.Is(err, driver.ErrNotFound) {
 			return i, fmt.Errorf("删除对象 %q: %w", row.StorageKey, err)
 		}
@@ -162,10 +176,10 @@ func (w *drainChannelWorker) deleteReplicas(ctx context.Context, channelID int64
 // purgeSystemObjects 删除本服务写在渠道上的系统对象:系统目录下的全部对象与深探测残留。
 // @Description: 深探测残留在渠道根下,驱动只能递归列举,故列举整个渠道再按键名挑出。
 // @param d 渠道驱动
-// @param draining 渠道是否仍在清理中;每个对象删除前确认
+// @param still 确认渠道仍在清理中;每个对象删除前调用
 // @return 删除的对象数
 // @return 渠道已不在清理中时为 errStopped;列举或删除失败时的错误
-func purgeSystemObjects(ctx context.Context, d driver.Driver, draining func() bool) (int, error) {
+func purgeSystemObjects(ctx context.Context, d driver.Driver, still func() error) (int, error) {
 	objs, err := d.List(ctx, "")
 	if err != nil {
 		return 0, fmt.Errorf("列举渠道对象: %w", err)
@@ -175,8 +189,8 @@ func purgeSystemObjects(ctx context.Context, d driver.Driver, draining func() bo
 		if !strings.HasPrefix(o.Key, systemPrefix) && !failover.IsDeepProbeKey(o.Key) {
 			continue
 		}
-		if !draining() {
-			return deleted, errStopped
+		if err := still(); err != nil {
+			return deleted, err
 		}
 		if err := d.Delete(ctx, o.Key); err != nil && !errors.Is(err, driver.ErrNotFound) {
 			return deleted, fmt.Errorf("删除系统对象 %q: %w", o.Key, err)

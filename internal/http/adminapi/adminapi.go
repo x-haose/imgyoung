@@ -61,12 +61,13 @@ type ImageAdmin interface {
 type BackupAdmin interface {
 	// List 列出各健康渠道上快照的并集,最新在前,每份带持有它的渠道。
 	List(ctx context.Context) ([]reliability.Snapshot, error)
-	// RunOnce 立即备份一次,写到每个健康渠道并返回新快照;任一渠道未写成即返回错误。
-	RunOnce(ctx context.Context) (reliability.Snapshot, error)
+	// Backup 立即备份一次,写到每个健康渠道并返回新快照;任一渠道未写成即返回错误。备份归备份服务执行,
+	// 不随请求断开而中止,停机时中止;本方法等到备份结束。
+	Backup() (reliability.Snapshot, error)
 	// Open 按优先级从持有快照的渠道打开它供下载,返回字节流与大小。
 	Open(ctx context.Context, name string) (io.ReadCloser, int64, error)
-	// Stage 把快照暂存到数据目录,等进程重启换入。
-	Stage(ctx context.Context, name string) (string, error)
+	// Restore 把快照取回、核对完整后暂存到数据目录,等进程重启换入;执行归属同 Backup。
+	Restore(name string) (string, error)
 }
 
 // SettingsStore 运营配置存储口(由 config.Store 实现):读取当前快照、应用修改热生效。
@@ -109,6 +110,7 @@ func New(cfg Config) *Handlers {
 
 // recordAudit best-effort 记录管理操作;审计写入失败只告警,不阻断主操作
 // (留痕缺失优于因日志失败而拒绝合法管理操作)。操作者取自请求上下文的会话主体。
+// 写入脱离请求的取消:操作已经完成,客户端此时断开不该丢掉这条留痕。
 // @param ctx 请求上下文
 // @param action 动作标识(见 audit 包常量)
 // @param target 操作目标标识
@@ -118,7 +120,7 @@ func (h *Handlers) recordAudit(ctx context.Context, action, target, detail strin
 	if info, ok := middleware.SessionFrom(ctx); ok {
 		actor = info.Principal.UserID
 	}
-	if err := h.cfg.Audit.Record(ctx, actor, action, target, detail); err != nil {
+	if err := h.cfg.Audit.Record(context.WithoutCancel(ctx), actor, action, target, detail); err != nil {
 		h.cfg.Logger.Warn("审计记录失败", "action", action, "target", target, "err", err)
 	}
 }

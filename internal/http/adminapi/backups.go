@@ -1,7 +1,6 @@
 package adminapi
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -34,10 +33,10 @@ func (h *Handlers) HandleBackupList(w http.ResponseWriter, r *http.Request) {
 
 // HandleBackupCreate 立即备份一次,写到每个健康渠道并返回新快照(仅管理员路由)。
 // @Description: 没有健康渠道可存放快照是外部依赖故障,回 503 供稍后重试;其余失败回 500,
-// 含部分渠道未写成——错误里列出失败的渠道与原因,写成的渠道保留该快照。备份不随请求断开而中止
-// (反代超时、关掉页面):写到一半停下只会留下一轮无谓的失败。
+// 含部分渠道未写成——错误里列出失败的渠道与原因,写成的渠道保留该快照。备份由备份服务执行,不随请求断开
+// 而中止(反代超时、关掉页面),停机时中止;处理器等它结束再记审计。
 func (h *Handlers) HandleBackupCreate(w http.ResponseWriter, r *http.Request) {
-	snap, err := h.cfg.Backups.RunOnce(context.WithoutCancel(r.Context()))
+	snap, err := h.cfg.Backups.Backup()
 	switch {
 	case errors.Is(err, channel.ErrNoHealthyChannel):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.NoHealthyChannel)
@@ -72,10 +71,10 @@ func (h *Handlers) HandleBackupDownload(w http.ResponseWriter, r *http.Request) 
 
 // HandleBackupRestore 用一份快照恢复元数据库:暂存后触发优雅停机,进程被拉起时换入(仅管理员路由)。
 // @Description: 响应 202 先于停机发出;没有进程管理器拉起时,暂存文件等到下次手动启动再换入。
-// 取回快照不随请求断开而中止,大快照取回超过反代超时也能暂存完成。
+// 取回快照由备份服务执行,不随请求断开而中止,大快照取回超过反代超时也能暂存完成;快照不完整时拒绝(422)。
 func (h *Handlers) HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	path, err := h.cfg.Backups.Stage(context.WithoutCancel(r.Context()), name)
+	path, err := h.cfg.Backups.Restore(name)
 	if err != nil {
 		h.writeSnapshotError(w, name, err)
 		return
@@ -100,6 +99,9 @@ func (h *Handlers) writeSnapshotError(w http.ResponseWriter, name string, err er
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.SnapshotNameInvalid)
 	case errors.Is(err, reliability.ErrSnapshotNotFound):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.SnapshotNotFound)
+	case errors.Is(err, reliability.ErrSnapshotCorrupt):
+		h.cfg.Logger.Warn("快照不完整,拒绝恢复", "snapshot", name, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, errcode.SnapshotCorrupt, "snapshot", name)
 	case errors.Is(err, channel.ErrNoHealthyChannel):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.NoHealthyChannel)
 	default:

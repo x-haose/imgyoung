@@ -48,19 +48,21 @@ type Service struct {
 	cfg         Config                        // 依赖
 	mu          sync.Mutex                    // 串行化备份:各轮共用同一个快照临时文件,定时与手动备份不能交叠
 	lastFailure atomic.Pointer[errcode.Error] // 最近一次备份的失败原因;nil 表示最近一次成功或尚未运行
+	jobs        chan job                      // 手动备份与恢复,由 Run 逐项执行
+	stopped     chan struct{}                 // Run 返回时关闭,此后的手动操作立即失败
 }
 
-// New 创建备份服务。
+// New 创建备份服务;手动备份与恢复要等 Run 启动后才执行。
 // @param cfg 依赖,字段均必填
 // @return 就绪的备份服务
 func New(cfg Config) *Service {
-	return &Service{cfg: cfg}
+	return &Service{cfg: cfg, jobs: make(chan job), stopped: make(chan struct{})}
 }
 
 // RunOnce 执行一次备份:快照一次 → 写入每个健康渠道并各自清理超额旧份;结果记入 LastFailure。
 // @Description: 快照经各渠道驱动写入,加密渠道自动得到密文备份。单个渠道失败不影响其余渠道继续写,
 // 但本轮记为失败,写成的渠道保留这份快照。写入期间占用各渠道的系统对象(见 channel.Manager.HoldWrites),
-// 期间被标为清理中的渠道跳过不写。恢复经 Stage 暂存、重启时 ApplyStaged 换入。
+// 期间被标为清理中的渠道跳过不写。恢复经 Restore 暂存、重启时 ApplyStaged 换入。
 // ctx 被取消(停机)造成的失败不记入 LastFailure:那不是备份的结论。
 // @return 新快照,Channels 为写入的全部渠道;失败时为零值
 // @return 带错误码的错误:没有健康渠道时(包裹 channel.ErrNoHealthyChannel)、生成快照失败、任一渠道快照没写成,
@@ -68,18 +70,18 @@ func New(cfg Config) *Service {
 func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snap, err := s.backup(ctx)
+	snap, err := s.takeAndStore(ctx)
 	if err == nil || ctx.Err() == nil {
 		s.recordResult(err)
 	}
 	return snap, err
 }
 
-// backup 执行一次备份的全部步骤。
+// takeAndStore 执行一次备份的全部步骤。
 // @param ctx 控制超时与取消
 // @return 新快照
 // @return 选渠道、生成快照失败或有渠道未写成时的错误
-func (s *Service) backup(ctx context.Context) (Snapshot, error) {
+func (s *Service) takeAndStore(ctx context.Context) (Snapshot, error) {
 	targets := s.cfg.Channels.Healthy()
 	if len(targets) == 0 {
 		return Snapshot{}, errNoTarget()
@@ -188,8 +190,15 @@ func discard(f *os.File) {
 // Run 周期执行备份,直至 ctx 取消;启动时有健康渠道缺少备份间隔内的快照才先备份一次。
 // @Description: 每次启动都备份会让频繁重启的实例用启动快照挤掉按保留份数轮换的历史
 // (保留 7 份时一天内重启 7 次就把一周的快照全换成同一天的);各渠道上都有间隔内的快照即跳过。
+// 手动备份与恢复(Backup、Restore)也在这里执行,周期循环结束时一并中止,全部结束才返回。每个服务只能 Run 一次。
 // @param wait 周期闸,到点放行、ctx 取消即收敛
 func (s *Service) Run(ctx context.Context, wait func(context.Context) bool) {
+	defer close(s.stopped)
+	ctx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer cancel()
+	wg.Go(func() { s.serveJobs(ctx) })
 	due, err := s.startupDue(ctx)
 	if err != nil {
 		s.cfg.Logger.Warn("无法判断各渠道上一份快照的时刻,按需要备份处理", "err", err)
@@ -197,11 +206,11 @@ func (s *Service) Run(ctx context.Context, wait func(context.Context) bool) {
 	}
 	if !due {
 		s.cfg.Logger.Info("各健康渠道上都有备份间隔内的元数据库快照,启动时不重复备份")
-	} else if _, err := s.RunOnce(ctx); err != nil {
+	} else if _, err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 		s.cfg.Logger.Warn("启动备份未完成", "err", err)
 	}
 	for wait(ctx) {
-		if _, err := s.RunOnce(ctx); err != nil {
+		if _, err := s.RunOnce(ctx); err != nil && ctx.Err() == nil {
 			s.cfg.Logger.Warn("定时备份未完成", "err", err)
 		}
 	}

@@ -73,6 +73,27 @@ func TestEditRejectedAfterConcurrentWriteBack(t *testing.T) {
 	}
 }
 
+// TestWriteBackRecoversAfterFailedPersist 验证写回落库失败一次之后,同一驱动的下一次写回照常落库——
+// 比较基准停在库里实际的值,不被那次没落库的新值带偏。
+func TestWriteBackRecoversAfterFailedPersist(t *testing.T) {
+	m, id := newLocalManager(t)
+	live := liveOf(m, id)
+	exec := func(stmt string) {
+		t.Helper()
+		if _, err := m.cfg.Conn.ExecContext(t.Context(), stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	exec(`CREATE TRIGGER fail_config BEFORE UPDATE OF config_sealed ON channels
+		BEGIN SELECT RAISE(ABORT, 'injected'); END`)
+	m.persistOwn(id, live, "token", `{"access_token":"T2"}`)
+	exec(`DROP TRIGGER fail_config`)
+	m.persistOwn(id, live, "token", `{"access_token":"T3"}`)
+	if got := storedParam(t, m, id, "token"); got != `{"access_token":"T3"}` {
+		t.Fatalf("落库恢复后的写回没有落库: %s", got)
+	}
+}
+
 // newLocalManager 建一个只有一条 local 渠道的管理器,测试结束自动关闭。
 // @return 管理器与渠道主键
 func newLocalManager(t *testing.T) (*Manager, int64) {

@@ -220,7 +220,8 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 
 // store 把处理好的图写进渠道并落库,随后为其余渠道触发补齐。
 // @Description: 写入与落库都在目标渠道的写入租约内:渠道期间被标为清理中,排空等这次落库后再列举,写下的对象
-// 不会遗留。落库时仍在役的同步副本不够,本次上传失败并删掉已写入的对象。
+// 不会遗留。写够份数前失败、落库失败(含落库时仍在役的同步副本不够、幂等键输给另一请求),都删掉本次已写入的
+// 对象:对象键带本次的短 ID,没落库就没有记录指向它。
 // @param set 本次请求生效的配置快照
 // @param opts 上传参数
 // @param user 归属用户
@@ -236,6 +237,7 @@ func (s *Service) store(ctx context.Context, set config.Settings, opts Options, 
 	defer release()
 	doneIDs, err := s.writeReplicas(ctx, targets, key, prep.data, minSuccess(set))
 	if err != nil {
+		s.discardWritten(ctx, targets, doneIDs, key)
 		return Result{}, err
 	}
 	all := s.cfg.Channels.All()
@@ -246,11 +248,11 @@ func (s *Service) store(ctx context.Context, set config.Settings, opts Options, 
 		width: int64(meta.width), height: int64(meta.height),
 		ttl: resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()), objectKey: opts.ObjectKey,
 	})
-	if errors.Is(err, ErrInsufficientReplicas) {
-		s.discardWritten(ctx, targets, doneIDs, key)
-		return Result{}, err
-	}
 	if err != nil {
+		s.discardWritten(ctx, targets, doneIDs, key)
+		if errors.Is(err, ErrInsufficientReplicas) {
+			return Result{}, err
+		}
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
 		if imageID, found, _ := s.imageByIdempotencyKey(ctx, opts); found {
 			return Result{ImageID: imageID}, nil
@@ -357,7 +359,7 @@ func prepare(data []byte, mime string, policy imaging.EXIFPolicy) (prepared, err
 // @param key 对象键
 // @param data 待存字节
 // @param need 最少同步副本数,>= 1
-// @return 已写入的渠道 ID,按写入顺序
+// @return 已写入的渠道 ID,按写入顺序;失败时同样给出,供调用方删掉已写的对象
 // @return 无健康渠道时为 channel.ErrNoHealthyChannel,份数不足时为 ErrInsufficientReplicas
 func (s *Service) writeReplicas(ctx context.Context, healthy []channel.Handle, key string, data []byte,
 	need int) ([]int64, error) {
@@ -383,10 +385,10 @@ func (s *Service) writeReplicas(ctx context.Context, healthy []channel.Handle, k
 		doneIDs = append(doneIDs, h.ID)
 	}
 	if errors.Is(err, failover.ErrInsufficient) {
-		return nil, fmt.Errorf("%w: %w", ErrInsufficientReplicas, err)
+		return doneIDs, fmt.Errorf("%w: %w", ErrInsufficientReplicas, err)
 	}
 	if err != nil {
-		return nil, err
+		return doneIDs, err
 	}
 	return doneIDs, nil
 }
@@ -410,7 +412,7 @@ func (s *Service) holdTargets() (targets []channel.Handle, release func()) {
 	}
 }
 
-// discardWritten 上传在落库时失败,删掉已写进各渠道的对象。
+// discardWritten 上传没有落库,删掉已写进各渠道的对象。
 // @Description: 尽力而为:删不掉的,在役渠道上由对账 GC 当孤儿回收;已标为清理中的渠道没有副本记录指向它,
 // 只能留在远端,记日志备查。删除脱离请求的取消,客户端断开也照样清理。
 // @param targets 本次上传的候选渠道

@@ -156,25 +156,30 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (TestResult, err
 // @param config 已整理的配置
 // @return probeErr 构造或探测失败的原因;nil 表示连接可用
 // @return unsaved 没有落到渠道的写回,参数名 → 新值
-// @return err 写回后重载失败时的错误
+// @return err 渠道已标为清理中时的 ErrChannelDeleting;写回后重载失败时的错误
 func (m *Manager) trialProbe(ctx context.Context, p TestParams,
 	config map[string]string) (probeErr error, unsaved map[string]string, err error) {
 	var persisted atomic.Bool
 	var wb writeBacks
 	live := newLiveParams(config)
 	onChange := func(key, value string) {
-		expected := live.swap(key, value)
-		if p.ChannelID > 0 && p.Config[key] == SecretPlaceholder && m.persistParam(p.ChannelID, key, expected, value) {
+		if p.ChannelID > 0 && p.Config[key] == SecretPlaceholder && live.writeBack(key, value,
+			func(expected string) bool { return m.persistParam(p.ChannelID, key, expected, value) }) {
 			persisted.Store(true)
 			return
 		}
 		wb.record(key, value)
+	}
+	release, err := m.holdForTrial(p.ChannelID)
+	if err != nil {
+		return nil, nil, err
 	}
 	d, probeErr := m.openTrial(ctx, p.Driver, config, onChange)
 	if probeErr == nil {
 		probeErr = deepProbe(ctx, d)
 		m.closeTrial(ctx, d, "测试连接")
 	}
+	release()
 	if persisted.Load() {
 		if err := m.Reload(ctx); err != nil && !errors.Is(err, errNothingLoaded) {
 			return nil, nil, err
@@ -183,6 +188,23 @@ func (m *Manager) trialProbe(ctx context.Context, p TestParams,
 	unsaved = map[string]string{}
 	wb.applyTo(unsaved)
 	return probeErr, unsaved, nil
+}
+
+// holdForTrial 测试已有渠道的配置时占用该渠道的写入租约:试探测与渠道自身的深探测写在同一位置,同样不能与排空交错。
+// @param channelID 渠道主键;0 表示创建场景,无须占用
+// @return release 探测结束后调用
+// @return err 渠道已标为清理中时为 ErrChannelDeleting;渠道未装载(装载失败)时不占用、照常探测
+func (m *Manager) holdForTrial(channelID int64) (release func(), err error) {
+	if channelID == 0 {
+		return func() {}, nil
+	}
+	if rel, ok := m.HoldWrites(channelID); ok {
+		return rel, nil
+	}
+	if h, found := m.Get(channelID); found && h.PendingDelete {
+		return nil, ErrChannelDeleting
+	}
+	return func() {}, nil
 }
 
 // recordProbe 把一次探测结果写入渠道行(healthy / last_checked_at / last_error*)

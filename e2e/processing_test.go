@@ -132,6 +132,10 @@ func TestProcessBadParams(t *testing.T) {
 	if resp, _ := procGet(t, inst, url+"?format=tiff", nil); resp.StatusCode != 400 {
 		t.Errorf("档外格式期望 400,得 %d", resp.StatusCode)
 	}
+	// 档内宽度只认规范写法:前导零的写法若也放行,同一档能拼出任意多个 URL。
+	if resp, _ := procGet(t, inst, url+"?w=0320", nil); resp.StatusCode != 400 {
+		t.Errorf("带前导零的宽度期望 400,得 %d", resp.StatusCode)
+	}
 }
 
 // procGet 带可选请求头的 GET,返回响应与正文;不自动跟随重定向。

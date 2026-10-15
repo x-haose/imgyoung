@@ -35,39 +35,42 @@ func (w *writeBacks) applyTo(config map[string]string) {
 	maps.Copy(config, w.values)
 }
 
-// liveParams 一个驱动手里当前的参数值:构造时的配置,随后端每次写回更新。
-// @Description: 写回落库前拿它核对库里的值——库里已不是驱动手里的旧值,说明配置在驱动构造之后被编辑过,
-// 这个驱动的写回属于旧配置,不得覆盖。
+// liveParams 一个驱动的参数在库里最近一次确认的值:构造时的配置,每次写回落库成功后更新。
+// @Description: 写回以它为比较基准:库里已不是这个值,说明配置在此之后被编辑过,这个驱动的写回属于旧配置,
+// 不得覆盖。写回落库失败时基准不变,下一次写回仍以库里实际的值比较,成功即补上。
 type liveParams struct {
-	mu     sync.Mutex        // 后端可能在任意 goroutine 写回
-	values map[string]string // 参数名 → 驱动当前的值
+	mu     sync.Mutex        // 串行化同一驱动的写回:比较基准与落库结果须成对更新
+	stored map[string]string // 参数名 → 库里最近一次确认的值
 }
 
 // newLiveParams 以构造驱动所用的配置建立参数值表。
 // @param params 构造驱动所用的完整配置
 // @return 参数值表(持有副本)
 func newLiveParams(params map[string]string) *liveParams {
-	return &liveParams{values: maps.Clone(params)}
+	return &liveParams{stored: maps.Clone(params)}
 }
 
-// swap 记下参数的新值,返回此前驱动手里的值。
+// writeBack 以库里最近一次确认的值为基准落库一次写回,成功才更新基准。
 // @param key 参数名
 // @param value 新值
-// @return 旧值;此前没有该参数时为空串
-func (l *liveParams) swap(key, value string) string {
+// @param persist 落库;参数为比较基准,返回库里是否已是新值
+// @return 库里是否已是新值
+func (l *liveParams) writeBack(key, value string, persist func(expected string) bool) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	old := l.values[key]
-	l.values[key] = value
-	return old
+	if !persist(l.stored[key]) {
+		return false
+	}
+	l.stored[key] = value
+	return true
 }
 
-// snapshot 返回当前参数值的副本。
+// snapshot 返回库里最近一次确认的参数值的副本。
 // @return 参数名 → 值
 func (l *liveParams) snapshot() map[string]string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return maps.Clone(l.values)
+	return maps.Clone(l.stored)
 }
 
 // persistParam 把后端运行期写回的参数(刷新后的 OAuth 令牌等)并入渠道配置并落库,前提是库里仍是写回之前的值。
@@ -141,14 +144,18 @@ func (m *Manager) mergeParam(ctx context.Context, channelID int64, key, expected
 
 // persistOwn 落库渠道自己驱动的写回,并同步进该驱动对应的驱动输入。
 // @Description: 驱动手里已是新值,下次 Reload 不应把写回误判为配置变更而重建驱动。写回只同步给构造出这个
-// 驱动的那条运行态;配置已被编辑时(库里已不是驱动手里的旧值)写回丢弃,驱动随后被 Reload 换掉。
+// 驱动的那条运行态;配置已被编辑时(库里已不是这个驱动上次确认的值)写回丢弃,驱动随后被 Reload 换掉;
+// 落库失败时驱动输入不变,Reload 也不重建,驱动继续用手里的新值,下一次写回再落库。
 // 一次性驱动的写回只经 persistParam 落库、不同步,下次 Reload 据此重建在用驱动,换用新值。
 // @param channelID 渠道主键
 // @param live 写回所属驱动的参数值表
 // @param key 参数名
 // @param value 新值
 func (m *Manager) persistOwn(channelID int64, live *liveParams, key, value string) {
-	if !m.persistParam(channelID, key, live.swap(key, value), value) {
+	applied := live.writeBack(key, value, func(expected string) bool {
+		return m.persistParam(channelID, key, expected, value)
+	})
+	if !applied {
 		return
 	}
 	m.mu.Lock()

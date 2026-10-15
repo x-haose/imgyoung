@@ -238,6 +238,7 @@ func TestStoreUpdateRejectsInvalid(t *testing.T) {
 		"站点地址带路径":        {"base_url", "https://img.example.com/sub", errcode.SettingSiteRoot},
 		"站点地址末尾空查询":      {"base_url", "https://img.example.com?", errcode.SettingSiteRoot},
 		"站点地址末尾空片段":      {"base_url", "https://img.example.com#", errcode.SettingSiteRoot},
+		"站点地址缺主机名":       {"base_url", "http://:8080", errcode.SettingSiteRoot},
 		"Webhook 非 HTTP": {"alert_webhook_url", "ftp://x", errcode.SettingURL},
 	} {
 		t.Run(name, func(t *testing.T) {

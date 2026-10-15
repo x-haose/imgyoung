@@ -376,7 +376,8 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	if p.Config[ConfigKeyToken] != SecretPlaceholder {
 		return false, &TokenRefreshedError{Token: refreshed, Err: err}
 	}
-	applied, perr := m.mergeParam(ctx, channelID, ConfigKeyToken, old[ConfigKeyToken], refreshed)
+	// 写回脱离请求的取消:客户端此时断开,交还表单的令牌也就没人收到,丢掉它渠道就坏了。
+	applied, perr := m.mergeParam(context.WithoutCancel(ctx), channelID, ConfigKeyToken, old[ConfigKeyToken], refreshed)
 	if perr != nil {
 		m.cfg.Logger.Error("编辑失败,刷新出的令牌也没能写回渠道,已交还表单", "channel_id", channelID, "err", perr)
 	}
@@ -526,7 +527,8 @@ func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[strin
 // @Description: 唯一副本检查与删除在同一事务内完成,消除并发上传落库造成的检查-删除窗口;
 // 其他清理中的渠道不算可替代副本,两个渠道先后带清理删除不会把同一张图的副本删光。
 // purge 为 true 只打清理中标记:渠道即刻退出选路、补齐与探测,渠道上的对象由排空任务
-// 逐个删除、清完才删行(见 Remove);为 false 立即删行,渠道上的对象原样留在远端。
+// 逐个删除、清完才删行(见 Remove);已在清理中的渠道再标一次什么都不改,已写下的排空失败结论保留。
+// 为 false 立即删行,渠道上的对象原样留在远端。
 // @param channelID 渠道主键
 // @param purge 是否清理渠道上的对象
 // @return ErrChannelNotFound / ErrHoldsSoleReplicas 或落库、重载失败时的错误

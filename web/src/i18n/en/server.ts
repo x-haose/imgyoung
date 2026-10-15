@@ -56,6 +56,8 @@ export const server = {
       'Snapshot {snapshot} was written, but removing old snapshots failed on {failed} of {total} channels, so the retention count is not enforced ({detail})',
     snapshot_name_invalid: 'Invalid snapshot name',
     snapshot_not_found: 'Snapshot not found',
+    snapshot_corrupt:
+      'Snapshot {snapshot} is not a complete database file (it may have been interrupted while being written). Restore from another snapshot',
     settings_body_invalid:
       'The request body must be a non-empty JSON object of key → value',
     setting_unknown: 'Unknown setting {key}',

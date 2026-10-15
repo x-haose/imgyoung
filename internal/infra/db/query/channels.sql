@@ -60,7 +60,7 @@ SET pending_delete    = 1,
     last_error_stage  = NULL,
     last_error_reason = NULL,
     last_error        = NULL
-WHERE id = ?;
+WHERE id = ? AND pending_delete = 0;
 
 -- name: ClearChannelLoadFailure :exec
 UPDATE channels

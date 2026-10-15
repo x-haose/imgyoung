@@ -223,15 +223,21 @@ func TestMigrateBackfillsChannelBoundAt(t *testing.T) {
 }
 
 // TestMigrateRewritesSettingsOutOfRange 存量配置按收紧后的取值范围改写:WebP 质量 0 改为实际生效的 75;
-// 不是站点根地址的 base_url 清空,合法的原样保留。
+// 不是「协议 + 主机名 + 可选端口」的 base_url 清空,这样的站点根地址原样保留。
 func TestMigrateRewritesSettingsOutOfRange(t *testing.T) {
 	for stored, want := range map[string]string{
 		"https://img.example.com":      "https://img.example.com",
 		"HTTP://Img.Example.com:8080":  "HTTP://Img.Example.com:8080",
+		"http://192.0.2.1:8080":        "http://192.0.2.1:8080",
 		"img.example.com":              "",
 		"https://img.example.com/sub":  "",
 		"https://img.example.com?":     "",
 		"https://user@img.example.com": "",
+		"https://img .example.com":     "",
+		"https://img.example.com:80a":  "",
+		"https://img%zz.com":           "",
+		"https://[::1":                 "",
+		"http://:8080":                 "",
 	} {
 		t.Run(stored, func(t *testing.T) {
 			conn := openTest(t)

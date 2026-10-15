@@ -186,7 +186,7 @@ func validateBaseURL(raw string) error {
 	}
 	// 末尾单独的 ? 或 # 不进 RawQuery / Fragment,按原文判定。
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil ||
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil ||
 		u.Path != "" || u.Opaque != "" || strings.ContainsAny(raw, "?#") {
 		return errcode.New(errcode.SettingSiteRoot, "key", "base_url", "value", raw)
 	}

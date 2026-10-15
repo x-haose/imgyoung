@@ -41,21 +41,27 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatalf("创建引用: %v", err)
 	}
 
-	svc := reliability.New(reliability.Config{
-		Conn:     env.Conn,
-		Channels: env.Manager,
-		DataDir:  env.DataDir,
-		Keep:     func() int { return 2 },
-		Interval: func() time.Duration { return time.Hour },
-		Logger:   env.Logger,
-	})
-	return &testEnv{Env: env, svc: svc}
+	te := &testEnv{Env: env}
+	te.svc = te.newService()
+	return te
 }
 
-// runStartupOnly 以立即收敛的周期闸调用 Run,只执行其启动阶段。
+// newService 按测试环境装配一个备份服务(keep=2,间隔 1 小时)。
+func (te *testEnv) newService() *reliability.Service {
+	return reliability.New(reliability.Config{
+		Conn:     te.Conn,
+		Channels: te.Manager,
+		DataDir:  te.DataDir,
+		Keep:     func() int { return 2 },
+		Interval: func() time.Duration { return time.Hour },
+		Logger:   te.Logger,
+	})
+}
+
+// runStartupOnly 模拟一次进程启动:新建备份服务,以立即收敛的周期闸调用 Run,只执行其启动阶段。
 func runStartupOnly(t *testing.T, env *testEnv) {
 	t.Helper()
-	env.svc.Run(t.Context(), func(context.Context) bool { return false })
+	env.newService().Run(t.Context(), func(context.Context) bool { return false })
 }
 
 // listBackups 列出一个渠道上的备份对象。

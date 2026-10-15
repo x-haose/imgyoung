@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/store/driver"
 )
@@ -22,6 +23,9 @@ var ErrSnapshotNotFound = errors.New("reliability: 快照不存在")
 
 // ErrSnapshotName 快照名不是本服务生成的形态。
 var ErrSnapshotName = errors.New("reliability: 快照名非法")
+
+// ErrSnapshotCorrupt 快照不是完整的数据库文件(写快照途中进程被杀、对象损坏),不能用来恢复。
+var ErrSnapshotCorrupt = errors.New("reliability: 快照不是完整的数据库文件")
 
 // DBFileName 元数据库在数据目录下的文件名。
 const DBFileName = "imgyoung.db"
@@ -127,14 +131,15 @@ func openStored(ctx context.Context, d driver.Driver, key string) (io.ReadCloser
 	return rc, info.Size, nil
 }
 
-// Stage 把一份快照取回数据目录,等下次启动换入为元数据库。
+// stage 把一份快照取回数据目录,核对完整后等下次启动换入为元数据库。
 // @Description: 运行中的 SQLite 文件不可能安全替换——全部句柄都指着它;恢复分两步:
-// 本方法只落暂存文件,进程重启时由 ApplyStaged 在开库前换入。暂存文件先写临时名再改名,半截文件不会被当作快照。
-// @param ctx 控制超时与取消
+// 本方法只落暂存文件,进程重启时由 ApplyStaged 在开库前换入。暂存文件先写临时名、通过完整性检查再改名,
+// 半截文件与残缺快照都不会被换入——换入残缺的库,实例就起不来。
+// @param ctx 控制超时与取消;取消时删除临时文件
 // @param name 快照名(List 返回的 Name)
 // @return 暂存文件路径
-// @return ErrSnapshotName / ErrSnapshotNotFound、渠道读取或落盘失败时的错误
-func (s *Service) Stage(ctx context.Context, name string) (string, error) {
+// @return ErrSnapshotName / ErrSnapshotNotFound / ErrSnapshotCorrupt、渠道读取或落盘失败时的错误
+func (s *Service) stage(ctx context.Context, name string) (string, error) {
 	rc, _, err := s.Open(ctx, name)
 	if err != nil {
 		return "", err
@@ -154,6 +159,13 @@ func (s *Service) Stage(ctx context.Context, name string) (string, error) {
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("关闭暂存文件: %w", err)
+	}
+	if err := db.QuickCheck(ctx, tmpName); err != nil {
+		_ = os.Remove(tmpName)
+		if errors.Is(err, db.ErrCorrupt) {
+			return "", fmt.Errorf("%w: %s: %w", ErrSnapshotCorrupt, name, err)
+		}
+		return "", fmt.Errorf("检查暂存文件: %w", err)
 	}
 	if err := os.Rename(tmpName, target); err != nil {
 		_ = os.Remove(tmpName)

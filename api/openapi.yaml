@@ -788,7 +788,14 @@ paths:
         '404':
           $ref: '#/components/responses/ImageNotFound'
         '500':
-          $ref: '#/components/responses/ImageInternalError'
+          description: 服务端故障，可稍后重试：会话校验时读数据库失败为错误信封；查询图片元数据失败为纯文本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
         '503':
           $ref: '#/components/responses/ImageUnavailable'
 
@@ -1920,7 +1927,7 @@ paths:
       operationId: restoreBackup
       tags: [Admin · Operations]
       summary: 从快照恢复
-      description: 按优先级从持有该快照的健康渠道取回（读取失败的渠道换下一个，各健康渠道都没有该快照时 404），暂存到数据目录后触发优雅停机，进程被拉起时换入，原库改名保留；没有进程管理器拉起时，暂存文件等到下次启动再换入。仅管理员。
+      description: 按优先级从持有该快照的健康渠道取回（读取失败的渠道换下一个，各健康渠道都没有该快照时 404），核对是完整的数据库文件后暂存到数据目录，再触发优雅停机，进程被拉起时换入，原库改名保留；没有进程管理器拉起时，暂存文件等到下次启动再换入。仅管理员。
       security:
         - session: []
       parameters:
@@ -1941,6 +1948,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          description: 快照不是完整的数据库文件（写入途中被中断、对象损坏），不暂存
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           description: 持有该快照的渠道都读取失败，或暂存到数据目录失败
           content:
@@ -2359,6 +2372,7 @@ components:
         - backup_prune_failed
         - snapshot_name_invalid
         - snapshot_not_found
+        - snapshot_corrupt
         - settings_body_invalid
         - setting_unknown
         - setting_type

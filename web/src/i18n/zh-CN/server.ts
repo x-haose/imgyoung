@@ -55,6 +55,8 @@ export const server = {
       '快照 {snapshot} 已写入，但有 {failed}/{total} 个渠道清理旧快照失败，保留份数没能生效（{detail}）',
     snapshot_name_invalid: '快照名非法',
     snapshot_not_found: '快照不存在',
+    snapshot_corrupt:
+      '快照 {snapshot} 不是完整的数据库文件（可能写入途中被中断），请换一份快照恢复',
     settings_body_invalid: '请求体需为非空的 键→值 JSON 对象',
     setting_unknown: '未知配置键 {key}',
     setting_type: '{key} 的取值类型不对',
