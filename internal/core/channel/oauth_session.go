@@ -6,13 +6,15 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // oauthSessionTTL 授权会话存活时长;用户在授权页停留过久即作废重来。
 const oauthSessionTTL = 10 * time.Minute
 
 // ErrOAuthSessionNotFound 授权会话不存在或已过期。
-var ErrOAuthSessionNotFound = fmt.Errorf("%w: 授权会话不存在或已过期", ErrInvalidChannel)
+var ErrOAuthSessionNotFound error = errcode.Wrap(ErrInvalidChannel, errcode.OAuthSessionNotFound)
 
 // oauthSession 一次进行中的授权。
 type oauthSession struct {
@@ -21,7 +23,7 @@ type oauthSession struct {
 	redirectURI string            // 发起时使用的回调地址,换取令牌时必须一致
 	createdAt   time.Time         // 创建时刻,用于过期判定
 	token       string            // 换取成功的令牌 JSON;未完成为空
-	failure     string            // 换取失败的原因;成功为空
+	failure     *errcode.Error    // 换取失败的原因;未完成或成功为 nil
 }
 
 // OAuthSessions 进行中的授权会话表。
@@ -87,9 +89,9 @@ func (s *OAuthSessions) Pending(state string) (PendingAuth, error) {
 // Complete 记录换取结果。
 // @param state 一次性 state
 // @param token 换取到的令牌 JSON;失败时为空
-// @param failure 失败原因;成功时为空
+// @param failure 失败原因;成功时为 nil
 // @return ErrOAuthSessionNotFound
-func (s *OAuthSessions) Complete(state, token, failure string) error {
+func (s *OAuthSessions) Complete(state, token string, failure *errcode.Error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[state]
@@ -104,17 +106,17 @@ func (s *OAuthSessions) Complete(state, token, failure string) error {
 // @Description: 令牌只允许被领取一次,避免同一 state 被重放领第二次。
 // @param state 一次性 state
 // @return token 令牌 JSON;尚未完成时为空
-// @return failure 失败原因;无失败时为空
+// @return failure 失败原因;无失败时为 nil
 // @return err ErrOAuthSessionNotFound
-func (s *OAuthSessions) Take(state string) (token, failure string, err error) {
+func (s *OAuthSessions) Take(state string) (token string, failure *errcode.Error, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[state]
 	if !ok || expired(sess) {
-		return "", "", ErrOAuthSessionNotFound
+		return "", nil, ErrOAuthSessionNotFound
 	}
-	if sess.token == "" && sess.failure == "" {
-		return "", "", nil
+	if sess.token == "" && sess.failure == nil {
+		return "", nil, nil
 	}
 	delete(s.sessions, state)
 	return sess.token, sess.failure, nil

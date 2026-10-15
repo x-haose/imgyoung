@@ -28,6 +28,11 @@ export type EditConfig = Schema<'ChannelEditConfig'>
 /** 测试连接的结果。 */
 export type TestResult = Schema<'ChannelTestResult'>
 
+/** 表单上显示的测试结论:接口返回的结果,或请求本身失败时的错误文案。 */
+export type TestOutcome =
+  | TestResult
+  | { ok: false; error: string; failure?: undefined; token?: undefined }
+
 /** 敏感配置值的回读哨兵:原样回传表示保留原凭证,与后端 channel.SecretPlaceholder 一致。 */
 export const SECRET_PLACEHOLDER = '__imgyoung_secret_keep__'
 

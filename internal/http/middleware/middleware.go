@@ -12,6 +12,7 @@ import (
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 )
 
@@ -34,7 +35,7 @@ func ConcurrencyLimit(limit func() int, l *slog.Logger) func(http.Handler) http.
 			if active >= limit() {
 				mu.Unlock()
 				w.Header().Set("Retry-After", "1")
-				httpx.WriteError(l, w, http.StatusTooManyRequests, "上传并发已满,请稍后重试")
+				httpx.WriteError(l, w, http.StatusTooManyRequests, errcode.UploadBusy)
 				return
 			}
 			active++

@@ -19,15 +19,23 @@ import (
 	"time"
 )
 
+// webhookDelivery 一次 Webhook 投递的请求体中用于断言的字段。
+type webhookDelivery struct {
+	Kind   string            `json:"kind"`   // 告警类型
+	Target string            `json:"target"` // 告警对象
+	Status string            `json:"status"` // open / resolved
+	Params map[string]string `json:"params"` // 描述参数
+}
+
 // webhookSink 收集告警 Webhook 投递的本地 HTTP 服务。
 type webhookSink struct {
 	mu  sync.Mutex
-	got []map[string]string // 收到的请求体,按到达顺序
+	got []webhookDelivery // 收到的请求体,按到达顺序
 }
 
 // ServeHTTP 记录请求体并回 204。
 func (s *webhookSink) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var body map[string]string
+	var body webhookDelivery
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -43,7 +51,7 @@ func (s *webhookSink) has(kind, target, status string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, b := range s.got {
-		if b["kind"] == kind && b["target"] == target && b["status"] == status {
+		if b.Kind == kind && b.Target == target && b.Status == status {
 			return true
 		}
 	}
@@ -259,7 +267,15 @@ func TestBackupReportsFailedChannel(t *testing.T) {
 	resp := adminReq(t, admin, csrf, http.MethodPost, inst.baseURL+"/api/admin/backups", "")
 	raw, err := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	named := strings.Contains(string(raw), `\"blocked\"`)
+	var failed struct {
+		Code   string            `json:"code"`
+		Params map[string]string `json:"params"`
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, &failed)
+	}
+	named := failed.Code == "backup_store_failed" && failed.Params["failed"] == "1" &&
+		strings.HasPrefix(failed.Params["detail"], "blocked: ")
 	if err != nil || resp.StatusCode != http.StatusInternalServerError || !named {
 		t.Fatalf("立即备份: 状态码 %d err=%v body=%s, 期望 500 且点名渠道 blocked", resp.StatusCode, err, raw)
 	}

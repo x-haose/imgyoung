@@ -7,6 +7,8 @@ import (
 	"image"
 	"image/jpeg"
 	"image/png"
+	"maps"
+	"slices"
 
 	"github.com/gen2brain/webp"
 	"golang.org/x/image/draw"
@@ -152,18 +154,22 @@ func ValidateFormat(format string) error {
 // @return MIME 字符串
 func MIME(format string) string { return mimeForFormat(format) }
 
+// formatMIME 目标格式白名单:格式 → MIME。
+var formatMIME = map[string]string{
+	FormatWebP: "image/webp",
+	FormatJPEG: "image/jpeg",
+	FormatPNG:  "image/png",
+}
+
+// Formats 返回支持的目标格式,按字典序。
+// @return 格式切片(新分配,可自由修改)
+func Formats() []string {
+	return slices.Sorted(maps.Keys(formatMIME))
+}
+
 // mimeForFormat 返回目标格式对应的 MIME;白名单外返回空串。
 // @param format 目标格式,取 Format* 常量
 // @return MIME 字符串
 func mimeForFormat(format string) string {
-	switch format {
-	case FormatWebP:
-		return "image/webp"
-	case FormatJPEG:
-		return "image/jpeg"
-	case FormatPNG:
-		return "image/png"
-	default:
-		return ""
-	}
+	return formatMIME[format]
 }

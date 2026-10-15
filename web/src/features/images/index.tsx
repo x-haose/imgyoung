@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorText } from '@/lib/server-text'
 import { useSession } from '@/lib/session'
 import { cn } from '@/lib/utils'
 import { useMessages } from '@/context/locale-provider'
@@ -142,7 +143,7 @@ export function Images() {
           t(m.images.batchPartial, {
             deleted: res.deleted,
             failed: res.failed.length,
-            error: res.failed[0].error,
+            error: errorText(res.failed[0]),
           })
         )
       } else {

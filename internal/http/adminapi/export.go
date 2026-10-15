@@ -9,6 +9,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -69,12 +70,13 @@ type blobExportItem struct {
 
 // blobChannelExportItem 导出的副本分布行。
 type blobChannelExportItem struct {
-	BlobID    int64  `json:"blob_id"`    // 物理图主键
-	ChannelID int64  `json:"channel_id"` // 渠道主键
-	State     string `json:"state"`      // 副本状态:pending / uploading / done / failed
-	Attempts  int64  `json:"attempts"`   // 累计补齐尝试次数
-	LastError string `json:"last_error"` // 最近一次失败原因;空表示无
-	UpdatedAt string `json:"updated_at"` // 状态最近更新时刻,UTC 文本
+	BlobID          int64  `json:"blob_id"`           // 物理图主键
+	ChannelID       int64  `json:"channel_id"`        // 渠道主键
+	State           string `json:"state"`             // 副本状态:pending / uploading / done / failed
+	Attempts        int64  `json:"attempts"`          // 累计补齐尝试次数
+	LastErrorReason string `json:"last_error_reason"` // 最近一次失败的归类;空表示没有失败
+	LastError       string `json:"last_error"`        // 最近一次失败的根因原文;空表示没有失败
+	UpdatedAt       string `json:"updated_at"`        // 状态最近更新时刻,UTC 文本
 }
 
 // HandleExport 导出全部元数据(仅管理员路由),渠道凭证脱敏。
@@ -82,7 +84,7 @@ func (h *Handlers) HandleExport(w http.ResponseWriter, r *http.Request) {
 	payload, err := h.collectExport(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("导出元数据失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionDataExport, "", "")
@@ -197,8 +199,8 @@ func blobChannelsExport(rows []sqlc.BlobChannel) []blobChannelExportItem {
 	items := make([]blobChannelExportItem, 0, len(rows))
 	for _, bc := range rows {
 		items = append(items, blobChannelExportItem{
-			BlobID: bc.BlobID, ChannelID: bc.ChannelID, State: bc.State,
-			Attempts: bc.Attempts, LastError: bc.LastError, UpdatedAt: bc.UpdatedAt,
+			BlobID: bc.BlobID, ChannelID: bc.ChannelID, State: bc.State, Attempts: bc.Attempts,
+			LastErrorReason: bc.LastErrorReason, LastError: bc.LastError, UpdatedAt: bc.UpdatedAt,
 		})
 	}
 	return items

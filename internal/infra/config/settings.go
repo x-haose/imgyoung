@@ -4,12 +4,11 @@
 package config
 
 import (
-	"errors"
-	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -173,7 +172,7 @@ func (s Settings) validate() error {
 	return validateWebhookURL(s.AlertWebhookURL)
 }
 
-// validateDurationCaps 校验换算成时长的配置不超过 MaxDurationHours 折算后的上限。
+// validateDurationCaps 校验换算成时长的配置不超过 MaxDurationHours(100 年)折算后的上限。
 // @return 超限配置的错误;全部合法时为 nil
 func (s Settings) validateDurationCaps() error {
 	const (
@@ -182,97 +181,65 @@ func (s Settings) validateDurationCaps() error {
 		maxSeconds = MaxDurationHours * 3600
 		maxMillis  = maxSeconds * 1000
 	)
-	for _, c := range []struct {
-		name         string
-		value, limit int
-	}{
-		{"health_check_seconds", s.HealthCheckSeconds, maxSeconds},
-		{"backup_interval_hours", s.BackupIntervalHours, MaxDurationHours},
-		{"cleanup_sweep_seconds", s.CleanupSweepSeconds, maxSeconds},
-		{"delete_grace_minutes", s.DeleteGraceMinutes, maxMinutes},
-		{"default_ttl_hours", s.DefaultTTLHours, MaxDurationHours},
-		{"activity_flush_seconds", s.ActivityFlushSeconds, maxSeconds},
-		{"cold_cleanup_days", s.ColdCleanupDays, maxDays},
-		{"usage_report_seconds", s.UsageReportSeconds, maxSeconds},
-		{"dedup_scan_seconds", s.DedupScanSeconds, maxSeconds},
-		{"process_timeout_ms", s.ProcessTimeoutMS, maxMillis},
-		{"idempotency_key_ttl_hours", s.IdempotencyKeyTTLHours, MaxDurationHours},
-		{"audit_retention_days", s.AuditRetentionDays, maxDays},
-	} {
-		if c.value > c.limit {
-			return fmt.Errorf("%s=%d 非法: 不可超过 %d(100 年)", c.name, c.value, c.limit)
-		}
-	}
-	return nil
+	return firstError(
+		atMost("health_check_seconds", s.HealthCheckSeconds, maxSeconds),
+		atMost("backup_interval_hours", s.BackupIntervalHours, MaxDurationHours),
+		atMost("cleanup_sweep_seconds", s.CleanupSweepSeconds, maxSeconds),
+		atMost("delete_grace_minutes", s.DeleteGraceMinutes, maxMinutes),
+		atMost("default_ttl_hours", s.DefaultTTLHours, MaxDurationHours),
+		atMost("activity_flush_seconds", s.ActivityFlushSeconds, maxSeconds),
+		atMost("cold_cleanup_days", s.ColdCleanupDays, maxDays),
+		atMost("usage_report_seconds", s.UsageReportSeconds, maxSeconds),
+		atMost("dedup_scan_seconds", s.DedupScanSeconds, maxSeconds),
+		atMost("process_timeout_ms", s.ProcessTimeoutMS, maxMillis),
+		atMost("idempotency_key_ttl_hours", s.IdempotencyKeyTTLHours, MaxDurationHours),
+		atMost("audit_retention_days", s.AuditRetentionDays, maxDays),
+	)
 }
 
 // validateUpload 校验上传入口与公开访问的配置:体积与像素预算、并发与限速、副本门槛、访问模式、EXIF 档位。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateUpload() error {
-	switch {
-	case s.MaxUploadMB <= 0:
-		return fmt.Errorf("max_upload_mb=%d 非法: 需要正整数(单位 MB)", s.MaxUploadMB)
-	case s.MaxPixelsMP <= 0:
-		return fmt.Errorf("max_pixels_mp=%d 非法: 需要正整数(单位百万像素)", s.MaxPixelsMP)
-	case s.MaxConcurrentUploads <= 0:
-		return fmt.Errorf("max_concurrent_uploads=%d 非法: 需要正整数", s.MaxConcurrentUploads)
-	case s.UploadRatePerMin < 0:
-		return fmt.Errorf("upload_rate_per_min=%d 非法: 需要非负整数(0 表示不启用)", s.UploadRatePerMin)
-	case s.MinSuccess < 1:
-		return fmt.Errorf("min_success=%d 非法: 需要正整数", s.MinSuccess)
-	case s.AccessMode != "proxy" && s.AccessMode != "redirect":
-		return fmt.Errorf("access_mode=%q 非法: 可选 proxy / redirect", s.AccessMode)
-	}
 	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
-	if err := imaging.ValidatePolicy(s.EXIFPolicy); err != nil {
-		return fmt.Errorf("exif_policy 配置非法: %w", err)
-	}
-	return nil
+	policy := oneOf("exif_policy", s.EXIFPolicy, imaging.Policies())
+	return firstError(
+		positive("max_upload_mb", s.MaxUploadMB),
+		positive("max_pixels_mp", s.MaxPixelsMP),
+		positive("max_concurrent_uploads", s.MaxConcurrentUploads),
+		nonNegative("upload_rate_per_min", s.UploadRatePerMin),
+		positive("min_success", s.MinSuccess),
+		oneOf("access_mode", s.AccessMode, []string{"proxy", "redirect"}),
+		policy,
+	)
 }
 
 // validateSchedules 校验后台循环的间隔与备份保留份数:全部须为正整数,0 会让循环空转或备份无保留。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateSchedules() error {
-	switch {
-	case s.HealthCheckSeconds < 1:
-		return fmt.Errorf("health_check_seconds=%d 非法: 需要正整数", s.HealthCheckSeconds)
-	case s.BackupIntervalHours < 1:
-		return fmt.Errorf("backup_interval_hours=%d 非法: 需要正整数", s.BackupIntervalHours)
-	case s.BackupKeep < 1:
-		return fmt.Errorf("backup_keep=%d 非法: 需要正整数", s.BackupKeep)
-	case s.CleanupSweepSeconds < 1:
-		return fmt.Errorf("cleanup_sweep_seconds=%d 非法: 需要正整数", s.CleanupSweepSeconds)
-	case s.ActivityFlushSeconds < 1:
-		return fmt.Errorf("activity_flush_seconds=%d 非法: 需要正整数", s.ActivityFlushSeconds)
-	case s.UsageReportSeconds < 1:
-		return fmt.Errorf("usage_report_seconds=%d 非法: 需要正整数", s.UsageReportSeconds)
-	case s.DedupScanSeconds < 1:
-		return fmt.Errorf("dedup_scan_seconds=%d 非法: 需要正整数", s.DedupScanSeconds)
-	}
-	return nil
+	return firstError(
+		positive("health_check_seconds", s.HealthCheckSeconds),
+		positive("backup_interval_hours", s.BackupIntervalHours),
+		positive("backup_keep", s.BackupKeep),
+		positive("cleanup_sweep_seconds", s.CleanupSweepSeconds),
+		positive("activity_flush_seconds", s.ActivityFlushSeconds),
+		positive("usage_report_seconds", s.UsageReportSeconds),
+		positive("dedup_scan_seconds", s.DedupScanSeconds),
+	)
 }
 
 // validateLifecycle 校验生命周期与查重阈值:宽限、TTL、冷图天数、配额、汉明距离、审计保留期以 0 表示不启用或永久、
 // 不可为负;幂等键保留期须为正。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateLifecycle() error {
-	switch {
-	case s.DeleteGraceMinutes < 0:
-		return fmt.Errorf("delete_grace_minutes=%d 非法: 不可为负", s.DeleteGraceMinutes)
-	case s.DefaultTTLHours < 0:
-		return fmt.Errorf("default_ttl_hours=%d 非法: 不可为负", s.DefaultTTLHours)
-	case s.ColdCleanupDays < 0:
-		return fmt.Errorf("cold_cleanup_days=%d 非法: 不可为负", s.ColdCleanupDays)
-	case s.ChannelQuotaGB < 0:
-		return fmt.Errorf("channel_quota_gb=%d 非法: 不可为负", s.ChannelQuotaGB)
-	case s.DedupPhashMaxDistance < 0:
-		return fmt.Errorf("dedup_phash_max_distance=%d 非法: 不可为负(0 表示不做相似扫描)", s.DedupPhashMaxDistance)
-	case s.IdempotencyKeyTTLHours < 1:
-		return fmt.Errorf("idempotency_key_ttl_hours=%d 非法: 需要正整数", s.IdempotencyKeyTTLHours)
-	case s.AuditRetentionDays < 0:
-		return fmt.Errorf("audit_retention_days=%d 非法: 不可为负(0 表示永久保留)", s.AuditRetentionDays)
-	}
-	return nil
+	return firstError(
+		nonNegative("delete_grace_minutes", s.DeleteGraceMinutes),
+		nonNegative("default_ttl_hours", s.DefaultTTLHours),
+		nonNegative("cold_cleanup_days", s.ColdCleanupDays),
+		nonNegative("channel_quota_gb", s.ChannelQuotaGB),
+		nonNegative("dedup_phash_max_distance", s.DedupPhashMaxDistance),
+		positive("idempotency_key_ttl_hours", s.IdempotencyKeyTTLHours),
+		nonNegative("audit_retention_days", s.AuditRetentionDays),
+	)
 }
 
 // validateWebhookURL 校验告警 Webhook 地址:空表示不外发,否则须为带主机的 http/https 地址。
@@ -284,7 +251,7 @@ func validateWebhookURL(raw string) error {
 	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("alert_webhook_url=%q 非法: 需要 http/https 地址", raw)
+		return errcode.New(errcode.SettingURL, "key", "alert_webhook_url", "value", raw)
 	}
 	return nil
 }
@@ -292,31 +259,27 @@ func validateWebhookURL(raw string) error {
 // validateProcess 校验按需处理的编码档位、并发与超时、缓存上限,以及宽度与格式白名单。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateProcess() error {
-	switch {
-	case s.ProcessQualityWebP < 0 || s.ProcessQualityWebP > 100:
-		return fmt.Errorf("process_quality_webp=%d 非法: 需要 [0,100]", s.ProcessQualityWebP)
-	case s.ProcessQualityJPEG < 1 || s.ProcessQualityJPEG > 100:
-		return fmt.Errorf("process_quality_jpeg=%d 非法: 需要 [1,100]", s.ProcessQualityJPEG)
-	case s.ProcessWebPMethod < 0 || s.ProcessWebPMethod > 6:
-		return fmt.Errorf("process_webp_method=%d 非法: 需要 [0,6]", s.ProcessWebPMethod)
-	case s.ProcessWorkers < 1:
-		return fmt.Errorf("process_workers=%d 非法: 需要正整数", s.ProcessWorkers)
-	case s.ProcessTimeoutMS < 1:
-		return fmt.Errorf("process_timeout_ms=%d 非法: 需要正整数", s.ProcessTimeoutMS)
-	case s.VariantsCacheMB < 1:
-		return fmt.Errorf("variants_cache_mb=%d 非法: 需要正整数", s.VariantsCacheMB)
+	if err := firstError(
+		between("process_quality_webp", s.ProcessQualityWebP, 0, 100),
+		between("process_quality_jpeg", s.ProcessQualityJPEG, 1, 100),
+		between("process_webp_method", s.ProcessWebPMethod, 0, 6),
+		positive("process_workers", s.ProcessWorkers),
+		positive("process_timeout_ms", s.ProcessTimeoutMS),
+		positive("variants_cache_mb", s.VariantsCacheMB),
+	); err != nil {
+		return err
 	}
 	for _, w := range s.ProcessWidths {
-		if w < 1 {
-			return fmt.Errorf("process_widths 含非法档位 %d: 需要正整数", w)
+		if err := positive("process_widths", w); err != nil {
+			return err
 		}
 	}
 	if len(s.ProcessFormats) == 0 {
-		return errors.New("process_formats 不可为空: 至少允许一种目标格式")
+		return errcode.New(errcode.SettingEmpty, "key", "process_formats")
 	}
 	for _, f := range s.ProcessFormats {
-		if err := imaging.ValidateFormat(f); err != nil {
-			return fmt.Errorf("process_formats 配置非法: %w", err)
+		if err := oneOf("process_formats", f, imaging.Formats()); err != nil {
+			return err
 		}
 	}
 	return nil

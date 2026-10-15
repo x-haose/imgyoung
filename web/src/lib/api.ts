@@ -1,24 +1,42 @@
 /**
  * 后端 API 的 fetch 封装:同源 cookie 会话 + CSRF 头回传。
  * CSRF 令牌由登录与 GET /api/admin/me 响应下发,保存在模块内存,刷新页面后由会话查询重新取得。
- * 写请求收到「CSRF 校验失败」的 403 时,确认会话主体未变后换新令牌重放一次;其它 403 直接抛出。
+ * 写请求收到错误码 csrf_rejected 的 403 时,确认会话主体未变后换新令牌重放一次;其它 403 直接抛出。
  * 401(登录与 me 端点除外)交给 onUnauthorized 注册的处理器,由应用层决定跳转。
  */
 import { messages, t } from '@/i18n'
 import type { components } from './api.gen'
+import { errorText } from './server-text'
 
 /** 接口文档里的数据结构;键为 api/openapi.yaml 的 components.schemas 名,类型由 pnpm gen:api 生成。 */
 export type Schema<K extends keyof components['schemas']> =
   components['schemas'][K]
 
-/** API 错误:携带 HTTP 状态码与后端 {error} 信封中的消息;status 为 0 表示网络层失败。 */
+/** 错误码;取值见接口文档的 ErrorCode。 */
+export type ErrorCode = components['schemas']['ErrorCode']
+
+/**
+ * API 错误:message 为当前语言的文案;status 为 0 表示网络层失败。
+ * 后端返回错误信封时带上错误码与整个响应体,个别接口在信封外附带的字段(如渠道保存失败时交还的令牌)从 body 读。
+ */
 export class ApiError extends Error {
   readonly status: number
+  readonly code?: ErrorCode
+  readonly body?: Record<string, unknown>
 
-  constructor(status: number, message: string, options?: ErrorOptions) {
+  constructor(
+    status: number,
+    message: string,
+    options?: ErrorOptions & {
+      code?: ErrorCode
+      body?: Record<string, unknown>
+    }
+  ) {
     super(message, options)
     this.name = 'ApiError'
     this.status = status
+    this.code = options?.code
+    this.body = options?.body
   }
 }
 
@@ -38,9 +56,6 @@ export function onUnauthorized(handler: () => void): void {
 }
 
 const authExemptPaths = new Set(['/api/admin/auth/login', '/api/admin/me'])
-
-/** 后端 CSRF 中间件拒绝请求时的 error 消息;写请求 403 仅此一种触发令牌自愈重放。 */
-const csrfRejectedMessage = 'CSRF 校验失败'
 
 async function rawFetch(
   path: string,
@@ -83,19 +98,37 @@ async function refreshCsrfToken(): Promise<boolean> {
   return true
 }
 
-/** 提取错误响应 {error} 信封中的消息;非 JSON 错误体(如网关页)退回带状态码的默认文案。 */
-async function readErrorMessage(resp: Response): Promise<string> {
-  const fallback = t(messages().common.requestFailed, { status: resp.status })
+/** 把错误响应转成 ApiError:错误信封按错误码取当前语言的文案;非信封的错误体(如网关页)用带状态码的通用文案。 */
+async function readError(resp: Response): Promise<ApiError> {
   const raw = await resp.text()
+  let body: unknown
   try {
-    const body = JSON.parse(raw) as { error?: string }
-    return body.error || fallback
+    body = JSON.parse(raw)
   } catch {
-    return fallback
+    body = undefined
   }
+  if (isErrorEnvelope(body)) {
+    return new ApiError(resp.status, errorText(body), { code: body.code, body })
+  }
+  return new ApiError(
+    resp.status,
+    t(messages().common.requestFailed, { status: resp.status })
+  )
 }
 
-/** 发起 API 请求;非 2xx 一律抛 ApiError(消息取后端 error 字段),空响应体(204、202 等)返回 undefined。 */
+/** 判断响应体是否为错误信封。 */
+function isErrorEnvelope(
+  body: unknown
+): body is components['schemas']['Error'] & Record<string, unknown> {
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    typeof (body as { code?: unknown }).code === 'string' &&
+    typeof (body as { error?: unknown }).error === 'string'
+  )
+}
+
+/** 发起 API 请求;非 2xx 一律抛 ApiError(消息按错误码取当前语言的文案),空响应体(204、202 等)返回 undefined。 */
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit
@@ -103,22 +136,22 @@ export async function apiFetch<T>(
   const method = (init?.method ?? 'GET').toUpperCase()
   const withCsrf = method !== 'GET' && method !== 'HEAD'
   let resp = await rawFetch(path, init, withCsrf)
-  let message = resp.ok ? '' : await readErrorMessage(resp)
+  let failure = resp.ok ? undefined : await readError(resp)
   if (
-    resp.status === 403 &&
+    failure?.status === 403 &&
     withCsrf &&
-    message === csrfRejectedMessage &&
+    failure.code === 'csrf_rejected' &&
     (await refreshCsrfToken())
   ) {
     // 会话仍有效但令牌陈旧(如另一标签页重新登录过):换新令牌后重放本次请求。
     resp = await rawFetch(path, init, withCsrf)
-    message = resp.ok ? '' : await readErrorMessage(resp)
+    failure = resp.ok ? undefined : await readError(resp)
   }
   if (resp.status === 401 && !authExemptPaths.has(path.split('?')[0])) {
     setCsrfToken('')
     unauthorizedHandler()
   }
-  if (!resp.ok) throw new ApiError(resp.status, message)
+  if (failure) throw failure
   const text = await resp.text()
   return (text === '' ? undefined : JSON.parse(text)) as T
 }

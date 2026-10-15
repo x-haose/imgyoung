@@ -170,7 +170,7 @@ func (r *Runner) requeuePhantoms(ctx context.Context, h channel.Handle,
 			continue
 		}
 		if err := r.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
-			State: channel.StatePending, LastError: "对账:渠道对象缺失", Attempts: 0,
+			State: channel.StatePending, LastErrorReason: string(channel.ReasonObjectMissing), Attempts: 0,
 			BlobID: blobID, ChannelID: h.ID,
 		}); err != nil {
 			r.cfg.Logger.Warn("幻影副本重置失败", "channel", h.Name, "key", key, "err", err)

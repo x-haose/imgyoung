@@ -16,6 +16,7 @@ import (
 	"github.com/pb33f/libopenapi-validator/helpers"
 
 	"github.com/x-haose/imgyoung/api"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // contract 由内嵌的 OpenAPI 文档构造的校验器,TestMain 装载一次,全部用例共用(校验器并发安全)。
@@ -114,4 +115,35 @@ func newSessionClient(t *testing.T) *http.Client {
 	client := newClient(t)
 	client.Jar = jar
 	return client
+}
+
+// TestErrorCodesMatchContract 验证服务端登记的错误码与接口文档的 ErrorCode 枚举逐一对应。
+// @Description: 管理后台的错误文案词典按枚举生成类型:服务端多出的错误码在界面上查不到文案,
+// 文档多出的则是不会出现的死条目。
+func TestErrorCodesMatchContract(t *testing.T) {
+	doc, err := libopenapi.NewDocument(api.OpenAPI)
+	if err != nil {
+		t.Fatalf("解析 OpenAPI 文档: %v", err)
+	}
+	model, err := doc.BuildV3Model()
+	if err != nil {
+		t.Fatalf("构造文档模型: %v", err)
+	}
+	proxy, ok := model.Model.Components.Schemas.Get("ErrorCode")
+	if !ok {
+		t.Fatal("文档里没有 ErrorCode")
+	}
+	documented := map[string]bool{}
+	for _, n := range proxy.Schema().Enum {
+		documented[n.Value] = true
+	}
+	for _, c := range errcode.Codes() {
+		if !documented[c.String()] {
+			t.Errorf("服务端错误码 %s 不在文档的 ErrorCode 枚举里", c)
+		}
+		delete(documented, c.String())
+	}
+	for c := range documented {
+		t.Errorf("文档的 ErrorCode 枚举里的 %s 服务端没有登记", c)
+	}
 }

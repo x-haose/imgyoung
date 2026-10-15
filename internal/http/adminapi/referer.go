@@ -11,6 +11,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // refererBodyLimit 添加规则请求体上限。
@@ -28,7 +29,7 @@ func (h *Handlers) HandleRefererList(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.cfg.Referer.List(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("查询防盗链规则失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]refererItem, 0, len(rows))
@@ -45,21 +46,20 @@ func (h *Handlers) HandleRefererAdd(w http.ResponseWriter, r *http.Request) {
 		Pattern string `json:"pattern"` // 规则:裸域(example.com)或子域通配(*.example.com)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return
 	}
 	row, err := h.cfg.Referer.Add(r.Context(), req.Pattern)
 	switch {
 	case errors.Is(err, referer.ErrPatternInvalid):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			"规则格式非法:应为裸域(example.com)或子域通配(*.example.com)")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.RefererPatternInvalid)
 		return
 	case errors.Is(err, referer.ErrPatternExists):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "该规则已存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.RefererExists)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("添加防盗链规则失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionRefererAdd, row.Pattern, "")
@@ -71,17 +71,17 @@ func (h *Handlers) HandleRefererAdd(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleRefererDelete(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "规则 id 非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.RefererIDInvalid)
 		return
 	}
 	pattern, err := h.cfg.Referer.Remove(r.Context(), id)
 	switch {
 	case errors.Is(err, referer.ErrPatternNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "规则不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.RefererNotFound)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("删除防盗链规则失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionRefererRemove, pattern, "")

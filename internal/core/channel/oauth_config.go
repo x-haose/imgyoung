@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 
@@ -116,7 +117,7 @@ func defaultStep(driver string, out *fs.ConfigOut) (fs.ConfigIn, bool, error) {
 	case out == nil:
 		return fs.ConfigIn{}, true, nil
 	case out.Error != "":
-		return fs.ConfigIn{}, false, fmt.Errorf("后端 %q 配置失败: %s", driver, out.Error)
+		return fs.ConfigIn{}, false, fmt.Errorf("后端 %q 配置失败: %w", driver, errors.New(out.Error))
 	case out.State == "":
 		return fs.ConfigIn{}, true, nil
 	case out.OAuth != nil:

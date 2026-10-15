@@ -61,3 +61,27 @@ func TestClientIPFallsBackToPeer(t *testing.T) {
 		t.Errorf("无法解析时 PeerAddr = %v, 期望零值", ip)
 	}
 }
+
+// TestPrefersChinese 验证 Accept-Language 协商:取 q 值最高的标签,缺省、通配与写错的 q 值按约定处理。
+func TestPrefersChinese(t *testing.T) {
+	cases := map[string]bool{
+		"":                           true,
+		"*":                          true,
+		"zh-CN,zh;q=0.9,en;q=0.8":    true,
+		"en-US,en;q=0.9,zh-CN;q=0.8": false,
+		"en;q=0.5,zh-TW;q=0.6":       true,
+		"en;q=abc,zh;q=0.1":          true,
+		"fr":                         false,
+		"en, zh":                     false,
+		"ZH-cn":                      true,
+	}
+	for header, want := range cases {
+		r := httptest.NewRequest("GET", "http://img.local/", nil)
+		if header != "" {
+			r.Header.Set("Accept-Language", header)
+		}
+		if got := PrefersChinese(r); got != want {
+			t.Errorf("Accept-Language %q: PrefersChinese = %v, 期望 %v", header, got, want)
+		}
+	}
+}

@@ -2,7 +2,6 @@ package publicapi
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
@@ -66,7 +66,7 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	tp, ok := middleware.TokenPrincipalFrom(r.Context())
 	if !ok {
 		h.cfg.Logger.Error("上传请求缺少 Token 主体,检查路由装配")
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.serveUpload(w, r, tp.UserID, tp.TokenID)
@@ -79,7 +79,7 @@ func (h *Handlers) HandleSessionUpload(w http.ResponseWriter, r *http.Request) {
 	si, ok := middleware.SessionFrom(r.Context())
 	if !ok {
 		h.cfg.Logger.Error("后台上传请求缺少会话主体,检查路由装配")
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.serveUpload(w, r, si.Principal.UserID, 0)
@@ -105,8 +105,8 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 
 	ttl, ttlSet, ok := parseTTL(form.ttl)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("ttl 取值非法(需要 0 到 %d 的整数秒,或 never 表示永久)", maxTTLSeconds))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
+			"max", strconv.FormatInt(maxTTLSeconds, 10))
 		return
 	}
 
@@ -261,22 +261,22 @@ func imageURL(r *http.Request, set config.Settings, imageID string) string {
 func (h *Handlers) writeUploadError(w http.ResponseWriter, set config.Settings, err error) {
 	switch {
 	case errors.Is(err, upload.ErrUnsupportedType):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnsupportedMediaType, "仅支持图片文件(jpeg/png/gif/webp)")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnsupportedMediaType, errcode.UploadUnsupportedType)
 	case errors.Is(err, upload.ErrTooManyPixels):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity,
-			fmt.Sprintf("图片分辨率超出限制(像素预算 %d 百万像素)", set.MaxPixelsMP))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, errcode.UploadTooManyPixels,
+			"max", strconv.FormatInt(set.MaxPixelsMP, 10))
 	case errors.Is(err, upload.ErrInvalidImage):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "图片内容无法解析")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadInvalidImage)
 	case errors.Is(err, imaging.ErrUnknownPolicy):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "exif_policy 取值非法(可选 strip / passthrough)")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadEXIFPolicy)
 	case errors.Is(err, upload.ErrQuotaExceeded):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "存储配额已满")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.UploadQuotaExceeded)
 	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
 		h.cfg.Logger.Error("渠道不可用,上传失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "存储渠道暂不可用,请稍后重试")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.UploadUnavailable)
 	default:
 		h.cfg.Logger.Error("上传处理失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 	}
 }
 
@@ -288,13 +288,12 @@ func (h *Handlers) writeReadError(w http.ResponseWriter, set config.Settings, er
 	var maxErr *http.MaxBytesError
 	switch {
 	case errors.Is(err, errFileTooLarge), errors.As(err, &maxErr):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("文件超过大小上限(%d MB)", set.MaxUploadMB))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge, errcode.UploadTooLarge,
+			"max", strconv.FormatInt(set.MaxUploadMB, 10))
 	case errors.Is(err, errFieldTooLong):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("exif_policy 或 ttl 字段过长(上限 %d 字节)", maxFieldBytes))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadFieldTooLong,
+			"max", strconv.Itoa(maxFieldBytes))
 	default:
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			"无法读取 file 字段(需要 multipart/form-data 的 file 字段)")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadNoFile)
 	}
 }

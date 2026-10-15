@@ -19,9 +19,10 @@ type oauthStartResult struct {
 
 // oauthResult 领取授权结果的响应体。
 type oauthResult struct {
-	Pending bool   `json:"pending"` // 用户尚未完成授权
-	Token   string `json:"token"`   // 授权令牌
-	Error   string `json:"error"`   // 授权失败原因
+	Pending bool              `json:"pending"` // 用户尚未完成授权
+	Token   string            `json:"token"`   // 授权令牌
+	Code    string            `json:"code"`    // 授权失败的错误码
+	Params  map[string]string `json:"params"`  // 授权失败的文案参数
 }
 
 // oauthStart 对指定模板发起授权,返回状态码与响应体(非 200 时响应体为零值)。
@@ -135,8 +136,9 @@ func TestOAuthFlowEndpoints(t *testing.T) {
 		t.Fatalf("用户拒绝授权的回调: 状态码 %d 页面 %q, 期望 200 且提示授权未完成", code, page)
 	}
 	code, got = oauthTake(t, inst, admin, csrf, started.State)
-	if code != http.StatusOK || got.Pending || got.Token != "" || !strings.Contains(got.Error, "access_denied") {
-		t.Fatalf("拒绝后领取结果: 状态码 %d 结果 %+v, 期望失败原因含 access_denied 且无令牌", code, got)
+	if code != http.StatusOK || got.Pending || got.Token != "" || got.Code != "oauth_denied" ||
+		got.Params["detail"] != "access_denied" {
+		t.Fatalf("拒绝后领取结果: 状态码 %d 结果 %+v, 期望 oauth_denied、原因 access_denied 且无令牌", code, got)
 	}
 	if code, _ := oauthTake(t, inst, admin, csrf, started.State); code != http.StatusNotFound {
 		t.Fatalf("结果二次领取状态码 = %d, 期望 404(只可领取一次)", code)

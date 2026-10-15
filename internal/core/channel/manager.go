@@ -82,11 +82,13 @@ func (s driverSource) equal(other driverSource) bool {
 // @Description: 自持驱动实例;配置变更调 Reload,只重建配置有变的渠道、关闭退役实例。
 // 读方法并发安全。
 type Manager struct {
-	cfg      ManagerConfig // 依赖
-	mu       sync.RWMutex  // 保护 channels
-	channels []managed     // 已加载渠道,按优先级降序
-	reloadMu sync.Mutex    // 串行化 Reload 与 Close:两者都要在"读取现状 → 构造/关闭 → 换入"之间保持现状不变
-	cfgMu    sync.Mutex    // 串行化渠道配置密文的读改写(编辑与后端写回并发时不互相覆盖)
+	cfg         ManagerConfig           // 依赖
+	mu          sync.RWMutex            // 保护 channels
+	channels    []managed               // 已加载渠道,按优先级降序
+	reloadMu    sync.Mutex              // 串行化 Reload 与 Close:两者都要在"读取现状 → 构造/关闭 → 换入"之间保持现状不变
+	cfgMu       sync.Mutex              // 串行化渠道配置密文的读改写(编辑与后端写回并发时不互相覆盖)
+	systemMu    sync.Mutex              // 保护 systemLocks
+	systemLocks map[int64]*sync.RWMutex // 渠道主键 → 系统对象锁(见 HoldSystemWrites);按需创建,渠道删除后不回收
 }
 
 // NewManager 创建管理器并完成首次加载。
@@ -128,7 +130,7 @@ func (m *Manager) Reload(ctx context.Context) error {
 			continue
 		}
 		m.cfg.Logger.Warn("渠道装载失败,本渠道跳过,健康检查时重试", "channel", row.Name, "err", loadErr)
-		if err := m.recordLoadFailure(ctx, row.ID, loadErr); err != nil {
+		if err := m.recordLoadFailure(ctx, row, loadErr); err != nil {
 			recordErrs = append(recordErrs, err)
 		}
 	}
@@ -150,16 +152,21 @@ func (m *Manager) Reload(ctx context.Context) error {
 	return recordErr
 }
 
-// recordLoadFailure 把渠道装载失败作为探测结论落库(不健康,原因以「装载失败」开头)。
-// @Description: ctx 已取消(停机、请求断开)时不落库——取消造成的失败不是渠道的结论。
-// @param channelID 渠道主键
+// recordLoadFailure 把渠道装载失败作为探测结论落库(不健康,环节为装载)。
+// @Description: ctx 已取消(停机、请求断开)时不落库——取消造成的失败不是渠道的结论。配置解得开时
+// 失败原文抹除其中的凭证;解不开时失败本身就是解密失败,原文里没有配置值。
+// @param row 渠道记录
 // @param loadErr 装载失败原因
 // @return 落库失败时的错误
-func (m *Manager) recordLoadFailure(ctx context.Context, channelID int64, loadErr error) error {
+func (m *Manager) recordLoadFailure(ctx context.Context, row sqlc.Channel, loadErr error) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-	return m.recordResult(ctx, channelID, false, "装载失败:"+humanizeProbeError(loadErr))
+	var secrets []string
+	if params, err := m.unsealConfigMap(row.ConfigSealed); err == nil {
+		secrets = secretsIn(row.Driver, params)
+	}
+	return m.recordResult(ctx, row.ID, &LastFailure{Stage: StageLoad, Failure: Explain(loadErr, secrets...)})
 }
 
 // loadChannel 为一条渠道记录装配运行态:驱动输入未变则沿用既有实例并从 previous 摘除,否则构造新实例。
@@ -235,6 +242,76 @@ func closeDrivers(ctx context.Context, channels []managed) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ExplainFor 把渠道上一次操作的错误归类为失败结论,原文抹除该渠道配置里的凭证。
+// @param channelID 渠道主键;未装载的渠道不抹除
+// @param err 底层错误,不可为 nil
+// @return 失败结论
+func (m *Manager) ExplainFor(channelID int64, err error) Failure {
+	m.mu.RLock()
+	var secrets []string
+	for _, c := range m.channels {
+		if c.handle.ID == channelID {
+			secrets = secretsIn(c.source.driver, c.source.params)
+		}
+	}
+	m.mu.RUnlock()
+	return Explain(err, secrets...)
+}
+
+// secretsIn 取渠道配置里须保密的值。
+// @param driverName rclone 后端名
+// @param params 明文配置
+// @return 值切片;后端不存在时为 nil(装载必然已因后端不存在失败,原文里没有配置值)
+func secretsIn(driverName string, params map[string]string) []string {
+	keys, err := secretKeysOf(driverName)
+	if err != nil {
+		return nil
+	}
+	return secretValues(params, keys)
+}
+
+// systemLock 返回渠道的系统对象锁,没有则创建。
+// @param channelID 渠道主键
+// @return 锁
+func (m *Manager) systemLock(channelID int64) *sync.RWMutex {
+	m.systemMu.Lock()
+	defer m.systemMu.Unlock()
+	if m.systemLocks == nil {
+		m.systemLocks = map[int64]*sync.RWMutex{}
+	}
+	l, ok := m.systemLocks[channelID]
+	if !ok {
+		l = &sync.RWMutex{}
+		m.systemLocks[channelID] = l
+	}
+	return l
+}
+
+// HoldSystemWrites 为往渠道写系统对象(元数据库快照、深探测临时对象)占用渠道,与排空删除系统对象互斥。
+// @Description: 持读锁后再确认渠道在役:渠道一旦标为清理中,之后的写入在此被拒;此前已占用的写入,
+// 排空的 LockSystemObjects 会等它释放后再列举删除,写下的对象不会漏删。多个写入可同时占用。
+// @param channelID 渠道主键
+// @return release 写完调用;ok 为 false 时为 nil
+// @return ok 渠道在役为 true;已标为清理中或不在管理器中为 false,此时不得写入
+func (m *Manager) HoldSystemWrites(channelID int64) (release func(), ok bool) {
+	l := m.systemLock(channelID)
+	l.RLock()
+	if h, found := m.Get(channelID); !found || h.PendingDelete {
+		l.RUnlock()
+		return nil, false
+	}
+	return l.RUnlock, true
+}
+
+// LockSystemObjects 独占渠道的系统对象,等在途写入(HoldSystemWrites)全部释放;排空删除系统对象前调用。
+// @param channelID 渠道主键,须已标为清理中
+// @return 删完调用的解锁函数
+func (m *Manager) LockSystemObjects(channelID int64) (unlock func()) {
+	l := m.systemLock(channelID)
+	l.Lock()
+	return l.Unlock
 }
 
 // Healthy 返回当前健康且不在清理中的渠道句柄,按优先级降序。
@@ -459,36 +536,44 @@ func (m *Manager) closeTrial(ctx context.Context, d *rclone.Driver, what string)
 // @param value 新值
 // @return 库里是否已是该值(本次写入或原本相同);失败时为 false,原因已记录
 func (m *Manager) persistParam(channelID int64, key, value string) bool {
-	ctx := context.Background()
 	m.cfgMu.Lock()
 	defer m.cfgMu.Unlock()
+	if err := m.persistParamLocked(context.Background(), channelID, key, value); err != nil {
+		m.cfg.Logger.Error("后端写回参数无法落库", "channel_id", channelID, "key", key, "err", err)
+		return false
+	}
+	return true
+}
+
+// persistParamLocked 把一个参数并入渠道配置并落库;库里已是该值时不写。调用方须持 cfgMu。
+// @param channelID 渠道主键
+// @param key 参数名
+// @param value 新值
+// @return 读取、解密、加密或落库失败时的错误
+func (m *Manager) persistParamLocked(ctx context.Context, channelID int64, key, value string) error {
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if err != nil {
-		m.cfg.Logger.Error("后端写回参数无法落库:读取渠道失败", "channel_id", channelID, "key", key, "err", err)
-		return false
+		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
 	}
 	params, err := m.unsealConfigMap(row.ConfigSealed)
 	if err != nil {
-		m.cfg.Logger.Error("后端写回参数无法落库", "channel", row.Name, "key", key, "err", err)
-		return false
+		return err
 	}
 	if params[key] == value {
-		return true
+		return nil
 	}
 	params[key] = value
 	sealed, err := m.sealConfigMap(params)
 	if err != nil {
-		m.cfg.Logger.Error("后端写回参数无法落库", "channel", row.Name, "key", key, "err", err)
-		return false
+		return err
 	}
 	if err := m.cfg.Queries.UpdateChannelConfigSealed(ctx, sqlc.UpdateChannelConfigSealedParams{
 		ConfigSealed: sealed, ID: channelID,
 	}); err != nil {
-		m.cfg.Logger.Error("后端写回参数无法落库", "channel", row.Name, "key", key, "err", err)
-		return false
+		return fmt.Errorf("写入渠道 %q 配置: %w", row.Name, err)
 	}
 	m.cfg.Logger.Info("渠道参数已由后端写回并落库", "channel", row.Name, "key", key)
-	return true
+	return nil
 }
 
 // persistOwn 落库渠道自己驱动的写回,并同步进该渠道的驱动输入。
@@ -531,7 +616,7 @@ func (m *Manager) sealConfigMap(config map[string]string) (string, error) {
 // unsealConfigMap 把入库的配置密文解密还原为参数表。
 // @param sealed 配置密文,空串表示无参数
 // @return 参数表(含约定键 path / public_base_url),永不为 nil
-// @return 解密或解析失败时的错误
+// @return 解密或解析失败时的 configError
 func (m *Manager) unsealConfigMap(sealed string) (map[string]string, error) {
 	params := map[string]string{}
 	if sealed == "" {
@@ -539,10 +624,10 @@ func (m *Manager) unsealConfigMap(sealed string) (map[string]string, error) {
 	}
 	plain, err := m.cfg.Master.DecryptString(sealed)
 	if err != nil {
-		return nil, fmt.Errorf("解密渠道配置: %w", err)
+		return nil, configError{err: err}
 	}
 	if err := json.Unmarshal([]byte(plain), &params); err != nil {
-		return nil, fmt.Errorf("解析渠道配置 JSON: %w", err)
+		return nil, configError{err: err}
 	}
 	return params, nil
 }

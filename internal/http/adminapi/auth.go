@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // loginBodyLimit 登录请求体上限。
@@ -50,23 +52,23 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, loginBodyLimit)
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return
 	}
 	res, err := h.cfg.Auth.Login(r.Context(), req.Name, req.Password, httpx.ClientIP(r))
 	switch {
 	case errors.Is(err, auth.ErrTooManyAttempts):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusTooManyRequests, "登录尝试过于频繁,请稍后再试")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusTooManyRequests, errcode.LoginRateLimited)
 		return
 	case errors.Is(err, auth.ErrInvalidCredentials):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnauthorized, "用户名或密码错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnauthorized, errcode.InvalidCredentials)
 		return
 	case errors.Is(err, auth.ErrUserDisabled):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "该用户已被禁用")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.UserDisabled)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("登录失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	http.SetCookie(w, sessionCookie(res.SessionID, r, sessionCookieMaxAge))
@@ -82,7 +84,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(middleware.SessionCookie); err == nil && c.Value != "" {
 		if lerr := h.cfg.Auth.Logout(r.Context(), c.Value); lerr != nil {
 			h.cfg.Logger.Error("删除会话失败", "err", lerr)
-			httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+			httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 			return
 		}
 	}
@@ -94,7 +96,7 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleMe(w http.ResponseWriter, r *http.Request) {
 	info, ok := middleware.SessionFrom(r.Context())
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnauthorized, "未登录或会话已过期")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnauthorized, errcode.Unauthenticated)
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, sessionResponse{
@@ -107,7 +109,7 @@ func (h *Handlers) HandleMe(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	var req struct {
@@ -116,20 +118,21 @@ func (h *Handlers) HandleChangePassword(w http.ResponseWriter, r *http.Request) 
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, loginBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return
 	}
 	err := h.cfg.Auth.ChangePassword(r.Context(), p.UserID, req.OldPassword, req.NewPassword)
 	switch {
 	case errors.Is(err, auth.ErrInvalidCredentials):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "旧密码不正确")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.OldPasswordIncorrect)
 		return
 	case errors.Is(err, auth.ErrPasswordTooShort):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.PasswordTooShort,
+			"min", strconv.Itoa(auth.MinPasswordLength))
 		return
 	case err != nil:
 		h.cfg.Logger.Error("修改密码失败", "user", p.UserID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionUserUpdate, p.UserID, "password.change")

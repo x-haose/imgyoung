@@ -19,13 +19,13 @@ import (
 // receiver 收集 Webhook 投递的本地 HTTP 服务,可按配置拒收。
 type receiver struct {
 	mu     sync.Mutex
-	got    []map[string]string // 收到的请求体,按到达顺序
-	reject bool                // 为 true 时回 500,模拟接收方故障
+	got    []map[string]any // 收到的请求体,按到达顺序
+	reject bool             // 为 true 时回 500,模拟接收方故障
 }
 
 // ServeHTTP 记录请求体并按配置回包。
 func (rc *receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	var body map[string]string
+	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -41,10 +41,10 @@ func (rc *receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // received 返回已收到的请求体副本。
-func (rc *receiver) received() []map[string]string {
+func (rc *receiver) received() []map[string]any {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	return append([]map[string]string(nil), rc.got...)
+	return append([]map[string]any(nil), rc.got...)
 }
 
 // setReject 切换拒收。
@@ -98,18 +98,29 @@ func (ae *alertEnv) openAlerts(t *testing.T) map[string]sqlc.Alert {
 	return out
 }
 
-// setProbe 写回一条渠道的探测结果。
-func (ae *alertEnv) setProbe(t *testing.T, id int64, healthy bool, lastError string) {
+// setProbe 写回一条在役渠道的探测结果;reason 为空表示健康。
+func (ae *alertEnv) setProbe(t *testing.T, id int64, reason channel.FailureReason, detail string) {
 	t.Helper()
-	h := int64(0)
-	if healthy {
-		h = 1
+	params := sqlc.UpdateChannelProbeResultParams{Healthy: 1, ID: id}
+	if reason != "" {
+		params.Healthy = 0
+		params.LastErrorStage = sql.NullString{String: string(channel.StageProbe), Valid: true}
+		params.LastErrorReason = sql.NullString{String: string(reason), Valid: true}
+		params.LastError = sql.NullString{String: detail, Valid: true}
 	}
-	if err := ae.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
-		Healthy: h, LastError: sql.NullString{String: lastError, Valid: lastError != ""}, ID: id,
-	}); err != nil {
-		t.Fatalf("写探测结果: %v", err)
+	if n, err := ae.Queries.UpdateChannelProbeResult(t.Context(), params); err != nil || n != 1 {
+		t.Fatalf("写探测结果: 改动 %d 行, err=%v", n, err)
 	}
+}
+
+// decodedParams 解出告警行的描述参数。
+func decodedParams(t *testing.T, a sqlc.Alert) map[string]string {
+	t.Helper()
+	params, err := alert.DecodeParams(a.Params)
+	if err != nil {
+		t.Fatalf("解析告警参数: %v", err)
+	}
+	return params
 }
 
 // localID 内置 local 渠道的主键。
@@ -118,27 +129,31 @@ func (ae *alertEnv) localID(t *testing.T) int64 {
 	return ae.Local(t).ID
 }
 
-// TestEvaluateOpensAndResolvesChannelUnhealthy 验证渠道探测不健康时开启告警、描述取探测原因,
-// 恢复健康后同一告警被恢复而非再开一条。
+// TestEvaluateOpensAndResolvesChannelUnhealthy 验证渠道探测不健康时开启告警、描述与参数取探测结论,
+// 结论变化时更新同一条,恢复健康后同一告警被恢复而非再开一条。
 func TestEvaluateOpensAndResolvesChannelUnhealthy(t *testing.T) {
 	ae := newAlertEnv(t)
 	id := ae.localID(t)
 
-	ae.setProbe(t, id, false, "连接超时")
+	ae.setProbe(t, id, channel.ReasonTimeout, "i/o timeout")
 	ae.evaluate(t)
 	got := ae.openAlerts(t)
 	a, ok := got[alert.KindChannelUnhealthy+"/local"]
-	if !ok || a.Message != "连接超时" || len(got) != 1 {
-		t.Fatalf("未恢复告警 = %+v, 期望仅 local 不健康且描述为探测原因", got)
+	if !ok || a.Message != "连接超时:检查端点地址与网络连通性(i/o timeout)" || len(got) != 1 {
+		t.Fatalf("未恢复告警 = %+v, 期望仅 local 不健康且描述为探测结论", got)
+	}
+	if p := decodedParams(t, a); p["stage"] != "probe" || p["reason"] != "timeout" || p["detail"] != "i/o timeout" {
+		t.Fatalf("告警参数 = %+v", p)
 	}
 
-	ae.setProbe(t, id, false, "认证失败")
+	ae.setProbe(t, id, channel.ReasonAuth, "401 Unauthorized")
 	ae.evaluate(t)
-	if again := ae.openAlerts(t)[alert.KindChannelUnhealthy+"/local"]; again.ID != a.ID || again.Message != "认证失败" {
-		t.Fatalf("描述变化应更新同一条告警, 得 %+v", again)
+	again := ae.openAlerts(t)[alert.KindChannelUnhealthy+"/local"]
+	if again.ID != a.ID || decodedParams(t, again)["reason"] != "auth" {
+		t.Fatalf("结论变化应更新同一条告警, 得 %+v", again)
 	}
 
-	ae.setProbe(t, id, true, "")
+	ae.setProbe(t, id, "", "")
 	ae.evaluate(t)
 	if left := ae.openAlerts(t); len(left) != 0 {
 		t.Fatalf("恢复健康后仍有未恢复告警: %+v", left)
@@ -175,7 +190,8 @@ func TestEvaluateReplicationFailedAndQuota(t *testing.T) {
 
 	ae.evaluate(t)
 	got := ae.openAlerts(t)
-	if a, ok := got[alert.KindReplicationFailed+"/local"]; !ok || a.Message != "1 份副本补齐失败,渠道恢复健康后会重试" {
+	if a, ok := got[alert.KindReplicationFailed+"/local"]; !ok || a.Message != "1 份副本补齐失败,渠道恢复健康后会重试" ||
+		decodedParams(t, a)["failed"] != "1" {
 		t.Fatalf("补齐失败告警 = %+v", got)
 	}
 	if _, ok := got[alert.KindChannelQuotaExceeded+"/local"]; ok {
@@ -184,23 +200,36 @@ func TestEvaluateReplicationFailedAndQuota(t *testing.T) {
 
 	ae.quota = 500
 	ae.evaluate(t)
-	if a, ok := ae.openAlerts(t)[alert.KindChannelQuotaExceeded+"/local"]; !ok || a.Message == "" {
+	a, ok := ae.openAlerts(t)[alert.KindChannelQuotaExceeded+"/local"]
+	if p := decodedParams(t, a); !ok || p["bytes"] != "1000" || p["quota"] != "500" {
 		t.Fatalf("用量 1000 超过阈值 500 应开启告警, 得 %+v", ae.openAlerts(t))
 	}
 }
 
-// TestEvaluateDrainFailed 验证清理中渠道的排空失败原因成为告警,且不再被当作不健康告警。
+// TestEvaluateDrainFailed 验证清理中渠道的排空失败结论成为告警,且不再被当作不健康告警;
+// 探测结果不会写到清理中的渠道上。
 func TestEvaluateDrainFailed(t *testing.T) {
 	ae := newAlertEnv(t)
 	id, _ := ae.AddLocalChannel(t, "victim", 50, false)
 	if err := ae.Manager.Delete(t.Context(), id, true); err != nil {
 		t.Fatalf("标记清理中: %v", err)
 	}
-	ae.setProbe(t, id, false, "清理渠道对象失败,会自动重试")
-
+	if n, err := ae.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
+		Healthy: 1, ID: id,
+	}); err != nil || n != 0 {
+		t.Fatalf("探测结果不应写到清理中的渠道: 改动 %d 行, err=%v", n, err)
+	}
+	if n, err := ae.Queries.RecordChannelDrainFailure(t.Context(), sqlc.RecordChannelDrainFailureParams{
+		LastErrorReason: sql.NullString{String: string(channel.ReasonForbidden), Valid: true},
+		LastError:       sql.NullString{String: "403 Forbidden", Valid: true},
+		ID:              id,
+	}); err != nil || n != 1 {
+		t.Fatalf("写排空失败: 改动 %d 行, err=%v", n, err)
+	}
 	ae.evaluate(t)
 	got := ae.openAlerts(t)
-	if _, ok := got[alert.KindDrainFailed+"/victim"]; !ok || len(got) != 1 {
+	a, ok := got[alert.KindDrainFailed+"/victim"]
+	if !ok || len(got) != 1 || decodedParams(t, a)["stage"] != "drain" {
 		t.Fatalf("告警 = %+v, 期望仅一条排空失败", got)
 	}
 }
@@ -219,7 +248,7 @@ func TestEvaluateBackupFailed(t *testing.T) {
 		WebhookURL: func() string { return "" }, Client: &http.Client{Timeout: 5 * time.Second}, Logger: env.Logger,
 	})
 	id := ae.localID(t)
-	ae.setProbe(t, id, false, "探测失败")
+	ae.setProbe(t, id, channel.ReasonUnclassified, "探测失败")
 	if err := env.Manager.Reload(t.Context()); err != nil {
 		t.Fatalf("重载渠道: %v", err)
 	}
@@ -227,11 +256,12 @@ func TestEvaluateBackupFailed(t *testing.T) {
 		t.Fatal("无健康渠道时备份应失败")
 	}
 	ae.evaluate(t)
-	if _, ok := ae.openAlerts(t)[alert.KindBackupFailed+"/"]; !ok {
-		t.Fatalf("备份失败应开启告警, 得 %+v", ae.openAlerts(t))
+	a, ok := ae.openAlerts(t)[alert.KindBackupFailed+"/"]
+	if !ok || decodedParams(t, a)["code"] != "no_healthy_channel" {
+		t.Fatalf("备份失败应开启告警且带错误码, 得 %+v", ae.openAlerts(t))
 	}
 
-	ae.setProbe(t, id, true, "")
+	ae.setProbe(t, id, "", "")
 	if err := env.Manager.Reload(t.Context()); err != nil {
 		t.Fatalf("重载渠道: %v", err)
 	}
@@ -255,7 +285,7 @@ func TestDeliverWebhook(t *testing.T) {
 	id := ae.localID(t)
 
 	rc.setReject(true)
-	ae.setProbe(t, id, false, "连接超时")
+	ae.setProbe(t, id, channel.ReasonTimeout, "i/o timeout")
 	ae.evaluate(t)
 	if n := len(rc.received()); n != 0 {
 		t.Fatalf("拒收时不应记为已投递, 收到 %d 条", n)
@@ -263,12 +293,16 @@ func TestDeliverWebhook(t *testing.T) {
 	rc.setReject(false)
 	ae.evaluate(t)
 	got := rc.received()
-	if len(got) != 1 || got[0]["status"] != "open" || got[0]["kind"] != alert.KindChannelUnhealthy ||
-		got[0]["target"] != "local" {
+	if len(got) != 1 {
+		t.Fatalf("重投后应收到一条开启, 得 %+v", got)
+	}
+	params, isMap := got[0]["params"].(map[string]any)
+	if got[0]["status"] != "open" || got[0]["kind"] != alert.KindChannelUnhealthy ||
+		got[0]["target"] != "local" || !isMap || params["reason"] != "timeout" {
 		t.Fatalf("重投后应收到一条开启, 得 %+v", got)
 	}
 
-	ae.setProbe(t, id, true, "")
+	ae.setProbe(t, id, "", "")
 	ae.evaluate(t)
 	got = rc.received()
 	if len(got) != 2 || got[1]["status"] != "resolved" || got[1]["resolved_at"] == "" {
@@ -280,7 +314,7 @@ func TestDeliverWebhook(t *testing.T) {
 	}
 
 	ae.webhook = ""
-	ae.setProbe(t, id, false, "再次失败")
+	ae.setProbe(t, id, channel.ReasonUnclassified, "再次失败")
 	ae.evaluate(t)
 	rows, err := ae.Queries.ListUnnotifiedAlerts(t.Context())
 	if err != nil || len(rows) != 0 {

@@ -9,6 +9,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // rateLimiterMaxEntries 频控键表容量上限,超出即触发闲置回收,防内存无界。
@@ -99,12 +100,12 @@ func UploadRateLimit(perMinute func() int, l *slog.Logger) func(http.Handler) ht
 			}
 			userID, ok := uploadSubject(r)
 			if !ok {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "未认证的上传请求")
+				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.UploadUnauthenticated)
 				return
 			}
 			if !table.allow(userID, quota, time.Now()) {
 				w.Header().Set("Retry-After", "60")
-				httpx.WriteError(l, w, http.StatusTooManyRequests, "上传过于频繁,请稍后重试")
+				httpx.WriteError(l, w, http.StatusTooManyRequests, errcode.UploadRateLimited)
 				return
 			}
 			next.ServeHTTP(w, r)

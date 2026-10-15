@@ -110,7 +110,7 @@ func (q *Queries) DeleteBlobChannelsByChannel(ctx context.Context, channelID int
 }
 
 const getBlobChannel = `-- name: GetBlobChannel :one
-SELECT blob_id, channel_id, state, attempts, last_error, updated_at
+SELECT blob_id, channel_id, state, attempts, last_error_reason, last_error, updated_at
 FROM blob_channels
 WHERE blob_id = ? AND channel_id = ?
 `
@@ -128,6 +128,7 @@ func (q *Queries) GetBlobChannel(ctx context.Context, arg GetBlobChannelParams) 
 		&i.ChannelID,
 		&i.State,
 		&i.Attempts,
+		&i.LastErrorReason,
 		&i.LastError,
 		&i.UpdatedAt,
 	)
@@ -245,7 +246,7 @@ func (q *Queries) ListBlobChannels(ctx context.Context, blobID int64) ([]ListBlo
 }
 
 const listBlobChannelsExport = `-- name: ListBlobChannelsExport :many
-SELECT blob_id, channel_id, state, attempts, last_error, updated_at
+SELECT blob_id, channel_id, state, attempts, last_error_reason, last_error, updated_at
 FROM blob_channels
 ORDER BY blob_id, channel_id
 `
@@ -264,6 +265,7 @@ func (q *Queries) ListBlobChannelsExport(ctx context.Context) ([]BlobChannel, er
 			&i.ChannelID,
 			&i.State,
 			&i.Attempts,
+			&i.LastErrorReason,
 			&i.LastError,
 			&i.UpdatedAt,
 		); err != nil {
@@ -323,7 +325,7 @@ func (q *Queries) ListBlobChannelsForChannelPage(ctx context.Context, arg ListBl
 }
 
 const listImageReplicas = `-- name: ListImageReplicas :many
-SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error, bc.updated_at
+SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at
 FROM images i
 JOIN blob_channels bc ON bc.blob_id = i.blob_id
 JOIN channels c ON c.id = bc.channel_id
@@ -332,12 +334,13 @@ ORDER BY c.priority DESC, c.id ASC
 `
 
 type ListImageReplicasRow struct {
-	ChannelID   int64
-	ChannelName string
-	State       string
-	Attempts    int64
-	LastError   string
-	UpdatedAt   string
+	ChannelID       int64
+	ChannelName     string
+	State           string
+	Attempts        int64
+	LastErrorReason string
+	LastError       string
+	UpdatedAt       string
 }
 
 func (q *Queries) ListImageReplicas(ctx context.Context, id string) ([]ListImageReplicasRow, error) {
@@ -354,6 +357,7 @@ func (q *Queries) ListImageReplicas(ctx context.Context, id string) ([]ListImage
 			&i.ChannelName,
 			&i.State,
 			&i.Attempts,
+			&i.LastErrorReason,
 			&i.LastError,
 			&i.UpdatedAt,
 		); err != nil {
@@ -415,24 +419,27 @@ func (q *Queries) ListPendingBlobChannelsAfter(ctx context.Context, arg ListPend
 
 const markBlobChannel = `-- name: MarkBlobChannel :exec
 UPDATE blob_channels
-SET state      = ?,
-    last_error = ?,
-    attempts   = attempts + ?,
-    updated_at = datetime('now')
+SET state             = ?,
+    last_error_reason = ?,
+    last_error        = ?,
+    attempts          = attempts + ?,
+    updated_at        = datetime('now')
 WHERE blob_id = ? AND channel_id = ?
 `
 
 type MarkBlobChannelParams struct {
-	State     string
-	LastError string
-	Attempts  int64
-	BlobID    int64
-	ChannelID int64
+	State           string
+	LastErrorReason string
+	LastError       string
+	Attempts        int64
+	BlobID          int64
+	ChannelID       int64
 }
 
 func (q *Queries) MarkBlobChannel(ctx context.Context, arg MarkBlobChannelParams) error {
 	_, err := q.db.ExecContext(ctx, markBlobChannel,
 		arg.State,
+		arg.LastErrorReason,
 		arg.LastError,
 		arg.Attempts,
 		arg.BlobID,

@@ -15,6 +15,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // channelBodyLimit 渠道管理请求体上限。
@@ -63,9 +64,15 @@ type channelTestRequest struct {
 
 // channelTestResponse 测试连接的响应体。
 type channelTestResponse struct {
-	OK    bool   `json:"ok"`              // 探测是否通过
-	Error string `json:"error,omitempty"` // 失败原因(人话化,不含凭证)
-	Token string `json:"token,omitempty"` // 测试期间服务商刷新了提交的授权令牌时为新令牌 JSON;前端须用它替换表单里的令牌再保存
+	OK      bool             `json:"ok"`                // 探测是否通过
+	Failure *channel.Failure `json:"failure,omitempty"` // 探测失败的结论,原文不含凭证;通过时省略
+	Token   string           `json:"token,omitempty"`   // 测试期间服务商刷新了提交的授权令牌时为新令牌 JSON;前端须用它替换表单里的令牌再保存
+}
+
+// channelSaveError 创建、编辑渠道失败时的响应体:错误信封,外加保存过程中服务商刷新出的令牌。
+type channelSaveError struct {
+	httpx.ErrorResponse        // 失败原因
+	Token               string `json:"token,omitempty"` // 服务商刷新了表单提交的令牌时为新令牌 JSON,表单须换用它再提交;原令牌可能已作废
 }
 
 // decodeChannelBody 解码渠道管理请求体:限制体积并拒绝未知字段
@@ -77,7 +84,7 @@ func (h *Handlers) decodeChannelBody(w http.ResponseWriter, r *http.Request, dst
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON 或含未知字段")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return false
 	}
 	return true
@@ -94,7 +101,7 @@ func (h *Handlers) resolveChannelConfig(w http.ResponseWriter, src channelSource
 	}
 	driverName, cfg, err := channel.BuildTemplateConfig(src.Template, src.Inputs)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
+		httpx.WriteErrorFrom(h.cfg.Logger, w, http.StatusBadRequest, err)
 		return channelSpec{}, false
 	}
 	return channelSpec{template: src.Template, driver: driverName, config: cfg}, true
@@ -105,7 +112,7 @@ func (h *Handlers) resolveChannelConfig(w http.ResponseWriter, src channelSource
 func (h *Handlers) channelIDParam(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	channelID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "渠道 ID 非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.ChannelIDInvalid)
 		return 0, false
 	}
 	return channelID, true
@@ -117,7 +124,7 @@ func (h *Handlers) writeChannelInfo(w http.ResponseWriter, r *http.Request, chan
 	list, err := h.cfg.Admin.List(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("查询渠道描述失败", "id", channelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	for _, c := range list {
@@ -126,7 +133,7 @@ func (h *Handlers) writeChannelInfo(w http.ResponseWriter, r *http.Request, chan
 			return
 		}
 	}
-	httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+	httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ChannelNotFound)
 }
 
 // HandleChannelTemplates 下发内置渠道模板清单(供前端渲染选模板 + 字段表单)。
@@ -160,16 +167,8 @@ func (h *Handlers) HandleChannelCreate(w http.ResponseWriter, r *http.Request) {
 		AllowDirectLink:  req.AllowDirectLink,
 		AutoCreateBucket: req.AutoCreateBucket,
 	})
-	switch {
-	case errors.Is(err, channel.ErrInvalidChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
-		return
-	case errors.Is(err, channel.ErrChannelNameExists):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "渠道名已存在")
-		return
-	case err != nil:
-		h.cfg.Logger.Error("创建渠道失败", "name", req.Name, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+	if err != nil {
+		h.writeChannelSaveError(w, err, "创建渠道失败", "name", req.Name)
 		return
 	}
 	h.kickReplication(r.Context(), req.Name)
@@ -213,23 +212,8 @@ func (h *Handlers) HandleChannelUpdate(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name, Driver: spec.driver, Config: spec.config, Template: spec.template,
 		Priority: req.Priority, Encrypted: req.Encrypted, AllowDirectLink: req.AllowDirectLink,
 	})
-	switch {
-	case errors.Is(err, channel.ErrChannelNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
-		return
-	case errors.Is(err, channel.ErrEncryptedImmutable):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict,
-			"加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据")
-		return
-	case errors.Is(err, channel.ErrChannelNameExists):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "渠道名已存在")
-		return
-	case errors.Is(err, channel.ErrInvalidChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
-		return
-	case err != nil:
-		h.cfg.Logger.Error("编辑渠道失败", "id", channelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+	if err != nil {
+		h.writeChannelSaveError(w, err, "编辑渠道失败", "id", channelID)
 		return
 	}
 	h.cfg.Logger.Info("渠道已编辑", "id", channelID, "name", req.Name)
@@ -238,11 +222,41 @@ func (h *Handlers) HandleChannelUpdate(w http.ResponseWriter, r *http.Request) {
 	h.writeChannelInfo(w, r, channelID, http.StatusOK)
 }
 
+// writeChannelSaveError 把创建、编辑渠道的失败写成响应;保存过程中服务商刷新出的令牌随错误交还。
+// @param err 创建或编辑返回的错误
+// @param logMsg 服务端故障时的日志消息
+// @param logArgs 日志字段,键值交替
+func (h *Handlers) writeChannelSaveError(w http.ResponseWriter, err error, logMsg string, logArgs ...any) {
+	var body channelSaveError
+	if tr, ok := errors.AsType[*channel.TokenRefreshedError](err); ok {
+		body.Token = tr.Token
+	}
+	status, e := http.StatusInternalServerError, errcode.New(errcode.Internal)
+	switch {
+	case errors.Is(err, channel.ErrChannelNotFound):
+		status, e = http.StatusNotFound, errcode.New(errcode.ChannelNotFound)
+	case errors.Is(err, channel.ErrChannelDeleting):
+		status, e = http.StatusConflict, errcode.New(errcode.ChannelDeleting)
+	case errors.Is(err, channel.ErrEncryptedImmutable):
+		status, e = http.StatusConflict, errcode.New(errcode.ChannelEncryptedImmutable)
+	case errors.Is(err, channel.ErrChannelNameExists):
+		status, e = http.StatusConflict, errcode.New(errcode.ChannelNameExists)
+	default:
+		if coded, ok := errcode.From(err); ok && errors.Is(err, channel.ErrInvalidChannel) {
+			status, e = http.StatusBadRequest, coded
+		} else {
+			h.cfg.Logger.Error(logMsg, append(logArgs, "err", err)...)
+		}
+	}
+	body.ErrorResponse = httpx.ErrorBody(e)
+	httpx.WriteJSON(h.cfg.Logger, w, status, body)
+}
+
 // HandleChannelTest 测试连接:按创建同构的请求体执行深探测,不落库、不留渠道。
 // @Description: 参数形态非法(未知模板/缺必填字段/非法配置键)返回 400;
-// 探测本身的成败以 {ok, error} 信封返回,供表单"先测后存"。凭证不回显,唯一例外是服务商刷新了
+// 探测本身的成败以 {ok, failure} 返回,供表单"先测后存"。凭证不回显,唯一例外是服务商刷新了
 // 提交的授权令牌:新令牌随 token 返回,表单换用它保存,原令牌可能已被服务商作废。
-// 编辑场景携 channel_id,配置中的哨兵值还原为该渠道原凭证后再探测。
+// 编辑场景携 channel_id,配置中的哨兵值还原为该渠道原凭证后再探测;清理中的渠道返回 409。
 func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 	var req channelTestRequest
 	if !h.decodeChannelBody(w, r, &req) {
@@ -257,18 +271,21 @@ func (h *Handlers) HandleChannelTest(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, channel.ErrChannelNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ChannelNotFound)
+		return
+	case errors.Is(err, channel.ErrChannelDeleting):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ChannelDeleting)
 		return
 	case errors.Is(err, channel.ErrInvalidChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, templateErrMsg(err))
+		httpx.WriteErrorFrom(h.cfg.Logger, w, http.StatusBadRequest, err)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("测试连接失败", "id", req.ChannelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, channelTestResponse{
-		OK: res.Failure == "", Error: res.Failure, Token: res.Token,
+		OK: res.Failure == nil, Failure: res.Failure, Token: res.Token,
 	})
 }
 
@@ -283,11 +300,11 @@ func (h *Handlers) HandleChannelConfig(w http.ResponseWriter, r *http.Request) {
 	cfg, err := h.cfg.Admin.ConfigForEdit(r.Context(), channelID)
 	switch {
 	case errors.Is(err, channel.ErrChannelNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ChannelNotFound)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("回读渠道配置失败", "id", channelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, cfg)
@@ -295,23 +312,29 @@ func (h *Handlers) HandleChannelConfig(w http.ResponseWriter, r *http.Request) {
 
 // HandleChannelRcloneConfig 以附件下载渠道的 rclone 配置文件,标准 rclone 凭它即可脱离本服务读写渠道数据。
 // @Description: 文件含渠道凭证与加密渠道的解密密码:响应不进任何缓存,每次下载记一条审计。
-// 配置里有 rclone 配置文件无法表达的值时返回 422,原因只指出远端与参数名。
+// 文件头注释的语言取查询参数 lang(管理后台带上界面语言),缺省按 Accept-Language。配置里有 rclone 配置文件
+// 无法表达的值时返回 422,原因只指出远端与参数名。
 func (h *Handlers) HandleChannelRcloneConfig(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := h.channelIDParam(w, r)
 	if !ok {
 		return
 	}
-	file, err := h.cfg.Admin.RcloneConfig(r.Context(), channelID)
+	lang, ok := exportLanguage(r)
+	if !ok {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.LangInvalid)
+		return
+	}
+	file, err := h.cfg.Admin.RcloneConfig(r.Context(), channelID, lang)
 	switch {
 	case errors.Is(err, channel.ErrChannelNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ChannelNotFound)
 		return
 	case errors.Is(err, channel.ErrInvalidChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, templateErrMsg(err))
+		httpx.WriteErrorFrom(h.cfg.Logger, w, http.StatusUnprocessableEntity, err)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("生成渠道 rclone 配置失败", "id", channelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionChannelExport, strconv.FormatInt(channelID, 10), "rclone-config")
@@ -319,6 +342,8 @@ func (h *Handlers) HandleChannelRcloneConfig(w http.ResponseWriter, r *http.Requ
 	hd.Set("Content-Type", "text/plain; charset=utf-8")
 	hd.Set("Content-Length", strconv.Itoa(len(file.Content)))
 	hd.Set("Content-Disposition", `attachment; filename="`+file.Name+`"`)
+	hd.Set("Content-Language", string(lang))
+	hd.Set("Vary", "Accept-Language")
 	hd.Set("Cache-Control", "no-store")
 	// 与快照下载一致以流式拷贝输出附件;显式纯文本类型 + 全局 nosniff,浏览器不会把它当页面渲染。
 	if _, err := io.Copy(w, strings.NewReader(file.Content)); err != nil {
@@ -326,8 +351,27 @@ func (h *Handlers) HandleChannelRcloneConfig(w http.ResponseWriter, r *http.Requ
 	}
 }
 
+// exportLanguage 取导出文件说明文字的语言:查询参数 lang 优先,缺省按 Accept-Language。
+// @param r 当前请求
+// @return 语言
+// @return lang 取值不是支持的语言时为 false
+func exportLanguage(r *http.Request) (channel.Language, bool) {
+	switch lang := channel.Language(r.URL.Query().Get("lang")); lang {
+	case channel.LanguageChinese, channel.LanguageEnglish:
+		return lang, true
+	case "":
+		if httpx.PrefersChinese(r) {
+			return channel.LanguageChinese, true
+		}
+		return channel.LanguageEnglish, true
+	default:
+		return "", false
+	}
+}
+
 // HandleChannelCheck 手动重检:对已有渠道执行深探测并返回探测后的完整描述。
 // @Description: 探测可能持续数十秒;客户端中途断开时探测结论不落库,此处也无人可答,直接返回。
+// 清理中的渠道不探测,返回 409。
 func (h *Handlers) HandleChannelCheck(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := h.channelIDParam(w, r)
 	if !ok {
@@ -336,13 +380,16 @@ func (h *Handlers) HandleChannelCheck(w http.ResponseWriter, r *http.Request) {
 	err := h.cfg.Admin.ProbeChannel(r.Context(), channelID)
 	switch {
 	case errors.Is(err, channel.ErrChannelNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ChannelNotFound)
+		return
+	case errors.Is(err, channel.ErrChannelDeleting):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ChannelDeleting)
 		return
 	case r.Context().Err() != nil:
 		return
 	case err != nil:
 		h.cfg.Logger.Error("手动重检失败", "id", channelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.writeChannelInfo(w, r, channelID, http.StatusOK)
@@ -353,7 +400,7 @@ func (h *Handlers) HandleChannelList(w http.ResponseWriter, r *http.Request) {
 	list, err := h.cfg.Admin.List(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("查询渠道列表失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: list, Total: int64(len(list))})
@@ -372,28 +419,27 @@ func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("purge"); raw != "" {
 		parsed, perr := strconv.ParseBool(raw)
 		if perr != nil {
-			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "purge 参数须为 true 或 false")
+			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.PurgeParamInvalid)
 			return
 		}
 		purge = parsed
 	}
 	if purge && h.cfg.Replicator == nil {
 		h.cfg.Logger.Error("删除渠道要求清理对象,但未装配补齐子系统", "id", channelID)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	err := h.cfg.Admin.Delete(r.Context(), channelID, purge)
 	switch {
 	case errors.Is(err, channel.ErrChannelNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ChannelNotFound)
 		return
 	case errors.Is(err, channel.ErrHoldsSoleReplicas):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict,
-			"该渠道持有部分图片的唯一副本,删除会丢数据;请先迁移或删除相关图片")
+		httpx.WriteErrorFrom(h.cfg.Logger, w, http.StatusConflict, err)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("删除渠道失败", "id", channelID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionChannelDelete, strconv.FormatInt(channelID, 10),
@@ -408,12 +454,4 @@ func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	h.cfg.Logger.Info("渠道已标记清理中,对象删完后移除", "id", channelID)
 	w.WriteHeader(http.StatusAccepted)
-}
-
-// templateErrMsg 把渠道操作错误转成面向用户的提示:去掉包前缀,透传字段必填、
-// 建桶失败等已面向用户的中文消息;凭证不入错误链,展示安全。
-// @param err 渠道操作返回的错误
-// @return 面向用户的错误消息
-func templateErrMsg(err error) string {
-	return strings.TrimPrefix(err.Error(), "channel: ")
 }

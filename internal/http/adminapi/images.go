@@ -14,10 +14,12 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // imageItem 面向前端的图片列表/详情项。
@@ -45,12 +47,12 @@ type imageItem struct {
 
 // replicaItem 单图在一个渠道上的副本状态。
 type replicaItem struct {
-	ChannelID   int64  `json:"channel_id"`   // 渠道主键
-	ChannelName string `json:"channel_name"` // 渠道名
-	State       string `json:"state"`        // 副本状态:pending / uploading / done / failed
-	Attempts    int64  `json:"attempts"`     // 累计补齐尝试次数
-	LastError   string `json:"last_error"`   // 最近一次失败原因;空表示无
-	UpdatedAt   string `json:"updated_at"`   // 状态最近更新时刻,UTC 文本
+	ChannelID   int64            `json:"channel_id"`   // 渠道主键
+	ChannelName string           `json:"channel_name"` // 渠道名
+	State       string           `json:"state"`        // 副本状态:pending / uploading / done / failed
+	Attempts    int64            `json:"attempts"`     // 累计补齐尝试次数
+	Failure     *channel.Failure `json:"failure"`      // 最近一次补齐失败的结论;nil 表示没有失败
+	UpdatedAt   string           `json:"updated_at"`   // 状态最近更新时刻,UTC 文本
 }
 
 // imageDetail 图片详情:列表项字段之外附带副本分布。
@@ -71,10 +73,14 @@ func (h *Handlers) imageDetailFrom(ctx context.Context, row sqlc.GetImageAdminRo
 	}
 	replicas := make([]replicaItem, 0, len(rows))
 	for _, r := range rows {
-		replicas = append(replicas, replicaItem{
+		item := replicaItem{
 			ChannelID: r.ChannelID, ChannelName: r.ChannelName, State: r.State,
-			Attempts: r.Attempts, LastError: r.LastError, UpdatedAt: r.UpdatedAt,
-		})
+			Attempts: r.Attempts, UpdatedAt: r.UpdatedAt,
+		}
+		if r.LastErrorReason != "" {
+			item.Failure = &channel.Failure{Reason: channel.FailureReason(r.LastErrorReason), Detail: r.LastError}
+		}
+		replicas = append(replicas, item)
 	}
 	return imageDetail{imageItem: imageItemFrom(row), Replicas: replicas}, nil
 }
@@ -99,7 +105,7 @@ func imageItemFrom(row sqlc.GetImageAdminRow) imageItem {
 func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	q := r.URL.Query()
@@ -122,7 +128,7 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.cfg.Logger.Error("查询图片列表失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	total, err := h.cfg.Queries.CountImagesAdmin(r.Context(), sqlc.CountImagesAdminParams{
@@ -131,7 +137,7 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.cfg.Logger.Error("统计图片总数失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]imageItem, 0, len(rows))
@@ -145,18 +151,18 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleImageGet(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	imageID := chi.URLParam(r, "id")
 	row, err := h.cfg.Queries.GetImageAdmin(r.Context(), imageID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !p.IsAdmin() && row.UserID != p.UserID) {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "图片不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
 		return
 	}
 	if err != nil {
 		h.cfg.Logger.Error("查询图片详情失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.writeImageDetail(w, r, row)
@@ -168,7 +174,7 @@ func (h *Handlers) writeImageDetail(w http.ResponseWriter, r *http.Request, row 
 	detail, err := h.imageDetailFrom(r.Context(), row)
 	if err != nil {
 		h.cfg.Logger.Error("查询图片副本分布失败", "id", row.ID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, detail)
@@ -186,7 +192,7 @@ type imagePatchRequest struct {
 func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	imageID := chi.URLParam(r, "id")
@@ -195,12 +201,12 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		(req.TTLHours == nil && req.CleanupExempt == nil) ||
 		(req.TTLHours != nil && (*req.TTLHours < 0 || *req.TTLHours > config.MaxDurationHours)) {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("请求体非法:ttl_hours 需为 0(永久)或不超过 %d 的正整数,至少携带一个修改项", config.MaxDurationHours))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.ImagePatchInvalid,
+			"max", strconv.Itoa(config.MaxDurationHours))
 		return
 	}
 	if req.CleanupExempt != nil && !p.IsAdmin() {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "清理豁免仅管理员可设置")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.CleanupExemptAdminOnly)
 		return
 	}
 	if _, ok := h.imageVisible(w, r, p, imageID); !ok {
@@ -209,7 +215,7 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	detail, err := h.applyImagePatch(r.Context(), imageID, req)
 	if err != nil {
 		h.cfg.Logger.Error("修改图片失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionImageUpdate, imageID, detail)
@@ -217,7 +223,7 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	row, err := h.cfg.Queries.GetImageAdmin(r.Context(), imageID)
 	if err != nil {
 		h.cfg.Logger.Error("回读图片详情失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.writeImageDetail(w, r, row)
@@ -268,7 +274,7 @@ func (h *Handlers) applyImagePatch(ctx context.Context, imageID string, req imag
 func (h *Handlers) HandleImageDelete(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	imageID := chi.URLParam(r, "id")
@@ -278,11 +284,11 @@ func (h *Handlers) HandleImageDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := h.cfg.Images.DeleteImage(r.Context(), imageID); err != nil {
 		if errors.Is(err, lifecycle.ErrImageNotFound) {
-			httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "图片不存在")
+			httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
 			return
 		}
 		h.cfg.Logger.Error("删除图片失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionImageDelete, imageID, "owner="+owner)
@@ -292,10 +298,10 @@ func (h *Handlers) HandleImageDelete(w http.ResponseWriter, r *http.Request) {
 // batchDeleteMax 单次批量删除的 id 数上限,防单请求长事务霸占单写者。
 const batchDeleteMax = 100
 
-// batchDeleteFailure 批量删除中单张失败的明细。
+// batchDeleteFailure 批量删除中单张失败的明细:引用短 ID 加上与错误信封同形的失败原因。
 type batchDeleteFailure struct {
-	ID    string `json:"id"`    // 失败的引用短 ID
-	Error string `json:"error"` // 用户可读的失败原因
+	ID                  string `json:"id"` // 失败的引用短 ID
+	httpx.ErrorResponse        // 失败原因
 }
 
 // batchDeleteResponse POST /images/batch-delete 的响应体。
@@ -309,7 +315,7 @@ type batchDeleteResponse struct {
 func (h *Handlers) HandleImageBatchDelete(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	var req struct {
@@ -318,14 +324,14 @@ func (h *Handlers) HandleImageBatchDelete(w http.ResponseWriter, r *http.Request
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		len(req.IDs) == 0 || len(req.IDs) > batchDeleteMax {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("请求体非法:ids 需为 1 到 %d 个图片 ID", batchDeleteMax))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.BatchIDsInvalid,
+			"max", strconv.Itoa(batchDeleteMax))
 		return
 	}
 	resp := batchDeleteResponse{Failed: []batchDeleteFailure{}}
 	for _, imageID := range req.IDs {
-		if err := h.deleteOneOwned(r.Context(), p.IsAdmin(), p.UserID, imageID); err != nil {
-			resp.Failed = append(resp.Failed, batchDeleteFailure{ID: imageID, Error: err.Error()})
+		if e := h.deleteOneOwned(r.Context(), p.IsAdmin(), p.UserID, imageID); e != nil {
+			resp.Failed = append(resp.Failed, batchDeleteFailure{ID: imageID, ErrorResponse: httpx.ErrorBody(e)})
 			continue
 		}
 		resp.Deleted++
@@ -333,26 +339,26 @@ func (h *Handlers) HandleImageBatchDelete(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, resp)
 }
 
-// deleteOneOwned 带归属校验删除一条引用并留审计;返回错误为用户可读文案。
+// deleteOneOwned 带归属校验删除一条引用并留审计。
 // @param isAdmin 操作者是否管理员(管理员可删任何人的)
 // @param userID 操作者用户 id
 // @param imageID 目标引用短 ID
-// @return 不可见/不存在或删除失败时的用户可读错误
-func (h *Handlers) deleteOneOwned(ctx context.Context, isAdmin bool, userID, imageID string) error {
+// @return 不可见/不存在或删除失败时的失败原因;成功为 nil
+func (h *Handlers) deleteOneOwned(ctx context.Context, isAdmin bool, userID, imageID string) *errcode.Error {
 	owner, err := h.cfg.Queries.GetImageOwner(ctx, imageID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !isAdmin && owner != userID) {
-		return errors.New("图片不存在")
+		return errcode.New(errcode.ImageNotFound)
 	}
 	if err != nil {
 		h.cfg.Logger.Error("查询图片归属失败", "id", imageID, "err", err)
-		return errors.New("服务内部错误")
+		return errcode.New(errcode.Internal)
 	}
 	if err := h.cfg.Images.DeleteImage(ctx, imageID); err != nil {
 		if errors.Is(err, lifecycle.ErrImageNotFound) {
-			return errors.New("图片不存在")
+			return errcode.New(errcode.ImageNotFound)
 		}
 		h.cfg.Logger.Error("删除图片失败", "id", imageID, "err", err)
-		return errors.New("服务内部错误")
+		return errcode.New(errcode.Internal)
 	}
 	h.recordAudit(ctx, audit.ActionImageDelete, imageID, "owner="+owner)
 	return nil
@@ -368,12 +374,12 @@ func (h *Handlers) imageVisible(w http.ResponseWriter, r *http.Request, p auth.P
 	imageID string) (string, bool) {
 	owner, err := h.cfg.Queries.GetImageOwner(r.Context(), imageID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !p.IsAdmin() && owner != p.UserID) {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "图片不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
 		return "", false
 	}
 	if err != nil {
 		h.cfg.Logger.Error("查询图片归属失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return "", false
 	}
 	return owner, true

@@ -7,6 +7,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { PLACEHOLDER, formatTime } from '@/lib/format'
+import { alertText } from '@/lib/server-text'
 import { useMessages } from '@/context/locale-provider'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -86,8 +87,9 @@ export function AlertsTab() {
         ),
       },
       {
-        accessorKey: 'message',
+        id: 'message',
         header: a.message,
+        cell: ({ row }) => alertText(row.original),
         meta: { className: 'min-w-64 whitespace-normal' },
       },
       {

@@ -12,6 +12,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // HandleBackupList 列出各健康渠道上快照的并集,最新在前(仅管理员路由)。
@@ -20,11 +21,11 @@ func (h *Handlers) HandleBackupList(w http.ResponseWriter, r *http.Request) {
 	snapshots, err := h.cfg.Backups.List(r.Context())
 	switch {
 	case errors.Is(err, channel.ErrNoHealthyChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "没有健康渠道,无法列举快照")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.NoHealthyChannel)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("列举备份快照失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: snapshots, Total: int64(len(snapshots))})
@@ -37,11 +38,11 @@ func (h *Handlers) HandleBackupCreate(w http.ResponseWriter, r *http.Request) {
 	snap, err := h.cfg.Backups.RunOnce(r.Context())
 	switch {
 	case errors.Is(err, channel.ErrNoHealthyChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "没有健康渠道可存放快照")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.NoHealthyChannel)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("手动备份失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "备份失败:"+err.Error())
+		httpx.WriteErrorFrom(h.cfg.Logger, w, http.StatusInternalServerError, err)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionBackupCreate, snap.Name, "")
@@ -78,7 +79,7 @@ func (h *Handlers) HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	h.recordAudit(r.Context(), audit.ActionBackupRestore, name, "staged="+path)
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusAccepted, map[string]string{
-		"snapshot": name, "staged": path, "message": "快照已暂存,服务即将重启并换入;请等待进程被重新拉起",
+		"snapshot": name, "staged": path,
 	})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -93,13 +94,13 @@ func (h *Handlers) HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) writeSnapshotError(w http.ResponseWriter, name string, err error) {
 	switch {
 	case errors.Is(err, reliability.ErrSnapshotName):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "快照名非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.SnapshotNameInvalid)
 	case errors.Is(err, reliability.ErrSnapshotNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "快照不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.SnapshotNotFound)
 	case errors.Is(err, channel.ErrNoHealthyChannel):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, "没有健康渠道,无法读取快照")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.NoHealthyChannel)
 	default:
 		h.cfg.Logger.Error("快照操作失败", "snapshot", name, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 	}
 }

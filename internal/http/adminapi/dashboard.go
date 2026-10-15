@@ -7,6 +7,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // channelStat 仪表盘的渠道概览项。
@@ -34,7 +35,7 @@ type topImage struct {
 func (h *Handlers) HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	var (
@@ -206,5 +207,5 @@ func (h *Handlers) channelStats(ctx context.Context, chans []channel.Info) ([]ch
 // @param err 底层错误
 func (h *Handlers) dashboardFail(w http.ResponseWriter, err error) {
 	h.cfg.Logger.Error("仪表盘聚合失败", "err", err)
-	httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+	httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 }

@@ -40,10 +40,11 @@ DO UPDATE SET state = excluded.state, updated_at = datetime('now');
 
 -- name: MarkBlobChannel :exec
 UPDATE blob_channels
-SET state      = ?,
-    last_error = ?,
-    attempts   = attempts + ?,
-    updated_at = datetime('now')
+SET state             = ?,
+    last_error_reason = ?,
+    last_error        = ?,
+    attempts          = attempts + ?,
+    updated_at        = datetime('now')
 WHERE blob_id = ? AND channel_id = ?;
 
 -- name: ListBlobChannels :many
@@ -103,7 +104,7 @@ WHERE c.id = ?
                     AND bc.channel_id = c.id);
 
 -- name: ListImageReplicas :many
-SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error, bc.updated_at
+SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at
 FROM images i
 JOIN blob_channels bc ON bc.blob_id = i.blob_id
 JOIN channels c ON c.id = bc.channel_id
@@ -111,6 +112,6 @@ WHERE i.id = ?
 ORDER BY c.priority DESC, c.id ASC;
 
 -- name: ListBlobChannelsExport :many
-SELECT blob_id, channel_id, state, attempts, last_error, updated_at
+SELECT blob_id, channel_id, state, attempts, last_error_reason, last_error, updated_at
 FROM blob_channels
 ORDER BY blob_id, channel_id;

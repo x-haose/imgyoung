@@ -11,7 +11,9 @@ import {
   XCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { ApiError } from '@/lib/api'
 import { errorMessage } from '@/lib/errors'
+import { channelFailureText, failureText } from '@/lib/server-text'
 import { useMessages } from '@/context/locale-provider'
 import { useServerConfig } from '@/hooks/use-server-config'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -61,7 +63,7 @@ import {
   CUSTOM,
   type EditConfig,
   SECRET_PLACEHOLDER,
-  type TestResult,
+  type TestOutcome,
   TOKEN_KEY,
 } from './types'
 
@@ -90,9 +92,11 @@ export function ChannelForm({
   const invalidate = useInvalidateChannels()
   const isEdit = channel !== null
   const isDrive = template?.category === CATEGORY_DRIVE
-  const [testResult, setTestResult] = useState<TestResult | null>(null)
+  const [testResult, setTestResult] = useState<TestOutcome | null>(null)
   // 测试连接时服务商刷新出的令牌:已换进表单,授权字段据此显示已授权。
   const [issuedToken, setIssuedToken] = useState('')
+  // 上一次保存失败时服务商刷新了令牌、表单已换用新令牌。
+  const [saveTokenRefreshed, setSaveTokenRefreshed] = useState(false)
   // 全局默认尚未取到时不据它禁用直链;冲突仍由后端拒绝。
   const inheritEncrypted = useServerConfig()?.encrypt_new_channels === true
   // 加密与 302 直链互斥(密文不能直出):编辑看渠道固有属性,创建看三态选择与全局默认。
@@ -156,7 +160,18 @@ export function ChannelForm({
     onError: (err) => setTestResult({ ok: false, error: errorMessage(err) }),
   })
 
+  // 保存失败而服务商已刷新了提交的令牌:换进表单,下次提交用新令牌,再显示失败原因。
+  const onSaveError = (err: unknown) => {
+    const token = err instanceof ApiError ? err.body?.token : undefined
+    if (typeof token === 'string' && token !== '') {
+      adoptToken(token)
+      setSaveTokenRefreshed(true)
+    }
+    form.setError('root', { message: errorMessage(err) })
+  }
+
   const save = useMutation({
+    onMutate: () => setSaveTokenRefreshed(false),
     mutationFn: (values: FormValues) => {
       const source = toSource(values, template)
       if (channel) {
@@ -179,14 +194,14 @@ export function ChannelForm({
       })
     },
     onSuccess: (info) => {
-      if (info.last_error) {
+      if (info.failure) {
         toast.warning(
           t(
             isEdit
               ? m.channels.savedProbeFailed
               : m.channels.createdProbeFailed,
             {
-              error: info.last_error,
+              error: channelFailureText(info.failure),
             }
           )
         )
@@ -196,7 +211,7 @@ export function ChannelForm({
       invalidate()
       onSaved()
     },
-    onError: (err) => form.setError('root', { message: errorMessage(err) }),
+    onError: onSaveError,
   })
 
   const runTest = async () => {
@@ -404,7 +419,9 @@ export function ChannelForm({
               <AlertDescription className={testResult.ok ? 'text-success' : ''}>
                 {testResult.ok
                   ? m.channels.testOk
-                  : t(m.channels.testFailed, { error: testResult.error ?? '' })}
+                  : t(m.channels.testFailed, {
+                      error: testOutcomeError(testResult),
+                    })}
               </AlertDescription>
             </Alert>
           )}
@@ -417,6 +434,12 @@ export function ChannelForm({
           {form.formState.errors.root && (
             <p className='text-sm text-destructive'>
               {form.formState.errors.root.message}
+            </p>
+          )}
+          {saveTokenRefreshed && (
+            <p className='flex items-start gap-2 text-xs leading-relaxed text-muted-foreground'>
+              <KeyRound className='mt-0.5 size-3.5 shrink-0' />
+              {m.channels.saveTokenRefreshed}
             </p>
           )}
           <div className='flex flex-wrap items-center justify-between gap-2'>
@@ -480,4 +503,10 @@ function TypeHeader({
       </div>
     </div>
   )
+}
+
+/** 测试结论的失败说明:请求本身失败时为错误文案,探测失败时为失败结论的说明。 */
+function testOutcomeError(o: TestOutcome): string {
+  if ('error' in o && o.error !== undefined) return o.error
+  return o.failure ? failureText(o.failure) : ''
 }

@@ -13,12 +13,22 @@ SELECT *
 FROM channels
 WHERE id = ?;
 
--- name: UpdateChannelProbeResult :exec
+-- name: UpdateChannelProbeResult :execrows
 UPDATE channels
-SET healthy         = ?,
-    last_checked_at = datetime('now'),
-    last_error      = ?
-WHERE id = ?;
+SET healthy           = ?,
+    last_checked_at   = datetime('now'),
+    last_error_stage  = ?,
+    last_error_reason = ?,
+    last_error        = ?
+WHERE id = ? AND pending_delete = 0;
+
+-- name: RecordChannelDrainFailure :execrows
+UPDATE channels
+SET healthy           = 0,
+    last_error_stage  = 'drain',
+    last_error_reason = ?,
+    last_error        = ?
+WHERE id = ? AND pending_delete = 1;
 
 -- name: UpdateChannelConfig :exec
 UPDATE channels

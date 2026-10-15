@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/riverqueue/river"
@@ -152,8 +151,9 @@ func TestReplicateWorkerPutFailureRecordsCause(t *testing.T) {
 		t.Fatalf("目标只读应返回可重试错误, 得 %v", err)
 	}
 	row := we.replica(t, args)
-	if row.State != channel.StatePending || row.Attempts != 1 || row.LastError == "" {
-		t.Fatalf("写入失败后副本行 = %+v, 期望 pending、attempts=1、last_error 非空", row)
+	if row.State != channel.StatePending || row.Attempts != 1 || row.LastError == "" ||
+		row.LastErrorReason != string(channel.ReasonPermission) {
+		t.Fatalf("写入失败后副本行 = %+v, 期望 pending、attempts=1、归为无写入权限", row)
 	}
 }
 
@@ -167,7 +167,7 @@ func TestReplicateWorkerSucceedsAndIsIdempotent(t *testing.T) {
 		t.Fatalf("复制失败: %v", err)
 	}
 	row := we.replica(t, args)
-	if row.State != channel.StateDone || row.Attempts != 1 || row.LastError != "" {
+	if row.State != channel.StateDone || row.Attempts != 1 || row.LastError != "" || row.LastErrorReason != "" {
 		t.Fatalf("成功后副本行 = %+v, 期望 done、attempts=1、无错误", row)
 	}
 	if _, err := we.backup.Driver.Stat(t.Context(), "seed_00000000"); err != nil {
@@ -203,8 +203,9 @@ func TestReplicateWorkerCancelsWhenTargetChannelMissing(t *testing.T) {
 		t.Fatalf("目标渠道不存在应取消任务, 得 %v", err)
 	}
 	row := we.replica(t, ghost)
-	if row.State != channel.StateFailed || row.LastError == "" || row.Attempts != 0 {
-		t.Fatalf("渠道不存在时副本行 = %+v, 期望 failed、有原因、不计尝试", row)
+	if row.State != channel.StateFailed || row.LastErrorReason != string(channel.ReasonChannelUnavailable) ||
+		row.Attempts != 0 {
+		t.Fatalf("渠道不存在时副本行 = %+v, 期望 failed、归为渠道未装载、不计尝试", row)
 	}
 }
 
@@ -315,9 +316,9 @@ func TestDeleteObjectWorkerRetriesOnDeleteFailure(t *testing.T) {
 }
 
 // drainJob 构造一个排空任务,首次尝试、上限 25 次。
-func drainJob(channelID int64) *river.Job[DrainChannelArgs] {
+func drainJob(channelID int64, attempt int) *river.Job[DrainChannelArgs] {
 	return &river.Job[DrainChannelArgs]{
-		JobRow: &rivertype.JobRow{Attempt: 1, MaxAttempts: 25},
+		JobRow: &rivertype.JobRow{Attempt: attempt, MaxAttempts: 25},
 		Args:   DrainChannelArgs{ChannelID: channelID},
 	}
 }
@@ -358,10 +359,10 @@ func (we *workerEnv) seedDrainable(t *testing.T) string {
 func TestDrainChannelWorkerCancelsUnlessDraining(t *testing.T) {
 	we := newWorkerEnv(t)
 	worker := &drainChannelWorker{cfg: we.cfg}
-	if err := worker.Work(t.Context(), drainJob(we.backup.ID)); !isCancel(err) {
+	if err := worker.Work(t.Context(), drainJob(we.backup.ID, 1)); !isCancel(err) {
 		t.Fatalf("未标记清理中应取消任务, 得 %v", err)
 	}
-	if err := worker.Work(t.Context(), drainJob(99999)); !isCancel(err) {
+	if err := worker.Work(t.Context(), drainJob(99999, 1)); !isCancel(err) {
 		t.Fatalf("渠道不存在应取消任务, 得 %v", err)
 	}
 }
@@ -373,7 +374,7 @@ func TestDrainChannelWorkerDeletesObjectsAndRemovesChannel(t *testing.T) {
 	key := we.seedDrainable(t)
 	worker := &drainChannelWorker{cfg: we.cfg}
 
-	if err := worker.Work(t.Context(), drainJob(we.backup.ID)); err != nil {
+	if err := worker.Work(t.Context(), drainJob(we.backup.ID, 1)); err != nil {
 		t.Fatalf("排空: %v", err)
 	}
 	if _, err := we.backup.Driver.Stat(t.Context(), key); !errors.Is(err, driver.ErrNotFound) {
@@ -395,7 +396,8 @@ func TestDrainChannelWorkerDeletesObjectsAndRemovesChannel(t *testing.T) {
 }
 
 // TestDrainChannelWorkerRecordsFailure 验证排空失败:任务被取消(停机、超时)不算渠道失败、不写原因;
-// 删对象失败即把原因写进渠道的探测结果栏并返回可重试错误,渠道停在清理中。
+// 删对象失败返回可重试错误、渠道停在清理中,前几次尝试不写原因,到第 drainFailureReportAttempt 次才写进
+// 渠道的失败栏。
 func TestDrainChannelWorkerRecordsFailure(t *testing.T) {
 	we := newWorkerEnv(t)
 	we.seedDrainable(t)
@@ -404,7 +406,7 @@ func TestDrainChannelWorkerRecordsFailure(t *testing.T) {
 
 	canceled, cancel := context.WithCancel(t.Context())
 	cancel()
-	if err := worker.Work(canceled, drainJob(we.backup.ID)); err == nil || isCancel(err) {
+	if err := worker.Work(canceled, drainJob(we.backup.ID, 1)); err == nil || isCancel(err) {
 		t.Fatalf("任务被取消应返回可重试错误, 得 %v", err)
 	}
 	row, err := we.env.Queries.GetChannel(t.Context(), we.backup.ID)
@@ -414,14 +416,21 @@ func TestDrainChannelWorkerRecordsFailure(t *testing.T) {
 	if row.LastError.Valid && row.LastError.String != "" {
 		t.Fatalf("任务被取消不应写回原因: %q", row.LastError.String)
 	}
-	if err := worker.Work(t.Context(), drainJob(we.backup.ID)); err == nil || isCancel(err) {
-		t.Fatalf("删对象失败应返回可重试错误, 得 %v", err)
+	for attempt := 1; attempt <= drainFailureReportAttempt; attempt++ {
+		if err := worker.Work(t.Context(), drainJob(we.backup.ID, attempt)); err == nil || isCancel(err) {
+			t.Fatalf("第 %d 次删对象失败应返回可重试错误, 得 %v", attempt, err)
+		}
+		row, err = we.env.Queries.GetChannel(t.Context(), we.backup.ID)
+		if err != nil {
+			t.Fatalf("读渠道记录: %v", err)
+		}
+		if row.PendingDelete == 0 || row.LastErrorStage.Valid != (attempt >= drainFailureReportAttempt) {
+			t.Fatalf("第 %d 次失败后渠道记录 = %+v", attempt, row)
+		}
 	}
-	row, err = we.env.Queries.GetChannel(t.Context(), we.backup.ID)
-	if err != nil {
-		t.Fatalf("读渠道记录: %v", err)
-	}
-	if !row.LastError.Valid || !strings.Contains(row.LastError.String, "清理渠道对象失败") || row.PendingDelete == 0 {
-		t.Fatalf("删对象失败后渠道记录 = %+v, 期望原因写回且仍在清理中", row)
+	if row.LastErrorStage.String != string(channel.StageDrain) ||
+		row.LastErrorReason.String != string(channel.ReasonPermission) || row.LastError.String == "" {
+		t.Fatalf("排空失败结论 = %s/%s/%q, 期望 drain/permission/原文", row.LastErrorStage.String,
+			row.LastErrorReason.String, row.LastError.String)
 	}
 }

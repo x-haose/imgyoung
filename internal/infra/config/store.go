@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
@@ -127,15 +128,15 @@ func (s *Store) Update(ctx context.Context, patch map[string]json.RawMessage) ([
 
 // applyPatch 把 patch 覆盖到当前配置上并归一、校验,返回候选新配置。
 // @Description: patch 反序列化进当前配置副本——只覆盖出现的键;未知键(DisallowUnknownFields)
-// 或类型不符即 ErrInvalidSetting/ErrUnknownKey。
+// 或类型不符即 ErrUnknownKey / ErrInvalidSetting,两者的错误链上都带指明配置键的错误码。
 // @param cur 当前配置
 // @param patch 键 → 新值
 // @return 校验通过的新配置
-// @return ErrUnknownKey / ErrInvalidSetting
+// @return ErrUnknownKey / ErrInvalidSetting;patch 无法重新编码时的错误
 func applyPatch(cur Settings, patch map[string]json.RawMessage) (Settings, error) {
 	blob, err := json.Marshal(patch)
 	if err != nil {
-		return Settings{}, fmt.Errorf("%w: %w", ErrInvalidSetting, err)
+		return Settings{}, fmt.Errorf("编码配置修改: %w", err)
 	}
 	next := cur
 	// 切片字段深拷贝后再解码:json 解码数组会复用已有底层数组,不克隆则 Decode 会在
@@ -146,16 +147,29 @@ func applyPatch(cur Settings, patch map[string]json.RawMessage) (Settings, error
 	dec := json.NewDecoder(bytes.NewReader(blob))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&next); err != nil {
-		if strings.Contains(err.Error(), "unknown field") {
-			return Settings{}, fmt.Errorf("%w: %w", ErrUnknownKey, err)
-		}
-		return Settings{}, fmt.Errorf("%w: %w", ErrInvalidSetting, err)
+		return Settings{}, decodeError(err)
 	}
 	next = next.normalized()
 	if err := next.validate(); err != nil {
 		return Settings{}, fmt.Errorf("%w: %w", ErrInvalidSetting, err)
 	}
 	return next, nil
+}
+
+// decodeError 把 patch 解码失败翻译为带错误码的配置错误。
+// @Description: encoding/json 对未知字段只给出形如 json: unknown field "x" 的文本,字段名从中切出;
+// 类型不符给出 *json.UnmarshalTypeError,字段名取其 Field。
+// @param err 解码错误
+// @return 包裹 ErrUnknownKey 或 ErrInvalidSetting 的错误
+func decodeError(err error) error {
+	if _, name, ok := strings.Cut(err.Error(), "unknown field "); ok {
+		return fmt.Errorf("%w: %w", ErrUnknownKey, errcode.New(errcode.SettingUnknown, "key", strings.Trim(name, `"`)))
+	}
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return fmt.Errorf("%w: %w", ErrInvalidSetting, errcode.New(errcode.SettingType, "key", typeErr.Field))
+	}
+	return fmt.Errorf("%w: %w", ErrInvalidSetting, err)
 }
 
 // diffSettings 对 patch 涉及的键比较新旧取值,产出实际变化清单(凭证键脱敏)。

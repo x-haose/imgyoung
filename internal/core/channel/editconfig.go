@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/store/rclone"
 )
 
@@ -52,10 +53,10 @@ func (m *Manager) ConfigForEdit(ctx context.Context, channelID int64) (EditConfi
 	return out, nil
 }
 
-// storedConfig 读取渠道已存的明文配置,供编辑场景还原哨兵。
+// storedConfig 读取在役渠道已存的明文配置,供编辑场景(测试连接、重新授权)还原哨兵;清理中的渠道不再编辑。
 // @param channelID 渠道主键
 // @return 明文配置
-// @return ErrChannelNotFound 或查询、解密失败时的错误
+// @return ErrChannelNotFound、ErrChannelDeleting 或查询、解密失败时的错误
 func (m *Manager) storedConfig(ctx context.Context, channelID int64) (map[string]string, error) {
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -63,6 +64,9 @@ func (m *Manager) storedConfig(ctx context.Context, channelID int64) (map[string
 	}
 	if err != nil {
 		return nil, fmt.Errorf("读取渠道 %d: %w", channelID, err)
+	}
+	if row.PendingDelete != 0 {
+		return nil, ErrChannelDeleting
 	}
 	return m.unsealConfigMap(row.ConfigSealed)
 }
@@ -72,11 +76,11 @@ func (m *Manager) storedConfig(ctx context.Context, channelID int64) (map[string
 // client_secret 与 token 由后端声明为敏感,在其中。
 // @param driver rclone 后端名
 // @return 键集合
-// @return 后端不存在时的 ErrInvalidChannel
+// @return 后端不存在时包裹 ErrInvalidChannel 的带错误码错误
 func secretKeysOf(driver string) (map[string]bool, error) {
 	names, err := rclone.SensitiveParams(driver)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+		return nil, errcode.Wrap(ErrInvalidChannel, errcode.ChannelUnknownBackend, "driver", driver)
 	}
 	secret := make(map[string]bool, len(names))
 	for _, n := range names {

@@ -41,7 +41,7 @@ func TestManagerUpdateChannel(t *testing.T) {
 	if got.Name != "edited" || got.Priority != 300 {
 		t.Fatalf("编辑未生效: %+v", got)
 	}
-	if got.LastCheckedAt == "" || got.LastError != "" || !got.Healthy {
+	if got.LastCheckedAt == "" || got.Failure != nil || !got.Healthy {
 		t.Fatalf("编辑后深探测结果异常: %+v", got)
 	}
 
@@ -99,8 +99,8 @@ func TestManagerTestConfig(t *testing.T) {
 	res, err := env.Manager.TestConfig(t.Context(), channel.TestParams{
 		Driver: "local", Config: map[string]string{"path": dir},
 	})
-	if err != nil || res.Failure != "" {
-		t.Fatalf("好配置探测失败: %q / %v", res.Failure, err)
+	if err != nil || res.Failure != nil {
+		t.Fatalf("好配置探测失败: %+v / %v", res.Failure, err)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -118,11 +118,11 @@ func TestManagerTestConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("探测失败不应算方法失败: %v", err)
 	}
-	if res.Failure == "" {
+	if res.Failure == nil {
 		t.Fatal("不可达端点应探测失败")
 	}
-	if strings.Contains(res.Failure, secret) {
-		t.Fatalf("错误文案回显了凭证: %s", res.Failure)
+	if strings.Contains(res.Failure.Detail, secret) {
+		t.Fatalf("失败原文回显了凭证: %s", res.Failure.Detail)
 	}
 	if _, err := env.Manager.TestConfig(t.Context(), channel.TestParams{
 		ChannelID: 99999, Driver: "local", Config: map[string]string{"path": dir},
@@ -153,8 +153,9 @@ func TestLoadFailureVisibleAndRetried(t *testing.T) {
 		if loaded != want || (row.Healthy == 1) != want || selectable != want {
 			t.Fatalf("装载=%v 健康=%d 参与选路=%v, 期望三者均为 %v", loaded, row.Healthy, selectable, want)
 		}
-		if !want && !strings.HasPrefix(row.LastError.String, "装载失败") {
-			t.Fatalf("last_error = %q, 期望以「装载失败」开头", row.LastError.String)
+		if !want && (row.LastErrorStage.String != string(channel.StageLoad) ||
+			row.LastErrorReason.String != string(channel.ReasonConfigUnreadable)) {
+			t.Fatalf("失败栏 = %s/%s, 期望装载环节的配置无法读取", row.LastErrorStage.String, row.LastErrorReason.String)
 		}
 	}
 
@@ -182,7 +183,7 @@ func TestLoadFailureVisibleAndRetried(t *testing.T) {
 }
 
 // TestManagerCheckAllPersistsProbeResult 验证轻探测落库:每轮更新 last_checked_at,
-// 失败存人话化 last_error,恢复后清空。
+// 失败存失败结论(环节、归类、原文),恢复后清空。
 func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 	testenv.SkipIfRoot(t)
 	env := testenv.New(t)
@@ -208,8 +209,9 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 		t.Fatalf("故障探测: %v", err)
 	}
 	row = mustGetChannel(t, env, id)
-	if row.Healthy != 0 || !row.LastError.Valid || row.LastError.String == "" {
-		t.Fatalf("故障未落库: %+v", row)
+	if row.Healthy != 0 || row.LastErrorStage.String != string(channel.StageProbe) ||
+		row.LastErrorReason.String != string(channel.ReasonPermission) || row.LastError.String == "" {
+		t.Fatalf("故障未按无写入权限落库: %+v", row)
 	}
 
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -219,8 +221,8 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 		t.Fatalf("恢复探测: %v", err)
 	}
 	row = mustGetChannel(t, env, id)
-	if row.Healthy != 1 || row.LastError.Valid {
-		t.Fatalf("恢复后 last_error 未清空: %+v", row)
+	if row.Healthy != 1 || row.LastError.Valid || row.LastErrorStage.Valid || row.LastErrorReason.Valid {
+		t.Fatalf("恢复后失败栏未清空: %+v", row)
 	}
 }
 

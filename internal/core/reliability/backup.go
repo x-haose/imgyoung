@@ -13,12 +13,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/store/driver"
 )
 
@@ -43,9 +45,9 @@ type Config struct {
 
 // Service 备份服务。
 type Service struct {
-	cfg         Config                 // 依赖
-	mu          sync.Mutex             // 串行化备份:各轮共用同一个快照临时文件,定时与手动备份不能交叠
-	lastFailure atomic.Pointer[string] // 最近一次备份的失败原因;nil 表示最近一次成功或尚未运行
+	cfg         Config                        // 依赖
+	mu          sync.Mutex                    // 串行化备份:各轮共用同一个快照临时文件,定时与手动备份不能交叠
+	lastFailure atomic.Pointer[errcode.Error] // 最近一次备份的失败原因;nil 表示最近一次成功或尚未运行
 }
 
 // New 创建备份服务。
@@ -57,10 +59,11 @@ func New(cfg Config) *Service {
 
 // RunOnce 执行一次备份:快照一次 → 写入每个健康渠道并各自清理超额旧份;结果记入 LastFailure。
 // @Description: 快照经各渠道驱动写入,加密渠道自动得到密文备份。单个渠道失败不影响其余渠道继续写,
-// 但本轮记为失败,写成的渠道保留这份快照。恢复经 Stage 暂存、重启时 ApplyStaged 换入。
+// 但本轮记为失败,写成的渠道保留这份快照。写入期间占用各渠道的系统对象(见 channel.Manager.HoldSystemWrites),
+// 期间被标为清理中的渠道跳过不写。恢复经 Stage 暂存、重启时 ApplyStaged 换入。
 // @return 新快照,Channels 为写入的全部渠道;失败时为零值
-// @return 没有健康渠道时包裹 channel.ErrNoHealthyChannel;生成快照失败,或任一渠道上传、清理失败时
-// 列出各失败渠道及原因的错误
+// @return 带错误码的错误:没有健康渠道时(包裹 channel.ErrNoHealthyChannel)、生成快照失败,或任一渠道
+// 上传、清理失败时列出各失败渠道及根因
 func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -76,11 +79,11 @@ func (s *Service) RunOnce(ctx context.Context) (Snapshot, error) {
 func (s *Service) backup(ctx context.Context) (Snapshot, error) {
 	targets := s.cfg.Channels.Healthy()
 	if len(targets) == 0 {
-		return Snapshot{}, fmt.Errorf("选择备份目标渠道: %w", channel.ErrNoHealthyChannel)
+		return Snapshot{}, errNoTarget()
 	}
 	f, size, err := s.vacuum(ctx)
 	if err != nil {
-		return Snapshot{}, err
+		return Snapshot{}, errcode.Wrap(err, errcode.BackupSnapshotFailed, "detail", channel.Explain(err).Detail)
 	}
 	defer discard(f)
 
@@ -89,18 +92,50 @@ func (s *Service) backup(ctx context.Context) (Snapshot, error) {
 	written := make([]string, 0, len(targets))
 	var failures []string
 	for _, h := range targets {
-		if err := s.store(ctx, h, key, io.NewSectionReader(f, 0, size), size); err != nil {
-			failures = append(failures, fmt.Sprintf("渠道 %q: %v", h.Name, err))
+		stored, err := s.storeHeld(ctx, h, key, io.NewSectionReader(f, 0, size), size)
+		if err != nil {
+			failures = append(failures, h.Name+": "+s.cfg.Channels.ExplainFor(h.ID, err).Detail)
+			s.cfg.Logger.Warn("快照写入渠道失败", "channel", h.Name, "key", key, "err", err)
 			continue
 		}
-		written = append(written, h.Name)
+		if stored {
+			written = append(written, h.Name)
+		}
 	}
 	name := strings.TrimPrefix(key, Dir+"/")
-	if len(failures) > 0 {
-		return Snapshot{}, fmt.Errorf("快照 %s 有 %d/%d 个渠道未写成: %s",
-			name, len(failures), len(targets), strings.Join(failures, "; "))
+	attempted := len(written) + len(failures)
+	switch {
+	case len(failures) > 0:
+		return Snapshot{}, errcode.New(errcode.BackupStoreFailed, "snapshot", name,
+			"failed", strconv.Itoa(len(failures)), "total", strconv.Itoa(attempted),
+			"detail", strings.Join(failures, "; "))
+	case attempted == 0:
+		return Snapshot{}, errNoTarget()
 	}
 	return Snapshot{Name: name, Size: size, TakenAt: taken, Channels: written}, nil
+}
+
+// errNoTarget 没有可写快照的渠道。
+// @return 包裹 channel.ErrNoHealthyChannel 的带错误码错误
+func errNoTarget() error {
+	return errcode.Wrap(fmt.Errorf("选择备份目标渠道: %w", channel.ErrNoHealthyChannel), errcode.NoHealthyChannel)
+}
+
+// storeHeld 占用渠道的系统对象后写入快照;渠道此刻已标为清理中则不写。
+// @param h 目标渠道
+// @param key 快照对象键
+// @param r 快照内容
+// @param size 字节数
+// @return stored 是否写入
+// @return err 上传或清理失败时的错误
+func (s *Service) storeHeld(ctx context.Context, h channel.Handle, key string, r io.Reader, size int64) (stored bool,
+	err error) {
+	release, ok := s.cfg.Channels.HoldSystemWrites(h.ID)
+	if !ok {
+		return false, nil
+	}
+	defer release()
+	return true, s.store(ctx, h, key, r, size)
 }
 
 // vacuum 用 VACUUM INTO 在数据目录生成一致性快照文件并打开它。
@@ -174,24 +209,23 @@ func (s *Service) Run(ctx context.Context, wait func(context.Context) bool) {
 }
 
 // LastFailure 返回最近一次备份的失败原因,供告警评估读取。
-// @return message 失败原因;最近一次成功或尚未运行时为空串
-// @return failed 最近一次是否失败
-func (s *Service) LastFailure() (message string, failed bool) {
-	if p := s.lastFailure.Load(); p != nil {
-		return *p, true
-	}
-	return "", false
+// @return 失败原因;最近一次成功或尚未运行时为 nil
+func (s *Service) LastFailure() *errcode.Error {
+	return s.lastFailure.Load()
 }
 
 // recordResult 记下一次备份的结果,供 LastFailure 读取。
-// @param err 本次备份的错误;nil 表示成功
+// @param err 本次备份的错误;nil 表示成功。backup 的失败都带错误码,不带的是代码缺陷,按服务内部错误记
 func (s *Service) recordResult(err error) {
 	if err == nil {
 		s.lastFailure.Store(nil)
 		return
 	}
-	msg := err.Error()
-	s.lastFailure.Store(&msg)
+	e, ok := errcode.From(err)
+	if !ok {
+		e = errcode.Wrap(err, errcode.Internal)
+	}
+	s.lastFailure.Store(e)
 }
 
 // startupDue 判断启动时是否需要立即备份:任一健康渠道上没有备份间隔内的快照。

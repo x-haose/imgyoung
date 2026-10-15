@@ -5,6 +5,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // auditItem 面向前端的审计记录项。
@@ -31,7 +32,7 @@ func (h *Handlers) HandleAuditList(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.cfg.Logger.Error("查询审计日志失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	total, err := h.cfg.Queries.CountAuditLog(r.Context(), sqlc.CountAuditLogParams{
@@ -40,7 +41,7 @@ func (h *Handlers) HandleAuditList(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.cfg.Logger.Error("统计审计日志失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]auditItem, 0, len(rows))

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { t } from '@/i18n'
 import { CheckCircle2, ExternalLink, Loader2 } from 'lucide-react'
 import { errorMessage } from '@/lib/errors'
+import { errorText } from '@/lib/server-text'
 import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
@@ -79,8 +80,14 @@ export function OAuthField({
         await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
         if (cancelled) return
         const result = await fetchOAuthResult(start.state)
-        if (result.error) {
-          setError(result.error)
+        if (result.code !== undefined && result.error !== undefined) {
+          setError(
+            errorText({
+              code: result.code,
+              error: result.error,
+              params: result.params,
+            })
+          )
           return
         }
         if (result.token) {

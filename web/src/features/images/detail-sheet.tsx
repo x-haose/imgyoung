@@ -12,6 +12,7 @@ import {
   formatRelativeTime,
   formatTime,
 } from '@/lib/format'
+import { failureText } from '@/lib/server-text'
 import { cn } from '@/lib/utils'
 import { useMessages } from '@/context/locale-provider'
 import { useServerConfig } from '@/hooks/use-server-config'
@@ -488,9 +489,9 @@ function ReplicaList({ replicas }: { replicas: ReplicaItem[] }) {
                 })}
               </span>
             </div>
-            {r.last_error && (
+            {r.failure && (
               <p className='text-xs break-all text-destructive'>
-                {m.images.lastError}: {r.last_error}
+                {t(m.images.lastError, { error: failureText(r.failure) })}
               </p>
             )}
           </li>

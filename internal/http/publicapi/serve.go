@@ -14,6 +14,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // imageAccess 一次图片访问的入口属性。
@@ -63,7 +64,7 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 	var req variantRequest
 	if h.cfg.Variants != nil {
 		if req, err = h.parseVariantRequest(r, row.Mime); err != nil {
-			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
+			httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.VariantParamsInvalid)
 			return
 		}
 	}

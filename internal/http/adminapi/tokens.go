@@ -16,6 +16,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // tokenNameMaxLen Token 用途名长度上限。
@@ -37,7 +38,7 @@ type tokenItem struct {
 func (h *Handlers) HandleTokenList(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	target := p.UserID
@@ -50,13 +51,13 @@ func (h *Handlers) HandleTokenList(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.cfg.Logger.Error("查询 Token 列表失败", "user", target, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	total, err := h.cfg.Queries.CountTokensByUser(r.Context(), target)
 	if err != nil {
 		h.cfg.Logger.Error("统计 Token 总数失败", "user", target, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]tokenItem, 0, len(rows))
@@ -74,7 +75,7 @@ func (h *Handlers) HandleTokenList(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	var req struct {
@@ -85,19 +86,19 @@ func (h *Handlers) HandleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		req.Name == "" || len(req.Name) > tokenNameMaxLen ||
 		req.ExpiresInHours < 0 || req.ExpiresInHours > config.MaxDurationHours {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("请求体非法:名称必填且不超长,有效期小时数需在 0 到 %d 之间", config.MaxDurationHours))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.TokenRequestInvalid,
+			"max_name", strconv.Itoa(tokenNameMaxLen), "max_hours", strconv.Itoa(config.MaxDurationHours))
 		return
 	}
 	issued, err := h.cfg.Auth.IssueToken(r.Context(), p.UserID, req.Name,
 		time.Duration(req.ExpiresInHours)*time.Hour)
 	switch {
 	case errors.Is(err, auth.ErrTokenNameTaken):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "同名 Token 已存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.TokenNameTaken)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("签发 Token 失败", "user", p.UserID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionTokenIssue, strconv.FormatInt(issued.ID, 10),
@@ -200,12 +201,12 @@ func (h *Handlers) HandleTokenDelete(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) tokenRequest(w http.ResponseWriter, r *http.Request) (auth.Principal, int64, bool) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return auth.Principal{}, 0, false
 	}
 	tokenID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "Token ID 非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.TokenIDInvalid)
 		return auth.Principal{}, 0, false
 	}
 	return p, tokenID, true
@@ -238,12 +239,12 @@ func (h *Handlers) writeTokenActionError(w http.ResponseWriter, err error, actio
 	case err == nil:
 		return true
 	case errors.Is(err, auth.ErrTokenNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "Token 不存在或已失效")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.TokenNotFound)
 	case errors.Is(err, auth.ErrTokenActive):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "Token 仍有效,请先吊销再删除")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.TokenActive)
 	default:
 		h.cfg.Logger.Error(action+" Token 失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 	}
 	return false
 }

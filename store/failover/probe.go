@@ -28,6 +28,9 @@ func IsDeepProbeKey(key string) bool {
 	return strings.HasPrefix(key, deepProbePrefix)
 }
 
+// ErrProbeMismatch 深探测读回的内容与写入的不一致:后端在静默改写或截断对象。
+var ErrProbeMismatch = errors.New("failover: 探测对象读回内容不一致")
+
 // cleanupTimeout 深探测删除临时对象的超时;独立于调用方的超时,读回超时不连累清理。
 const cleanupTimeout = 10 * time.Second
 
@@ -92,7 +95,7 @@ func readBack(ctx context.Context, d driver.Driver, key string) error {
 		return fmt.Errorf("读取探测对象内容: %w", err)
 	}
 	if !bytes.Equal(got, probePayload) {
-		return errors.New("探测对象读回内容不一致")
+		return ErrProbeMismatch
 	}
 	return nil
 }

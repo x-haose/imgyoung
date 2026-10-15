@@ -13,6 +13,7 @@ type Alert struct {
 	Kind            string
 	Target          string
 	Message         string
+	Params          string
 	OpenedAt        string
 	ResolvedAt      sql.NullString
 	OpenNotified    int64
@@ -44,12 +45,13 @@ type Blob struct {
 }
 
 type BlobChannel struct {
-	BlobID    int64
-	ChannelID int64
-	State     string
-	Attempts  int64
-	LastError string
-	UpdatedAt string
+	BlobID          int64
+	ChannelID       int64
+	State           string
+	Attempts        int64
+	LastErrorReason string
+	LastError       string
+	UpdatedAt       string
 }
 
 type Channel struct {
@@ -64,6 +66,8 @@ type Channel struct {
 	CreatedAt       string
 	BoundAt         string
 	LastCheckedAt   sql.NullString
+	LastErrorStage  sql.NullString
+	LastErrorReason sql.NullString
 	LastError       sql.NullString
 	Template        string
 	PendingDelete   int64

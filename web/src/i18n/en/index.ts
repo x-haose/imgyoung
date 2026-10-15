@@ -11,6 +11,7 @@ import { errors } from './errors'
 import { guide } from './guide'
 import { images } from './images'
 import { nav, navGroups } from './nav'
+import { server } from './server'
 import { settings } from './settings'
 import { tokens } from './tokens'
 import { users } from './users'
@@ -33,4 +34,5 @@ export const en = {
   audit,
   guide,
   settings,
+  server,
 } satisfies Messages

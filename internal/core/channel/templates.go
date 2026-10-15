@@ -1,10 +1,11 @@
 package channel
 
 import (
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // 字段输入类型,前端据此渲染控件。
@@ -45,7 +46,7 @@ type Template struct {
 }
 
 // ErrUnknownTemplate 指定的模板不存在。
-var ErrUnknownTemplate = fmt.Errorf("%w: 未知的渠道模板", ErrInvalidChannel)
+var ErrUnknownTemplate error = errcode.Wrap(ErrInvalidChannel, errcode.ChannelUnknownTemplate)
 
 // templates 内置渠道模板清单。
 var templates = slices.Concat(s3Templates, driveTemplates)
@@ -142,18 +143,6 @@ func publicBaseURLField() TemplateField {
 // @return 模板切片
 func Templates() []Template { return templates }
 
-// TemplateByID 按标识查内置模板。
-// @param templateID 模板标识
-// @return 模板副本
-// @return 模板是否存在
-func TemplateByID(templateID string) (Template, bool) {
-	tpl := findTemplate(templateID)
-	if tpl == nil {
-		return Template{}, false
-	}
-	return *tpl, true
-}
-
 // BuildTemplateConfig 按模板与用户输入合并出渠道 config,并做必填校验。
 // @Description: 合并顺序为固定预设 → 字段值(按 configKey 落位)→ endpoint 拼接;
 // 参与拼接的中间字段(region/account_id)若 configKey 为空则不直接进 config。
@@ -214,17 +203,12 @@ func mergeTemplate(tpl *Template, inputs map[string]string,
 func templateFieldValue(f TemplateField, inputs map[string]string) (string, error) {
 	v := strings.TrimSpace(inputs[f.Key])
 	if f.Required && v == "" {
-		return "", fmt.Errorf("%w: 字段 %s 必填", ErrInvalidChannel, f.Key)
+		return "", errcode.Wrap(ErrInvalidChannel, errcode.ChannelFieldRequired, "field", f.Key)
 	}
 	if f.Type != FieldOAuth || v == "" || v == SecretPlaceholder {
 		return v, nil
 	}
-	token, err := ParsePastedToken(v)
-	if err != nil {
-		// 哨兵留在链首,面向用户的文案去掉包前缀后仍从「渠道参数非法」读起。
-		return "", fmt.Errorf("%w(字段 %s)", err, f.Key)
-	}
-	return token, nil
+	return ParsePastedToken(v)
 }
 
 // renderEndpoint 把各字段值代入模板的 endpoint 拼接模式。

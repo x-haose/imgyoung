@@ -9,6 +9,7 @@ import {
 import { type Messages, t } from '@/i18n'
 import { Info, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorText } from '@/lib/server-text'
 import { useMessages } from '@/context/locale-provider'
 import { useServerConfig } from '@/hooks/use-server-config'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
@@ -138,7 +139,7 @@ export function Cleanup() {
           t(m.cleanup.batchDeletePartial, {
             deleted: result.deleted,
             failed: result.failed.length,
-            error: result.failed[0].error,
+            error: errorText(result.failed[0]),
           })
         )
       } else {

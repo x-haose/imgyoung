@@ -16,6 +16,24 @@ import (
 // ErrUnrepresentable 参数值无法写进 rclone 配置文件:按 rclone 的读法读不回原值(含换行、首尾空白等)。
 var ErrUnrepresentable = errors.New("参数值无法写进 rclone 配置文件")
 
+// UnrepresentableError 指出哪个参数无法写进 rclone 配置文件;errors.Is 判定为 ErrUnrepresentable。
+// 只带段名与键名,不带值:值可能是凭证。
+type UnrepresentableError struct {
+	Remote string // 段名,即远端名
+	Key    string // 参数名
+}
+
+// Error 返回带段名与键名的错误文本。
+// @return 错误文本
+func (e *UnrepresentableError) Error() string {
+	return fmt.Sprintf("%s: 远端 %q 的参数 %q", ErrUnrepresentable, e.Remote, e.Key)
+}
+
+// Is 使 errors.Is(err, ErrUnrepresentable) 成立。
+// @param target 比较目标
+// @return target 为 ErrUnrepresentable 时为 true
+func (*UnrepresentableError) Is(target error) bool { return target == ErrUnrepresentable }
+
 // sectionTypeKey rclone 配置文件段内记录后端名的保留键。
 const sectionTypeKey = "type"
 
@@ -105,12 +123,13 @@ func (s *configSection) writeTo(cf *goconfig.ConfigFile) error {
 // 解析失败时也不带解析错误的原文。
 // @param text 配置文件文本
 // @param sections 写入的段
-// @return 解析失败或某参数读不回原值(ErrUnrepresentable,只带段名与键名,不带值)时的错误
+// @return 某参数含换行或读不回原值时的 *UnrepresentableError;整份文本无法解析时包裹 ErrUnrepresentable 的错误;
+// 两者都不带值
 func verifyReadBack(text string, sections []configSection) error {
 	for i := range sections {
 		for k, v := range sections[i].written() {
 			if strings.ContainsAny(v, "\r\n") {
-				return fmt.Errorf("%w: 远端 %q 的参数 %q 含换行", ErrUnrepresentable, sections[i].name, k)
+				return &UnrepresentableError{Remote: sections[i].name, Key: k}
 			}
 		}
 	}
@@ -121,7 +140,7 @@ func verifyReadBack(text string, sections []configSection) error {
 	for i := range sections {
 		for k, v := range sections[i].written() {
 			if got, err := cf.GetValue(sections[i].name, k); err != nil || got != v {
-				return fmt.Errorf("%w: 远端 %q 的参数 %q", ErrUnrepresentable, sections[i].name, k)
+				return &UnrepresentableError{Remote: sections[i].name, Key: k}
 			}
 		}
 	}

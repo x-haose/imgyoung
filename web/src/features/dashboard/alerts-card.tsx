@@ -4,6 +4,7 @@ import { t } from '@/i18n'
 import { ArrowRight, RefreshCw, ShieldCheck, TriangleAlert } from 'lucide-react'
 import { errorMessage } from '@/lib/errors'
 import { formatRelativeTime, formatTime } from '@/lib/format'
+import { alertText } from '@/lib/server-text'
 import { useMessages } from '@/context/locale-provider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -94,7 +95,9 @@ function AlertRow({ alert }: { alert: AlertItem }) {
             </span>
           )}
         </div>
-        <p className='text-sm leading-relaxed break-words'>{alert.message}</p>
+        <p className='text-sm leading-relaxed break-words'>
+          {alertText(alert)}
+        </p>
         <p
           className='text-xs text-muted-foreground'
           title={formatTime(alert.opened_at)}

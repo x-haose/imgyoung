@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"maps"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/store/driver"
 	"github.com/x-haose/imgyoung/store/failover"
 	"github.com/x-haose/imgyoung/store/rclone"
@@ -30,6 +32,25 @@ var ErrChannelNotFound = errors.New("channel: 渠道不存在")
 // ErrEncryptedImmutable 加密属性创建后不可变:翻转会造成同一渠道密文/明文对象
 // 混存,历史数据不可恢复,只能新建渠道迁移。
 var ErrEncryptedImmutable = errors.New("channel: 加密属性创建后不可变")
+
+// ErrChannelDeleting 渠道正在清理中:不再编辑、探测或测试,只等排空完成或直接移除。
+var ErrChannelDeleting = errors.New("channel: 渠道正在清理中")
+
+// TokenRefreshedError 保存渠道失败,而保存过程中服务商已刷新了表单提交的授权令牌。
+// @Description: 刷新令牌只能用一次的服务商(Box 等)此时已作废原令牌,调用方须把新令牌交还表单,
+// 下次提交用它;沿用渠道已存令牌的情形不会产生本错误——刷新出的令牌已写回渠道。
+type TokenRefreshedError struct {
+	Token string // 刷新后的令牌 JSON,与 rclone 的 token 参数同格式
+	Err   error  // 保存失败的原因
+}
+
+// Error 返回保存失败的原因。
+// @return 错误文本
+func (e *TokenRefreshedError) Error() string { return e.Err.Error() }
+
+// Unwrap 返回保存失败的原因,调用方仍按它分类。
+// @return 保存失败的原因
+func (e *TokenRefreshedError) Unwrap() error { return e.Err }
 
 // CreateParams 创建渠道的参数。
 type CreateParams struct {
@@ -52,23 +73,23 @@ var configKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 // validateCreateParams 校验创建参数:必填项、渠道名长度、配置键字符集、
 // 加密与直链的互斥(密文无法直出)。
 // @param p 创建参数
-// @return 参数非法时的 ErrInvalidChannel
+// @return 参数非法时包裹 ErrInvalidChannel 的带错误码错误
 func validateCreateParams(p CreateParams) error {
 	if p.Name == "" || p.Driver == "" {
-		return fmt.Errorf("%w: name 与 driver 必填", ErrInvalidChannel)
+		return errcode.Wrap(ErrInvalidChannel, errcode.ChannelNameDriverRequired)
 	}
 	if len(p.Name) > nameMaxLen {
-		return fmt.Errorf("%w: name 超过 %d 字节", ErrInvalidChannel, nameMaxLen)
+		return errcode.Wrap(ErrInvalidChannel, errcode.ChannelNameTooLong, "max", strconv.Itoa(nameMaxLen))
 	}
 	if p.Encrypted && p.AllowDirectLink {
-		return fmt.Errorf("%w: 加密渠道不允许直链(密文无法直出)", ErrInvalidChannel)
+		return errcode.Wrap(ErrInvalidChannel, errcode.ChannelEncryptedDirect)
 	}
 	for k := range p.Config {
 		if k == configKeyPath || k == configKeyPublicBaseURL {
 			continue
 		}
 		if !configKeyPattern.MatchString(k) {
-			return fmt.Errorf("%w: 配置键 %q 非法(仅允许字母数字下划线)", ErrInvalidChannel, k)
+			return errcode.Wrap(ErrInvalidChannel, errcode.ChannelConfigKeyInvalid, "key", k)
 		}
 	}
 	return nil
@@ -83,7 +104,7 @@ func validateCreateParams(p CreateParams) error {
 // @param stored 渠道已存的配置;创建场景为 nil
 // @param fromTemplate 配置是否由模板表单合并而来
 // @return 整理后的新配置
-// @return 哨兵落在非敏感键或无原值可还原、后端不存在时的 ErrInvalidChannel
+// @return 哨兵落在非敏感键或无原值可还原、后端不存在时包裹 ErrInvalidChannel 的带错误码错误
 func prepareConfig(driverName string, submitted, stored map[string]string,
 	fromTemplate bool) (map[string]string, error) {
 	secret, err := secretKeysOf(driverName)
@@ -97,9 +118,9 @@ func prepareConfig(driverName string, submitted, stored map[string]string,
 		case v != SecretPlaceholder:
 			out[k] = v
 		case !secret[k]:
-			return nil, fmt.Errorf("%w: 字段 %q 不是凭证,不能沿用已存值", ErrInvalidChannel, k)
+			return nil, errcode.Wrap(ErrInvalidChannel, errcode.ChannelKeepNotSecret, "field", k)
 		case stored[k] == "":
-			return nil, fmt.Errorf("%w: 字段 %q 无已存原值可保留,请重新填写", ErrInvalidChannel, k)
+			return nil, errcode.Wrap(ErrInvalidChannel, errcode.ChannelKeepNoValue, "field", k)
 		default:
 			kept[k] = stored[k]
 		}
@@ -109,7 +130,7 @@ func prepareConfig(driverName string, submitted, stored map[string]string,
 		encode = rclone.ObscureSecrets
 	}
 	if err := encode(driverName, out); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+		return nil, errcode.Wrap(ErrInvalidChannel, errcode.ChannelParamInvalid, "detail", err.Error())
 	}
 	maps.Copy(out, kept)
 	return out, nil
@@ -125,7 +146,7 @@ type Info struct {
 	Encrypted       bool         `json:"encrypted"`         // 是否加密渠道
 	AllowDirectLink bool         `json:"allow_direct_link"` // 是否允许直链
 	LastCheckedAt   string       `json:"last_checked_at"`   // 最近探测时刻,UTC 文本;空 = 尚未探测
-	LastError       string       `json:"last_error"`        // 最近探测失败原因(人话化);空 = 最近一次探测成功
+	Failure         *LastFailure `json:"failure"`           // 最近一次失败的结论;nil 表示最近一次探测成功或尚未出错
 	Deleting        bool         `json:"deleting"`          // 清理中:排空任务正在删除渠道上的对象,清完即消失
 	Replicas        ReplicaStats `json:"replicas"`          // 副本补齐水位统计
 	CreatedAt       string       `json:"created_at"`        // 创建时刻,UTC 文本;与 ID 一起参与加密渠道的 crypt 密钥派生
@@ -149,6 +170,7 @@ func boolToInt(b bool) int64 {
 // Create 创建渠道:整理配置 → 试构造验证 → 落库并播种存量副本 → 重载 → 立即深探测。
 // @Description: 整理配置含编码密码与补齐授权带出的参数(见 completeTemplateConfig)。深探测失败
 // 不回滚创建——渠道保留,healthy=false 且 last_error 可见,管理员据此修配置或重检。
+// 补齐授权或试构造期间服务商刷新了提交的令牌而创建随后失败时,错误以 TokenRefreshedError 交还新令牌。
 // @param p 创建参数
 // @return 新渠道 ID
 // @return 参数非法、后端初始化失败或落库失败时的错误
@@ -160,8 +182,30 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	submitted := config[ConfigKeyToken]
+	channelID, err := m.createRecord(ctx, p, config)
+	if err != nil {
+		return 0, withRefreshedToken(err, submitted, config[ConfigKeyToken])
+	}
+	// 渠道已落库,创建即成立;装不上的渠道原因已落库,健康检查时重试装载。
+	if err := m.Reload(ctx); err != nil {
+		m.cfg.Logger.Error("渠道已创建但装载失败", "channel", p.Name, "err", err)
+		return channelID, nil
+	}
+	if err := m.ProbeChannel(ctx, channelID); err != nil {
+		m.cfg.Logger.Warn("新渠道首次探测未完成", "channel", p.Name, "err", err)
+	}
+	return channelID, nil
+}
+
+// createRecord 补齐授权带出的参数、试构造验证、落库并播种存量副本;后端写回的参数随时并入 config。
+// @param p 创建参数
+// @param config 已整理的配置;补齐与试构造期间的写回原地并入,失败时也已并入
+// @return 新渠道 ID
+// @return 后端初始化失败或落库失败时的错误
+func (m *Manager) createRecord(ctx context.Context, p CreateParams, config map[string]string) (int64, error) {
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, nil); err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+		return 0, backendError(errcode.ChannelBackendFailed, err, config, p.Driver)
 	}
 	if err := m.verifyConfig(ctx, p.Driver, config, p.AutoCreateBucket); err != nil {
 		return 0, err
@@ -177,15 +221,30 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if seeded > 0 {
 		m.cfg.Logger.Info("已为新渠道播种存量副本", "channel", p.Name, "count", seeded)
 	}
-	// 渠道已落库,创建即成立;装不上的渠道原因已落库,健康检查时重试装载。
-	if err := m.Reload(ctx); err != nil {
-		m.cfg.Logger.Error("渠道已创建但装载失败", "channel", p.Name, "err", err)
-		return channelID, nil
-	}
-	if err := m.ProbeChannel(ctx, channelID); err != nil {
-		m.cfg.Logger.Warn("新渠道首次探测未完成", "channel", p.Name, "err", err)
-	}
 	return channelID, nil
+}
+
+// withRefreshedToken 保存失败时,若服务商已把提交的令牌刷新成新值,把新令牌随错误交还。
+// @param err 保存失败的原因
+// @param submitted 提交的令牌;空表示没有提交令牌
+// @param current 保存过程结束时配置里的令牌
+// @return 令牌未变时原样返回 err,否则为 TokenRefreshedError
+func withRefreshedToken(err error, submitted, current string) error {
+	if current == "" || current == submitted {
+		return err
+	}
+	return &TokenRefreshedError{Token: current, Err: err}
+}
+
+// backendError 把后端初始化或建桶失败包装成带错误码的 ErrInvalidChannel,原文抹除配置里的凭证。
+// @param code 错误码,文案参数为 reason(FailureReason)与 detail(根因原文)
+// @param err 后端错误
+// @param config 本次使用的配置
+// @param driverName rclone 后端名
+// @return 包裹 ErrInvalidChannel 的带错误码错误
+func backendError(code errcode.Code, err error, config map[string]string, driverName string) error {
+	f := Explain(err, secretsIn(driverName, config)...)
+	return errcode.Wrap(ErrInvalidChannel, code, "reason", string(f.Reason), "detail", f.Detail)
 }
 
 // insertChannelTx 在单个事务里落渠道记录并为存量 blob 播种 pending 副本行。
@@ -248,12 +307,21 @@ type UpdateParams struct {
 // SecretPlaceholder 值先还原为该渠道已存配置的同键原值(编辑表单不必重录凭证),
 // 沿用已存授权时授权带出的参数一并保留。后端名或配置有任何改动即把绑定时刻重置为当前时刻。
 // 成功后 Reload 重建本渠道驱动,再对该渠道深探测落库。编辑不改变副本集合语义,不触发存量回填。
+// 清理中的渠道不可编辑。编辑失败而服务商已刷新了令牌时:沿用的已存令牌刷新后写回渠道并重载
+// (已存的那份可能已作废,在用驱动须换用新令牌);表单提交的新令牌以 TokenRefreshedError 交还。
 // @param channelID 渠道主键
 // @param p 编辑参数
-// @return ErrChannelNotFound / ErrEncryptedImmutable / ErrChannelNameExists /
+// @return ErrChannelNotFound / ErrChannelDeleting / ErrEncryptedImmutable / ErrChannelNameExists /
 // ErrInvalidChannel 或落库、重载失败时的错误
 func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) error {
-	if err := m.updateRecord(ctx, channelID, p); err != nil {
+	reload, err := m.updateRecord(ctx, channelID, p)
+	if err != nil {
+		if !reload {
+			return err
+		}
+		if rerr := m.Reload(ctx); rerr != nil {
+			return errors.Join(err, fmt.Errorf("刷新后的令牌已写回渠道,但重载失败: %w", rerr))
+		}
 		return err
 	}
 	if err := m.Reload(ctx); err != nil {
@@ -266,26 +334,57 @@ func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) e
 }
 
 // updateRecord 校验编辑参数并写回渠道记录;配置密文的读改写全程持锁,与后端写回互斥。
-// @Description: 后端名或落库配置(哨兵还原后的参数)与原有的有任何不同,即把绑定时刻重置为当前时刻:
-// 决定存储位置的参数因后端而异(如 OneDrive 的 drive_id 属敏感参数),一律按改了位置处理,保证对账 GC
-// 不回收新位置上原有的对象。比较在试构造之前,试构造期间令牌刷新的写回不计入。
+// @Description: 失败时沿用的已存令牌若已被刷新,新令牌写回渠道,reload 为 true。
 // @param channelID 渠道主键
 // @param p 编辑参数
-// @return ErrChannelNotFound / ErrEncryptedImmutable / ErrChannelNameExists /
-// ErrInvalidChannel 或落库失败时的错误
-func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdateParams) error {
+// @return reload 渠道配置已改动、调用方须重载;仅 err 非 nil 时为 true
+// @return err ErrChannelNotFound / ErrChannelDeleting / ErrEncryptedImmutable / ErrChannelNameExists /
+// ErrInvalidChannel、TokenRefreshedError 或落库失败时的错误
+func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdateParams) (reload bool, err error) {
 	m.cfgMu.Lock()
 	defer m.cfgMu.Unlock()
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrChannelNotFound
+		return false, ErrChannelNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
+		return false, fmt.Errorf("读取渠道 %d: %w", channelID, err)
 	}
-	old, config, err := m.editedConfig(ctx, row, p)
+	if row.PendingDelete != 0 {
+		return false, ErrChannelDeleting
+	}
+	old, config, err := m.editedConfig(row, p)
 	if err != nil {
-		return err
+		return false, err
+	}
+	submitted := config[ConfigKeyToken]
+	err = m.applyEdit(ctx, row, p, old, config)
+	refreshed := config[ConfigKeyToken]
+	if err == nil || refreshed == "" || refreshed == submitted {
+		return false, err
+	}
+	if p.Config[ConfigKeyToken] != SecretPlaceholder {
+		return false, &TokenRefreshedError{Token: refreshed, Err: err}
+	}
+	if perr := m.persistParamLocked(ctx, channelID, ConfigKeyToken, refreshed); perr != nil {
+		return false, errors.Join(err, perr)
+	}
+	return true, err
+}
+
+// applyEdit 补齐授权带出的参数、试构造验证,再整体写回渠道记录;后端写回的参数随时并入 config。
+// @Description: 后端名或落库配置(哨兵还原、补齐授权后的参数)与原有的有任何不同,即把绑定时刻重置为当前时刻:
+// 决定存储位置的参数因后端而异(如 OneDrive 的 drive_id 属敏感参数),一律按改了位置处理,保证对账 GC
+// 不回收新位置上原有的对象。比较在试构造之前,试构造期间令牌刷新的写回不计入。
+// @param row 渠道现有记录
+// @param p 编辑参数
+// @param old 渠道已存的配置
+// @param config 已整理的配置;补齐与试构造期间的写回原地并入,失败时也已并入
+// @return ErrChannelNameExists / ErrInvalidChannel 或落库失败时的错误
+func (m *Manager) applyEdit(ctx context.Context, row sqlc.Channel, p UpdateParams,
+	old, config map[string]string) error {
+	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
+		return backendError(errcode.ChannelBackendFailed, err, config, p.Driver)
 	}
 	rebind := p.Driver != row.Driver || !maps.Equal(old, config)
 	if err := m.verifyConfig(ctx, p.Driver, config, false); err != nil {
@@ -301,7 +400,7 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	}
 	if err := m.cfg.Queries.UpdateChannelConfig(ctx, sqlc.UpdateChannelConfigParams{
 		Name: p.Name, Driver: p.Driver, ConfigSealed: sealed, Priority: p.Priority,
-		AllowDirectLink: boolToInt(p.AllowDirectLink), Template: p.Template, BoundAt: boundAt, ID: channelID,
+		AllowDirectLink: boolToInt(p.AllowDirectLink), Template: p.Template, BoundAt: boundAt, ID: row.ID,
 	}); err != nil {
 		if db.IsUniqueViolation(err, "channels.name") {
 			return ErrChannelNameExists
@@ -311,14 +410,13 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	return nil
 }
 
-// editedConfig 校验编辑参数,并把提交的配置整理成将要落库的形态(哨兵还原、密码编码、补齐授权带出的参数)。
+// editedConfig 校验编辑参数,并把提交的配置整理成可入库形态(哨兵还原、密码编码),不访问后端。
 // @param row 渠道现有记录
 // @param p 编辑参数
 // @return old 渠道已存的配置
-// @return config 将要落库的配置
+// @return config 整理后的配置
 // @return ErrEncryptedImmutable / ErrInvalidChannel 或解密已存配置失败时的错误
-func (m *Manager) editedConfig(ctx context.Context, row sqlc.Channel, p UpdateParams) (old, config map[string]string,
-	err error) {
+func (m *Manager) editedConfig(row sqlc.Channel, p UpdateParams) (old, config map[string]string, err error) {
 	encrypted := row.Encrypted != 0
 	if p.Encrypted != nil && *p.Encrypted != encrypted {
 		return nil, nil, ErrEncryptedImmutable
@@ -337,32 +435,31 @@ func (m *Manager) editedConfig(ctx context.Context, row sqlc.Channel, p UpdatePa
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
-	}
 	return old, config, nil
 }
 
 // verifyConfig 落库前以一次性驱动试构造整理好的配置,可选顺带建桶;试构造期间的写回并入配置(原地修改)。
 // @Description: 加密渠道以明文形态试构造——crypt 密钥派生依赖渠道 ID 与创建时刻,包裹层在 Reload 时
-// 生效。写回多为访问令牌过期时刷新得到的新令牌,随配置落库,刷新令牌只能用一次的服务商不因此作废。
-// 建桶在落库前进行,失败即中止,不留「渠道已建但桶不存在」的坑。
+// 生效。写回多为访问令牌过期时刷新得到的新令牌,成功时随配置落库;失败时也已并入配置,调用方据此交还
+// 或写回新令牌,刷新令牌只能用一次的服务商不因此作废授权。建桶在落库前进行,失败即中止,不留
+// 「渠道已建但桶不存在」的坑。
 // @param driverName rclone 后端名
 // @param config 已整理的配置
 // @param createBucket 是否主动建桶(需凭证有建桶权限);仅 s3 有意义
-// @return 后端初始化或建桶失败时的 ErrInvalidChannel
+// @return 后端初始化或建桶失败时包裹 ErrInvalidChannel 的带错误码错误
 func (m *Manager) verifyConfig(ctx context.Context, driverName string, config map[string]string,
 	createBucket bool) error {
 	var wb writeBacks
 	trial, err := m.openTrial(ctx, driverName, config, wb.record)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+		wb.applyTo(config)
+		return backendError(errcode.ChannelBackendFailed, err, config, driverName)
 	}
 	m.closeTrial(ctx, trial, "试构造")
 	if createBucket {
 		if err := m.ensureBucket(ctx, driverName, config, wb.record); err != nil {
-			return fmt.Errorf("%w: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): %w",
-				ErrInvalidChannel, err)
+			wb.applyTo(config)
+			return backendError(errcode.ChannelBucketFailed, err, config, driverName)
 		}
 	}
 	wb.applyTo(config)
@@ -417,7 +514,7 @@ func (m *Manager) Delete(ctx context.Context, channelID int64, purge bool) error
 		return fmt.Errorf("检查唯一副本: %w", err)
 	}
 	if sole > 0 {
-		return fmt.Errorf("%w(%d 张图仅此渠道有副本)", ErrHoldsSoleReplicas, sole)
+		return errcode.Wrap(ErrHoldsSoleReplicas, errcode.ChannelSoleReplicas, "count", strconv.FormatInt(sole, 10))
 	}
 	if purge {
 		if err := q.MarkChannelPendingDelete(ctx, channelID); err != nil {
@@ -466,6 +563,19 @@ func removeChannelRows(ctx context.Context, q *sqlc.Queries, channelID int64) er
 	return nil
 }
 
+// FailureOf 从渠道记录还原最近一次失败的结论。
+// @param row 渠道记录
+// @return 失败结论;最近一次探测成功或尚未出错时为 nil
+func FailureOf(row sqlc.Channel) *LastFailure {
+	if !row.LastErrorStage.Valid {
+		return nil
+	}
+	return &LastFailure{
+		Stage:   FailureStage(row.LastErrorStage.String),
+		Failure: Failure{Reason: FailureReason(row.LastErrorReason.String), Detail: row.LastError.String},
+	}
+}
+
 // List 返回全部渠道的对外描述(按优先级降序,不含配置与凭证)。
 // @Description: 副本水位来自 blob_channels 的一次聚合查询,渠道数量无关(非 N+1);
 // 无任何副本行的渠道计数为零值。
@@ -495,7 +605,7 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 			Encrypted:       row.Encrypted != 0,
 			AllowDirectLink: row.AllowDirectLink != 0,
 			LastCheckedAt:   row.LastCheckedAt.String,
-			LastError:       row.LastError.String,
+			Failure:         FailureOf(row),
 			Deleting:        row.PendingDelete != 0,
 			Replicas:        ReplicaStats{Done: s.Done, Pending: s.Pending, Failed: s.Failed},
 			CreatedAt:       row.CreatedAt,
@@ -529,7 +639,7 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 	var wg sync.WaitGroup
 	for i, c := range channels {
 		wg.Go(func() {
-			results[i] = probeForHealth(ctx, c.handle.Driver, c.healthy)
+			results[i] = m.probeForHealth(ctx, c)
 		})
 	}
 	wg.Wait()
@@ -538,6 +648,9 @@ func (m *Manager) CheckAll(ctx context.Context) ([]string, error) {
 	}
 	changed := []string{}
 	for i, c := range channels {
+		if errors.Is(results[i], ErrChannelDeleting) {
+			continue
+		}
 		if err := m.recordProbe(ctx, c.handle.ID, results[i]); err != nil {
 			return changed, fmt.Errorf("渠道 %q: %w", c.handle.Name, err)
 		}
@@ -563,14 +676,17 @@ func (m *Manager) snapshot() []managed {
 }
 
 // probeForHealth 对单个渠道做一轮健康判定:轻探测;不健康渠道轻探测通过后再经深探测确认才算恢复。
-// @param d 渠道驱动
-// @param healthy 渠道当前的健康标记
-// @return 渠道不可用时的原因错误;nil 表示健康
-func probeForHealth(ctx context.Context, d driver.Driver, healthy bool) error {
-	if err := probe(ctx, d); err != nil || healthy {
+// @param c 渠道运行态
+// @return 渠道不可用时的原因错误;nil 表示健康;深探测前渠道已进入清理中时为 ErrChannelDeleting
+func (m *Manager) probeForHealth(ctx context.Context, c managed) error {
+	if err := probe(ctx, c.handle.Driver); err != nil || c.healthy {
 		return err
 	}
-	return deepProbe(ctx, d)
+	probeErr, err := m.deepProbeChannel(ctx, c.handle)
+	if err != nil {
+		return err
+	}
+	return probeErr
 }
 
 // probe 在轻探测超时内探测单个渠道可达性(只读不写)。

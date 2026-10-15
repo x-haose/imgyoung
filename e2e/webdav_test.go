@@ -120,8 +120,11 @@ func TestWebDAVChannelRejectsWrongPassword(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	raw, _ := io.ReadAll(resp.Body)
 	var tr struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
+		OK      bool `json:"ok"`
+		Failure *struct {
+			Reason string `json:"reason"`
+			Detail string `json:"detail"`
+		} `json:"failure"`
 	}
 	if err := json.Unmarshal(raw, &tr); err != nil {
 		t.Fatalf("解析测试连接响应: %v; body=%s", err, raw)
@@ -129,12 +132,12 @@ func TestWebDAVChannelRejectsWrongPassword(t *testing.T) {
 	if tr.OK {
 		t.Fatal("错误密码的 WebDAV 渠道测试连接却通过了")
 	}
-	// 失败原因须可读且不回显凭证。
-	if tr.Error == "" {
-		t.Error("测试连接失败但未给出原因")
+	// 失败须归为认证失败,原文不回显凭证。
+	if tr.Failure == nil || tr.Failure.Reason != "auth" {
+		t.Fatalf("测试连接失败结论 = %+v, 期望归为认证失败", tr.Failure)
 	}
-	if containsAny(tr.Error, davPass, davWrongPass) {
-		t.Errorf("失败原因回显了凭证: %q", tr.Error)
+	if containsAny(string(raw), davPass, davWrongPass) {
+		t.Errorf("测试连接响应回显了凭证: %s", raw)
 	}
 }
 
@@ -190,7 +193,7 @@ func TestWebDAVChannelEditKeepsPassword(t *testing.T) {
 	}
 	put := adminReq(t, client, csrf, http.MethodPut, fmt.Sprintf("%s/api/admin/channels/%d", inst.baseURL, id),
 		string(update))
-	if info := decodeChannelInfo(t, put, http.StatusOK); !info.Healthy || info.LastError != "" {
+	if info := decodeChannelInfo(t, put, http.StatusOK); !info.Healthy || info.Failure != nil {
 		t.Fatalf("不改密码保存后探测失败: %+v", info)
 	}
 }

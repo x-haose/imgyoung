@@ -22,7 +22,7 @@ func (q *Queries) CountAlerts(ctx context.Context) (int64, error) {
 }
 
 const listAlertsPage = `-- name: ListAlertsPage :many
-SELECT id, kind, target, message, opened_at, resolved_at, open_notified, resolve_notified
+SELECT id, kind, target, message, params, opened_at, resolved_at, open_notified, resolve_notified
 FROM alerts
 ORDER BY id DESC
 LIMIT ? OFFSET ?
@@ -47,6 +47,7 @@ func (q *Queries) ListAlertsPage(ctx context.Context, arg ListAlertsPageParams) 
 			&i.Kind,
 			&i.Target,
 			&i.Message,
+			&i.Params,
 			&i.OpenedAt,
 			&i.ResolvedAt,
 			&i.OpenNotified,
@@ -66,7 +67,7 @@ func (q *Queries) ListAlertsPage(ctx context.Context, arg ListAlertsPageParams) 
 }
 
 const listOpenAlerts = `-- name: ListOpenAlerts :many
-SELECT id, kind, target, message, opened_at, resolved_at, open_notified, resolve_notified
+SELECT id, kind, target, message, params, opened_at, resolved_at, open_notified, resolve_notified
 FROM alerts
 WHERE resolved_at IS NULL
 ORDER BY opened_at DESC, id DESC
@@ -86,6 +87,7 @@ func (q *Queries) ListOpenAlerts(ctx context.Context) ([]Alert, error) {
 			&i.Kind,
 			&i.Target,
 			&i.Message,
+			&i.Params,
 			&i.OpenedAt,
 			&i.ResolvedAt,
 			&i.OpenNotified,
@@ -105,7 +107,7 @@ func (q *Queries) ListOpenAlerts(ctx context.Context) ([]Alert, error) {
 }
 
 const listUnnotifiedAlerts = `-- name: ListUnnotifiedAlerts :many
-SELECT id, kind, target, message, opened_at, resolved_at, open_notified, resolve_notified
+SELECT id, kind, target, message, params, opened_at, resolved_at, open_notified, resolve_notified
 FROM alerts
 WHERE (resolved_at IS NULL AND open_notified = 0)
    OR (resolved_at IS NOT NULL AND (open_notified = 0 OR resolve_notified = 0))
@@ -126,6 +128,7 @@ func (q *Queries) ListUnnotifiedAlerts(ctx context.Context) ([]Alert, error) {
 			&i.Kind,
 			&i.Target,
 			&i.Message,
+			&i.Params,
 			&i.OpenedAt,
 			&i.ResolvedAt,
 			&i.OpenNotified,
@@ -167,8 +170,8 @@ func (q *Queries) MarkAlertResolveNotified(ctx context.Context, id int64) error 
 }
 
 const openAlert = `-- name: OpenAlert :one
-INSERT INTO alerts (kind, target, message)
-VALUES (?, ?, ?)
+INSERT INTO alerts (kind, target, message, params)
+VALUES (?, ?, ?, ?)
 RETURNING id
 `
 
@@ -176,10 +179,16 @@ type OpenAlertParams struct {
 	Kind    string
 	Target  string
 	Message string
+	Params  string
 }
 
 func (q *Queries) OpenAlert(ctx context.Context, arg OpenAlertParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, openAlert, arg.Kind, arg.Target, arg.Message)
+	row := q.db.QueryRowContext(ctx, openAlert,
+		arg.Kind,
+		arg.Target,
+		arg.Message,
+		arg.Params,
+	)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -196,18 +205,20 @@ func (q *Queries) ResolveAlert(ctx context.Context, id int64) error {
 	return err
 }
 
-const updateAlertMessage = `-- name: UpdateAlertMessage :exec
+const updateAlertDescription = `-- name: UpdateAlertDescription :exec
 UPDATE alerts
-SET message = ?
+SET message = ?,
+    params  = ?
 WHERE id = ?
 `
 
-type UpdateAlertMessageParams struct {
+type UpdateAlertDescriptionParams struct {
 	Message string
+	Params  string
 	ID      int64
 }
 
-func (q *Queries) UpdateAlertMessage(ctx context.Context, arg UpdateAlertMessageParams) error {
-	_, err := q.db.ExecContext(ctx, updateAlertMessage, arg.Message, arg.ID)
+func (q *Queries) UpdateAlertDescription(ctx context.Context, arg UpdateAlertDescriptionParams) error {
+	_, err := q.db.ExecContext(ctx, updateAlertDescription, arg.Message, arg.Params, arg.ID)
 	return err
 }

@@ -132,6 +132,8 @@ export const channels = {
   testFailed: 'Connection failed: {error}',
   testTokenRefreshed:
     'The provider refreshed the authorization token during the test. The form now holds the new token and will save it; the old one may no longer work.',
+  saveTokenRefreshed:
+    'Saving failed, but the provider refreshed the authorization token meanwhile. The form now holds the new token; fix the problem and save again, no need to authorize again.',
   createSubmit: 'Create',
   saved: 'Channel saved',
   created: 'Channel created',

@@ -5,12 +5,14 @@ package alert
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // 告警类型标识。
@@ -24,9 +26,10 @@ const (
 
 // Condition 当前成立的一条告警条件。
 type Condition struct {
-	Kind    string // 告警类型
-	Target  string // 告警对象,渠道名等;无对象为空串
-	Message string // 人话描述,随每轮评估更新
+	Kind    string            // 告警类型
+	Target  string            // 告警对象,渠道名等;无对象为空串
+	Message string            // 中文描述,随每轮评估更新
+	Params  map[string]string // 描述参数,随每轮评估更新;各类型的键见 conditions.go,管理后台按类型与它渲染当前语言的描述
 }
 
 // key 同一告警的身份:类型加对象。
@@ -37,8 +40,8 @@ type key struct {
 
 // BackupStatus 备份结果的读取口(由 reliability.Service 实现)。
 type BackupStatus interface {
-	// LastFailure 返回最近一次备份的失败原因;最近一次成功或尚未运行时 failed 为 false。
-	LastFailure() (message string, failed bool)
+	// LastFailure 返回最近一次备份的失败原因;最近一次成功或尚未运行时为 nil。
+	LastFailure() *errcode.Error
 }
 
 // Config 告警服务依赖。
@@ -130,8 +133,12 @@ func (s *Service) reconcile(ctx context.Context, conditions []Condition) error {
 // @param c 成立的条件
 // @return 写告警表失败时的错误
 func (s *Service) open(ctx context.Context, c Condition) error {
+	params, err := encodeParams(c.Params)
+	if err != nil {
+		return err
+	}
 	if _, err := s.cfg.Queries.OpenAlert(ctx, sqlc.OpenAlertParams{
-		Kind: c.Kind, Target: c.Target, Message: c.Message,
+		Kind: c.Kind, Target: c.Target, Message: c.Message, Params: params,
 	}); err != nil {
 		return fmt.Errorf("开启告警 %s/%s: %w", c.Kind, c.Target, err)
 	}
@@ -139,19 +146,50 @@ func (s *Service) open(ctx context.Context, c Condition) error {
 	return nil
 }
 
-// refresh 条件仍成立时更新已开启告警的描述;描述未变则不写。
+// refresh 条件仍成立时更新已开启告警的描述与参数;两者都未变则不写。
 // @param ctx 控制超时与取消
 // @param existing 已开启的告警行
 // @param c 本轮条件
-// @return 写告警表失败时的错误
+// @return 编码参数或写告警表失败时的错误
 func (s *Service) refresh(ctx context.Context, existing sqlc.Alert, c Condition) error {
-	if existing.Message == c.Message {
+	params, err := encodeParams(c.Params)
+	if err != nil {
+		return err
+	}
+	if existing.Message == c.Message && existing.Params == params {
 		return nil
 	}
-	if err := s.cfg.Queries.UpdateAlertMessage(ctx, sqlc.UpdateAlertMessageParams{
-		Message: c.Message, ID: existing.ID,
+	if err := s.cfg.Queries.UpdateAlertDescription(ctx, sqlc.UpdateAlertDescriptionParams{
+		Message: c.Message, Params: params, ID: existing.ID,
 	}); err != nil {
 		return fmt.Errorf("更新告警 %d 描述: %w", existing.ID, err)
 	}
 	return nil
+}
+
+// encodeParams 把描述参数编码为告警表 params 列的 JSON 文本;键按字典序输出,同样的参数得到同样的文本。
+// @param params 描述参数,可为 nil
+// @return JSON 对象文本
+// @return 编码失败时的错误
+func encodeParams(params map[string]string) (string, error) {
+	if params == nil {
+		params = map[string]string{}
+	}
+	b, err := json.Marshal(params)
+	if err != nil {
+		return "", fmt.Errorf("编码告警参数: %w", err)
+	}
+	return string(b), nil
+}
+
+// DecodeParams 把告警表 params 列还原为描述参数。
+// @param raw 列值,JSON 对象文本
+// @return 描述参数
+// @return 列值不是字符串到字符串的 JSON 对象时的错误
+func DecodeParams(raw string) (map[string]string, error) {
+	params := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &params); err != nil {
+		return nil, fmt.Errorf("解析告警参数: %w", err)
+	}
+	return params, nil
 }

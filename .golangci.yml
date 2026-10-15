@@ -123,8 +123,9 @@ linters:
       - path: internal/infra/imaging/phash\.go$
         linters: [gosec]
         text: "G115"
-      # 设置项的列名 cdn_cloudflare_api_token 与公开的掩码哨兵是常量字面量,不是凭证
-      - path: internal/infra/config/store\.go$|internal/core/channel/editconfig\.go$
+      # 设置项的列名 cdn_cloudflare_api_token 与公开的掩码哨兵是常量字面量,不是凭证;
+      # 失败归类的说明文案以 ReasonAppCredentials 等常量为键、正文提到 Secret Key,同样不是凭证
+      - path: internal/infra/config/store\.go$|internal/core/channel/editconfig\.go$|internal/core/channel/failure\.go$
         linters: [gosec]
         text: "G101"
       # 按 rclone 的存储格式序列化 OAuth 令牌正是该函数的职责,产物随渠道配置以 AES-GCM 加密入库

@@ -117,6 +117,8 @@ export const channels = {
   testFailed: '连接失败：{error}',
   testTokenRefreshed:
     '服务商在测试时刷新了授权令牌，表单已换用新令牌，保存时提交的就是它；原令牌可能已失效。',
+  saveTokenRefreshed:
+    '保存未成功，但服务商在保存过程中刷新了授权令牌：表单已换用新令牌，改正后再次保存即可，无需重新授权。',
   createSubmit: '创建',
   saved: '渠道已保存',
   created: '渠道已创建',

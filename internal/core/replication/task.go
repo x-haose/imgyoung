@@ -9,7 +9,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"time"
 
@@ -343,8 +342,8 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 
 	target, ok := w.cfg.Manager.Get(args.ChannelID)
 	if !ok {
-		w.markState(ctx, args, channel.StateFailed, "目标渠道不存在", 0)
-		return river.JobCancel(fmt.Errorf("目标渠道 %d 不存在", args.ChannelID))
+		w.markState(ctx, args, channel.StateFailed, &channel.Failure{Reason: channel.ReasonChannelUnavailable}, 0)
+		return river.JobCancel(fmt.Errorf("目标渠道 %d 未装载", args.ChannelID))
 	}
 	if target.PendingDelete {
 		// 渠道正在清理:往上面补副本只是给排空任务添活,副本行由它一并删除。
@@ -355,59 +354,75 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 		return fmt.Errorf("读取 blob %d: %w", args.BlobID, err)
 	}
 
-	w.markState(ctx, args, channel.StateUploading, "", 1)
-	if err := w.copyBlob(ctx, blob, target); err != nil {
-		if job.Attempt >= job.MaxAttempts {
-			w.markState(ctx, args, channel.StateFailed, err.Error(), 0)
-		} else {
-			w.markState(ctx, args, channel.StatePending, err.Error(), 0)
+	w.markState(ctx, args, channel.StateUploading, nil, 1)
+	if failedOn, err := w.copyBlob(ctx, blob, target); err != nil {
+		f := channel.Failure{Reason: channel.ReasonNoSource}
+		if !errors.Is(err, errNoSource) {
+			f = w.cfg.Manager.ExplainFor(failedOn, err)
 		}
+		state := channel.StatePending
+		if job.Attempt >= job.MaxAttempts {
+			state = channel.StateFailed
+		}
+		w.markState(ctx, args, state, &f, 0)
 		return fmt.Errorf("复制 blob %d → 渠道 %q: %w", args.BlobID, target.Name, err)
 	}
-	w.markState(ctx, args, channel.StateDone, "", 0)
+	w.markState(ctx, args, channel.StateDone, nil, 0)
 	w.cfg.Logger.Info("副本补齐完成", "blob", args.BlobID, "channel", target.Name)
 	return nil
 }
 
-// copyBlob 从优先级最高的就绪源渠道流式复制到目标渠道。
+// errNoSource 没有可读的源副本:除目标外没有健康且副本就绪的渠道。
+var errNoSource = errors.New("无可用源副本")
+
+// copyBlob 从优先级最高的就绪源渠道流式复制到目标渠道;源读不出或目标写失败时换下一个源。
 // @param blob 物理图记录
 // @param target 目标渠道
-// @return 无可用源或读写失败时的错误
-func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target channel.Handle) error {
+// @return failedOn 最后一次失败发生在哪个渠道(源读取失败为源渠道,写入失败为目标渠道);成功或无可用源时无意义
+// @return err 无可用源(errNoSource)或最后一次读写失败时的错误
+func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target channel.Handle) (failedOn int64,
+	err error) {
 	sources, err := w.cfg.Manager.CandidatesForBlob(ctx, blob.ID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	var lastErr error
-	lastErr = errors.New("无可用源副本")
+	err = errNoSource
 	for _, src := range sources {
 		if src.ID == target.ID {
 			continue
 		}
-		var rc io.ReadCloser
-		if rc, lastErr = src.Driver.Open(ctx, blob.StorageKey); lastErr != nil {
+		rc, oerr := src.Driver.Open(ctx, blob.StorageKey)
+		if oerr != nil {
+			failedOn, err = src.ID, oerr
 			continue
 		}
-		lastErr = target.Driver.Put(ctx, blob.StorageKey, rc, blob.Size)
-		if cerr := rc.Close(); cerr != nil && lastErr == nil {
-			lastErr = cerr
+		err = target.Driver.Put(ctx, blob.StorageKey, rc, blob.Size)
+		if cerr := rc.Close(); cerr != nil && err == nil {
+			err = cerr
 		}
 		if w.cfg.Metrics != nil {
-			w.cfg.Metrics.RecordChannelPut(target.Name, lastErr == nil)
+			w.cfg.Metrics.RecordChannelPut(target.Name, err == nil)
 		}
-		if lastErr == nil {
-			return nil
+		if err == nil {
+			return 0, nil
 		}
+		failedOn = target.ID
 	}
-	return lastErr
+	return failedOn, err
 }
 
 // markState 写回副本状态,失败仅告警(业务表兜底,不阻断任务流转)。
+// @param state 副本状态
+// @param f 失败结论;nil 表示清空失败原因
 // @param attemptsDelta 尝试计数增量(仅置 uploading 时为 1,保证计数=实际尝试次数)
-func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, state, lastError string,
+func (w *replicateWorker) markState(ctx context.Context, args ReplicateArgs, state string, f *channel.Failure,
 	attemptsDelta int64) {
+	var reason, detail string
+	if f != nil {
+		reason, detail = string(f.Reason), f.Detail
+	}
 	if err := w.cfg.Queries.MarkBlobChannel(ctx, sqlc.MarkBlobChannelParams{
-		State: state, LastError: lastError, Attempts: attemptsDelta,
+		State: state, LastErrorReason: reason, LastError: detail, Attempts: attemptsDelta,
 		BlobID: args.BlobID, ChannelID: args.ChannelID,
 	}); err != nil {
 		w.cfg.Logger.Error("写回副本状态失败", "blob", args.BlobID, "channel", args.ChannelID, "err", err)

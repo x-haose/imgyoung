@@ -89,7 +89,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, bound_at, last_checked_at, last_error, template, pending_delete
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, bound_at, last_checked_at, last_error_stage, last_error_reason, last_error, template, pending_delete
 FROM channels
 WHERE id = ?
 `
@@ -109,6 +109,8 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 		&i.CreatedAt,
 		&i.BoundAt,
 		&i.LastCheckedAt,
+		&i.LastErrorStage,
+		&i.LastErrorReason,
 		&i.LastError,
 		&i.Template,
 		&i.PendingDelete,
@@ -117,7 +119,7 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 }
 
 const listChannels = `-- name: ListChannels :many
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, bound_at, last_checked_at, last_error, template, pending_delete
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, bound_at, last_checked_at, last_error_stage, last_error_reason, last_error, template, pending_delete
 FROM channels
 ORDER BY priority DESC, id ASC
 `
@@ -143,6 +145,8 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 			&i.CreatedAt,
 			&i.BoundAt,
 			&i.LastCheckedAt,
+			&i.LastErrorStage,
+			&i.LastErrorReason,
 			&i.LastError,
 			&i.Template,
 			&i.PendingDelete,
@@ -178,6 +182,29 @@ SET bound_at = datetime('now')
 
 func (q *Queries) RebindAllChannels(ctx context.Context) (int64, error) {
 	result, err := q.db.ExecContext(ctx, rebindAllChannels)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const recordChannelDrainFailure = `-- name: RecordChannelDrainFailure :execrows
+UPDATE channels
+SET healthy           = 0,
+    last_error_stage  = 'drain',
+    last_error_reason = ?,
+    last_error        = ?
+WHERE id = ? AND pending_delete = 1
+`
+
+type RecordChannelDrainFailureParams struct {
+	LastErrorReason sql.NullString
+	LastError       sql.NullString
+	ID              int64
+}
+
+func (q *Queries) RecordChannelDrainFailure(ctx context.Context, arg RecordChannelDrainFailureParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, recordChannelDrainFailure, arg.LastErrorReason, arg.LastError, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -237,21 +264,34 @@ func (q *Queries) UpdateChannelConfigSealed(ctx context.Context, arg UpdateChann
 	return err
 }
 
-const updateChannelProbeResult = `-- name: UpdateChannelProbeResult :exec
+const updateChannelProbeResult = `-- name: UpdateChannelProbeResult :execrows
 UPDATE channels
-SET healthy         = ?,
-    last_checked_at = datetime('now'),
-    last_error      = ?
-WHERE id = ?
+SET healthy           = ?,
+    last_checked_at   = datetime('now'),
+    last_error_stage  = ?,
+    last_error_reason = ?,
+    last_error        = ?
+WHERE id = ? AND pending_delete = 0
 `
 
 type UpdateChannelProbeResultParams struct {
-	Healthy   int64
-	LastError sql.NullString
-	ID        int64
+	Healthy         int64
+	LastErrorStage  sql.NullString
+	LastErrorReason sql.NullString
+	LastError       sql.NullString
+	ID              int64
 }
 
-func (q *Queries) UpdateChannelProbeResult(ctx context.Context, arg UpdateChannelProbeResultParams) error {
-	_, err := q.db.ExecContext(ctx, updateChannelProbeResult, arg.Healthy, arg.LastError, arg.ID)
-	return err
+func (q *Queries) UpdateChannelProbeResult(ctx context.Context, arg UpdateChannelProbeResultParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateChannelProbeResult,
+		arg.Healthy,
+		arg.LastErrorStage,
+		arg.LastErrorReason,
+		arg.LastError,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

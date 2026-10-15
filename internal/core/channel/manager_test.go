@@ -60,7 +60,7 @@ func TestManagerHealthyByPriority(t *testing.T) {
 func TestManagerHealthySkipsUnhealthy(t *testing.T) {
 	env := testenv.New(t)
 	id, _ := env.AddLocalChannel(t, "backup-high", 200, false)
-	if err := env.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
+	if _, err := env.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
 		Healthy: 0, ID: id,
 	}); err != nil {
 		t.Fatalf("标记渠道不健康: %v", err)
@@ -277,7 +277,7 @@ func TestManagerCheckAll(t *testing.T) {
 func TestManagerNoHealthyChannel(t *testing.T) {
 	env := testenv.New(t)
 	for _, h := range env.Manager.All() {
-		if err := env.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
+		if _, err := env.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
 			Healthy: 0, ID: h.ID,
 		}); err != nil {
 			t.Fatalf("标记不健康: %v", err)

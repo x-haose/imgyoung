@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/replication"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/version"
 )
 
@@ -109,17 +110,17 @@ func (h *Handlers) HandleConfigFull(w http.ResponseWriter, _ *http.Request) {
 func (h *Handlers) HandleConfigUpdate(w http.ResponseWriter, r *http.Request) {
 	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil || len(patch) == 0 {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体需为非空的 键→值 JSON 对象")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.SettingsBodyInvalid)
 		return
 	}
 	changes, err := h.cfg.Settings.Update(r.Context(), patch)
 	switch {
 	case errors.Is(err, config.ErrUnknownKey), errors.Is(err, config.ErrInvalidSetting):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
+		httpx.WriteErrorFrom(h.cfg.Logger, w, http.StatusBadRequest, err)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("配置修改失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "配置修改失败")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	if len(changes) > 0 {

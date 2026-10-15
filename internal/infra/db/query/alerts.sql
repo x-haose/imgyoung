@@ -15,13 +15,14 @@ SELECT COUNT(*)
 FROM alerts;
 
 -- name: OpenAlert :one
-INSERT INTO alerts (kind, target, message)
-VALUES (?, ?, ?)
+INSERT INTO alerts (kind, target, message, params)
+VALUES (?, ?, ?, ?)
 RETURNING id;
 
--- name: UpdateAlertMessage :exec
+-- name: UpdateAlertDescription :exec
 UPDATE alerts
-SET message = ?
+SET message = ?,
+    params  = ?
 WHERE id = ?;
 
 -- name: ResolveAlert :exec

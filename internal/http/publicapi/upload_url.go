@@ -3,16 +3,17 @@ package publicapi
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/urlfetch"
 )
@@ -36,7 +37,7 @@ func (h *Handlers) HandleUploadURL(w http.ResponseWriter, r *http.Request) {
 	tp, ok := middleware.TokenPrincipalFrom(r.Context())
 	if !ok {
 		h.cfg.Logger.Error("URL 转存请求缺少 Token 主体,检查路由装配")
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.serveUploadURL(w, r, tp.UserID, tp.TokenID)
@@ -47,7 +48,7 @@ func (h *Handlers) HandleSessionUploadURL(w http.ResponseWriter, r *http.Request
 	si, ok := middleware.SessionFrom(r.Context())
 	if !ok {
 		h.cfg.Logger.Error("后台 URL 转存请求缺少会话主体,检查路由装配")
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.serveUploadURL(w, r, si.Principal.UserID, 0)
@@ -64,11 +65,11 @@ func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体需为 JSON 对象,且只含 url/file_name/exif_policy/ttl 字段")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLBodyInvalid)
 		return
 	}
 	if strings.TrimSpace(req.URL) == "" {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "url 不能为空")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLRequired)
 		return
 	}
 
@@ -78,8 +79,8 @@ func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID
 	}
 	ttl, ttlSet, ok := parseTTL(rawTTLString(req.TTL))
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("ttl 取值非法(需要 0 到 %d 的整数秒,或 never 表示永久)", maxTTLSeconds))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
+			"max", strconv.FormatInt(maxTTLSeconds, 10))
 		return
 	}
 
@@ -145,19 +146,19 @@ func fileNameFromURL(rawURL string) string {
 func (h *Handlers) writeFetchError(w http.ResponseWriter, set config.Settings, rawURL string, err error) {
 	switch {
 	case errors.Is(err, urlfetch.ErrScheme):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "url 仅支持 http/https 地址")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLScheme)
 	case errors.Is(err, urlfetch.ErrBlockedAddress):
 		h.cfg.Logger.Warn("URL 转存目标被地址策略拒绝", "url", rawURL)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "目标地址不可访问(仅允许公网地址)")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLBlocked)
 	case errors.Is(err, urlfetch.ErrTooManyRedirects):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadGateway, "远端重定向次数过多")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadGateway, errcode.URLTooManyRedirects)
 	case errors.Is(err, urlfetch.ErrTooLarge):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge,
-			fmt.Sprintf("远端内容超过大小上限(%d MB)", set.MaxUploadMB))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge, errcode.URLTooLarge,
+			"max", strconv.FormatInt(set.MaxUploadMB, 10))
 	case errors.Is(err, urlfetch.ErrStatus):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadGateway, "远端返回错误状态,无法取回图片")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadGateway, errcode.URLBadStatus)
 	default:
 		h.cfg.Logger.Warn("URL 转存抓取失败", "url", rawURL, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadGateway, "无法从该地址取回图片")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadGateway, errcode.URLFetchFailed)
 	}
 }

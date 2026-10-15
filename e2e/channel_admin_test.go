@@ -21,8 +21,12 @@ type channelInfo struct {
 	Priority      int64  `json:"priority"`
 	Healthy       bool   `json:"healthy"`
 	LastCheckedAt string `json:"last_checked_at"`
-	LastError     string `json:"last_error"`
-	Replicas      struct {
+	Failure       *struct {
+		Stage  string `json:"stage"`
+		Reason string `json:"reason"`
+		Detail string `json:"detail"`
+	} `json:"failure"`
+	Replicas struct {
 		Done    int64 `json:"done"`
 		Pending int64 `json:"pending"`
 		Failed  int64 `json:"failed"`
@@ -198,8 +202,11 @@ func TestChannelUpdate(t *testing.T) {
 
 // testConnectionResult 测试连接响应的投影。
 type testConnectionResult struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error"`
+	OK      bool `json:"ok"`
+	Failure *struct {
+		Reason string `json:"reason"`
+		Detail string `json:"detail"`
+	} `json:"failure"`
 }
 
 // testConnection 发一次测试连接请求,返回解析结果与原始响应体。
@@ -228,15 +235,15 @@ func TestChannelTestAndCheck(t *testing.T) {
 
 	good, _ := testConnection(t, inst, client, csrf,
 		fmt.Sprintf(`{"name":"probe","driver":"local","config":{"path":%q}}`, t.TempDir()))
-	if !good.OK || good.Error != "" {
+	if !good.OK || good.Failure != nil {
 		t.Fatalf("好配置结果 = %+v, 期望 ok", good)
 	}
 	const secretValue = "TESTSECRETNEVERSHOWN"
 	bad, raw := testConnection(t, inst, client, csrf,
 		`{"name":"probe","driver":"s3","config":{"provider":"Minio","endpoint":"http://127.0.0.1:1",`+
 			`"access_key_id":"AK","secret_access_key":"`+secretValue+`","path":"bkt"}}`)
-	if bad.OK || bad.Error == "" {
-		t.Fatalf("坏配置结果 = %+v, 期望 ok=false 且带错误文案", bad)
+	if bad.OK || bad.Failure == nil || bad.Failure.Reason != "connect" {
+		t.Fatalf("坏配置结果 = %+v, 期望 ok=false 且归为无法连接", bad)
 	}
 	if strings.Contains(raw, secretValue) {
 		t.Fatalf("测试连接响应回显了凭证: %s", raw)
@@ -249,7 +256,7 @@ func TestChannelTestAndCheck(t *testing.T) {
 	_, _ = mustUpload(t, inst, pngBytes(t), nil, nil)
 	checked := adminReq(t, client, csrf, http.MethodPost, inst.baseURL+"/api/admin/channels/1/check", "")
 	info := decodeChannelInfo(t, checked, http.StatusOK)
-	if !info.Healthy || info.LastCheckedAt == "" || info.LastError != "" {
+	if !info.Healthy || info.LastCheckedAt == "" || info.Failure != nil {
 		t.Fatalf("重检结果异常: %+v", info)
 	}
 	if info.Replicas.Done != 1 || info.Replicas.Pending != 0 || info.Replicas.Failed != 0 {

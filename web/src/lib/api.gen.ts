@@ -578,7 +578,7 @@ export interface paths {
         put?: never;
         /**
          * 测试连接
-         * @description 按创建同构的请求体深探测，不落库；探测成败以 `{ok, error}` 返回，补齐授权带出的参数时向服务商查询失败也在其中。授权令牌已过期时测试期间会被刷新：提交的是新令牌（创建表单，或编辑时新粘贴 / 新授权的令牌）时，刷新后的令牌随 `token` 返回；沿用已存令牌（哨兵）时直接写回该渠道，不返回。编辑场景带 `channel_id`，配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
+         * @description 按创建同构的请求体深探测，不落库；探测成败以 `{ok, failure}` 返回，补齐授权带出的参数时向服务商查询失败也在其中。授权令牌已过期时测试期间会被刷新：提交的是新令牌（创建表单，或编辑时新粘贴 / 新授权的令牌）时，刷新后的令牌随 `token` 返回；沿用已存令牌（哨兵）时直接写回该渠道，不返回。编辑场景带 `channel_id`，配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
          */
         post: operations["testChannel"];
         delete?: never;
@@ -597,7 +597,7 @@ export interface paths {
         get?: never;
         /**
          * 编辑渠道
-         * @description 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409。仅管理员。
+         * @description 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409；清理中的渠道不可编辑（409）。编辑失败而服务商已刷新了令牌时：沿用已存令牌的，新令牌写回渠道；表单提交的新令牌随错误的 `token` 交还。仅管理员。
          */
         put: operations["updateChannel"];
         post?: never;
@@ -640,7 +640,7 @@ export interface paths {
         };
         /**
          * 导出 rclone 配置
-         * @description 以附件输出一份标准 rclone 可直接使用的配置文件（rclone.conf），凭它可脱离 ImgYoung 读写渠道数据。 远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致，含凭证与授权令牌，密码类参数按 rclone 规则以 obscure 形式写出； 加密渠道另有远端 `imgyoung-<渠道 id>-crypt`，指向渠道存储路径，参数与服务端的 crypt 层一致（`password` / `password2` 为 obscure 形式，`filename_encryption = standard`）。文件头的 `#` 注释说明各远端与用法。 文件里的凭证与解密密码与主密钥同等敏感；响应不缓存，每次下载记一条 `channel.export` 审计日志。仅管理员。
+         * @description 以附件输出一份标准 rclone 可直接使用的配置文件（rclone.conf），凭它可脱离 ImgYoung 读写渠道数据。 远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致，含凭证与授权令牌，密码类参数按 rclone 规则以 obscure 形式写出； 加密渠道另有远端 `imgyoung-<渠道 id>-crypt`，指向渠道存储路径，参数与服务端的 crypt 层一致（`password` / `password2` 为 obscure 形式，`filename_encryption = standard`）。文件头的 `#` 注释说明各远端与用法，语言取查询参数 `lang`， 缺省按 `Accept-Language`（没有该头时用中文）。 文件里的凭证与解密密码与主密钥同等敏感；响应不缓存，每次下载记一条 `channel.export` 审计日志。仅管理员。
          */
         get: operations["channelRcloneConfig"];
         put?: never;
@@ -662,7 +662,7 @@ export interface paths {
         put?: never;
         /**
          * 手动重检
-         * @description 对已有渠道执行深探测并返回探测后的完整描述；此前装载失败的渠道先重试装载，仍装不上则以装载失败作为结论。探测可能持续数十秒。仅管理员。
+         * @description 对已有渠道执行深探测并返回探测后的完整描述；此前装载失败的渠道先重试装载，仍装不上则以装载失败作为结论。探测可能持续数十秒。清理中的渠道不探测（409）。仅管理员。
          */
         post: operations["checkChannel"];
         delete?: never;
@@ -700,7 +700,7 @@ export interface paths {
         };
         /**
          * 授权回调
-         * @description 由授权服务器把浏览器顶层跳转打回，换取令牌后交前端凭 `state` 领取；本端点返回提示页而非 JSON，令牌不写进页面。仅管理员会话。
+         * @description 由授权服务器把浏览器顶层跳转打回，换取令牌后交前端凭 `state` 领取；本端点返回提示页而非 JSON，令牌不写进页面。提示页按浏览器的 `Accept-Language` 用中文或英文。仅管理员会话。
          */
         get: operations["channelOAuthCallback"];
         put?: never;
@@ -1054,10 +1054,42 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description 错误信封 */
+        /** @description 错误信封。管理后台按 `code` 与 `params` 渲染当前语言的文案；不经管理后台的调用方可直接展示 `error` */
         Error: {
-            /** @description 面向用户的错误描述，不含内部细节与凭证 */
+            code: components["schemas"]["ErrorCode"];
+            /** @description 中文文案（`params` 已填入），不含内部细节与凭证 */
             error: string;
+            /** @description 文案参数，键即文案里的占位符名；没有参数的错误码省略 */
+            params?: {
+                [key: string]: string;
+            };
+        };
+        /**
+         * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
+         * @enum {string}
+         */
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "snapshot_name_invalid" | "snapshot_not_found" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        /**
+         * @description 失败归类，按底层错误的特征判定；`unclassified` 表示未能归类，排障看原文
+         * @enum {string}
+         */
+        FailureReason: "s3_auth" | "app_credentials" | "grant_revoked" | "auth" | "forbidden" | "bucket_missing" | "region_mismatch" | "dns" | "connect" | "tls" | "timeout" | "permission" | "probe_mismatch" | "config_unreadable" | "no_source" | "channel_unavailable" | "object_missing" | "unclassified";
+        /** @description 一次失败的结论 */
+        Failure: {
+            reason: components["schemas"]["FailureReason"];
+            /** @description 根因原文，已抹除凭证、截断到 200 个字符；多为服务商或网络库的英文原文，归类已足以说明时可能为空 */
+            detail: string;
+        };
+        /** @description 渠道最近一次失败的结论 */
+        ChannelFailure: {
+            /**
+             * @description 失败环节：`probe` 健康探测，`load` 按配置装载驱动，`drain` 删除清理中渠道上的对象
+             * @enum {string}
+             */
+            stage: "probe" | "load" | "drain";
+            reason: components["schemas"]["FailureReason"];
+            /** @description 根因原文，已抹除凭证、截断到 200 个字符 */
+            detail: string;
         };
         UploadResult: {
             /** @description 图片短 ID */
@@ -1489,8 +1521,8 @@ export interface components {
              * @description 累计补齐尝试次数
              */
             attempts: number;
-            /** @description 最近一次失败原因；空表示无 */
-            last_error: string;
+            /** @description 最近一次补齐失败的结论；null 表示没有失败 */
+            failure: components["schemas"]["Failure"] | null;
             /** @description 状态最近更新时刻 */
             updated_at: string;
         };
@@ -1529,11 +1561,9 @@ export interface components {
             /** @description 成功删除张数 */
             deleted: number;
             /** @description 失败明细；全部成功时为空数组 */
-            failed: {
+            failed: (components["schemas"]["Error"] & {
                 id: string;
-                /** @description 用户可读的失败原因 */
-                error: string;
-            }[];
+            })[];
         };
         /**
          * @description 内置渠道模板的标识；模板名与说明由前端按它查词典
@@ -1610,8 +1640,8 @@ export interface components {
             allow_direct_link: boolean;
             /** @description 最近探测时刻；空表示尚未探测 */
             last_checked_at: string;
-            /** @description 最近探测失败原因，渠道装载失败时以「装载失败」开头；空表示最近一次探测成功 */
-            last_error: string;
+            /** @description 最近一次失败的结论；null 表示最近一次探测成功，或尚未出过错 */
+            failure: components["schemas"]["ChannelFailure"] | null;
             /** @description 清理中：排空任务正在删除渠道上的对象，清完即消失 */
             deleting: boolean;
             replicas: components["schemas"]["ReplicaStats"];
@@ -1678,9 +1708,14 @@ export interface components {
         ChannelTestResult: {
             /** @description 探测是否通过 */
             ok: boolean;
-            /** @description 失败原因，不含凭证 */
-            error?: string;
+            /** @description 探测失败的结论，原文不含凭证；通过时省略 */
+            failure?: components["schemas"]["Failure"];
             /** @description 测试期间服务商刷新了提交的授权令牌时出现，值为刷新后的令牌 JSON（与 rclone 的 `token` 参数同格式）； 探测失败时也可能出现。存在时前端须用它替换表单里的令牌再保存——刷新令牌只能用一次的服务商（如 Box）， 原令牌已被作废。模板模式替换授权字段（`inputs.token`），自定义模式替换 `config.token`。只回传令牌，不回传其他凭证 */
+            token?: string;
+        };
+        /** @description 创建、编辑渠道失败的响应：错误信封，外加保存过程中服务商刷新出的令牌 */
+        ChannelSaveError: components["schemas"]["Error"] & {
+            /** @description 保存过程中服务商刷新了表单提交的授权令牌时出现，值为刷新后的令牌 JSON。前端须换用它再提交——刷新令牌只能用一次的服务商 （如 Box）原令牌已被作废。沿用渠道已存令牌的编辑不会出现它：刷新出的令牌已写回渠道 */
             token?: string;
         };
         /** @description 渠道配置的编辑视图，敏感值以哨兵掩码 */
@@ -1724,8 +1759,13 @@ export interface components {
             pending: boolean;
             /** @description 授权令牌，填入渠道表单后随渠道提交 */
             token?: string;
-            /** @description 授权失败原因 */
+            code?: components["schemas"]["ErrorCode"];
+            /** @description 授权失败时的中文文案；与 `code`、`params` 一起出现，含义同错误信封 */
             error?: string;
+            /** @description 授权失败时的文案参数 */
+            params?: {
+                [key: string]: string;
+            };
         };
         /** @description 用户列表项，不含任何凭证材料 */
         User: {
@@ -1920,8 +1960,12 @@ export interface components {
             kind: "channel_unhealthy" | "replication_failed" | "channel_quota_exceeded" | "drain_failed" | "backup_failed";
             /** @description 告警对象，渠道名等；无对象为空串 */
             target: string;
-            /** @description 人话描述 */
+            /** @description 中文描述 */
             message: string;
+            /** @description 描述参数，管理后台按 `kind` 与它渲染当前语言的描述。`channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail` （同 ChannelFailure；渠道尚未探测过时为空对象）；`replication_failed`：`failed`；`channel_quota_exceeded`：`bytes`、`quota`； `backup_failed`：`code`（ErrorCode）加该错误码的文案参数 */
+            params: {
+                [key: string]: string;
+            };
             opened_at: string;
             /** @description 恢复时刻；null 表示仍未恢复 */
             resolved_at: string | null;
@@ -1958,8 +2002,6 @@ export interface components {
             snapshot: string;
             /** @description 暂存文件路径 */
             staged: string;
-            /** @description 服务端说明 */
-            message: string;
         };
         /** @description 导出的 Token 元数据，无哈希 */
         TokenExport: {
@@ -2027,6 +2069,9 @@ export interface components {
             state: components["schemas"]["ReplicaState"];
             /** Format: int64 */
             attempts: number;
+            /** @description 最近一次失败的归类（FailureReason）；空串表示没有失败 */
+            last_error_reason: string;
+            /** @description 最近一次失败的根因原文；空串表示没有失败 */
             last_error: string;
             updated_at: string;
         };
@@ -2118,6 +2163,15 @@ export interface components {
             headers: {
                 /** @description 建议等待的秒数 */
                 "Retry-After"?: string;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+        /** @description 渠道正在清理中，不再编辑、测试或探测 */
+        ChannelDeleting: {
+            headers: {
                 [name: string]: unknown;
             };
             content: {
@@ -3211,7 +3265,15 @@ export interface operations {
         };
         responses: {
             201: components["responses"]["ChannelResponse"];
-            400: components["responses"]["BadRequest"];
+            /** @description 参数非法，或后端初始化、建桶失败；保存过程中服务商刷新了令牌时带 `token` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelSaveError"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             /** @description 渠道名已存在 */
@@ -3220,7 +3282,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Error"];
+                    "application/json": components["schemas"]["ChannelSaveError"];
+                };
+            };
+            /** @description 服务内部错误；保存过程中服务商刷新了令牌时同样带 `token` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelSaveError"];
                 };
             };
         };
@@ -3254,6 +3325,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["ChannelDeleting"];
         };
     };
     updateChannel: {
@@ -3276,17 +3348,42 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["ChannelResponse"];
-            400: components["responses"]["BadRequest"];
+            /** @description 参数非法，或后端初始化失败；保存过程中服务商刷新了表单提交的令牌时带 `token` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelSaveError"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            /** @description 渠道名已存在，或试图变更加密属性 */
+            /** @description 渠道不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelSaveError"];
+                };
+            };
+            /** @description 渠道名已存在、试图变更加密属性，或渠道正在清理中 */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Error"];
+                    "application/json": components["schemas"]["ChannelSaveError"];
+                };
+            };
+            /** @description 服务内部错误；保存过程中服务商刷新了表单提交的令牌时同样带 `token` */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelSaveError"];
                 };
             };
         };
@@ -3327,7 +3424,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description 渠道持有部分图片的唯一副本 */
+            /** @description 渠道持有部分图片的唯一副本，`params.count` 为这些图片的张数 */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3367,7 +3464,10 @@ export interface operations {
     };
     channelRcloneConfig: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 文件头注释的语言；缺省按 `Accept-Language` */
+                lang?: "zh-CN" | "en";
+            };
             header?: never;
             path: {
                 /** @description 渠道 id */
@@ -3384,6 +3484,8 @@ export interface operations {
                     "Content-Disposition"?: string;
                     /** @description 恒为 `no-store` */
                     "Cache-Control"?: string;
+                    /** @description 文件头注释的语言，`zh-CN` 或 `en` */
+                    "Content-Language"?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -3425,6 +3527,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["ChannelDeleting"];
         };
     };
     startChannelOAuth: {
@@ -3456,6 +3559,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            409: components["responses"]["ChannelDeleting"];
         };
     };
     channelOAuthCallback: {

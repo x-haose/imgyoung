@@ -3,6 +3,7 @@ package imaging
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // EXIFPolicy EXIF 处理档位。
@@ -21,16 +22,20 @@ const (
 // ErrUnknownPolicy EXIF 档位取值非法或尚未实现(如实验特性 spoof)。
 var ErrUnknownPolicy = errors.New("imaging: 未知的 EXIF 策略")
 
+// Policies 返回已实现的档位。
+// @return 档位切片(新分配,可自由修改)
+func Policies() []EXIFPolicy {
+	return []EXIFPolicy{PolicyStrip, PolicyPassthrough}
+}
+
 // ValidatePolicy 校验档位为已实现的明确取值。
 // @Description: 空值、实验特性 spoof 与乱填值一律返回 ErrUnknownPolicy——
 // 不做隐式回退,档位决策必须由调用方显式完成(不静默降级)。
 // @param p 待校验的档位
 // @return 取值非法时的错误
 func ValidatePolicy(p EXIFPolicy) error {
-	switch p {
-	case PolicyStrip, PolicyPassthrough:
+	if slices.Contains(Policies(), p) {
 		return nil
-	default:
-		return fmt.Errorf("%w: %q", ErrUnknownPolicy, p)
 	}
+	return fmt.Errorf("%w: %q", ErrUnknownPolicy, p)
 }

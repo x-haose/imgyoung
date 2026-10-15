@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // ProxyHeaders 按信任的反向代理解析请求来源并放入上下文,须挂在全部中间件之前。
@@ -43,7 +44,7 @@ func AllowFrom(allow []netip.Prefix, l *slog.Logger) func(http.Handler) http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := httpx.OriginFrom(r).IP
 			if !ip.IsValid() || !inPrefixes(ip, allow) {
-				httpx.WriteError(l, w, http.StatusForbidden, "来源地址不在放行网段内")
+				httpx.WriteError(l, w, http.StatusForbidden, errcode.SourceNotAllowed)
 				return
 			}
 			next.ServeHTTP(w, r)

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatNumber, formatRelativeTime, formatTime } from '@/lib/format'
+import { channelFailureText } from '@/lib/server-text'
 import { cn } from '@/lib/utils'
 import { useMessages } from '@/context/locale-provider'
 import { Badge } from '@/components/ui/badge'
@@ -63,9 +64,12 @@ export function ChannelTable({
   const check = useMutation({
     mutationFn: checkChannel,
     onSuccess: (info) => {
-      if (info.last_error) {
+      if (info.failure) {
         toast.warning(
-          t(m.channels.checkFailed, { name: info.name, error: info.last_error })
+          t(m.channels.checkFailed, {
+            name: info.name,
+            error: channelFailureText(info.failure),
+          })
         )
       } else {
         toast.success(t(m.channels.checkPassed, { name: info.name }))
@@ -203,7 +207,9 @@ function HealthCell({ row }: { row: ChannelItem }) {
         </Badge>
       </TooltipTrigger>
       <TooltipContent className='max-w-xs'>
-        {row.last_error || m.channels.deletingHint}
+        {row.failure
+          ? channelFailureText(row.failure)
+          : m.channels.deletingHint}
       </TooltipContent>
     </Tooltip>
   ) : row.healthy ? (
@@ -224,7 +230,9 @@ function HealthCell({ row }: { row: ChannelItem }) {
         </Badge>
       </TooltipTrigger>
       <TooltipContent className='max-w-xs'>
-        {row.last_error || m.channels.probeFailedHint}
+        {row.failure
+          ? channelFailureText(row.failure)
+          : m.channels.probeFailedHint}
       </TooltipContent>
     </Tooltip>
   )

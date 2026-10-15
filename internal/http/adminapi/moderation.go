@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/dedup"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // DedupAdmin 相似候选裁决执行口(由 dedup.Merger 实现)。
@@ -50,13 +51,13 @@ func (h *Handlers) HandleDedupCandidates(w http.ResponseWriter, r *http.Request)
 		sqlc.ListPendingDedupCandidateDetailsParams{Limit: limit, Offset: offset})
 	if err != nil {
 		h.cfg.Logger.Error("查询相似候选失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	total, err := h.cfg.Queries.CountPendingDedupCandidates(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("统计相似候选失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]candidateItem, 0, len(rows))
@@ -80,7 +81,7 @@ func (h *Handlers) HandleDedupCandidates(w http.ResponseWriter, r *http.Request)
 func (h *Handlers) HandleDedupMerge(w http.ResponseWriter, r *http.Request) {
 	candidateID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "候选 ID 非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.CandidateIDInvalid)
 		return
 	}
 	var req struct {
@@ -88,23 +89,23 @@ func (h *Handlers) HandleDedupMerge(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return
 	}
 	err = h.cfg.Dedup.MergeCandidate(r.Context(), candidateID, req.KeepBlobID)
 	switch {
 	case errors.Is(err, dedup.ErrCandidateNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "候选不存在或已裁决")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.CandidateNotFound)
 		return
 	case errors.Is(err, dedup.ErrBadKeeper):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "保留对象必须是候选对中的一方")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.KeeperInvalid)
 		return
 	case errors.Is(err, dedup.ErrCandidateStale):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "候选涉及的图片已被删除,请刷新列表")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.CandidateStale)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("合并相似候选失败", "candidate", candidateID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionDedupMerge, strconv.FormatInt(candidateID, 10),
@@ -116,17 +117,17 @@ func (h *Handlers) HandleDedupMerge(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) HandleDedupDismiss(w http.ResponseWriter, r *http.Request) {
 	candidateID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "候选 ID 非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.CandidateIDInvalid)
 		return
 	}
 	err = h.cfg.Dedup.DismissCandidate(r.Context(), candidateID)
 	switch {
 	case errors.Is(err, dedup.ErrCandidateNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "候选不存在或已裁决")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.CandidateNotFound)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("忽略相似候选失败", "candidate", candidateID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionDedupDismiss, strconv.FormatInt(candidateID, 10), "")
@@ -154,13 +155,13 @@ func (h *Handlers) HandleCleanupList(w http.ResponseWriter, r *http.Request) {
 		sqlc.ListPendingCleanupImagesParams{Limit: limit, Offset: offset})
 	if err != nil {
 		h.cfg.Logger.Error("查询待清理列表失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	total, err := h.cfg.Queries.CountPendingCleanupImages(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("统计待清理数失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]cleanupItem, 0, len(rows))

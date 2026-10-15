@@ -24,16 +24,16 @@ func TestOAuthSessionRoundTrip(t *testing.T) {
 
 	// 未完成时领取应得空结果而非报错——前端靠这个状态继续轮询。
 	tok, failure, err := s.Take(state)
-	if err != nil || tok != "" || failure != "" {
-		t.Errorf("未完成时 Take = (%q, %q, %v), 期望全空", tok, failure, err)
+	if err != nil || tok != "" || failure != nil {
+		t.Errorf("未完成时 Take = (%q, %v, %v), 期望全空", tok, failure, err)
 	}
 
-	if err := s.Complete(state, `{"access_token":"AT"}`, ""); err != nil {
+	if err := s.Complete(state, `{"access_token":"AT"}`, nil); err != nil {
 		t.Fatalf("Complete 报错: %v", err)
 	}
 	tok, failure, err = s.Take(state)
-	if err != nil || tok != `{"access_token":"AT"}` || failure != "" {
-		t.Errorf("Take = (%q, %q, %v)", tok, failure, err)
+	if err != nil || tok != `{"access_token":"AT"}` || failure != nil {
+		t.Errorf("Take = (%q, %v, %v)", tok, failure, err)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestOAuthSessionTakeIsOneShot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start 报错: %v", err)
 	}
-	if err := s.Complete(state, "TOKEN", ""); err != nil {
+	if err := s.Complete(state, "TOKEN", nil); err != nil {
 		t.Fatalf("Complete 报错: %v", err)
 	}
 	if _, _, err := s.Take(state); err != nil {
@@ -89,7 +89,7 @@ func TestOAuthSessionExpires(t *testing.T) {
 	if _, err := s.Pending(state); !errors.Is(err, ErrOAuthSessionNotFound) {
 		t.Errorf("Pending 错误 = %v, 期望 ErrOAuthSessionNotFound", err)
 	}
-	if err := s.Complete(state, "TOKEN", ""); !errors.Is(err, ErrOAuthSessionNotFound) {
+	if err := s.Complete(state, "TOKEN", nil); !errors.Is(err, ErrOAuthSessionNotFound) {
 		t.Errorf("Complete 错误 = %v, 期望 ErrOAuthSessionNotFound", err)
 	}
 }

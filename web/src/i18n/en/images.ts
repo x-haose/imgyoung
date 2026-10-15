@@ -97,7 +97,7 @@ export const images = {
     failed: 'Failed',
   },
   attempts: '{count} attempts',
-  lastError: 'Last error',
+  lastError: 'Last error: {error}',
   updatedAt: 'updated {time}',
   delete: 'Delete',
   deleteTitle: 'Delete this image?',

@@ -21,6 +21,11 @@ const drainBatch = 200
 // drainJobTimeout 单次排空执行上限;超时中断后交 River 重试,已删的行不回退,从剩余行继续。
 const drainJobTimeout = time.Hour
 
+// drainFailureReportAttempt 排空任务第几次尝试失败时起才把原因写进渠道、开启告警。
+// 按 River 默认退避(第 n 次失败后等 n⁴ 秒),第 4 次尝试在首次失败约 98 秒后开始;它仍失败才算持续故障,
+// 一次网络抖动在前几次重试里就过去了,不留原因也不开告警。
+const drainFailureReportAttempt = 4
+
 // DrainChannelArgs 排空一个清理中渠道的任务参数:删除本服务写在其上的对象,清完删渠道记录。
 type DrainChannelArgs struct {
 	ChannelID int64 `json:"channel_id"` // 目标渠道主键
@@ -58,10 +63,11 @@ func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 
 // Work 删除本服务写在渠道上的全部对象并删除渠道记录。
 // @Description: 先逐行"删副本对象 → 删副本行",进度持久在业务表,中断重试从剩余行继续;再删系统目录下的
-// 对象(含元数据库快照)与深探测残留,别的程序写的对象不动。对象已不存在视为已删。任一对象删不掉即整体
-// 报错交 River 退避重试,并把原因写进渠道的 last_error;尝试次数用尽后对账为清理中渠道重新入队,重试不会
-// 停止,渠道停在清理中,直到清完或管理员直接移除(保留远端对象)。任务自身超时或停机取消不算渠道失败,
-// 不写原因。渠道不在清理中(已被直接移除)时任务作废。
+// 对象(含元数据库快照)与深探测残留,别的程序写的对象不动——删系统对象时独占渠道,在途的快照与深探测写完
+// 才列举,写下的对象不会漏删。对象已不存在视为已删。任一对象删不掉即整体报错交 River 退避重试;同一任务
+// 第 drainFailureReportAttempt 次起仍失败,才把原因写进渠道的失败栏(随之开启 drain_failed 告警)。尝试
+// 次数用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除(保留远端
+// 对象)。任务自身超时或停机取消不算渠道失败,不写原因。渠道不在清理中(已被直接移除)时任务作废。
 func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChannelArgs]) error {
 	h, ok := w.cfg.Manager.Get(job.Args.ChannelID)
 	if !ok || !h.PendingDelete {
@@ -70,10 +76,12 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 	replicas, err := w.drain(ctx, h.ID, h.Driver)
 	system := 0
 	if err == nil {
+		unlock := w.cfg.Manager.LockSystemObjects(h.ID)
 		system, err = purgeSystemObjects(ctx, h.Driver)
+		unlock()
 	}
 	if err != nil {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && job.Attempt >= drainFailureReportAttempt {
 			w.recordFailure(ctx, h.ID, err)
 		}
 		return fmt.Errorf("排空渠道 %q: %w", h.Name, err)
@@ -140,14 +148,19 @@ func purgeSystemObjects(ctx context.Context, d driver.Driver) (int, error) {
 	return deleted, nil
 }
 
-// recordFailure 把排空失败原因写进渠道的探测结果栏,渠道列表与告警可见;写入失败只记录。
+// recordFailure 把排空失败的结论写进渠道的失败栏,渠道列表与告警可见;写入失败只记录。
+// @Description: 只写清理中的渠道;此刻已被直接移除的渠道不写。写入失败的后果只是界面与告警缺一条原因,
+// 排空本身照样报错重试,故只记日志。
 // @param channelID 渠道主键
 // @param cause 失败原因
 func (w *drainChannelWorker) recordFailure(ctx context.Context, channelID int64, cause error) {
-	msg := "清理渠道对象失败,会自动重试;凭证已失效或存储桶已不存在时可直接移除(远端对象保留): " + cause.Error()
-	if err := w.cfg.Queries.UpdateChannelProbeResult(context.WithoutCancel(ctx), sqlc.UpdateChannelProbeResultParams{
-		Healthy: 0, LastError: sql.NullString{String: msg, Valid: true}, ID: channelID,
-	}); err != nil {
+	f := w.cfg.Manager.ExplainFor(channelID, cause)
+	params := sqlc.RecordChannelDrainFailureParams{
+		LastErrorReason: sql.NullString{String: string(f.Reason), Valid: true},
+		LastError:       sql.NullString{String: f.Detail, Valid: true},
+		ID:              channelID,
+	}
+	if _, err := w.cfg.Queries.RecordChannelDrainFailure(context.WithoutCancel(ctx), params); err != nil {
 		w.cfg.Logger.Error("写回渠道清理失败原因失败", "channel_id", channelID, "err", err)
 	}
 }

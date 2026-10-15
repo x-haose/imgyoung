@@ -14,14 +14,17 @@ import (
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configfile"
 
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/testenv"
 )
 
 // TestRcloneConfigRoundTrip 验证导出的 rclone 配置与本服务驱动等价:驱动写入的对象,只凭配置文本经标准 rclone 读回一致。
-// @Description: 加密与不加密渠道各一。配置文本经 rclone 自己的配置文件加载路径(configfile + fs.NewFs)解析,
-// 与用户执行 rclone --config 相同;加密渠道经 crypt 远端读回明文,而直接看后端远端只有密文、找不到原对象名。
+// @Description: 加密与不加密渠道各一,文件头分别用中文与英文注释。配置文本经 rclone 自己的配置文件加载路径
+// (configfile + fs.NewFs)解析,与用户执行 rclone --config 相同;加密渠道经 crypt 远端读回明文,而直接看后端远端
+// 只有密文、找不到原对象名。
 func TestRcloneConfigRoundTrip(t *testing.T) {
 	env := testenv.New(t)
+	langs := map[bool]channel.Language{false: channel.LanguageEnglish, true: channel.LanguageChinese}
 	for _, encrypted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("encrypted=%v", encrypted), func(t *testing.T) {
 			id, dir := env.AddLocalChannel(t, fmt.Sprintf("conf-%v", encrypted), 50, encrypted)
@@ -35,7 +38,7 @@ func TestRcloneConfigRoundTrip(t *testing.T) {
 				t.Fatalf("经驱动写入: %v", err)
 			}
 
-			file, err := env.Manager.RcloneConfig(t.Context(), id)
+			file, err := env.Manager.RcloneConfig(t.Context(), id, langs[encrypted])
 			if err != nil {
 				t.Fatalf("生成 rclone 配置: %v", err)
 			}

@@ -19,12 +19,13 @@ const (
 
 // payload Webhook 请求体,一次投递一条告警的一次转折。
 type payload struct {
-	Kind       string `json:"kind"`                  // 告警类型
-	Target     string `json:"target"`                // 告警对象
-	Message    string `json:"message"`               // 人话描述
-	Status     string `json:"status"`                // open / resolved
-	OpenedAt   string `json:"opened_at"`             // 开启时刻,UTC 文本
-	ResolvedAt string `json:"resolved_at,omitempty"` // 恢复时刻,UTC 文本;开启投递时为空
+	Kind       string            `json:"kind"`                  // 告警类型
+	Target     string            `json:"target"`                // 告警对象
+	Message    string            `json:"message"`               // 中文描述
+	Params     map[string]string `json:"params"`                // 描述参数,与管理后台告警接口的 params 相同
+	Status     string            `json:"status"`                // open / resolved
+	OpenedAt   string            `json:"opened_at"`             // 开启时刻,UTC 文本
+	ResolvedAt string            `json:"resolved_at,omitempty"` // 恢复时刻,UTC 文本;开启投递时为空
 }
 
 // deliver 把尚未投递的开启与恢复逐条 POST 到 Webhook;地址为空时一律记为已投递。
@@ -51,8 +52,12 @@ func (s *Service) deliver(ctx context.Context) error {
 // @param a 告警行
 // @return 标记告警表失败时的错误
 func (s *Service) notify(ctx context.Context, url string, a sqlc.Alert) error {
+	params, err := DecodeParams(a.Params)
+	if err != nil {
+		return fmt.Errorf("告警 %d: %w", a.ID, err)
+	}
 	if a.OpenNotified == 0 {
-		if url != "" && !s.post(ctx, url, payloadFor(a, statusOpen)) {
+		if url != "" && !s.post(ctx, url, payloadFor(a, params, statusOpen)) {
 			return nil
 		}
 		if err := s.cfg.Queries.MarkAlertOpenNotified(ctx, a.ID); err != nil {
@@ -62,7 +67,7 @@ func (s *Service) notify(ctx context.Context, url string, a sqlc.Alert) error {
 	if !a.ResolvedAt.Valid || a.ResolveNotified != 0 {
 		return nil
 	}
-	if url != "" && !s.post(ctx, url, payloadFor(a, statusResolved)) {
+	if url != "" && !s.post(ctx, url, payloadFor(a, params, statusResolved)) {
 		return nil
 	}
 	if err := s.cfg.Queries.MarkAlertResolveNotified(ctx, a.ID); err != nil {
@@ -73,11 +78,12 @@ func (s *Service) notify(ctx context.Context, url string, a sqlc.Alert) error {
 
 // payloadFor 组装一条告警某次转折的请求体。
 // @param a 告警行
+// @param params 告警行解出的描述参数
 // @param status 本次投递的状态
 // @return 请求体
-func payloadFor(a sqlc.Alert, status string) payload {
+func payloadFor(a sqlc.Alert, params map[string]string, status string) payload {
 	return payload{
-		Kind: a.Kind, Target: a.Target, Message: a.Message, Status: status,
+		Kind: a.Kind, Target: a.Target, Message: a.Message, Params: params, Status: status,
 		OpenedAt: a.OpenedAt, ResolvedAt: a.ResolvedAt.String,
 	}
 }

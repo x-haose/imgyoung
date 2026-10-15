@@ -4,8 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/config"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // userBodyLimit 用户管理请求体上限。
@@ -46,7 +47,7 @@ func (h *Handlers) HandleUserList(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.cfg.Queries.ListUsersWithUsage(r.Context())
 	if err != nil {
 		h.cfg.Logger.Error("查询用户列表失败", "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	items := make([]userItem, 0, len(rows))
@@ -82,17 +83,18 @@ func (h *Handlers) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, auth.ErrUserNameTaken):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "登录名已存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.UserNameTaken)
 		return
 	case errors.Is(err, auth.ErrInvalidRole):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "角色取值非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidRole)
 		return
 	case errors.Is(err, auth.ErrPasswordTooShort):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.PasswordTooShort,
+			"min", strconv.Itoa(auth.MinPasswordLength))
 		return
 	case err != nil:
 		h.cfg.Logger.Error("创建用户失败", "name", req.Name, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionUserCreate, user.ID, "name="+user.Name+" role="+user.Role)
@@ -116,20 +118,20 @@ func (h *Handlers) HandleUserUpdate(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, auth.ErrUserNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "用户不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.UserNotFound)
 		return
 	case errors.Is(err, auth.ErrUserProtected):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "内置管理员不可禁用或降级")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.UserProtected)
 		return
 	case errors.Is(err, auth.ErrUserNameTaken):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "登录名已存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.UserNameTaken)
 		return
 	case errors.Is(err, auth.ErrInvalidRole):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "角色取值非法")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidRole)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("更新用户失败", "id", userID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionUserUpdate, userID, "name="+req.Name)
@@ -143,22 +145,23 @@ func (h *Handlers) HandleUserResetPassword(w http.ResponseWriter, r *http.Reques
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return
 	}
 	userID := chi.URLParam(r, "id")
 	if _, err := h.cfg.Queries.GetUser(r.Context(), userID); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "用户不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.UserNotFound)
 		return
 	}
 	err := h.cfg.Auth.SetPassword(r.Context(), userID, req.Password)
 	switch {
 	case errors.Is(err, auth.ErrPasswordTooShort):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.PasswordTooShort,
+			"min", strconv.Itoa(auth.MinPasswordLength))
 		return
 	case err != nil:
 		h.cfg.Logger.Error("重置密码失败", "id", userID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionUserUpdate, userID, "password.reset")
@@ -169,23 +172,23 @@ func (h *Handlers) HandleUserResetPassword(w http.ResponseWriter, r *http.Reques
 func (h *Handlers) HandleUserDelete(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "id")
 	if p, ok := h.sessionPrincipal(r); ok && p.UserID == userID {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "不能删除当前登录用户")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.CannotDeleteSelf)
 		return
 	}
 	err := h.cfg.Auth.DeleteUser(r.Context(), userID)
 	switch {
 	case errors.Is(err, auth.ErrUserProtected):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, "内置管理员不可删除")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.UserProtected)
 		return
 	case errors.Is(err, auth.ErrUserNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "用户不存在")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.UserNotFound)
 		return
 	case errors.Is(err, auth.ErrUserHasImages):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, "用户名下仍有图片,请先删除或处置")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.UserHasImages)
 		return
 	case err != nil:
 		h.cfg.Logger.Error("删除用户失败", "id", userID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionUserDelete, userID, "")
@@ -200,12 +203,12 @@ func decodeUserBody(h *Handlers, w http.ResponseWriter, r *http.Request) (userWr
 	dec.DisallowUnknownFields()
 	var req userWriteRequest
 	if err := dec.Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON 或含未知字段")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.InvalidBody)
 		return userWriteRequest{}, false
 	}
 	if v := req.DefaultTTLHours; v != nil && (*v < 0 || *v > config.MaxDurationHours) {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			fmt.Sprintf("default_ttl_hours 需为 0(永久)到 %d 的整数,或 null 表示随全局", config.MaxDurationHours))
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UserTTLInvalid,
+			"max", strconv.Itoa(config.MaxDurationHours))
 		return userWriteRequest{}, false
 	}
 	return req, true

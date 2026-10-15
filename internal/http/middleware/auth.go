@@ -10,6 +10,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // SessionCookie 后台会话 cookie 名。
@@ -64,16 +65,16 @@ func TokenAuth(svc *auth.Service, scope string, l *slog.Logger) func(http.Handle
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			plaintext, ok := strings.CutPrefix(r.Header.Get("Authorization"), bearerPrefix)
 			if !ok {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "无效的上传 Token")
+				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.UploadTokenInvalid)
 				return
 			}
 			tp, err := svc.AuthenticateToken(r.Context(), plaintext)
 			if err != nil {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "无效的上传 Token")
+				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.UploadTokenInvalid)
 				return
 			}
 			if !slices.Contains(strings.Split(tp.Scopes, ","), scope) {
-				httpx.WriteError(l, w, http.StatusForbidden, "Token 无本操作权限")
+				httpx.WriteError(l, w, http.StatusForbidden, errcode.UploadTokenScope)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyTokenPrincipal, tp)))
@@ -92,12 +93,12 @@ func SessionAuth(svc *auth.Service, l *slog.Logger) func(http.Handler) http.Hand
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			c, err := r.Cookie(SessionCookie)
 			if err != nil || c.Value == "" {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "未登录或会话已过期")
+				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.Unauthenticated)
 				return
 			}
 			info, err := svc.ValidateSession(r.Context(), c.Value)
 			if err != nil {
-				httpx.WriteError(l, w, http.StatusUnauthorized, "未登录或会话已过期")
+				httpx.WriteError(l, w, http.StatusUnauthorized, errcode.Unauthenticated)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeySession, info)))
@@ -121,7 +122,7 @@ func CSRF(l *slog.Logger) func(http.Handler) http.Handler {
 			info, ok := SessionFrom(r.Context())
 			if !ok || subtle.ConstantTimeCompare(
 				[]byte(r.Header.Get(CSRFHeader)), []byte(info.CSRFToken)) != 1 {
-				httpx.WriteError(l, w, http.StatusForbidden, "CSRF 校验失败")
+				httpx.WriteError(l, w, http.StatusForbidden, errcode.CSRFRejected)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -138,7 +139,7 @@ func RequireAdmin(l *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			info, ok := SessionFrom(r.Context())
 			if !ok || !info.Principal.IsAdmin() {
-				httpx.WriteError(l, w, http.StatusForbidden, "需要管理员权限")
+				httpx.WriteError(l, w, http.StatusForbidden, errcode.AdminRequired)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -156,7 +157,7 @@ func RequirePasswordChanged(l *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			info, ok := SessionFrom(r.Context())
 			if !ok || info.Principal.MustChangePassword {
-				httpx.WriteError(l, w, http.StatusForbidden, "须先修改出厂默认密码")
+				httpx.WriteError(l, w, http.StatusForbidden, errcode.MustChangePassword)
 				return
 			}
 			next.ServeHTTP(w, r)

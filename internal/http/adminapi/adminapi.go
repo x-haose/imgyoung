@@ -32,12 +32,12 @@ type ChannelAdmin interface {
 	List(ctx context.Context) ([]channel.Info, error)
 	// ProbeChannel 对已有渠道执行深探测并把结果落库。
 	ProbeChannel(ctx context.Context, channelID int64) error
-	// TestConfig 用未落库的配置执行深探测(测试连接),返回可直接展示的失败原因与须交还表单的刷新后令牌。
+	// TestConfig 用未落库的配置执行深探测(测试连接),返回失败结论与须交还表单的刷新后令牌。
 	TestConfig(ctx context.Context, p channel.TestParams) (channel.TestResult, error)
 	// ConfigForEdit 返回渠道配置的编辑视图(敏感值哨兵掩码,含模板表单字段还原)。
 	ConfigForEdit(ctx context.Context, channelID int64) (channel.EditConfig, error)
-	// RcloneConfig 生成渠道的 rclone 配置文件(含凭证;加密渠道含 crypt 远端与解密密码)。
-	RcloneConfig(ctx context.Context, channelID int64) (channel.RcloneConfigFile, error)
+	// RcloneConfig 生成渠道的 rclone 配置文件(含凭证;加密渠道含 crypt 远端与解密密码),文件头注释用 lang。
+	RcloneConfig(ctx context.Context, channelID int64, lang channel.Language) (channel.RcloneConfigFile, error)
 	// OAuthStartParams 汇总发起授权所需的后端名与参数;编辑场景还原字段中的哨兵。
 	OAuthStartParams(ctx context.Context, channelID int64, templateID string,
 		inputs map[string]string) (string, map[string]string, error)

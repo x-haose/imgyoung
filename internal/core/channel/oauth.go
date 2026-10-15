@@ -3,6 +3,7 @@ package channel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/rclone/rclone/fs/config/configmap"
 	"github.com/rclone/rclone/lib/oauthutil"
 	"golang.org/x/oauth2"
+
+	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
 // rclone 认得的 OAuth 配置键。
@@ -26,11 +29,11 @@ const oauthConfigName = "imgyoung"
 // findBackend 按名查找 rclone 后端。
 // @param driver rclone 后端名
 // @return 后端注册信息
-// @return 后端不存在时的 ErrInvalidChannel
+// @return 后端不存在时包裹 ErrInvalidChannel 的带错误码错误
 func findBackend(driver string) (*fs.RegInfo, error) {
 	ri, err := fs.Find(driver)
 	if err != nil {
-		return nil, fmt.Errorf("%w: 未知的后端 %q", ErrInvalidChannel, driver)
+		return nil, errcode.Wrap(ErrInvalidChannel, errcode.ChannelUnknownBackend, "driver", driver)
 	}
 	return ri, nil
 }
@@ -64,10 +67,10 @@ func (d optionDefaults) Get(key string) (string, bool) {
 }
 
 // ErrNotOAuthDriver 指定后端无需 OAuth 授权。
-var ErrNotOAuthDriver = fmt.Errorf("%w: 该后端无需 OAuth 授权", ErrInvalidChannel)
+var ErrNotOAuthDriver error = errcode.Wrap(ErrInvalidChannel, errcode.OAuthNotRequired)
 
 // ErrInvalidToken 令牌不是合法的 rclone 授权结果。
-var ErrInvalidToken = fmt.Errorf("%w: 令牌格式非法", ErrInvalidChannel)
+var ErrInvalidToken error = errcode.Wrap(ErrInvalidChannel, errcode.OAuthTokenInvalid)
 
 // OAuthFlow 一个后端的 OAuth 授权码流。
 type OAuthFlow struct {
@@ -84,7 +87,7 @@ type OAuthFlow struct {
 // @param params 后端参数
 // @param redirectURI 授权回调地址;空则沿用后端内置地址(指向本机 53682 端口)
 // @return 授权流
-// @return 后端不存在、无需授权或取配置失败时的错误
+// @return 后端不存在、无需授权或取配置失败时包裹 ErrInvalidChannel 的带错误码错误
 func NewOAuthFlow(ctx context.Context, driver string, params map[string]string,
 	redirectURI string) (*OAuthFlow, error) {
 	ri, err := findBackend(driver)
@@ -212,7 +215,9 @@ func backendOAuthOptions(ctx context.Context, ri *fs.RegInfo, m configmap.Mapper
 	for range configWalkLimit {
 		out, err := ri.Config(ctx, oauthConfigName, m, in)
 		if err != nil {
-			return nil, fmt.Errorf("读取后端 %q 的授权配置: %w", ri.Name, err)
+			f := Explain(err)
+			return nil, errcode.Wrap(ErrInvalidChannel, errcode.ChannelBackendFailed,
+				"reason", string(f.Reason), "detail", f.Detail)
 		}
 		opt, next, err := oauthStep(ri.Name, out)
 		if err != nil {
@@ -238,7 +243,9 @@ func oauthStep(driver string, out *fs.ConfigOut) (*oauthutil.Options, fs.ConfigI
 		return nil, fs.ConfigIn{}, ErrNotOAuthDriver
 	}
 	if out.Error != "" {
-		return nil, fs.ConfigIn{}, fmt.Errorf("%w: 后端 %q 配置失败: %s", ErrInvalidChannel, driver, out.Error)
+		f := Explain(errors.New(out.Error))
+		return nil, fs.ConfigIn{}, errcode.Wrap(ErrInvalidChannel, errcode.ChannelBackendFailed,
+			"reason", string(f.Reason), "detail", f.Detail)
 	}
 	if out.OAuth != nil {
 		opt, ok := out.OAuth.(*oauthutil.Options)
@@ -248,7 +255,8 @@ func oauthStep(driver string, out *fs.ConfigOut) (*oauthutil.Options, fs.ConfigI
 		return opt, fs.ConfigIn{}, nil
 	}
 	if out.Option != nil {
-		return nil, fs.ConfigIn{}, fmt.Errorf("%w: 后端 %q 要求先提供 %s", ErrInvalidChannel, driver, out.Option.Name)
+		return nil, fs.ConfigIn{}, errcode.Wrap(ErrInvalidChannel, errcode.OAuthOptionRequired,
+			"driver", driver, "option", out.Option.Name)
 	}
 	if out.State == "" {
 		return nil, fs.ConfigIn{}, ErrNotOAuthDriver
@@ -260,7 +268,7 @@ func oauthStep(driver string, out *fs.ConfigOut) (*oauthutil.Options, fs.ConfigI
 // @Description: 到期时刻为零值的令牌永不过期(如 pCloud),不需要刷新令牌。
 // @param raw 令牌 JSON 原文
 // @return 归一化后的令牌 JSON
-// @return ErrInvalidToken,或会过期却缺少刷新令牌时的 ErrInvalidChannel
+// @return ErrInvalidToken,或会过期却缺少刷新令牌时包裹 ErrInvalidChannel 的带错误码错误
 func validateToken(raw string) (string, error) {
 	var tok oauth2.Token
 	if err := json.Unmarshal([]byte(raw), &tok); err != nil {
@@ -270,7 +278,7 @@ func validateToken(raw string) (string, error) {
 		return "", ErrInvalidToken
 	}
 	if tok.RefreshToken == "" && !tok.Expiry.IsZero() {
-		return "", fmt.Errorf("%w: 缺少刷新令牌,访问令牌过期后无法续期", ErrInvalidChannel)
+		return "", errcode.Wrap(ErrInvalidChannel, errcode.OAuthNoRefreshToken)
 	}
 	return marshalToken(&tok)
 }

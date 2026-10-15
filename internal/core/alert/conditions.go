@@ -3,7 +3,10 @@ package alert
 import (
 	"context"
 	"fmt"
+	"maps"
+	"strconv"
 
+	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
@@ -32,37 +35,55 @@ func (s *Service) conditions(ctx context.Context) ([]Condition, error) {
 	}
 	out = append(out, quota...)
 	if s.cfg.Backup != nil {
-		if message, failed := s.cfg.Backup.LastFailure(); failed {
-			out = append(out, Condition{Kind: KindBackupFailed, Message: message})
+		if e := s.cfg.Backup.LastFailure(); e != nil {
+			params := maps.Clone(e.Params)
+			if params == nil {
+				params = map[string]string{}
+			}
+			params["code"] = e.Code.String()
+			out = append(out, Condition{Kind: KindBackupFailed, Message: e.Error(), Params: params})
 		}
 	}
 	return out, nil
 }
 
 // channelConditions 从渠道表判定不健康与排空失败。
-// @Description: 清理中的渠道不参与选路与探测,其 last_error 只会来自排空失败;在役渠道不健康时
-// 以最近探测的失败原因为描述,尚未探测过的以通用描述。
+// @Description: 清理中的渠道不参与选路与探测,其失败栏只会来自排空失败;在役渠道不健康时以最近一次
+// 失败的结论为描述,参数为 stage / reason / detail(见 channel.LastFailure);尚未探测过的没有参数。
 // @param channels 渠道表全部行
 // @return 条件列表
 func channelConditions(channels []sqlc.Channel) []Condition {
 	var out []Condition
 	for _, c := range channels {
-		reason := c.LastError.String
+		f := channel.FailureOf(c)
 		if c.PendingDelete != 0 {
-			if reason != "" {
-				out = append(out, Condition{Kind: KindDrainFailed, Target: c.Name, Message: reason})
+			if f != nil {
+				out = append(out, failureCondition(KindDrainFailed, c.Name, *f))
 			}
 			continue
 		}
 		if c.Healthy != 0 {
 			continue
 		}
-		if reason == "" {
-			reason = "渠道探测不健康"
+		if f == nil {
+			out = append(out, Condition{Kind: KindChannelUnhealthy, Target: c.Name, Message: "渠道探测不健康"})
+			continue
 		}
-		out = append(out, Condition{Kind: KindChannelUnhealthy, Target: c.Name, Message: reason})
+		out = append(out, failureCondition(KindChannelUnhealthy, c.Name, *f))
 	}
 	return out
+}
+
+// failureCondition 以渠道失败结论构造告警条件。
+// @param kind 告警类型
+// @param target 渠道名
+// @param f 失败结论
+// @return 条件
+func failureCondition(kind, target string, f channel.LastFailure) Condition {
+	return Condition{
+		Kind: kind, Target: target, Message: f.Message(),
+		Params: map[string]string{"stage": string(f.Stage), "reason": string(f.Reason), "detail": f.Detail},
+	}
 }
 
 // replicaConditions 从副本水位判定补齐失败:渠道上有 failed 副本即告警,计数进描述。
@@ -84,6 +105,7 @@ func (s *Service) replicaConditions(ctx context.Context, nameByID map[int64]stri
 		out = append(out, Condition{
 			Kind: KindReplicationFailed, Target: name,
 			Message: fmt.Sprintf("%d 份副本补齐失败,渠道恢复健康后会重试", st.Failed),
+			Params:  map[string]string{"failed": strconv.FormatInt(st.Failed, 10)},
 		})
 	}
 	return out, nil
@@ -108,6 +130,9 @@ func (s *Service) quotaConditions(ctx context.Context) ([]Condition, error) {
 			out = append(out, Condition{
 				Kind: KindChannelQuotaExceeded, Target: row.Name,
 				Message: fmt.Sprintf("用量 %d 字节已超过阈值 %d 字节,留意账单与容量", row.Bytes, quota),
+				Params: map[string]string{
+					"bytes": strconv.FormatInt(row.Bytes, 10), "quota": strconv.FormatInt(quota, 10),
+				},
 			})
 		}
 	}

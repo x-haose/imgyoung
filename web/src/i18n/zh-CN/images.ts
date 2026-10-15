@@ -94,7 +94,7 @@ export const images = {
     failed: '失败',
   },
   attempts: '尝试 {count} 次',
-  lastError: '最近错误',
+  lastError: '最近错误：{error}',
   updatedAt: '更新于 {time}',
   delete: '删除',
   deleteTitle: '删除这张图片？',
