@@ -38,6 +38,7 @@ type GCResult struct {
 // @Description: 孤儿 = 渠道有、库里没有任何状态的副本记录、键名是本服务的对象键格式、修改时间不早于
 // 渠道记录创建且已过宽限期,回收(按量付费渠道防烧钱)。本库只以该格式命名对象,且只可能在渠道记录创建
 // 之后写入;其余对象(别的程序写的文件、灾备时新实例接入旧桶而元数据尚未恢复)只计数不回收。
+// 深探测删除失败留下的临时对象过宽限期即回收。
 // 幻影 = DB 记为就绪、渠道实际缺失(回退 pending 并重新入队补齐)。
 // 顺带产出各渠道用量统计。单渠道失败跳过,不中断其余渠道。
 // @return 各渠道对账结果
@@ -113,6 +114,13 @@ func takeInventory(objs []driver.ObjectInfo, known map[string]struct{}, createdA
 	inv := inventory{sizes: make(map[string]int64, len(objs))}
 	for _, o := range objs {
 		if strings.HasPrefix(o.Key, systemPrefix) || o.Key == failover.ProbeKey {
+			continue
+		}
+		// 深探测残留:探后即删的临时对象,删除失败才会留下;不论哪个库写的都可回收,也不计入用量。
+		if failover.IsDeepProbeKey(o.Key) {
+			if now.Sub(o.ModTime) > orphanGrace {
+				inv.orphans = append(inv.orphans, o.Key)
+			}
 			continue
 		}
 		inv.sizes[o.Key] = o.Size

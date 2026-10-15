@@ -71,7 +71,7 @@ func New(cfg Config) http.Handler {
 		g.Use(middleware.RefererCheck(cfg.RefererPatterns, func() bool { return cfg.Settings().AllowEmptyReferer }))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
 		g.Get("/o/*", cfg.Public.HandleServeObjectKey)
-		// HEAD 与 GET 同一处理:只写响应头,不打开渠道对象,也不计访问
+		// HEAD 与 GET 同一处理,只写响应头、不计访问:输出原图时不打开渠道对象,需要按需处理时同样取或生成衍生图
 		g.Head("/i/{id}", cfg.Public.HandleServe)
 		g.Head("/o/*", cfg.Public.HandleServeObjectKey)
 	})

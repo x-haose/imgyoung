@@ -106,7 +106,7 @@ export interface paths {
         options?: never;
         /**
          * 按短 ID 查询图片响应头
-         * @description 与 GET 同一处理,只返回响应头;不打开渠道对象,也不计访问。
+         * @description 与 GET 同一处理,只返回响应头,不计访问。输出原图时不打开渠道对象;需要按需处理时与 GET 一样取或生成衍生图 (缓存未命中即读原图处理),响应头与 GET 相同。
          */
         head: operations["headImage"];
         patch?: never;
@@ -135,7 +135,7 @@ export interface paths {
         options?: never;
         /**
          * 按 S3 对象键查询图片响应头
-         * @description 与 GET 同一处理,只返回响应头;不打开渠道对象,也不计访问。
+         * @description 与 GET 同一处理,只返回响应头,不计访问。输出原图时不打开渠道对象;需要按需处理时与 GET 一样取或生成衍生图 (缓存未命中即读原图处理),响应头与 GET 相同。
          */
         head: operations["headImageByObjectKey"];
         patch?: never;

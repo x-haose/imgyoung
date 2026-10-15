@@ -297,7 +297,8 @@ func TestBackfillNewChannel(t *testing.T) {
 
 // TestGCRemovesExpiredOrphans 验证孤儿回收:键名是本服务格式、渠道记录创建之后写入、库里没有任何副本
 // 记录且超宽限期的对象被删;新鲜对象、早于渠道记录创建的对象(别的库写出,如灾备接入的旧桶)、键名不是
-// 本服务格式的对象(别的程序写的文件)、有未就绪副本记录的对象与系统目录对象一律保留。
+// 本服务格式的对象(别的程序写的文件)、有未就绪副本记录的对象与系统目录对象一律保留;深探测残留
+// 不论写入时刻,过宽限期即删。
 func TestGCRemovesExpiredOrphans(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := t.Context()
@@ -325,6 +326,7 @@ func TestGCRemovesExpiredOrphans(t *testing.T) {
 	put(freshOrphan, now)
 	put(preexisting, now.Add(-60*24*time.Hour))
 	put("photos/foreign.jpg", now.Add(-72*time.Hour))
+	put(".imgyoung-probe-0123456789abcdef", now.Add(-60*24*time.Hour))
 	put("pending_00000000", now.Add(-72*time.Hour))
 	put("_imgyoung/backup/keep.db", now.Add(-72*time.Hour))
 	blobID, err := env.queries.CreateBlob(ctx, sqlc.CreateBlobParams{
@@ -344,16 +346,18 @@ func TestGCRemovesExpiredOrphans(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunGC 返回错误: %v", err)
 	}
-	// 盘点口径:五个业务对象各 6 字节,系统目录对象不计;回收 1 个孤儿,早于渠道记录创建与键名不符的
-	// 各 1 个不是本库写出,无幻影。
+	// 盘点口径:五个业务对象各 6 字节,系统目录对象与深探测残留不计;回收 1 个孤儿与 1 个深探测残留
+	// (早于渠道记录创建也回收),早于渠道记录创建与键名不符的各 1 个不是本库写出,无幻影。
 	got := gcResultFor(t, results, "local")
-	want := replication.GCResult{Channel: "local", Objects: 5, Bytes: 30, Foreign: 2, OrphansDeleted: 1}
+	want := replication.GCResult{Channel: "local", Objects: 5, Bytes: 30, Foreign: 2, OrphansDeleted: 2}
 	if got != want {
 		t.Errorf("local 对账统计 = %+v, 期望 %+v", got, want)
 	}
 
-	if _, err := env.local.Driver.Stat(ctx, staleOrphan); !errors.Is(err, driver.ErrNotFound) {
-		t.Errorf("过期孤儿未被回收: %v", err)
+	for _, key := range []string{staleOrphan, ".imgyoung-probe-0123456789abcdef"} {
+		if _, err := env.local.Driver.Stat(ctx, key); !errors.Is(err, driver.ErrNotFound) {
+			t.Errorf("对象 %s 未被回收: %v", key, err)
+		}
 	}
 	kept := []string{freshOrphan, preexisting, "photos/foreign.jpg", "pending_00000000", "_imgyoung/backup/keep.db"}
 	for _, key := range kept {
