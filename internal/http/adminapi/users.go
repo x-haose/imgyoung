@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -11,13 +12,11 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 )
 
 // userBodyLimit 用户管理请求体上限。
 const userBodyLimit = 16 << 10
-
-// userTTLMaxHours 用户默认 TTL 的小时数上限(100 年),与全局 ttl_hours 口径一致。
-const userTTLMaxHours = 876000
 
 // userItem 面向前端的用户列表项(不含任何凭证材料)。
 type userItem struct {
@@ -204,9 +203,9 @@ func decodeUserBody(h *Handlers, w http.ResponseWriter, r *http.Request) (userWr
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, "请求体不是合法 JSON 或含未知字段")
 		return userWriteRequest{}, false
 	}
-	if v := req.DefaultTTLHours; v != nil && (*v < 0 || *v > userTTLMaxHours) {
+	if v := req.DefaultTTLHours; v != nil && (*v < 0 || *v > config.MaxDurationHours) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			"default_ttl_hours 需为 0(永久)到 876000 的整数,或 null 表示随全局")
+			fmt.Sprintf("default_ttl_hours 需为 0(永久)到 %d 的整数,或 null 表示随全局", config.MaxDurationHours))
 		return userWriteRequest{}, false
 	}
 	return req, true

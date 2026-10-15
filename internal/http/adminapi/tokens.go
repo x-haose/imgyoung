@@ -14,14 +14,12 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
 // tokenNameMaxLen Token 用途名长度上限。
 const tokenNameMaxLen = 64
-
-// tokenExpiresMaxHours 有效期小时数上限(100 年),防 time.Duration 乘法溢出。
-const tokenExpiresMaxHours = 876000
 
 // tokenItem 面向前端的 Token 列表项(仅识别前缀,无哈希无明文)。
 type tokenItem struct {
@@ -86,9 +84,9 @@ func (h *Handlers) HandleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		req.Name == "" || len(req.Name) > tokenNameMaxLen ||
-		req.ExpiresInHours < 0 || req.ExpiresInHours > tokenExpiresMaxHours {
+		req.ExpiresInHours < 0 || req.ExpiresInHours > config.MaxDurationHours {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			"请求体非法:名称必填且不超长,有效期小时数需在 0 到 876000 之间")
+			fmt.Sprintf("请求体非法:名称必填且不超长,有效期小时数需在 0 到 %d 之间", config.MaxDurationHours))
 		return
 	}
 	issued, err := h.cfg.Auth.IssueToken(r.Context(), p.UserID, req.Name,

@@ -19,9 +19,8 @@ import (
 // idempotencyHeader 客户端幂等键请求头。
 const idempotencyHeader = "Idempotency-Key"
 
-// maxTTLSeconds ttl 秒数上限(100 年),与管理面 ttl_hours 上限同口径;
-// 同时挡住 time.Duration 乘法溢出(溢出为负会被误判为永久)。
-const maxTTLSeconds = 876000 * 3600
+// maxTTLSeconds ttl 秒数上限:config.MaxDurationHours 折算成秒,与管理面 ttl_hours 同口径。
+const maxTTLSeconds = config.MaxDurationHours * 3600
 
 // uploadResponse 上传成功的响应体。
 type uploadResponse struct {

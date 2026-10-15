@@ -16,6 +16,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
@@ -173,9 +174,6 @@ func (h *Handlers) writeImageDetail(w http.ResponseWriter, r *http.Request, row 
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, detail)
 }
 
-// patchTTLMaxHours ttl_hours 上限(100 年),防 time.Duration 乘法溢出。
-const patchTTLMaxHours = 876000
-
 // imagePatchRequest PATCH /images/{id} 的请求体;指针字段缺省表示不修改该项。
 type imagePatchRequest struct {
 	TTLHours      *int64 `json:"ttl_hours"`      // >0 从现在起算新到期并更新时长;0 改永久
@@ -196,9 +194,9 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		(req.TTLHours == nil && req.CleanupExempt == nil) ||
-		(req.TTLHours != nil && (*req.TTLHours < 0 || *req.TTLHours > patchTTLMaxHours)) {
+		(req.TTLHours != nil && (*req.TTLHours < 0 || *req.TTLHours > config.MaxDurationHours)) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
-			"请求体非法:ttl_hours 需为 0(永久)或不超过 876000 的正整数,至少携带一个修改项")
+			fmt.Sprintf("请求体非法:ttl_hours 需为 0(永久)或不超过 %d 的正整数,至少携带一个修改项", config.MaxDurationHours))
 		return
 	}
 	if req.CleanupExempt != nil && !p.IsAdmin() {

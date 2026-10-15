@@ -56,6 +56,11 @@ type Settings struct {
 	AuditRetentionDays     int                `json:"audit_retention_days"`      // 审计日志保留天数,超期由清理循环回收;0=永久保留
 }
 
+// MaxDurationHours 以整数表达的时长(配置项与请求参数)的统一上限:100 年,单位小时。
+// @Description: 时长最终要乘成 time.Duration(int64 纳秒,约 292 年溢出);溢出会得到负数,
+// 让"很长"静默变成"立即到期"或"永久"之类相反的语义,故一律在入口以它封顶。
+const MaxDurationHours = 876000
+
 // Defaults 返回与 settings 表列 DEFAULT 一致的出厂配置,供测试与工具构造基线。
 // @Description: 运行期不用它(真相在表);此处是测试便利副本,由 TestDefaultsMatchSchema
 // 守卫与建表默认值一致,防两处漂移。
@@ -162,7 +167,43 @@ func (s Settings) validate() error {
 	if err := s.validateProcess(); err != nil {
 		return err
 	}
+	if err := s.validateDurationCaps(); err != nil {
+		return err
+	}
 	return validateWebhookURL(s.AlertWebhookURL)
+}
+
+// validateDurationCaps 校验换算成时长的配置不超过 MaxDurationHours 折算后的上限。
+// @return 超限配置的错误;全部合法时为 nil
+func (s Settings) validateDurationCaps() error {
+	const (
+		maxDays    = MaxDurationHours / 24
+		maxMinutes = MaxDurationHours * 60
+		maxSeconds = MaxDurationHours * 3600
+		maxMillis  = maxSeconds * 1000
+	)
+	for _, c := range []struct {
+		name         string
+		value, limit int
+	}{
+		{"health_check_seconds", s.HealthCheckSeconds, maxSeconds},
+		{"backup_interval_hours", s.BackupIntervalHours, MaxDurationHours},
+		{"cleanup_sweep_seconds", s.CleanupSweepSeconds, maxSeconds},
+		{"delete_grace_minutes", s.DeleteGraceMinutes, maxMinutes},
+		{"default_ttl_hours", s.DefaultTTLHours, MaxDurationHours},
+		{"activity_flush_seconds", s.ActivityFlushSeconds, maxSeconds},
+		{"cold_cleanup_days", s.ColdCleanupDays, maxDays},
+		{"usage_report_seconds", s.UsageReportSeconds, maxSeconds},
+		{"dedup_scan_seconds", s.DedupScanSeconds, maxSeconds},
+		{"process_timeout_ms", s.ProcessTimeoutMS, maxMillis},
+		{"idempotency_key_ttl_hours", s.IdempotencyKeyTTLHours, MaxDurationHours},
+		{"audit_retention_days", s.AuditRetentionDays, maxDays},
+	} {
+		if c.value > c.limit {
+			return fmt.Errorf("%s=%d 非法: 不可超过 %d(100 年)", c.name, c.value, c.limit)
+		}
+	}
+	return nil
 }
 
 // validateUpload 校验上传入口与公开访问的配置:体积与像素预算、并发与限速、副本门槛、访问模式、EXIF 档位。

@@ -199,6 +199,7 @@ func TestStoreUpdateRejectsInvalid(t *testing.T) {
 		"类型不符":  {"max_upload_mb": rawPatch(t, "abc")},
 		"档位清空":  {"process_formats": rawPatch(t, []string{})},
 		"档位含非法": {"process_widths": rawPatch(t, []int{0})},
+		"时长溢出":  {"default_ttl_hours": rawPatch(t, MaxDurationHours+1)},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := store.Update(context.Background(), patch); !errors.Is(err, ErrInvalidSetting) {
