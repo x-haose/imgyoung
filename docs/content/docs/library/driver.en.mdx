@@ -170,8 +170,8 @@ modify the map in place, skip empty values, and return an error for an unknown b
 
 `ObscurePlainSecrets` decides "already encoded" the same way rclone does: a value rclone can decode counts as encoded,
 matching `rclone config create` run without `--obscure` / `--no-obscure`. If it misjudges a plaintext value, encode it
-with `rclone obscure` first and pass the result. The application's channel configuration accepts both forms, which is
-why it uses this function.
+with `rclone obscure` first and pass the result. The application uses `ObscureSecrets` for its console template forms
+(the values are known to be plaintext) and `ObscurePlainSecrets` for custom parameters (both forms are accepted).
 
 ```go
 params := map[string]string{
@@ -185,6 +185,12 @@ if err := rclone.ObscureSecrets("webdav", params); err != nil {
 }
 d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Path: "images"})
 ```
+
+A related helper, `SensitiveParams(backend)`, returns the names of the parameters a backend declares as passwords or
+sensitive (`IsPassword` or `Sensitive` in its option metadata), sorted and without duplicates, by the same rule as
+`rclone config redacted`: besides passwords, keys and tokens, identity information such as access key IDs and account
+names is included. Use it to decide which values to mask when echoing a configuration and which to scrub from error
+messages; the application's edit read-back and error scrubbing rely on it.
 
 ### OAuth token write-back and OnChange
 
@@ -242,29 +248,86 @@ name (like `imgyoung-0123abcd`), and then builds the crypt layer with that name 
 Password and Salt are the only way to decrypt. Without them, the objects in the store cannot be recovered.
 </Callout>
 
-crypt is a public rclone format, so standard rclone can decrypt the data without this library. Configure a crypt remote
-in rclone.conf as below, setting `password` and `password2` to the output of `rclone obscure <Password>` and
-`rclone obscure <Salt>`. Leave every other option at rclone's default (the library only sets `filename_encryption`):
+crypt is a public rclone format, so standard rclone can decrypt the data without this library: generate a
+configuration file with `ConfigFile`, described in the next section. The application's channel encryption is built on
+this same layer, with passwords derived from the master key; see [Channel encryption](../channels/encryption.mdx).
+
+### Exporting an rclone configuration file [#config-file]
+
+```go
+func ConfigFile(opts Options, remote, cryptRemote string) (string, error)
+```
+
+`ConfigFile` produces the text of an rclone configuration file (rclone.conf) equivalent to the driver `Open(opts)`
+builds, so standard rclone can read and write the same data with it:
+
+- The backend section is named `remote`, and its parameters are exactly what the driver hands to the backend,
+  including the defaults this package adds (such as s3's `no_check_bucket = true`). Empty values are omitted, because
+  both the driver and rclone treat an empty value as unset. Password parameters are already in rclone's encoded form
+  by the `Options` convention and are written as they are.
+- When `opts.Crypt` is non-nil, a second crypt section named `cryptRemote` is written: its `remote` points to
+  `<remote>:<opts.Path>`, `password` and `password2` are the encoded `Password` and `Salt`, and
+  `filename_encryption = standard`, matching the driver's crypt layer. Reads and writes through it are plaintext.
+- Without encryption, the backend section carries no path; use it as `<remote>:<opts.Path>`. `OnChange` plays no part.
+- Equivalence is guaranteed by construction: `ConfigFile` and `Open` share the same default filling and crypt
+  parameter generation, so they never compute things separately.
+
+```go
+text, err := rclone.ConfigFile(rclone.Options{
+	Backend: "s3",
+	Params: map[string]string{
+		"provider":          "Cloudflare",
+		"access_key_id":     "<access key>",
+		"secret_access_key": "<secret key>",
+		"endpoint":          "https://<account id>.r2.cloudflarestorage.com",
+	},
+	Path:  "my-bucket/images",
+	Crypt: &rclone.CryptOptions{Password: "<password>", Salt: "<salt>"},
+}, "mystore", "mystore-crypt")
+```
+
+The resulting text looks like this (encoding uses a random IV, so `password` and `password2` differ on every call,
+yet always decode to the same values):
 
 ```ini title="rclone.conf"
 [mystore]
 type = s3
-provider = Cloudflare
 access_key_id = <access key>
-secret_access_key = <secret key>
 endpoint = https://<account id>.r2.cloudflarestorage.com
+no_check_bucket = true
+provider = Cloudflare
+secret_access_key = <secret key>
 
 [mystore-crypt]
 type = crypt
-remote = mystore:my-bucket/images
 filename_encryption = standard
-password = <output of rclone obscure>
-password2 = <output of rclone obscure>
+password = <encoded Password>
+password2 = <encoded Salt>
+remote = mystore:my-bucket/images
 ```
 
-`rclone ls mystore-crypt:` then lists plaintext file names, and `rclone copy mystore-crypt: ./out` retrieves the
-plaintext content. The application's channel encryption is built on this same layer, with passwords derived from the
-master key; see [Channel encryption](../channels/encryption.mdx).
+```bash title="Terminal"
+rclone --config rclone.conf ls mystore-crypt:
+```
+
+The text is serialized with the same INI library rclone uses for its configuration files, then read back the way
+rclone reads it and checked. If a parameter cannot be written into the file as it is, the function returns an error
+wrapping `ErrUnrepresentable` instead of producing a file that is not equivalent to the driver. The error text names
+only the section and the parameter, never the value (the text itself is in Chinese):
+
+| Situation | Error text |
+|---|---|
+| A parameter value contains a line break (`\n` or `\r`) | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>" 含换行` |
+| The generated text cannot be parsed the way rclone reads it | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
+| A parameter reads back as something other than its original value (leading or trailing whitespace, a `%(name)s` style reference, and so on) | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>"` |
+
+Other errors: an unknown backend name, a section name that breaks rclone's naming rules (only letters, digits, `_`,
+`-`, `.`, `+`, `@` and spaces), or a failure to encode a password.
+
+<Callout type="warn" title="The file holds working credentials">
+The configuration file contains backend credentials and authorization tokens; rclone's encoding is reversible, not
+encryption. For encrypted channels it also contains the decryption password. Keep it offline, to the same standard as the master key.
+</Callout>
 
 ### Close
 
@@ -277,9 +340,10 @@ backend from rclone's fs cache, and the cache closes the inner backend as it is 
 
 ### Complete example
 
-This is `store/rclone/example_test.go` from the repository. It walks through write, stat, read back, and delete on
-rclone's `memory` backend, runs with `go test ./store/rclone`, and prints exactly what the `Output` comment at the end
-lists (the comments in the source are in Chinese):
+This is `store/rclone/example_test.go` from the repository. It runs with `go test ./store/rclone`, and each example
+prints exactly what its `Output` comment lists (the comments in the source are in Chinese): `ExampleSensitiveParams`
+queries the sensitive parameters of the webdav backend, and `Example` walks through write, stat, read back, and delete
+on rclone's `memory` backend.
 
 <include cwd lang="go" meta='title="store/rclone/example_test.go"'>../store/rclone/example_test.go</include>
 

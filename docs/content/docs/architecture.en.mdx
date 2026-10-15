@@ -92,7 +92,7 @@ The remaining tables:
 
 | Table | Contents |
 |---|---|
-| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest check result, whether encrypted, whether direct links are allowed, the being-cleaned-up flag |
+| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest check result, whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
 | `variants` | Index of the variant cache: one row per blob and processing parameter set; the bytes live on local disk and are evicted LRU by last access |
 | `settings` | Runtime settings in a single-row wide table; each column's DEFAULT is the factory value. See [Configuration](./configuration.mdx) |
 | `users`, `tokens`, `sessions` | Users and quotas, upload tokens (hashes only), admin sessions (only a hash of the session id plus its bound CSRF token) |
@@ -246,7 +246,9 @@ that was running when the process was killed is rescheduled by River once it has
 machinery brings them in line, with no separate backfill logic.
 
 The other asynchronous jobs follow the same principle: deleting objects from a channel (`delete_object`), draining a
-channel being cleaned up (`drain_channel`, whose progress is simply the remaining replica rows), and purging CDN caches
+channel being cleaned up (`drain_channel`: it first deletes the replica objects row by row, so its progress is simply the
+remaining replica rows; then deletes the system objects under `_imgyoung/` on that channel, metadata snapshots included,
+along with deep check leftovers, leaving objects written by other programs alone; and finally deletes the channel record), and purging CDN caches
 (`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
 finally fails are reclaimed by reconciliation GC; the first time a drain job cannot delete an object, it writes the
 reason into the channel's check result and raises a `drain_failed` alert, then keeps retrying with backoff — once its
@@ -267,28 +269,52 @@ from runtime settings, a change in the admin console reschedules the current wai
 | Activity flush | `activity_flush_seconds` (default 60 seconds) | Write public access times and counts to the database in batches; variants' last-access times are flushed on the same interval |
 | Deduplication | `dedup_scan_seconds` (default 300 seconds) | Merge exact duplicates (same SHA-256) automatically, then scan for pHash near-duplicates and queue them for manual decisions |
 | Usage report | `usage_report_seconds` (default 300 seconds) | Compute storage usage per channel and update metrics |
-| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take a consistent snapshot with `VACUUM INTO`, upload it to `_imgyoung/backup/` on the primary channel, and keep `backup_keep` copies. See [Backup and restore](./operations/backup.mdx) |
+| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take one consistent snapshot with `VACUUM INTO` and write it to `_imgyoung/backup/` on every channel that is healthy and not being cleaned up, each channel keeping its own `backup_keep` copies; if any channel is not written, the round counts as failed (`backup_failed` alert) and the channels that were written keep the snapshot. At startup, a backup runs right away if any healthy channel lacks a snapshot within the backup interval. See [Backup and restore](./operations/backup.mdx) |
 | Auth maintenance | 1 minute / 1 hour (fixed) | Write back token last-used times in batches / reclaim expired sessions |
 | Replication reconciliation | 10 minutes (fixed) | See the previous section |
 | Reconciliation GC | 24 hours (fixed) | List every healthy channel and compare with the replica records in the database in both directions: reclaim orphan objects, and reset phantom replicas to `pending` to be replicated again. Criteria below |
+
+### Reconciliation GC criteria [#reconcile-gc]
 
 What reconciliation GC handles (the system directory `_imgyoung/` and the light check key are excluded from the comparison):
 
 - **Orphans**: an object is reclaimed only if all of these hold — its key has this service's object key format
   `{short_id}_{first 8 hex chars of sha256}`; the database has no replica record of it on that channel in any state;
-  its modification time is not earlier than the channel record's creation time; and it is past the 48-hour grace period
+  its modification time is not earlier than the channel's binding time; and it is past the 48-hour grace period
   (which covers uploads already written to the channel but not yet recorded). Every other object without a record —
-  files written by other programs, or objects in an old bucket attached by a new instance during disaster recovery
-  before the metadata is restored — is only counted, never reclaimed, and appears as `foreign` in the reconciliation log.
+  files written by other programs, objects in an old bucket attached by a new instance during disaster recovery
+  before the metadata is restored, or objects written to the channel before a snapshot restore that the restored
+  database has no record of — is only counted, never reclaimed, and appears as `foreign` in the reconciliation log.
 - **Deep check leftovers**: `.imgyoung-probe-` temporary objects left when a deep check fails to delete them are
   deleted once past the 48-hour grace period, regardless of when they were written, and are not counted in the
   reconciliation's object and byte totals.
 - **Phantoms**: replicas recorded as `done` but missing from the channel are reset to `pending` and queued for replication again.
 
+The **binding time** (`channels.bound_at`) marks when the channel record started to correspond to its current storage
+location; this service only writes objects there after that moment:
+
+- A new channel's binding time equals its creation time. When a new instance attaches an old bucket, every object
+  already in it is older and is only counted, never reclaimed.
+- Editing a channel in the admin console resets it to the time of the edit if the backend name or any configuration
+  parameter changes; typing the same password again counts as a change (rclone encodes passwords with a random IV).
+  Changing only the name, priority, or direct-link switch does not reset it, and neither does a token refresh write-back.
+- After a restore from a snapshot, every channel is reset to the time of the first start after the restore: before
+  swapping the snapshot in, a marker file `imgyoung.db.restored` is written to the data directory; after migrations and
+  before the master key is loaded, the marker triggers the reset and is deleted on success, with the log line
+  `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收`. Objects uploaded after the snapshot,
+  which the restored database has no record of, are therefore never deleted as orphans. The marker is written when the
+  staged file `<data dir>/imgyoung.db.restore` is swapped in, and a restore from the admin console stages exactly that
+  file; a manual restore must also put the snapshot there and then start, not overwrite `imgyoung.db` directly,
+  otherwise no marker is written and the binding times are not reset.
+
+`created_at` does not change along with the binding time: together with the channel ID it feeds key derivation for encrypted channels.
+
 <Callout type="warn" title="Two instances must not share a channel path">
 Reconciliation only trusts this database's replica records: objects another instance writes to the same path have the
 right key format but no record here, so once past the grace period they are deleted as orphans.
 </Callout>
+
+### Shutdown
 
 Shutdown (on SIGINT / SIGTERM, or a restart requested after restoring a backup snapshot in the admin console) happens
 in order: new requests stop being accepted first, and in-flight requests get at most 6 seconds before the remaining
@@ -395,6 +421,10 @@ map, instead of calling the rclone command line, librclone's RPC interface, or a
 - **Channel encryption with no extra code**: encrypted channels stack rclone's crypt layer on top of the backend, and
   the upload and access paths stay unchanged; crypt is a public format, so with the password the data can be decrypted
   by standard rclone on its own. See [Channel encryption](./channels/encryption.mdx).
+- **Configuration exportable as-is**: the admin console can export an rclone configuration file for every channel, with
+  exactly the parameters the driver hands to the backend, plus a crypt remote for encrypted channels. It is generated by
+  `ConfigFile` in `store/rclone`, which shares its parameter handling with driver construction, so standard rclone can
+  read and write the channel's data without ImgYoung. See [Driver interface and rclone implementation](./library/driver.mdx#config-file).
 - **Tests need no cloud account**: rclone's `local` and `memory` backends let the whole storage path run as integration tests on one machine.
 
 Registering every rclone backend (`backend/all`) means any storage rclone supports can be used as a channel directly,

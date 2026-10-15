@@ -8,7 +8,7 @@ description: What each page of the admin console is for, how administrators and 
 The admin console lives at the site root, for example `https://img.example.com/`.
 
 On first start the built-in administrator signs in as `admin` with the factory default password `imgyoung123`. After that sign-in the console goes straight to **Set the admin password**.
-The server enforces this: a session still using the factory password can only change the password, sign out and read the current account; every other console API (including console uploads, issuing tokens and managing channels) returns 403 with "须先修改出厂默认密码" (the factory default password must be changed first), whether the request comes from the console or a script.
+The server enforces this: a session still using the factory password can only change the password, sign out and read the current account; every other console API (including console uploads, issuing tokens and managing channels) returns 403 with `须先修改出厂默认密码` (the factory default password must be changed first), whether the request comes from the console or a script.
 The default password is public, so do this before the instance is reachable from the internet. If you forget the password, see [Password reset](../operations/password-reset.mdx).
 
 There is no environment variable for setting the initial administrator password, and no bootstrap token provided through an environment variable: a one-off seed like that stops having any effect after its first use, yet stays in the deployment files and leaves people guessing where a value came from. On a headless deployment, sign in once, change the password, and issue a token in the console.
@@ -34,7 +34,7 @@ Administrators see the whole site:
 - **Storage channels**: the health and stored bytes of each channel.
 - **Alerts**: alerts that are still open; each resolves itself once its condition no longer holds. **History** leads to the alert history in Settings. Alert kinds are channel unhealthy, replication failed, channel over quota, channel drain failed and backup failed.
 - **Top images**: the 10 images with the most accesses.
-- A warning at the top when the metadata snapshots live on the same local disk as the images (only a single local channel exists).
+- When no healthy channel lives off this host's disk, a **Your data only lives on this host** warning appears at the top: image replicas and metadata snapshots exist only on this host, so losing the host loses everything. The condition is that no channel is healthy, not draining and using a driver other than local; it also shows when there is no healthy channel at all. Adding an object storage or cloud drive channel clears it; if you already have one, check on the **Storage channels** page why it is unhealthy.
 
 Regular users see their own image count, space used and quota. While the site has no images yet, the dashboard shows a three-step quick start.
 
@@ -66,12 +66,18 @@ Issue and manage the credentials for the data API; see [Upload tokens](#upload-t
 
 Create, edit, check and delete channels, set their priority, encryption and 302 direct links, and watch each channel's replication progress. Form fields and per-backend configuration are covered in [Storage channels](../channels/index.mdx); a few points matter when working in the console:
 
-- Cloud drive templates have two fields above the authorization control, "应用 Client ID" (app client ID) and "应用 Client Secret" (app client secret), which are stored encrypted with the channel configuration. One-click authorization requires the client ID first; when pasting a token that was authorized with your own app, fill both in too, because the token can only be refreshed by the app that issued it.
+- Cloud drive templates have two fields above the authorization control, **App client ID** and **App client secret**, which are stored encrypted with the channel configuration. One-click authorization requires the client ID first; when pasting a token that was authorized with your own app, fill both in too, because the token can only be refreshed by the app that issued it.
 - When editing a channel, credential-type parameters are masked: besides passwords, secrets and tokens, this includes access key IDs, WebDAV usernames, client IDs and the like. Leave them unchanged to keep the stored values.
-- A channel that fails to load (its configuration cannot be decrypted, the driver cannot be built and so on) shows as **Unhealthy** in the list, with a reason starting with "装载失败:" (load failed). Every health check round retries loading it, and **Probe again** retries loading first as well; it becomes healthy and serves reads and writes again only once it loads and passes the probe.
+- A channel that fails to load (its configuration cannot be decrypted, the driver cannot be built and so on) shows as **Unhealthy** in the list, with a reason starting with `装载失败:` (load failed). Every health check round retries loading it, and **Probe again** retries loading first as well; it becomes healthy and serves reads and writes again only once it loads and passes the probe.
 - With **Encrypt new channels by default** turned on in Settings, a new channel whose **Server-side encryption** stays at **Inherit the global default** is encrypted, so **Allow 302 direct links** is unavailable; to use direct links, set server-side encryption to **Force off**.
+- If the provider refreshes the authorization token during **Test connection**, the result is followed by "The provider refreshed the authorization token during the test. The form now holds the new token and will save it; the old one may no longer work." and the authorization field shows **Authorized**; just save. When editing, a stored token that is reused and gets refreshed is written straight back to the channel.
+- **Export rclone config** in a channel's row menu (not offered for draining channels) downloads the channel's rclone config file, `imgyoung-channel-<channel ID>.rclone.conf`. With it, a stock rclone can read and write the channel's data without ImgYoung; an encrypted channel also gets a crypt remote, through which reads come back as plaintext.
+  The file contains the channel's credentials and OAuth tokens (plus the decryption passwords for an encrypted channel), so keep it offline and safe like the master key; every download is recorded in the audit log. The file's contents and usage are covered in [Channel encryption](../channels/encryption.mdx) and [Storage channels](../channels/index.mdx).
 
-When you delete a channel with **Delete and purge**, its objects are deleted one by one in the background; meanwhile the channel shows as **Draining**, and it is removed once the objects are gone. If deleting objects fails:
+When you delete a channel, **Also delete what this service stored on the channel** is ticked by default and the confirm button reads **Delete and purge**: image replicas and metadata snapshots (and any leftover deep-check files) are deleted one by one in the background, the channel shows as **Draining** meanwhile, and it is removed once they are gone. Files this service did not write are left alone.
+Untick it and the button becomes **Remove only**: the channel is removed immediately, and the image replicas and metadata snapshots on it are left as they are for you to deal with at the provider if needed.
+
+If **Delete and purge** fails to delete objects:
 
 - The reason is written into the channel's check result on the very first failure, visible in the channel list, and a "Channel drain failed" alert opens. A purge run that merely times out or is interrupted by a shutdown does not count as a failure.
 - Retries then continue automatically with backoff and never stop, so a channel that was only temporarily unavailable finishes draining on its own once it recovers.
@@ -91,7 +97,7 @@ An append-only record of administrative actions, filterable by **Action**, **Act
 
 | Object | Actions |
 |---|---|
-| Channels | Create channel, Edit channel, Delete channel |
+| Channels | Create channel, Edit channel, Delete channel, Export channel rclone config |
 | Tokens | Issue token, Revoke token, Rotate token, Delete token |
 | Users | Create user, Update user (including password changes and resets), Delete user |
 | Images | Update image (lifetime, cleanup exemption), Delete image (including S3 DeleteObject) |
@@ -113,7 +119,8 @@ Administrators only, with four tabs:
   The **Bootstrap configuration** card below shows the environment variables read-only (listen address, data directory, trusted proxy networks, networks allowed on `/metrics`), the server version and the built-in login rate limit. See [Configuration](../configuration.mdx).
   When a network variable is not set, its default networks are shown; when it is explicitly set to an empty string, **Trusted proxy networks** shows "Empty: forwarded headers are never trusted" and **Networks allowed on /metrics** shows "Empty: open to no one".
 - **Hotlink protection**: the Referer allowlist and the **Allow empty referer** switch; see [Accessing images](./access.mdx#hotlink-protection).
-- **Backups & export**: **Back up now**, **Download** and **Restore** for metadata snapshots, plus **Export JSON** for all metadata. See [Backup and restore](../operations/backup.mdx).
+- **Backups & export**: metadata snapshots are written to every healthy channel on the **Backup interval**, each channel keeping its own most recent copies. The snapshot table lists each snapshot with its size, time and **Stored on** (the channels holding it, in priority order), with **Back up now**, **Download** and **Restore**; **Export JSON** exports all metadata.
+  If some channels fail during **Back up now**, an error such as `备份失败:快照 imgyoung-….db 有 k/n 个渠道未写成: …` lists them, and the channels that succeeded keep the snapshot; with no healthy channel the error is `没有健康渠道可存放快照`. **Download** and **Restore** read the snapshot from the healthy channels holding it in priority order, moving on to the next one when a read fails. See [Backup and restore](../operations/backup.mdx).
 - **Alert history**: every alert's open and resolve record. For the alert webhook, see [Monitoring](../operations/monitoring.mdx).
 
 ## Roles and permissions
@@ -130,7 +137,7 @@ Accounts are created only by administrators on the **Users** page; there is no s
 | View, revoke and delete other users' tokens | Yes | No |
 | Storage channels, Users, Duplicates, Cleanup, Audit log, Settings | Yes | No |
 
-Regular users cannot see each other's images or tokens; opening someone else's image details reports that it does not exist. Image links themselves are public: anyone with a link can load it.
+Regular users cannot see each other's images or tokens; opening someone else's image details returns 404 `图片不存在` (image not found). Image links themselves are public: anyone with a link can load it.
 
 There can be several administrators. The built-in administrator (user ID `default`) is protected: it cannot be disabled, demoted or deleted, though it can be renamed. No administrator can delete their own account.
 

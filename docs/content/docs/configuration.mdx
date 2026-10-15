@@ -162,8 +162,8 @@ sudo systemctl restart imgyoung
 | 配置键 | 界面名称 | 默认 | 取值 | 说明 |
 |---|---|---|---|---|
 | `health_check_seconds` | 健康检查间隔 | `60` | ≥ 1,秒 | 渠道健康探测与告警评估的节奏 |
-| `backup_interval_hours` | 备份间隔 | `24` | ≥ 1,小时 | 元数据库自动快照的间隔,见[备份与恢复](./operations/backup.mdx) |
-| `backup_keep` | 备份保留份数 | `7` | ≥ 1 | 每次备份成功后,备份渠道上只保留最新的这么多份 |
+| `backup_interval_hours` | 备份间隔 | `24` | ≥ 1,小时 | 元数据库自动快照的间隔。启动时任一健康渠道上缺少这个间隔内的快照,就先备份一次。见[备份与恢复](./operations/backup.mdx) |
+| `backup_keep` | 备份保留份数 | `7` | ≥ 1 | 快照写到每个健康且不在清理中的渠道;每个渠道写入后各自只保留最新的这么多份 |
 | `usage_report_seconds` | 用量上报间隔 | `300` | ≥ 1,秒 | 只决定指标 `imgyoung_channel_storage_bytes` 的刷新节奏;用量告警按健康检查间隔评估 |
 | `channel_quota_gb` | 渠道用量告警阈值 | `0` | ≥ 0,GB(1 GB = 2³⁰ 字节) | 任一渠道已存数据(按已就绪副本的图片大小求和)超过阈值即开启告警,不限制写入。`0` 不告警 |
 

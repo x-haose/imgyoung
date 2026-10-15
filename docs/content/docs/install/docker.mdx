@@ -47,7 +47,7 @@ docker run --rm ghcr.io/x-haose/imgyoung:latest -version
 |---|---|
 | `imgyoung.db` | 元数据库(SQLite,WAL 模式,运行时旁边还有 `imgyoung.db-wal` 与 `imgyoung.db-shm`):用户、图片记录、渠道配置(凭证经主密钥加密)、运营配置与任务队列 |
 | `master.key` | 主密钥。全新实例首次启动、又没有设置 `IMGYOUNG_MASTER_KEY` 时生成,权限 0600。设置了 `IMGYOUNG_MASTER_KEY` 时既不生成也不读取这个文件 |
-| `blobs/` | 内置 local 渠道的对象。local 是主渠道时,元数据库快照也在其中的 `_imgyoung/backup/` |
+| `blobs/` | 内置 local 渠道的对象。local 渠道健康时,元数据库快照也会写一份到其中的 `_imgyoung/backup/` |
 | `variants/` | 按需处理产生的衍生图缓存,出厂上限 10240 MB,超出按最近访问淘汰 |
 
 从快照恢复时,数据目录里还会出现暂存文件 `imgyoung.db.restore`,以及换入后留存的原库 `imgyoung.db.pre-restore-<时刻>`。

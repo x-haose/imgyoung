@@ -8,7 +8,7 @@ import { FeatureCard } from '@/components/home/feature-card'
 import type { Language } from '@/lib/i18n'
 import { languageAlternates, SITE_URL } from '@/lib/site'
 
-import { BACKENDS, COPY } from './copy'
+import { COPY } from './copy'
 
 /** 取某语言的文案;路由段不在支持列表时按英文。 */
 function copyFor(lang: string) {
@@ -142,7 +142,7 @@ function Backends({ lang, t }: SectionProps) {
           </Link>
         </div>
         <ul className='flex flex-wrap content-start gap-2'>
-          {BACKENDS.map((name) => (
+          {t.backends.map((name) => (
             <li
               key={name}
               className='rounded-lg border border-fd-border bg-fd-card px-3 py-1.5 text-sm transition-colors hover:border-fd-primary/50'

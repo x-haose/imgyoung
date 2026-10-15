@@ -15,6 +15,8 @@ type HomeCopy = {
   features: { title: string; body: string }[]
   backendsTitle: string
   backendsLede: string
+  /** 渠道模板名,与该语言后台「新建渠道」里的模板名逐字一致;模板之外的 rclone 后端走自定义模式。 */
+  backends: string[]
   backendsMore: string
   installTitle: string
   installLede: string
@@ -22,23 +24,6 @@ type HomeCopy = {
   installMore: string
   strip: string[]
 }
-
-/** 渠道模板名(与后台「添加渠道」的模板一致);模板之外的 rclone 后端走自定义模式。 */
-const BACKENDS = [
-  'Amazon S3',
-  'Cloudflare R2',
-  '阿里云 OSS',
-  '腾讯云 COS',
-  'Backblaze B2',
-  'MinIO',
-  'WebDAV',
-  'OneDrive',
-  'Google Drive',
-  'Dropbox',
-  'pCloud',
-  'Box',
-  'Yandex Disk',
-]
 
 /** 安装命令,中英文共用。 */
 const COMMANDS = {
@@ -50,8 +35,6 @@ const COMMANDS = {
   library:
     'go get github.com/x-haose/imgyoung/store/rclone\ngo get github.com/x-haose/imgyoung/store/failover',
 }
-
-export { BACKENDS }
 
 export const COPY: Record<Language, HomeCopy> = {
   zh: {
@@ -87,7 +70,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: '元数据库自动备份',
-        body: '定时快照上传到最高优先级的健康渠道,保留最近 N 份;后台可浏览快照并一键恢复。',
+        body: '定时快照写到每个健康渠道,各渠道各自保留最近 N 份;后台可浏览快照并一键恢复。',
       },
       {
         title: '生命周期',
@@ -113,6 +96,21 @@ export const COPY: Record<Language, HomeCopy> = {
     backendsTitle: '存储渠道',
     backendsLede:
       '渠道就是一个 rclone 后端实例。常用的对象存储与网盘有现成模板,填几个字段就能接入;模板之外的后端在自定义模式里直接填 rclone 参数。',
+    backends: [
+      'Amazon S3',
+      'Cloudflare R2',
+      '阿里云 OSS',
+      '腾讯云 COS',
+      'Backblaze B2',
+      'MinIO / 自建',
+      'WebDAV',
+      'OneDrive',
+      'Google Drive',
+      'Dropbox',
+      'pCloud',
+      'Box',
+      'Yandex Disk',
+    ],
     backendsMore: '以及 rclone 支持的其他后端',
     installTitle: '一条命令装好',
     installLede: '首次启动无需任何配置:浏览器打开 8721 端口,用 admin / imgyoung123 登录并改密。',
@@ -165,7 +163,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: 'Automatic metadata backups',
-        body: 'Scheduled snapshots go to the highest-priority healthy channel, keeping the latest N. Browse them in the admin console and restore with one click.',
+        body: 'Scheduled snapshots are written to every healthy channel, each keeping its own latest N. Browse them in the admin console and restore with one click.',
       },
       {
         title: 'Lifecycle',
@@ -191,6 +189,21 @@ export const COPY: Record<Language, HomeCopy> = {
     backendsTitle: 'Storage channels',
     backendsLede:
       'A channel is an rclone backend instance. Popular object stores and cloud drives come with templates that need only a few fields; anything else rclone supports works in custom mode with raw rclone parameters.',
+    backends: [
+      'Amazon S3',
+      'Cloudflare R2',
+      'Alibaba Cloud OSS',
+      'Tencent Cloud COS',
+      'Backblaze B2',
+      'MinIO / self-hosted',
+      'WebDAV',
+      'OneDrive',
+      'Google Drive',
+      'Dropbox',
+      'pCloud',
+      'Box',
+      'Yandex Disk',
+    ],
     backendsMore: 'and any other backend rclone supports',
     installTitle: 'Install with one command',
     installLede:

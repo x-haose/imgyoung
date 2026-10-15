@@ -164,8 +164,8 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 | Key | UI label | Default | Valid values | Notes |
 |---|---|---|---|---|
 | `health_check_seconds` | Health check interval | `60` | ≥ 1, seconds | Cadence of channel health checks and alert evaluation |
-| `backup_interval_hours` | Backup interval | `24` | ≥ 1, hours | Interval between automatic metadata snapshots; see [Backup & restore](./operations/backup.mdx) |
-| `backup_keep` | Backups to keep | `7` | ≥ 1 | After each successful backup, only the newest this many snapshots are kept on the backup channel |
+| `backup_interval_hours` | Backup interval | `24` | ≥ 1, hours | Interval between automatic metadata snapshots. At startup, a backup runs right away if any healthy channel lacks a snapshot within this interval. See [Backup & restore](./operations/backup.mdx) |
+| `backup_keep` | Backups to keep | `7` | ≥ 1 | Snapshots are written to every channel that is healthy and not being cleaned up; after each write, that channel keeps only the newest this many |
 | `usage_report_seconds` | Usage report interval | `300` | ≥ 1, seconds | Only controls how often the `imgyoung_channel_storage_bytes` metric is refreshed; usage alerts are evaluated on the health check interval |
 | `channel_quota_gb` | Channel usage alert threshold | `0` | ≥ 0, GB (1 GB = 2³⁰ bytes) | Opens an alert when a channel's stored data (sum of image sizes of its completed replicas) exceeds this; writes are not blocked. `0` disables the alert |
 

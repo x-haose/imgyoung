@@ -9,20 +9,20 @@ In the type picker of **New channel**, the **Cloud drives** group holds the gene
 
 | Template | rclone backend | Backend-specific field |
 |---|---|---|
-| OneDrive | `onedrive` | region |
+| OneDrive | `onedrive` | Region |
 | Google Drive | `drive` | — |
 | Dropbox | `dropbox` | — |
-| pCloud | `pcloud` | data region |
+| pCloud | `pcloud` | Data region |
 | Box | `box` | — |
 | Yandex Disk | `yandex` | — |
 
-After the backend-specific field, all six templates have app client ID, app client secret, authorization and folder, in that order. Labels and options come from the server in Chinese:
+After the backend-specific field, all six templates have **App client ID**, **App client secret**, **Authorization** and **Folder**, in that order:
 
-- **Region** (区域, OneDrive): 国际版 (global), 美国政府云 (US government), 德国云 (Germany), 中国世纪互联 (China, 21Vianet). It selects the authorization and API endpoints and must match the account's region.
-- **Data region** (数据区域, pCloud): 美国 (US) or 欧洲 (EU). It must match the region chosen when the account was registered, or the token exchange fails.
-- **App client ID / app client secret** (应用 Client ID / 应用 Client Secret): the identity and secret of an OAuth app you registered on the provider's developer platform. One-click authorization requires the client ID. When pasting a token, fill in both if the token was obtained with your own app; leave them empty for tokens from rclone's built-in app. Token renewal uses these two values, so they must belong to the app that issued the token. Both are stored encrypted with the channel and shown masked when editing.
-- **Authorization** (授权): the token, filled in by one of the two authorization paths below; the form cannot be saved without it.
-- **Folder** (存储目录): the folder on the drive that holds the images, `imgyoung` suggested; empty means the root.
+- **Region** (OneDrive): **Global**, **Microsoft Cloud for US Government**, **Microsoft Cloud Germany** or **China (operated by 21Vianet)**. It selects the authorization and API endpoints and must match the account's region.
+- **Data region** (pCloud): **United States** or **Europe**. It must match the region chosen when the account was registered, or the token exchange fails.
+- **App client ID / App client secret**: the identity and secret of an OAuth app you registered on the provider's developer platform. One-click authorization requires the client ID. When pasting a token, fill in both if the token was obtained with your own app; leave them empty for tokens from rclone's built-in app. Token renewal uses these two values, so they must belong to the app that issued the token. Both are stored encrypted with the channel and shown masked when editing.
+- **Authorization**: the token, filled in by one of the two authorization paths below; the form cannot be saved without it.
+- **Folder**: the folder on the drive that holds the images, `imgyoung` suggested; empty means the root.
 
 The endpoints, scopes and rclone's built-in app identity needed for authorization all come from the rclone backend's own registration; ImgYoung has no per-provider code.
 
@@ -56,12 +56,12 @@ Paste the following into your remote machine --->
 Copy everything between the two marker lines.
 </Step>
 <Step>
-In the authorization field switch to **Paste a token**, paste it, fill in the remaining fields, run **Test connection** and save.
+In the **Authorization** field switch to **Paste a token**, paste it, fill in the remaining fields, run **Test connection** and save.
 </Step>
 </Steps>
 
 - Both a plain token JSON and rclone's encoded config blob (what `rclone authorize` prints when given a config blob argument) are accepted; ImgYoung extracts the token.
-- A token that expires must include a refresh token, otherwise it cannot be renewed once the access token expires; saving then fails with "渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段「授权」)". Tokens that never expire (such as pCloud's) need none. Content that cannot be parsed fails with "令牌格式非法" ("malformed token").
+- A token that expires must include a refresh token, otherwise it cannot be renewed once the access token expires; saving then fails with `渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段 token)` ("missing refresh token"). Tokens that never expire (such as pCloud's) need none. Content that cannot be parsed fails with `渠道参数非法: 令牌格式非法(字段 token)` ("malformed token").
 - A token from `rclone authorize "<backend>"` is issued to rclone's built-in app: leave the app client ID and secret empty, and rclone renews it with the built-in app as well.
 - To use your own app, run `rclone authorize "<backend>" <client ID> <client secret>` (the app must register rclone's local callback URL `http://127.0.0.1:53682/`), then enter the same app's client ID and secret in the form.
 
@@ -71,7 +71,7 @@ This runs the whole OAuth authorization-code flow inside the admin console. It r
 
 <Steps>
 <Step>
-Set **Settings → Runtime settings → Access & links → Public site address** to ImgYoung's public address, such as `https://img.example.com`. Without it, starting authorization fails with "一键授权需先在设置中填写对外站点地址;或改用粘贴令牌方式" ("set the public site address first, or paste a token").
+Set **Settings → Runtime settings → Access & links → Public site address** to ImgYoung's public address, such as `https://img.example.com`. Without it, starting authorization fails with `一键授权需先在设置中填写对外站点地址;或改用粘贴令牌方式` ("set the public site address first, or paste a token").
 </Step>
 <Step>
 Create an app on the provider's developer platform and register this callback URL — the public site address plus a fixed path:
@@ -83,17 +83,17 @@ https://img.example.com/api/admin/channel-oauth/callback
 The two must match character for character (scheme, host, port and path).
 </Step>
 <Step>
-Enter your app's credentials in the app client ID and app client secret fields above the authorization field, then click **Authorize with …** under **One-click authorization**. The button stays disabled until a client ID is filled in. A new browser tab opens the provider's consent page.
+Enter your app's credentials in the **App client ID** and **App client secret** fields above the **Authorization** field, then click **Authorize with …** under **One-click authorization**. The button stays disabled until a client ID is filled in. A new browser tab opens the provider's consent page.
 </Step>
 <Step>
-When it finishes, the callback page reads "授权成功,请回到后台继续。" ("authorized, return to the console"), the authorization field turns **Authorized**, and you can save.
+When it finishes, the callback page reads "授权成功,请回到后台继续。" ("authorized, return to the console"), the **Authorization** field turns **Authorized**, and you can save.
 </Step>
 </Steps>
 
 - The callback requires an admin session, so finish the authorization **in the same browser you are signed in to the console with**.
 - An authorization session is valid for 10 minutes and the form waits for at most about 11 minutes; after that it shows "Timed out waiting for authorization, please start again".
 - The token is never written into the callback page; the form collects it with a one-time identifier, and it can be collected only once.
-- A failed token exchange reports "换取令牌失败,请核对应用凭证与回调地址" ("token exchange failed; check the app credentials and the callback URL"); refusing or cancelling on the provider's page reports "授权被拒绝或取消" plus the reason the provider returned.
+- A failed token exchange shows `换取令牌失败,请核对应用凭证与回调地址` ("token exchange failed; check the app credentials and the callback URL") in the form; refusing or cancelling on the provider's page shows `授权被拒绝或取消:` plus the reason the provider returned.
 - When re-authorizing an existing channel, leaving the two app credential fields masked keeps the stored values.
 - The client ID and secret are stored with the channel, so rclone renews the token with the same app once it expires.
 
@@ -101,9 +101,17 @@ When it finishes, the callback page reads "授权成功,请回到后台继续。
 
 - Backend parameters are handed to rclone as a map with a write-back hook. When the access token nears expiry, rclone refreshes it itself and writes the new token back through the hook; ImgYoung immediately encrypts it with the master key and stores it in the channel configuration. Any other parameter rclone writes back at runtime takes the same path.
 - If storing fails, only a log line is written (`后端写回参数无法落库`) and the new token stays in use in memory; after a restart the old token from the database is used again.
-- Backends built temporarily while saving a channel, or while testing the connection in the edit form, also persist a refreshed token: creating and editing store it with the configuration, and a stored token refreshed during an edit-form connection test is written back to that channel.
+- If a backend built temporarily while saving a channel refreshes the token, the new token is stored with the configuration.
+- When a token gets refreshed during **Test connection**, there are two cases:
+  - A stored token being kept (the **Authorization** field left at **Authorized · using the stored token** while editing) is written straight back to the channel.
+  - A token submitted in this form (refreshed even if the test fails) is handed back to the form: below the result the form notes "The provider refreshed the authorization token during the test. The form now holds the new token and will save it; the old one may no longer work.", the **Authorization** field shows **Authorized**, and saving submits the new token. In custom mode the new token goes into the `token` row of the backend parameters.
 - **There is exactly one refresher.** ImgYoung runs no refresh loop of its own: some providers invalidate the old refresh token on every refresh, so two refreshers would keep invalidating each other. The read-only requests of the periodic light check (every 60 s by default) are enough for rclone to refresh on time.
-- When editing a drive channel, the authorization field shows **Authorized · using the stored token**; leave it to keep the token, or click **Authorize again** to replace it.
+- When editing a drive channel, the **Authorization** field shows **Authorized · using the stored token**; leave it to keep the token, or click **Authorize again** to replace it.
+- An [exported rclone config file](./encryption.mdx) carries the token too. Do not use that file while ImgYoung is still using the channel: with providers such as Box, whose refresh tokens are single-use, the two would keep invalidating each other's tokens. Once ImgYoung refreshes the token, the copy in the file is stale and you need to export again.
+
+<Callout type="warn" title="Tokens refreshed during a failed save are lost">
+When creating or editing a channel and the save ultimately fails (invalid parameters, the backend failing to build, the OneDrive drive lookup failing, a duplicate channel name and so on), a token the provider refreshed during the save is neither stored nor handed back to the form. With providers whose refresh tokens are single-use, such as Box, the original token is then dead and you have to authorize again. Running **Test connection** before saving lowers the risk: a token refreshed during the test is handed back to the form, so the save already uses the new one.
+</Callout>
 
 ## Other OneDrive drives
 
@@ -148,7 +156,7 @@ Deploy the aggregator following its own documentation, mount the drive you want,
 Create a dedicated account for ImgYoung with read, write and delete permissions. Deep checks, the daily reconciliation and channel draining all delete objects; without delete permission a channel cannot pass a deep check.
 </Step>
 <Step>
-Create a WebDAV channel in ImgYoung: set the server URL (服务地址) to the aggregator's WebDAV address (for Alist, `https://domain/dav/`), choose 其他(坚果云 / Alist / 群晖等) ("other") as the server type, enter the account and password, and set the folder (存储目录) to a dedicated folder under the drive's mount path in the aggregator.
+Create a WebDAV channel in ImgYoung: set **Server URL** to the aggregator's WebDAV address (for Alist, `https://domain/dav/`), choose **Other (Nutstore, Alist, Synology, …)** as **Server type**, enter the account and password, and set **Folder** to a dedicated folder under the drive's mount path in the aggregator.
 </Step>
 <Step>
 Run **Test connection** to confirm write, read and delete all pass, give the channel a priority below your object storage channels, and save.

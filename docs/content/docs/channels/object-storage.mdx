@@ -41,7 +41,7 @@ ImgYoung 给所有 `s3` 渠道默认加上 `no_check_bucket=true`:rclone 上传�
 因此:
 
 - **先在存储商控制台建好桶**,再创建渠道。
-- 凭证确有建桶权限、又想让 ImgYoung 建桶时,创建表单里打开「自动创建存储桶」:创建时尝试建一次桶(桶已存在不报错),失败则整个创建中止,提示「自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): 」加原因。这个开关只在创建时出现,「测试连接」不会建桶。
+- 凭证确有建桶权限、又想让 ImgYoung 建桶时,创建表单里打开「自动创建存储桶」:创建时尝试建一次桶(桶已存在不报错),失败则整个创建中止,返回 `渠道参数非法: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): ` 加原因。这个开关只在创建时出现,「测试连接」不会建桶。
 - 自定义模式里显式写 `no_check_bucket=false`,rclone 会恢复上传前检查并按需建桶的行为。
 
 ## 公开访问地址与 302 直链
@@ -114,25 +114,25 @@ WebDAV 渠道没有公开访问地址,表单里也不显示「允许 302 直链�
 
 | 提示 | 底层错误特征 | 排查 |
 |---|---|---|
-| 认证失败(403):检查 Access Key / Secret Key 及其权限 | `InvalidAccessKeyId`、`SignatureDoesNotMatch`、`StatusCode: 403`(只出现在 S3 类后端) | 核对密钥是否抄错、是否已吊销,以及是否对这个桶有读、写、删权限。只读密钥会在深探测的写入环节失败 |
-| 应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致 | `invalid_client`、`unauthorized_client` | 网盘渠道的「应用 Client ID」「应用 Client Secret」填错,或与签发令牌的应用不是同一个 |
-| 授权已失效:刷新令牌被拒绝,请重新授权 | `invalid_grant` | 令牌被吊销或已过期太久,在编辑表单里点「重新授权」 |
-| 认证失败(401):检查用户名、密码或授权令牌是否有效 | `401 Unauthorized`、`unauthenticated`、`InvalidAuthenticationToken` | WebDAV 的用户名或密码(坚果云要用应用密码),或网盘的授权令牌 |
-| 无访问权限(403):检查账号对存储位置的权限 | `AccessDenied`、`access denied`、`403 Forbidden` | 非 S3 后端的账号对存储目录没有读、写或删权限 |
-| 存储桶不存在或无权访问:检查桶名与凭证权限 | `NoSuchBucket`、`no such bucket`、`BucketRegionError` | 核对桶名(COS 带 APPID 后缀);确认桶已建好 |
-| 区域不匹配:检查所选区域与存储桶实际所在区域 | `PermanentRedirect`、`AuthorizationHeaderMalformed` | 区域或端点与桶的实际区域不一致 |
-| 无法解析服务端点域名:检查 endpoint 配置 | `no such host`、`server misbehaving` | 端点拼写错误,或服务器 DNS 不通 |
-| 无法连接服务端点:检查 endpoint 地址与端口 | `connection refused`、`connection reset` | 端口、协议或防火墙问题 |
-| TLS 证书校验失败:检查端点证书或改用正确协议 | `certificate`、`x509`、`tls handshake` | 自签证书,或把 `http` 服务写成了 `https` |
-| 连接超时:检查端点地址与网络连通性 | 超时(含探测自身的 10 / 20 秒超时) | 网络不通或服务过慢 |
-| 存储路径无写入权限:检查目录权限 | `permission denied`、`read-only file system` | `local` 渠道的目录权限;容器内以 uid 65532 运行时,挂载目录要对它可写 |
+| `认证失败(403):检查 Access Key / Secret Key 及其权限` | `InvalidAccessKeyId`、`SignatureDoesNotMatch`、`StatusCode: 403`(只出现在 S3 类后端) | 核对密钥是否抄错、是否已吊销,以及是否对这个桶有读、写、删权限。只读密钥会在深探测的写入环节失败 |
+| `应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致` | `invalid_client`、`unauthorized_client` | 网盘渠道的「应用 Client ID」「应用 Client Secret」填错,或与签发令牌的应用不是同一个 |
+| `授权已失效:刷新令牌被拒绝,请重新授权` | `invalid_grant` | 令牌被吊销或已过期太久,在编辑表单里点「重新授权」 |
+| `认证失败(401):检查用户名、密码或授权令牌是否有效` | `401 Unauthorized`、`unauthenticated`、`InvalidAuthenticationToken` | WebDAV 的用户名或密码(坚果云要用应用密码),或网盘的授权令牌 |
+| `无访问权限(403):检查账号对存储位置的权限` | `AccessDenied`、`access denied`、`403 Forbidden` | 非 S3 后端的账号对存储目录没有读、写或删权限 |
+| `存储桶不存在或无权访问:检查桶名与凭证权限` | `NoSuchBucket`、`no such bucket`、`BucketRegionError` | 核对桶名(COS 带 APPID 后缀);确认桶已建好 |
+| `区域不匹配:检查所选区域与存储桶实际所在区域` | `PermanentRedirect`、`AuthorizationHeaderMalformed` | 区域或端点与桶的实际区域不一致 |
+| `无法解析服务端点域名:检查 endpoint 配置` | `no such host`、`server misbehaving` | 端点拼写错误,或服务器 DNS 不通 |
+| `无法连接服务端点:检查 endpoint 地址与端口` | `connection refused`、`connection reset` | 端口、协议或防火墙问题 |
+| `TLS 证书校验失败:检查端点证书或改用正确协议` | `certificate`、`x509`、`tls handshake` | 自签证书,或把 `http` 服务写成了 `https` |
+| `连接超时:检查端点地址与网络连通性` | 超时(含探测自身的 10 / 20 秒超时) | 网络不通或服务过慢 |
+| `存储路径无写入权限:检查目录权限` | `permission denied`、`read-only file system` | `local` 渠道的目录权限;容器内以 uid 65532 运行时,挂载目录要对它可写 |
 
 保存表单时的常见拒绝(提交即返回,不会建出渠道):
 
 | 提示 | 原因 |
 |---|---|
-| `渠道参数非法: 字段「…」必填` | 模板必填字段为空 |
-| 渠道名已存在 | 渠道名重复(409) |
+| `渠道参数非法: 字段 <key> 必填` | 模板必填字段为空,字段以 key 指称,如 `渠道参数非法: 字段 bucket 必填` |
+| `渠道名已存在` | 渠道名重复(409) |
 | `渠道参数非法: 初始化 rclone 后端 "…": …` | 用填写的参数试构造后端失败,原因见冒号后的 rclone 原文 |
 | `渠道参数非法: 未知的 rclone 后端 "…"` | 自定义模式的驱动名拼错 |
 | `渠道参数非法: 配置键 "…" 非法(仅允许字母数字下划线)` | 自定义参数的键含其他字符(如 `-`) |

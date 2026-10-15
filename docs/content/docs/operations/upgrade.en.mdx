@@ -110,7 +110,7 @@ Switch back to the older binary or image tag.
 </Step>
 <Step>
 
-Replace the metadata database with your pre-upgrade snapshot (or the database copied while the service was stopped): move `<data dir>/imgyoung.db` and any `imgyoung.db-wal` / `imgyoung.db-shm` out of the way, then put the snapshot in place as `imgyoung.db`. For Docker the file must be owned by `65532:65532`; use the throwaway-container approach shown in [Backup & restore](./backup.mdx).
+Put your pre-upgrade snapshot (or the database copied while the service was stopped) in place as `<data dir>/imgyoung.db.restore`; do not overwrite `imgyoung.db` with it. At startup it is swapped in, the database migrated by the newer version is kept as `imgyoung.db.pre-restore-<UTC time>`, and the channels' binding times are reset. For Docker the file must be owned by `65532:65532`; use the throwaway-container approach shown in [Backup & restore](./backup.mdx).
 
 </Step>
 <Step>
@@ -120,4 +120,4 @@ Start the service.
 </Step>
 </Steps>
 
-Metadata written since the upgrade is lost, with the same effects as restoring a snapshot: images uploaded in the meantime are deleted by reconciliation GC as orphans. See [Backup & restore](./backup.mdx).
+Metadata written since the upgrade is lost, with the same effects as restoring a snapshot: images uploaded in the meantime have no record in the metadata, so their objects on the channels are only counted, never deleted, but can no longer be reached through ImgYoung. See [Backup & restore](./backup.mdx).

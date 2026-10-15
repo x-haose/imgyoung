@@ -110,7 +110,7 @@ task build
 </Step>
 <Step>
 
-用升级前的快照(或停服时复制的数据库)替换元数据库:把 `<数据目录>/imgyoung.db` 以及可能存在的 `imgyoung.db-wal`、`imgyoung.db-shm` 移走,再把快照放为 `imgyoung.db`。Docker 部署的文件属主须为 `65532:65532`,写入方法参考[备份与恢复](./backup.mdx)里借临时容器的做法。
+把升级前的快照(或停服时复制的数据库)放为 `<数据目录>/imgyoung.db.restore`,不要直接覆盖 `imgyoung.db`:启动时它被换入,新版本迁移过的库改名为 `imgyoung.db.pre-restore-<UTC 时刻>` 留存,并且渠道的绑定时刻随之重置。Docker 部署的文件属主须为 `65532:65532`,写入方法参考[备份与恢复](./backup.mdx)里借临时容器的做法。
 
 </Step>
 <Step>
@@ -120,4 +120,4 @@ task build
 </Step>
 </Steps>
 
-升级之后产生的元数据随之丢失,影响与从快照恢复相同:这期间上传的图片会被对账 GC 当作孤儿删除,详见[备份与恢复](./backup.mdx)。
+升级之后产生的元数据随之丢失,影响与从快照恢复相同:这期间上传的图片在元数据里没有记录,它们在渠道上的对象只计数、不回收,但无法再通过 ImgYoung 访问,详见[备份与恢复](./backup.mdx)。

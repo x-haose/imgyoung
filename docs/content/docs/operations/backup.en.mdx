@@ -10,39 +10,41 @@ Objects in channels are named by content hash; which image belongs to which shor
 | What | Where | How |
 |---|---|---|
 | Master key | `<data dir>/master.key`, or the `IMGYOUNG_MASTER_KEY` variable | Copy it offline right after the first start and keep it apart from the snapshots; see [Configuration](../configuration.mdx#master-key) |
-| Metadata database | `<data dir>/imgyoung.db` | Automatic snapshots (stored on a channel), plus a downloaded copy kept somewhere else |
+| Metadata database | `<data dir>/imgyoung.db` | Automatic snapshots (written to every healthy channel), plus a downloaded copy kept somewhere else |
 | Images | Your channels | Configure several channels so replication keeps more than one copy of each image; the built-in local channel stores its data in `<data dir>/blobs/` |
+| rclone config of encrypted channels | **Export rclone config** on the **Storage channels** page | Export one per encrypted channel and keep it offline like the master key; see [Channel encryption](../channels/encryption.mdx) |
 | Deployment configuration | Environment variables, systemd drop-ins, `compose.yaml`, proxy configuration | Your own configuration management |
 
 `<data dir>/variants/` is the variant cache; it is regenerated on demand and needs no backup. Do not copy `imgyoung.db` while the service is running: the database runs in WAL mode and recent writes may still be in `imgyoung.db-wal`. For a consistent copy, download a snapshot from the admin console, or stop the service first.
 
 ## Automatic metadata snapshots
 
-- **How**: SQLite's `VACUUM INTO` writes a consistent snapshot to `<data dir>/backup-snapshot.tmp` (needs free space of roughly the database size), which is uploaded and then deleted.
-- **Where**: the current **primary channel** — the healthy, not-being-deleted channel with the highest priority. The object key is `_imgyoung/backup/imgyoung-<UTC time>.db` (e.g. `imgyoung-20261015-083000.123.db`) under the channel's path; when the primary is the built-in local channel, that is `<data dir>/blobs/_imgyoung/backup/`. There is exactly one copy; snapshots are not replicated to other channels.
-- **Encryption**: if the primary channel is encrypted, snapshots are encrypted along with everything else on it.
-- **When**: every **Backup interval** (`backup_interval_hours`, 24 hours by default), counted from process start; changing the interval restarts the countdown from the moment of the change.
-- **At startup**: if the newest snapshot on the primary channel is older than one interval (or there is none), a backup runs immediately; otherwise it is skipped, so frequent restarts do not push the rotated history out with same-day snapshots.
-- **Retention**: after each successful backup, only the newest **Backups to keep** (`backup_keep`, 7 by default) snapshots are kept on the primary channel; older ones are deleted.
-- **Failure**: no healthy channel, or a failed snapshot or upload, opens a `backup_failed` alert, which resolves after the next success; see [Monitoring & alerts](./monitoring.mdx).
+- **How**: each round, SQLite's `VACUUM INTO` writes one consistent snapshot to `<data dir>/backup-snapshot.tmp` (needs free space of roughly the database size), which is deleted once it has been written to the channels.
+- **Where**: the same snapshot is written to **every** healthy channel that is not being deleted, under the object key `_imgyoung/backup/imgyoung-<UTC time>.db` (e.g. `imgyoung-20261015-083000.123.db`) in the channel's path; on the built-in local channel that is `<data dir>/blobs/_imgyoung/backup/`.
+- **Encryption**: snapshots written to an encrypted channel are encrypted along with everything else on it.
+- **When**: every **Backup interval** (`backup_interval_hours`, 24 hours by default), counted from process start; changing the interval restarts the countdown from the moment of the change. Scheduled backups and **Back up now** run one at a time; if both happen at once, one waits for the other.
+- **At startup**: if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately; otherwise it is skipped. The first start after adding a channel therefore fills it in, and frequent restarts do not push the rotated history out with same-day snapshots.
+- **Retention**: after a successful write, each channel keeps only its own newest **Backups to keep** (`backup_keep`, 7 by default) snapshots; older ones are deleted.
+- **Failure**: a channel that fails does not stop the others from being written, but if any channel was not written the round counts as failed and opens a `backup_failed` alert; the channels that were written keep the snapshot. No healthy channel, or failing to take the snapshot, also counts as failure. The alert resolves after the next success; see [Monitoring & alerts](./monitoring.mdx).
+- **When a channel is deleted**: **Delete and purge** deletes the snapshots on the channel too; **Remove only** leaves every remote object, snapshots included, where it is.
 
-<Callout type="warn" title="Snapshots on the same disk as the images">
-With only the built-in local channel, snapshots land in `<data dir>/blobs/` on the same host and are lost together with it; the dashboard warns about this. Adding an off-site channel alone is not enough: snapshots always go to the healthy channel with the highest priority. To get snapshots off the host, give the off-site channel a higher priority than local (100 by default), or download snapshots regularly.
+<Callout type="warn" title="Your data only lives on this host">
+If no healthy channel lives off this host's disk (only the built-in local channel, or every other channel is unhealthy), image replicas and snapshots exist only on this host and are lost with it; the dashboard then shows **Your data only lives on this host**. Add an object storage or cloud drive channel and snapshots are written to it as well — no priority changes needed.
 </Callout>
 
-<Callout type="warn" title="When the primary channel is encrypted">
-An encrypted channel's crypt keys are derived from the master key together with the channel's ID and creation time recorded in the metadata database. Once the metadata database is gone, snapshots stored on an encrypted channel cannot be decrypted, even with `master.key`. If your primary channel is encrypted, download snapshots to somewhere else regularly.
+<Callout type="warn" title="Snapshots on encrypted channels">
+A snapshot written to an encrypted channel is ciphertext, and the crypt password and salt that decrypt it are derived from the master key together with the channel's ID and creation time recorded in the metadata database. Once the metadata database is gone, fetch the snapshot from any unencrypted channel that holds one. If only encrypted channels hold snapshots, you need the config file downloaded beforehand with **Export rclone config** and kept offline; see [Channel encryption](../channels/encryption.mdx).
 </Callout>
 
 ## Managing snapshots in the admin console
 
-**Settings → Backups & export → Metadata snapshots** lists the snapshots on the primary channel, newest first:
+**Settings → Backups & export → Metadata snapshots** lists the union of the snapshots on all healthy channels, newest first; **Stored on** lists the channels holding each snapshot, in priority order.
 
-- **Back up now**: take a snapshot immediately (this also prunes snapshots beyond the retention count);
-- **Download**: download the snapshot file, which is a complete SQLite database;
-- **Restore**: replace the current metadata database with that snapshot; see the next section.
+- **Back up now**: take a snapshot immediately and write it to every healthy channel, pruning each channel beyond the retention count. If some channels were not written, the request fails with an error naming them and why, like `备份失败:快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成: 渠道 "r2-main": 上传快照: …`; the channels that were written keep the snapshot. With no healthy channel it returns `没有健康渠道可存放快照`.
+- **Download**: reads the snapshot from the healthy channels holding it in priority order, moving on to the next one if a read fails. The downloaded file is a complete SQLite database.
+- **Restore**: reads the same way; see the next section.
 
-Only the **current** primary channel's snapshots are listed. After the primary changes (failover or a priority change), snapshots on the previous primary stay where they are but are no longer listed or rotated. With no healthy channel, the list and all actions fail.
+Snapshots on unhealthy channels or channels being deleted are not listed and are not used for downloads or restores. If listing any healthy channel fails, the whole list fails (500). With no healthy channel every action returns 503: `没有健康渠道,无法列举快照` for the list, `没有健康渠道,无法读取快照` for downloads and restores, and `没有健康渠道可存放快照` for **Back up now**. If no healthy channel has the requested snapshot, downloads and restores return 404 `快照不存在`; if some channels fail to read it and none succeeds, they return 500.
 
 ## Restoring from a snapshot
 
@@ -61,7 +63,12 @@ A live SQLite file cannot be replaced safely, so a restore happens in two steps:
 </Step>
 <Step>
 
-**Swap in**: at startup, before the database is opened, the current `imgyoung.db` and its `-wal` and `-shm` files are renamed to `imgyoung.db.pre-restore-<UTC time>`, and the staged file is renamed to `imgyoung.db`. Database migrations then run as usual, so a snapshot from an older version is brought up to date.
+**Swap in**: at startup, before the database is opened, a restore marker `imgyoung.db.restored` is written to the data directory, the current `imgyoung.db` and its `-wal` and `-shm` files are renamed to `imgyoung.db.pre-restore-<UTC time>`, and the staged file is renamed to `imgyoung.db`. Database migrations then run as usual, so a snapshot from an older version is brought up to date.
+
+</Step>
+<Step>
+
+**Reset binding times**: after the migrations and before the master key is loaded, the marker causes every channel's binding time (see [Reconciliation GC](#reconciliation-gc)) to be reset to the current time; the marker is then deleted and the log reads `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收`, with the number of channels in the `channels` field. If this step fails, the marker stays and the next start does it again.
 
 </Step>
 <Step>
@@ -75,13 +82,17 @@ The kept `imgyoung.db.pre-restore-*` files are never deleted automatically; remo
 
 A restore takes the metadata back to snapshot time, so anything that happened afterwards no longer matches the objects in your channels:
 
-- **images uploaded after the snapshot** are unknown to the metadata; their objects become orphans that reconciliation GC deletes (see below) and cannot be recovered through ImgYoung;
+- **images uploaded after the snapshot** are unknown to the metadata. Their objects predate the reset binding times, so reconciliation GC only counts them (`foreign`) and never deletes them; they stay on the channels but can no longer be reached through ImgYoung;
 - **images deleted after the snapshot** are back in the metadata, but their objects are gone; they fail to load and show up as **Replication failed** alerts, so delete them in the admin console;
 - **everything else** — channels, users and tokens created, runtime settings and hotlink rules changed — goes back to snapshot time.
 
 ## Disaster recovery after losing the host
 
-Prerequisites: a backup of the `master.key` of the instance the snapshot came from, and a snapshot file — either one you downloaded, or one fetched straight from an **unencrypted** channel (use the provider's console or rclone to download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path).
+Prerequisites: a backup of the `master.key` of the instance the snapshot came from, and a snapshot file from one of these:
+
+- a snapshot you downloaded;
+- any **unencrypted** channel: use the provider's console or rclone to download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path;
+- an encrypted channel: read it through the crypt remote of the rclone config file you exported beforehand; see [Channel encryption](../channels/encryption.mdx).
 
 <Steps>
 <Step>
@@ -92,6 +103,8 @@ Prerequisites: a backup of the `master.key` of the instance the snapshot came fr
 <Step>
 
 **Stop the service and put the master key and the snapshot in place**: put the original `master.key` in the data directory and the snapshot file as `imgyoung.db.restore`.
+
+The snapshot must go in as `imgyoung.db.restore`; do not overwrite `imgyoung.db` with it. Only a swap through the staged file writes the restore marker that resets the channels' binding times. If you overwrite the database directly, objects written to the channels after the snapshot look like this database's own orphans to reconciliation GC and are deleted once past the grace period.
 
 <Tabs items={['Binary', 'Docker', 'Compose', 'systemd']}>
 <Tab value="Binary">
@@ -155,7 +168,7 @@ If you provide the master key through `IMGYOUNG_MASTER_KEY`, set the variable in
 </Step>
 <Step>
 
-**Start and check**: for the binary, start `imgyoung` now. The log line 已用暂存快照换入元数据库,原库留存 confirms the swap. Sign in with the credentials from snapshot time and check on **Storage channels** that the channels are healthy again.
+**Start and check**: for the binary, start `imgyoung` now. The log lines `已用暂存快照换入元数据库,原库留存` and then `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收` confirm the swap. Sign in with the credentials from snapshot time and check on **Storage channels** that the channels are healthy again.
 
 If startup fails saying the master key does not match the database, or that no master key can be found, the key you put in place is not the one from the snapshot's instance, or there is none. The snapshot has already been swapped in at that point; put the right master key in place and start again — there is no need to stage the snapshot again.
 
@@ -164,10 +177,10 @@ If startup fails saying the master key does not match the database, or that no m
 
 Images that existed only on the local channel are gone with the old host. Images with replicas on other channels load as usual, and the missing local replicas are detected by reconciliation GC and copied back from the other channels.
 
-If the snapshots are on an unencrypted channel, you can also skip fetching the file by hand: start a fresh instance, add the channel holding the snapshots in the admin console with its original parameters and the highest priority, and restore from **Metadata snapshots**. The fresh instance must use the original master key from its very first start (put `master.key` in place or set `IMGYOUNG_MASTER_KEY` beforehand); otherwise, when it restarts after the restore, the key does not match the snapshot and the process refuses to start. If it has already started with a generated key, stop it, put the original `master.key` in place, delete the fresh `imgyoung.db` (and its `-wal` and `-shm`) from the data directory, start it again, and only then add the channel. Every object already on the channel predates the new channel record, so reconciliation GC only counts those objects and never deletes them (see below); nothing is lost while you wait.
+If a snapshot is on an unencrypted channel, you can also skip fetching the file by hand: start a fresh instance, add the channel holding the snapshots in the admin console with its original parameters, and restore from **Metadata snapshots**; the list covers every healthy channel, so no priority changes are needed. The fresh instance must use the original master key from its very first start (put `master.key` in place or set `IMGYOUNG_MASTER_KEY` beforehand); otherwise, when it restarts after the restore, the key does not match the snapshot and the process refuses to start. If it has already started with a generated key, stop it, put the original `master.key` in place, delete the fresh `imgyoung.db` (and its `-wal` and `-shm`) from the data directory, start it again, and only then add the channel. A newly added channel is bound at the moment it is added, and every object already in the bucket predates that, so reconciliation GC only counts those objects and never deletes them; nothing is lost while you wait.
 
-<Callout type="warn" title="Do not click Back up now before restoring">
-The fresh instance's empty database would be written into the same backup directory and, by the retention count, push out the oldest of your existing snapshots.
+<Callout type="warn" title="Restore soon after adding the old channel">
+Between adding the channel and restoring, do not click **Back up now** and do not restart the fresh instance: the fresh instance's empty database would be written to every healthy channel, the old one included, and by the retention count push out the oldest of the snapshots there. The restart caused by **Restore** is fine: that start swaps the snapshot in first, so what gets backed up afterwards is the restored database.
 </Callout>
 
 ## Metadata export
@@ -177,7 +190,7 @@ The fresh instance's empty database would be written into the same backup direct
 | Field | Contents |
 |---|---|
 | `users` | Users: ID, username, role, quota, default lifetime, disabled flag, usage and image count; no password hashes |
-| `channels` | Channels: name, driver, priority, health, encrypted flag, direct-link flag, replica counts; no configuration parameters or credentials |
+| `channels` | Channels: ID, name, driver, priority, health, encrypted flag, direct-link flag, creation time, replica counts; no configuration parameters or credentials |
 | `tokens` | Tokens: name, owner, plaintext prefix, scopes, revocation and issue times; no hashes |
 | `images` | Every image reference: short ID, stored image, owner and token, original file name, object key alias, lifetime, access statistics, cleanup flags |
 | `blobs` | Every stored image: SHA-256, perceptual hash, object key in the channels, MIME type, size, dimensions, reference count, deletion state |
@@ -187,21 +200,30 @@ The export is readable and self-contained: even without running ImgYoung you can
 
 ## Reconciliation GC
 
-Every 24 hours (the first run 24 hours after process start), the replication subsystem reconciles each healthy channel in both directions. System objects under the `_imgyoung/` prefix (including snapshots) are left alone:
+Every 24 hours (the first run 24 hours after process start), the replication subsystem reconciles each healthy channel in both directions. System objects under the `_imgyoung/` prefix (including snapshots) are left alone.
+
+Orphan detection is bounded by the channel's **binding time**: the moment the channel record started pointing at its current storage location. ImgYoung only writes objects to that location after it.
+
+| Situation | Binding time |
+|---|---|
+| A channel is created | Its creation time |
+| The channel is edited in the admin console and the backend or any configuration parameter changes | Reset to the time of the edit; re-entering the same password counts as a change (rclone encodes passwords with a random IV, so the encoded value differs every time) |
+| Only the name, priority or direct-link setting changes; a token refreshed by the provider is written back | Unchanged |
+| A snapshot is restored (swapped in through `imgyoung.db.restore`) | Every channel is reset to the time of the start that swapped it in |
 
 - **Orphans** are deleted, so pay-per-use channels do not bill you for ownerless objects. An object is an orphan only if all of the following hold:
   - its key has ImgYoung's object key format `<short ID>_<first 8 hex digits of SHA-256>`;
   - the metadata database has no replica record of it on that channel, in any state;
-  - it was last modified no earlier than the channel record was created;
+  - it was last modified no earlier than the channel's binding time;
   - it was last modified more than 48 hours ago; the grace period covers the normal window between writing to a channel and recording it in the database.
 - **Deep check leftovers**: the deep health check writes a temporary `.imgyoung-probe-*` object and deletes it right away; one is left behind only when that deletion fails. They are deleted once past the 48-hour grace period regardless of when they were written (leftovers from a connection test predate the channel record), and are not counted in the object count or usage.
-- **Foreign objects** have no record in the database but either a key in another format or a modification time before the channel record was created — files written to the same path by other programs, say, or the objects in an old bucket attached by a fresh instance during disaster recovery before the metadata is restored. They are counted, never deleted.
+- **Foreign objects** have no record in the database but either a key in another format or a modification time before the binding time — files written to the same path by other programs, the objects already in an old bucket attached by a fresh instance during disaster recovery, or objects written after a snapshot that was later restored. They are counted, never deleted.
 - **Phantoms**: replicas the metadata database records as completed but that are missing from the channel. They are reset to pending and queued to be copied from another channel.
 
-Each channel's reconciliation logs a 渠道对账完成 line with the fields `objects` (object count), `bytes`, `foreign` (foreign objects), `orphans_deleted` (deep check leftovers included) and `phantoms_requeued`.
+Each channel's reconciliation logs a `渠道对账完成` line with the fields `objects` (object count), `bytes`, `foreign` (foreign objects), `orphans_deleted` (deep check leftovers included) and `phantoms_requeued`.
 
 <Callout type="error" title="Two instances must not share a channel path">
-If two ImgYoung instances use the same storage path, objects the other instance writes after this one attached the path are orphans as far as this database is concerned, and are deleted once past the grace period. Give each instance its own bucket or path.
+If two ImgYoung instances use the same storage path, objects the other instance writes after this one bound the path are orphans as far as this database is concerned, and are deleted once past the grace period. Give each instance its own bucket or path.
 </Callout>
 
 Separately, replica reconciliation runs every 10 minutes (without listing channel objects): failed replicas on channels that are healthy again are reset to pending, and unfinished replicas are queued again.

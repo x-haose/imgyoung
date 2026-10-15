@@ -26,7 +26,7 @@ Check that it started:
 docker logs imgyoung
 ```
 
-Look for a line with `msg="ImgYoung 已启动"` (log messages are in Chinese). The first start also prints two `level=WARN` lines, one saying a master key file was generated and one saying the default admin password was initialized. Both are expected.
+Look for a line with `msg="ImgYoung 已启动"` (log messages are in Chinese). The first start also prints two `level=WARN` lines, `已生成主密钥文件,请立即备份——丢失将导致渠道配置与加密渠道数据永久不可恢复` (a master key file was generated; back it up now) and `已初始化默认管理员密码,请登录后立即在后台修改` (the default admin password was initialized; change it after signing in). Both are expected.
 
 </Step>
 <Step>
@@ -101,9 +101,8 @@ Paste it into your blog or notes and the image shows up.
 ## Next steps
 
 <Callout type="warn" title="Right now everything sits on one disk">
-  A fresh instance has only the built-in `local` channel, which stores images under `blobs/` in the data volume. Metadata snapshots go to the highest-priority healthy channel, so for now they are on the same disk too.
-  If that disk fails, the images and the snapshots are lost together. Open "Storage channels" in the sidebar soon and click "New channel" to add an off-site object storage or cloud drive channel; existing images are replicated to it automatically.
-  Snapshots go to the primary channel only: give the new channel a higher priority than `local` (100 by default; on a tie the older channel wins) so that snapshots move off-site as well.
+  A fresh instance has only the built-in `local` channel, which stores images under `blobs/` in the data volume. Metadata snapshots are written to every healthy channel, so for now this disk holds the only copy. If it fails, the images and the snapshots are lost together, and the "Dashboard" warns "Your data only lives on this host".
+  Open "Storage channels" in the sidebar soon and click "New channel" to add an off-site object storage or cloud drive channel. Existing images are replicated to it automatically, and a snapshot is written there on the next scheduled backup or the next start; for a copy right away, click "Back up now" under "Settings → Backups & export". Once the new channel is healthy, the dashboard warning goes away.
 </Callout>
 
 - [Storage channels](./channels/index.mdx): add an off-site channel, set priority and encryption.

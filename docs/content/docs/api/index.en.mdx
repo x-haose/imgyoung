@@ -83,7 +83,7 @@ Session details:
 - While an account still has the factory default password, its session can use only three endpoints: log out
   (`POST /api/admin/auth/logout`), view itself (`GET /api/admin/me`, where `must_change_password` is true), and change
   the password (`PUT /api/admin/me/password`). Every other admin endpoint, including admin console uploads and issuing
-  tokens, returns 403 ("须先修改出厂默认密码", i.e. change the factory default password first) until the password is
+  tokens, returns 403 `须先修改出厂默认密码` (change the factory default password first) until the password is
   changed and you log in again.
 
 Channels, users, hotlink protection, audit log, alerts, backups, export, and moderation endpoints, as well as reading
@@ -138,7 +138,7 @@ The group pages list the status codes each endpoint can actually return.
 
 - **Timestamps**: unless stated otherwise, UTC text in the form `YYYY-MM-DD HH:MM:SS` (for example
   `2026-10-15 08:30:00`), with no time zone suffix. The exceptions are `built_at` in build info and `taken_at` on
-  backup snapshots, which are RFC 3339.
+  backup snapshots, which are RFC 3339 (`taken_at` with millisecond precision).
 - **Lists**: list endpoints return `{"items": […], "total": N}`, where `total` counts all items after filtering.
 - **Pagination**: the image, upload token, duplicate, cleanup, audit log, and alert lists accept `page` (from 1,
   default 1) and `page_size` (default 20, maximum 100; larger values are treated as 100).

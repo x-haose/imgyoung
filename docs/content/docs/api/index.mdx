@@ -76,7 +76,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 - 登录尝试过于频繁时返回 429。
 - 账号仍是出厂默认密码时,会话只能用三个接口:退出(`POST /api/admin/auth/logout`)、查看自己(`GET /api/admin/me`,
   其中 `must_change_password` 为 true)与改密(`PUT /api/admin/me/password`)。其余后台接口(包括后台上传、签发 Token)
-  一律返回 403「须先修改出厂默认密码」,改密并重新登录后放行。
+  一律返回 403 `须先修改出厂默认密码`,改密并重新登录后放行。
 
 渠道、用户、防盗链、审计、告警、备份、导出、裁决,以及运营配置的全量读取与修改,仅管理员可用,普通用户调用返回 403。
 
@@ -124,7 +124,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 ## 通用约定
 
 - **时刻**:除特别说明外,均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`(如 `2026-10-15 08:30:00`),不带时区后缀。
-  例外是构建信息的 `built_at` 与备份快照的 `taken_at`,为 RFC 3339。
+  例外是构建信息的 `built_at` 与备份快照的 `taken_at`,为 RFC 3339(`taken_at` 精确到毫秒)。
 - **列表**:列表接口返回 `{"items": […], "total": N}`,`total` 是过滤后的总条数。
 - **分页**:图片、上传 Token、疑似重复、待清理、审计日志、告警列表支持 `page`(从 1 起,默认 1)与 `page_size`(默认 20,
   最大 100,超出按 100 处理)。

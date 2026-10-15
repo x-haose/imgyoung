@@ -19,7 +19,7 @@ An encrypted channel wraps its backend in rclone's `crypt` backend:
 - **Object names** use the `standard` mode: each path segment is encrypted with AES-256 in EME mode and written as lower-case base32; folder names are encrypted too. A given name always encrypts to the same ciphertext, which is what makes lookups by name possible.
 - **Key material**: rclone derives the actual keys with scrypt from a password and a salt. ImgYoung derives a separate password and salt for every channel, see [Where the keys come from](#where-the-keys-come-from).
 
-Uploads, proxied reads, replication and health checks all pass through this layer transparently. Everything on the channel is encrypted: images, deep-check temporary objects, and the metadata snapshots (`_imgyoung/backup/`) written while the channel is the primary.
+Uploads, proxied reads, replication and health checks all pass through this layer transparently. Everything on the channel is encrypted: images, deep-check temporary objects, and the metadata snapshots (`_imgyoung/backup/`) that each backup round writes to the channel.
 
 ## Turning it on
 
@@ -36,7 +36,7 @@ Encrypted channels carry an **Encrypted** badge in the list; the edit form only 
 
 ## Fixed at creation
 
-The encryption attribute is set at creation and cannot change afterwards. The API rejects changes with 409 and "加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据" ("encryption cannot change after creation; create a new channel and migrate").
+The encryption attribute is set at creation and cannot change afterwards. The API rejects changes with 409 and `加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据` ("encryption cannot change after creation; create a new channel and migrate").
 
 The reason: after flipping the switch, one channel would hold objects written under the old setting next to objects written under the new one, and the old objects could not be read back under the new setting.
 
@@ -60,7 +60,7 @@ Ciphertext cannot be handed to a browser, so encryption and **Allow 302 direct l
 
 - In the new-channel form, choosing **Force on** disables **Allow 302 direct links**; with direct links on, **Force on** cannot be selected.
 - The same applies when you choose **Inherit the global default** while the global default is on.
-- The API rejects a request asking for both with 400 and "渠道参数非法: 加密渠道不允许直链(密文无法直出)" ("invalid channel parameters: encrypted channels cannot serve direct links").
+- The API rejects a request asking for both with 400 and `渠道参数非法: 加密渠道不允许直链(密文无法直出)` ("invalid channel parameters: encrypted channels cannot serve direct links").
 - With `access_mode = redirect`, images on encrypted channels are always proxied.
 
 ## Where the keys come from
@@ -91,25 +91,83 @@ The first start with a given master key records a fingerprint derived from it in
 Without the master key no encrypted channel's password can be derived, so the ciphertext stays unreadable; the stored channel configurations cannot be decrypted either, and ImgYoung refuses to start. Keep a copy of the master key somewhere separate from the server. Configuration is covered in the [configuration reference](../configuration.mdx), backup strategy in [Metadata backups](../operations/backup.mdx).
 </Callout>
 
-## Self-rescue: decrypting a channel with stock rclone
+## Self-rescue: reading a channel with stock rclone
 
-crypt is a published rclone format. Even with ImgYoung gone, stock rclone can read every object on an encrypted channel. You need:
-
-- the master key (64 hex characters);
-- the channel's ID and creation time (the `channels` table of the metadata database);
-- the backend credentials and the channel's storage path (bucket and prefix, drive folder, and so on).
-
-ImgYoung has no command that prints the derived password, and neither the admin console nor the data export includes a channel's creation time. Read the ID and creation time straight from the database file and compute the password with the rules above.
+crypt is a published rclone format. Even with ImgYoung gone, stock rclone can read every object on an encrypted channel. The easy way is to export each channel's rclone config file in advance; without an exported file you can still derive everything by hand from the metadata database and the master key.
 
 <Callout type="warn" title="When the snapshots are on an encrypted channel too">
-If the primary channel is encrypted, metadata snapshots on it are encrypted as well. Should the server be lost together with `<data dir>/imgyoung.db`, and the only snapshot sit on an encrypted channel, you need that channel's ID and creation time to open the snapshot — and those two values are recorded inside the snapshot. Keep each encrypted channel's ID and creation time offline together with the master key.
+Each backup round writes the metadata snapshot to every healthy channel, and the copy on an encrypted channel is ciphertext as well. As long as one unencrypted channel holds a snapshot, or you have kept the encrypted channels' exported files offline, you can get a snapshot back after losing the host. If every channel is encrypted and there is no exported file, deriving by hand needs the channel's ID and creation time — and those are recorded inside the snapshot. In such a deployment, export a config file for every encrypted channel and keep it offline with the master key.
 </Callout>
+
+### With an exported config file
 
 <Steps>
 <Step>
-### Read the channel ID and creation time
+On the Storage channels page choose **Export rclone config** in the row menu, then **Download config file**, to get `imgyoung-channel-<channel ID>.rclone.conf`. There is one file per channel; export again after changing a channel's configuration.
+</Step>
+<Step>
+Keep it offline together with the master key. The file alone is enough to read and write all of this channel's data (an encrypted channel's decryption passwords are in it); the master key is what you need to restore ImgYoung itself.
+</Step>
+<Step>
+On any machine with rclone, run the commands from the comments at the top of the file. For an encrypted channel read `imgyoung-<channel ID>-crypt:`, which yields plaintext:
 
-The metadata database is `<data dir>/imgyoung.db`; snapshot files are SQLite databases of the same shape. Query it with `sqlite3`:
+```bash title="Terminal"
+rclone --config imgyoung-channel-3.rclone.conf ls imgyoung-3-crypt:
+rclone --config imgyoung-channel-3.rclone.conf copy imgyoung-3-crypt: ./imgyoung-restore
+```
+
+For an unencrypted channel read the backend remote plus the storage path, such as `imgyoung-3:my-bucket/imgyoung`; the comments at the top of the file give that path.
+</Step>
+</Steps>
+
+The file exported for an encrypted R2 channel looks like this (the comments at the top are always in Chinese):
+
+```ini title="imgyoung-channel-3.rclone.conf"
+# ImgYoung 渠道 "r2-backup"(ID 3,创建于 2026-10-15 08:00:00 UTC)的 rclone 配置。
+# 文件含渠道凭证与解密密码,与主密钥一样离线妥善保存。
+#
+# [imgyoung-3] 渠道后端(s3),参数与 ImgYoung 所用一致
+# [imgyoung-3-crypt] 渠道的加密层,指向渠道存储路径 imgyoung-3:my-bucket/imgyoung,经它读写的是明文
+#
+# 用法:
+#   rclone --config imgyoung-channel-3.rclone.conf ls imgyoung-3-crypt:
+#   rclone --config imgyoung-channel-3.rclone.conf copy imgyoung-3-crypt: ./imgyoung-restore
+
+[imgyoung-3]
+type = s3
+access_key_id = <Access Key>
+endpoint = https://<account ID>.r2.cloudflarestorage.com
+no_check_bucket = true
+provider = Cloudflare
+region = auto
+secret_access_key = <Secret Key>
+
+[imgyoung-3-crypt]
+type = crypt
+filename_encryption = standard
+password = <rclone-encoded password>
+password2 = <rclone-encoded salt>
+remote = imgyoung-3:my-bucket/imgyoung
+```
+
+- The backend remote has exactly the parameters ImgYoung hands to the backend, credentials and OAuth tokens included; password-type parameters are in rclone's encoded form, which rclone uses as is. s3 channels carry `no_check_bucket = true`.
+- For drive channels holding an OAuth token, the comments add two lines: rclone refreshes the token when using this file and writes it back into the file; with providers whose refresh tokens are single-use, such as Box, the file and an ImgYoung still using the channel invalidate each other's tokens, so do not use both at once. Also, once ImgYoung refreshes the token, the copy in the file is stale; with Box and the like its refresh token is invalidated and you need to export again.
+- A `local` channel's path is a path on the server (for the built-in local channel `<data dir>/blobs`, which is relative if the data directory is configured as a relative path); change it to the real location when using the file on another machine.
+- If a parameter value cannot be written into an rclone config file (a line break, for example), the export returns 422 and the error names only the remote and the parameter key. Every download is recorded in the audit log as "Export channel rclone config".
+
+### Without an exported file: deriving by hand
+
+You need:
+
+- the master key (64 hex characters);
+- the channel's ID and creation time;
+- the backend credentials and the channel's storage path (bucket and prefix, drive folder, and so on).
+
+<Steps>
+<Step>
+#### Get the channel ID and creation time
+
+Every channel in the metadata export JSON and in the channel list API has `id` and `created_at`. If all you have is the metadata database file, query it with `sqlite3`; the database is `<data dir>/imgyoung.db`, and snapshot files are SQLite databases of the same shape:
 
 ```bash title="Terminal"
 sqlite3 imgyoung.db "SELECT id, name, created_at FROM channels WHERE encrypted = 1;"
@@ -120,7 +178,7 @@ sqlite3 imgyoung.db "SELECT id, name, created_at FROM channels WHERE encrypted =
 ```
 </Step>
 <Step>
-### Compute the password and salt
+#### Compute the password and salt
 
 This script uses only the Python standard library to compute the password and salt with HKDF-SHA256:
 
@@ -142,7 +200,7 @@ python3 derive.py "$(cat master.key)" 3 "2026-10-15 08:00:00"
 It prints two lines: `password <64 hex characters>` and `salt <64 hex characters>`.
 </Step>
 <Step>
-### Configure rclone
+#### Configure rclone
 
 First create a plain remote for the channel's backend, using the same parameters as the channel (Cloudflare R2 as an example):
 
@@ -162,13 +220,15 @@ rclone config create imgyoung-crypt crypt \
 ```
 </Step>
 <Step>
-### Read the data
+#### Read the data
 
 ```bash title="Terminal"
 rclone ls imgyoung-crypt:
 rclone copy imgyoung-crypt: ./imgyoung-restore
 ```
-
-Image objects are named `<short ID>_<first 8 hex digits of SHA-256>`, without an extension; the short ID is the ID in the image link. Metadata snapshots are under `_imgyoung/backup/`.
 </Step>
 </Steps>
+
+### What you get
+
+Image objects are named `<short ID>_<first 8 hex digits of SHA-256>`, without an extension; the short ID is the ID in the image link. Metadata snapshots are under `_imgyoung/backup/`.

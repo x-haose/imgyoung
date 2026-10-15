@@ -160,7 +160,8 @@ rclone 要求一部分参数以 `rclone obscure` 的编码形式提供,例如 we
 | 误判后果 | 已编码的值被再编码一次,认证失败 | 恰好形似编码产物的明文被原样放过,认证失败 |
 
 `ObscurePlainSecrets` 判断「已编码」的规则与 rclone 相同:能被 rclone 解码的值即视为已编码,与不带 `--obscure` / `--no-obscure`
-执行 `rclone config create` 时的行为一致。遇到它误判的明文,先用 `rclone obscure` 编码再传入即可。应用的渠道配置接受两种形式,用的就是它。
+执行 `rclone config create` 时的行为一致。遇到它误判的明文,先用 `rclone obscure` 编码再传入即可。
+应用在后台模板表单里用 `ObscureSecrets`(值确定是明文),在自定义参数里用 `ObscurePlainSecrets`(两种形式都接受)。
 
 ```go
 params := map[string]string{
@@ -174,6 +175,10 @@ if err := rclone.ObscureSecrets("webdav", params); err != nil {
 }
 d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Path: "images"})
 ```
+
+另一个辅助函数 `SensitiveParams(backend)` 返回后端声明为密码或敏感信息的参数名(选项元数据里的 `IsPassword` 或 `Sensitive`),
+按名排序、无重复,口径与 `rclone config redacted` 相同:除密码、密钥与令牌外,访问密钥 ID、账号名这类身份信息也在其中。
+回显配置时掩码哪些值、从错误信息里抹除哪些值,可以据此决定;应用的编辑回读与错误抹除用的就是它。
 
 ### OAuth 令牌写回与 OnChange
 
@@ -223,28 +228,76 @@ d, err := rclone.Open(ctx, rclone.Options{
 Password 与 Salt 是解密的唯一依据,丢失后存储里的对象无法还原。
 </Callout>
 
-crypt 是 rclone 的公开格式,不依赖本库也能用标准 rclone 解密。按下面的方式在 rclone.conf 里配置一个 crypt 远端,
-其中 `password` 与 `password2` 分别填 `rclone obscure <Password>` 与 `rclone obscure <Salt>` 的输出,
-其余选项保持 rclone 默认值(本库只设置了 `filename_encryption`):
+crypt 是 rclone 的公开格式,不依赖本库也能用标准 rclone 解密:用下一节的 `ConfigFile` 生成配置文件即可。
+应用的渠道存储加密也基于这一层,密码由主密钥派生,见 [渠道存储加密](../channels/encryption.mdx)。
+
+### 导出为 rclone 配置文件 [#config-file]
+
+```go
+func ConfigFile(opts Options, remote, cryptRemote string) (string, error)
+```
+
+`ConfigFile` 生成一份 rclone 配置文件(rclone.conf)的文本,与 `Open(opts)` 构造的驱动等价,标准 rclone 凭它就能读写同一份数据:
+
+- 后端段名为 `remote`,参数就是驱动实际交给后端的那一份,包括本包补上的默认值(如 s3 的 `no_check_bucket = true`);
+  空值省略,因为驱动与 rclone 都把空值当作未设置。密码类参数按 `Options` 的约定本就是 rclone 编码形式,原样写出。
+- `opts.Crypt` 不为 nil 时,另写一段名为 `cryptRemote` 的 crypt 远端:`remote` 指向 `<remote>:<opts.Path>`,
+  `password` 与 `password2` 是编码后的 `Password` 与 `Salt`,`filename_encryption = standard`,与驱动的 crypt 层一致。
+  经它读写的是明文。
+- 不加密时,后端段本身不含路径,使用时写成 `<remote>:<opts.Path>`。`OnChange` 不参与。
+- 等价性由实现保证:`ConfigFile` 与 `Open` 共用同一套默认值补齐与 crypt 参数生成,不会各算各的。
+
+```go
+text, err := rclone.ConfigFile(rclone.Options{
+	Backend: "s3",
+	Params: map[string]string{
+		"provider":          "Cloudflare",
+		"access_key_id":     "<access key>",
+		"secret_access_key": "<secret key>",
+		"endpoint":          "https://<account id>.r2.cloudflarestorage.com",
+	},
+	Path:  "my-bucket/images",
+	Crypt: &rclone.CryptOptions{Password: "<password>", Salt: "<salt>"},
+}, "mystore", "mystore-crypt")
+```
+
+得到的文本形如(编码带随机 IV,每次生成的 `password` 与 `password2` 都不同,都能解出同一个值):
 
 ```ini title="rclone.conf"
 [mystore]
 type = s3
-provider = Cloudflare
 access_key_id = <access key>
-secret_access_key = <secret key>
 endpoint = https://<account id>.r2.cloudflarestorage.com
+no_check_bucket = true
+provider = Cloudflare
+secret_access_key = <secret key>
 
 [mystore-crypt]
 type = crypt
-remote = mystore:my-bucket/images
 filename_encryption = standard
-password = <rclone obscure 的输出>
-password2 = <rclone obscure 的输出>
+password = <编码后的 Password>
+password2 = <编码后的 Salt>
+remote = mystore:my-bucket/images
 ```
 
-之后 `rclone ls mystore-crypt:` 列出的就是明文文件名,`rclone copy mystore-crypt: ./out` 可取回明文内容。
-应用的渠道存储加密也基于这一层,密码由主密钥派生,见 [渠道存储加密](../channels/encryption.mdx)。
+```bash title="终端"
+rclone --config rclone.conf ls mystore-crypt:
+```
+
+文本用 rclone 自己读写配置文件的同一个 INI 库序列化,写完再按 rclone 的读法回读核对;有参数无法原样写进文件时,
+返回包裹 `ErrUnrepresentable` 的错误,不会产出与驱动不等价的文件。错误文本只指出段名与参数名,不带参数值:
+
+| 情形 | 错误文本 |
+|---|---|
+| 某个参数值含换行(`\n` 或 `\r`) | `参数值无法写进 rclone 配置文件: 远端 "<段名>" 的参数 "<参数名>" 含换行` |
+| 生成的文本按 rclone 的读法无法解析 | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
+| 某个参数读回的值与原值不同(如首尾空白、`%(name)s` 形式的引用) | `参数值无法写进 rclone 配置文件: 远端 "<段名>" 的参数 "<参数名>"` |
+
+其他错误:后端名不认识、段名不合 rclone 的命名规则(只允许字母、数字、`_`、`-`、`.`、`+`、`@` 与空格)、密码编码失败。
+
+<Callout type="warn" title="文件里是可用的凭证">
+配置文件含后端凭证与授权令牌;rclone 的编码可以还原,不是加密。加密渠道的文件还含解密密码。按主密钥的标准离线保存。
+</Callout>
 
 ### Close
 
@@ -255,8 +308,8 @@ password2 = <rclone obscure 的输出>
 
 ### 完整示例
 
-下面是仓库里的 `store/rclone/example_test.go`,用 rclone 的 `memory` 后端走一遍写入、查询、读回、删除,
-随 `go test ./store/rclone` 执行,输出与末尾的 `Output` 注释一致:
+下面是仓库里的 `store/rclone/example_test.go`,随 `go test ./store/rclone` 执行,输出与各自的 `Output` 注释一致:
+`ExampleSensitiveParams` 查询 webdav 后端的敏感参数;`Example` 用 rclone 的 `memory` 后端走一遍写入、查询、读回、删除。
 
 <include cwd lang="go" meta='title="store/rclone/example_test.go"'>../store/rclone/example_test.go</include>
 

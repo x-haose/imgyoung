@@ -19,7 +19,7 @@ description: 用 rclone crypt 让存储商只看到密文:防什么、怎么开�
 - **对象名**:`standard` 模式,每一级路径用 AES-256(EME 模式)加密后转成小写 base32;目录名同样加密。同一个名字总是加密成同一个密文,所以能按名查找。
 - **密钥材料**:rclone 用 scrypt 从「密码」与「盐」派生出实际密钥。ImgYoung 为每个渠道派生一对独立的密码与盐,见[密钥从哪里来](#密钥从哪里来)。
 
-上传、访问代理、补齐、探测都经过这一层自动加解密。渠道上的所有对象都会加密,包括图片、深探测的临时对象,以及该渠道作为主渠道时写入的元数据库快照(`_imgyoung/backup/`)。
+上传、访问代理、补齐、探测都经过这一层自动加解密。渠道上的所有对象都会加密,包括图片、深探测的临时对象,以及每轮备份写到该渠道上的元数据库快照(`_imgyoung/backup/`)。
 
 ## 开启方式
 
@@ -36,7 +36,7 @@ description: 用 rclone crypt 让存储商只看到密文:防什么、怎么开�
 
 ## 创建后不可变
 
-加密属性在创建时固化,之后不能修改。接口拒绝变更并返回 409:「加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据」。
+加密属性在创建时固化,之后不能修改。接口拒绝变更并返回 409 `加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据`。
 
 原因:翻转开关后,同一个渠道里会同时存在按旧设置写入的对象与按新设置写入的对象,旧对象无法按新设置读回。
 
@@ -60,7 +60,7 @@ description: 用 rclone crypt 让存储商只看到密文:防什么、怎么开�
 
 - 新建表单里选了「强制开启」时,「允许 302 直链」不可开;已开直链时,「强制开启」不可选。
 - 「继承全局默认」而全局默认为开时,同样不能开直链。
-- 接口同时收到两者时拒绝,返回 400「渠道参数非法: 加密渠道不允许直链(密文无法直出)」。
+- 接口同时收到两者时拒绝,返回 400 `渠道参数非法: 加密渠道不允许直链(密文无法直出)`。
 - `access_mode = redirect` 时,加密渠道上的图片始终走代理。
 
 ## 密钥从哪里来
@@ -91,25 +91,84 @@ description: 用 rclone crypt 让存储商只看到密文:防什么、怎么开�
 没有主密钥,就派生不出任何加密渠道的密码,渠道上的密文无法解开;已保存的渠道配置也无法解密,ImgYoung 会拒绝启动。把主密钥复制到与服务器分离的安全位置。主密钥的配置见[配置参考](../configuration.mdx),备份策略见[元数据库备份](../operations/backup.mdx)。
 </Callout>
 
-## 自救:用标准 rclone 解密渠道数据
+## 自救:用标准 rclone 读出渠道数据
 
-crypt 是 rclone 的公开格式。即使 ImgYoung 不再运行,也可以用标准 rclone 读出加密渠道上的全部对象。需要准备:
-
-- 主密钥(64 位十六进制);
-- 渠道的 ID 与创建时刻(元数据库里的 `channels` 表);
-- 渠道后端的凭证与渠道的存储路径(桶名及前缀、网盘目录等)。
-
-ImgYoung 没有提供输出派生密码的命令,后台界面与数据导出也不包含渠道创建时刻,所以 ID 与创建时刻要直接从元数据库文件读取,密码要按上一节的规则自己计算。
+crypt 是 rclone 的公开格式。即使 ImgYoung 不再运行,也可以用标准 rclone 读出加密渠道上的全部对象。最省事的做法是事先导出每个渠道的 rclone 配置文件;没有导出文件时,也可以从元数据库与主密钥手工推导。
 
 <Callout type="warn" title="快照也在加密渠道上时">
-主渠道是加密渠道时,元数据库快照同样加密存放。如果服务器连同 `<数据目录>/imgyoung.db` 一起丢失,唯一的快照又在加密渠道上,就需要先知道该渠道的 ID 与创建时刻才能解开快照,而这两项正记录在快照里。把每个加密渠道的 ID 与创建时刻和主密钥一起离线保存。
+元数据库快照每轮写到每个健康渠道,加密渠道上的那一份同样是密文。只要有一个未加密的渠道持有快照,或者已经离线保存了加密渠道的导出文件,主机全损后就能取回快照。如果全部渠道都加密、又没有导出文件,手工推导需要渠道的 ID 与创建时刻,而这两项正记录在快照里。这种部署请为每个加密渠道导出配置文件,与主密钥一起离线保存。
 </Callout>
+
+### 用导出的配置文件
 
 <Steps>
 <Step>
-### 读出渠道 ID 与创建时刻
+在「存储渠道」页的行菜单点「导出 rclone 配置」,再点「下载配置文件」,得到 `imgyoung-channel-<渠道 ID>.rclone.conf`。每个渠道一个文件,渠道配置改动后重新导出。
+</Step>
+<Step>
+把它和主密钥一起离线保存。文件本身就足以读写这个渠道上的全部数据(加密渠道的解密密码已在其中);主密钥用于恢复 ImgYoung 自身。
+</Step>
+<Step>
+在任意装有 rclone 的机器上,用文件头注释里的命令读出数据。加密渠道读 `imgyoung-<渠道 ID>-crypt:`,得到的就是明文:
 
-元数据库是 `<数据目录>/imgyoung.db`,快照文件也是同样格式的 SQLite 库。用 `sqlite3` 查询:
+```bash title="终端"
+rclone --config imgyoung-channel-3.rclone.conf ls imgyoung-3-crypt:
+rclone --config imgyoung-channel-3.rclone.conf copy imgyoung-3-crypt: ./imgyoung-restore
+```
+
+未加密的渠道直接读后端远端加存储路径,如 `imgyoung-3:my-bucket/imgyoung`,文件头注释里写着这个路径。
+</Step>
+</Steps>
+
+一个加密 R2 渠道导出的文件形如:
+
+```ini title="imgyoung-channel-3.rclone.conf"
+# ImgYoung 渠道 "r2-backup"(ID 3,创建于 2026-10-15 08:00:00 UTC)的 rclone 配置。
+# 文件含渠道凭证与解密密码,与主密钥一样离线妥善保存。
+#
+# [imgyoung-3] 渠道后端(s3),参数与 ImgYoung 所用一致
+# [imgyoung-3-crypt] 渠道的加密层,指向渠道存储路径 imgyoung-3:my-bucket/imgyoung,经它读写的是明文
+#
+# 用法:
+#   rclone --config imgyoung-channel-3.rclone.conf ls imgyoung-3-crypt:
+#   rclone --config imgyoung-channel-3.rclone.conf copy imgyoung-3-crypt: ./imgyoung-restore
+
+[imgyoung-3]
+type = s3
+access_key_id = <Access Key>
+endpoint = https://<账户 ID>.r2.cloudflarestorage.com
+no_check_bucket = true
+provider = Cloudflare
+region = auto
+secret_access_key = <Secret Key>
+
+[imgyoung-3-crypt]
+type = crypt
+filename_encryption = standard
+password = <rclone 编码后的密码>
+password2 = <rclone 编码后的盐>
+remote = imgyoung-3:my-bucket/imgyoung
+```
+
+- 后端远端的参数与 ImgYoung 交给后端的完全一致,包括凭证与授权令牌;密码类参数是 rclone 编码后的形式,rclone 直接可用。s3 渠道带 `no_check_bucket = true`。
+- 文件头注释固定为中文。
+- 持有授权令牌的网盘渠道,注释里多两行提醒:rclone 用这个文件时会刷新令牌并写回文件;Box 等刷新令牌只能用一次的服务商,文件与仍在使用该渠道的 ImgYoung 会互相作废对方的令牌,不要同时使用。另外,ImgYoung 刷新令牌之后,文件里的令牌就过时了;对 Box 这类服务商,文件里的刷新令牌随即作废,要重新导出。
+- `local` 渠道的路径是服务器上的路径(内置 local 渠道是 `<数据目录>/blobs`,数据目录配成相对路径时导出的也是相对路径),换一台机器使用要改成实际位置。
+- 参数值写不进 rclone 配置文件(如含换行)时,导出返回 422,错误只指出远端名与参数键。每次下载都记一条审计日志「导出渠道 rclone 配置」。
+
+### 没有导出文件时:手工推导
+
+需要准备:
+
+- 主密钥(64 位十六进制);
+- 渠道的 ID 与创建时刻;
+- 渠道后端的凭证与渠道的存储路径(桶名及前缀、网盘目录等)。
+
+<Steps>
+<Step>
+#### 取得渠道 ID 与创建时刻
+
+元数据导出的 JSON 与渠道列表接口里,每个渠道都有 `id` 与 `created_at`。只剩元数据库文件时,用 `sqlite3` 查询;元数据库是 `<数据目录>/imgyoung.db`,快照文件也是同样格式的 SQLite 库:
 
 ```bash title="终端"
 sqlite3 imgyoung.db "SELECT id, name, created_at FROM channels WHERE encrypted = 1;"
@@ -120,7 +179,7 @@ sqlite3 imgyoung.db "SELECT id, name, created_at FROM channels WHERE encrypted =
 ```
 </Step>
 <Step>
-### 计算密码与盐
+#### 计算密码与盐
 
 下面的脚本只用 Python 标准库,按 HKDF-SHA256 计算出密码与盐:
 
@@ -142,7 +201,7 @@ python3 derive.py "$(cat master.key)" 3 "2026-10-15 08:00:00"
 输出两行:`password <64 位十六进制>` 与 `salt <64 位十六进制>`。
 </Step>
 <Step>
-### 配置 rclone
+#### 配置 rclone
 
 先建一个指向渠道后端的普通 remote,参数与渠道的后端参数一致(以 Cloudflare R2 为例):
 
@@ -162,13 +221,15 @@ rclone config create imgyoung-crypt crypt \
 ```
 </Step>
 <Step>
-### 读出数据
+#### 读出数据
 
 ```bash title="终端"
 rclone ls imgyoung-crypt:
 rclone copy imgyoung-crypt: ./imgyoung-restore
 ```
-
-图片对象名形如 `<短 ID>_<SHA-256 前 8 位>`,不带扩展名;短 ID 就是图片链接里的 ID。元数据库快照在 `_imgyoung/backup/` 下。
 </Step>
 </Steps>
+
+### 读出的内容
+
+图片对象名形如 `<短 ID>_<SHA-256 前 8 位>`,不带扩展名;短 ID 就是图片链接里的 ID。元数据库快照在 `_imgyoung/backup/` 下。
