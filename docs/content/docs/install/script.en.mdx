@@ -33,8 +33,8 @@ The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`; `
 
 | Option | Default | Description |
 |---|---|---|
-| `--version vX.Y.Z` | Latest stable release | Install a specific version. Use the release tag exactly as shown, including the `v` prefix |
-| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable |
+| `--version X.Y.Z` | Latest stable release | Install a specific version; the `v` prefix is optional |
+| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable. With `--service` it must be an absolute path outside `/home` and `/root` |
 | `--service` | Not installed | Linux only, needs root: also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung` |
 
 | Environment variable | Default | Description |
@@ -64,7 +64,7 @@ Without `--service` the script only installs the binary and does not start it. R
 The settings that matter:
 
 - **Data directory.** `IMGYOUNG_DATA_DIR=%S/imgyoung` resolves to `/var/lib/imgyoung`, which `StateDirectory=imgyoung` makes systemd create and hand to the service user. With `DynamicUser` the real directory is `/var/lib/private/imgyoung` and `/var/lib/imgyoung` is a symlink to it. It holds `imgyoung.db`, `master.key`, the local channel's `blobs/` and the variant cache `variants/`.
-- **DynamicUser=yes.** systemd allocates a transient system user on every start, so no user has to be created in advance. Together with sandboxing such as `ProtectSystem=strict` and `ProtectHome=yes`, the process can write only its own data directory: if you point the local channel somewhere else, open that directory with `ReadWritePaths=`; and the binary must not live under `/home` or `/root`, or the service cannot start.
+- **DynamicUser=yes.** systemd allocates a transient system user on every start, so no user has to be created in advance. Together with sandboxing such as `ProtectSystem=strict` and `ProtectHome=yes`, the process can write only its own data directory: if you point the local channel somewhere else, open that directory with `ReadWritePaths=`; and the binary must not live under `/home` or `/root`, or the service cannot start; the script rejects such a `--dir`.
 - **Restart=always.** Restoring a snapshot in the console makes the service exit cleanly; systemd starts it again 3 seconds later and the snapshot is swapped in before the database is opened. `Restart=on-failure` does not restart a clean exit, so the restore would only complete once someone starts the service by hand.
 - **TimeoutStopSec=75s.** On stop, the service drains replication jobs and then HTTP connections, up to 30 seconds each, so it gets enough time before being killed.
 - **UMask=0077.** New files, `master.key` included, are readable and writable only by the service user.
@@ -80,7 +80,7 @@ sudo systemctl restart imgyoung  # apply changed environment variables
 
 ### Changing the service configuration
 
-Re-running the script with `--service` overwrites `/etc/systemd/system/imgyoung.service` with the version from the release archive. Keep local changes out of that file and put them in a drop-in instead:
+Re-running the script with `--service` overwrites `/etc/systemd/system/imgyoung.service` with the version from the release archive, and says so when the content changes. Keep local changes out of that file and put them in a drop-in instead:
 
 ```bash title="Terminal"
 sudo systemctl edit imgyoung

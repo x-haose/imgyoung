@@ -1,7 +1,9 @@
 # Caddy 反向代理示例:Caddy 自动申请并续期 HTTPS 证书。把域名换成你的,DNS 指向本机。
 # Caddy 默认就会设置 X-Forwarded-For / -Proto / -Host,并忽略客户端自带的这些头。
-# ImgYoung 与 Caddy 在同一台主机上时,默认信任回环地址的转发头,无需额外配置;
-# Caddy 跑在容器里时,把 reverse_proxy 改成 imgyoung:8721,并给 ImgYoung 设 IMGYOUNG_TRUSTED_PROXIES。
+# ImgYoung 直接运行在本机(非容器)时,Caddy 的连接来自回环地址,默认受信任,无需额外配置。
+# ImgYoung 在容器里时,不论 Caddy 在宿主机还是另一个容器,ImgYoung 看到的对端都是 Docker 网络里的地址,
+# 要给 ImgYoung 设 IMGYOUNG_TRUSTED_PROXIES 为该网络的网段(docker network inspect 查看);
+# Caddy 也在容器里时,把 reverse_proxy 改成 imgyoung:8721。
 img.example.com {
 	# 指标只给内网抓取,公网入口一律不转发
 	respond /metrics 404

@@ -4,9 +4,11 @@
 #   curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
 #
 # 选项(经 sh -s -- 传入,如 ... | sh -s -- --service):
-#   --version vX.Y.Z  安装指定版本;默认最新正式版
+#   --version X.Y.Z   安装指定版本,前缀 v 可带可不带;默认最新正式版
 #   --dir DIR         二进制安装目录;默认 root 为 /usr/local/bin,其他用户为 ~/.local/bin
-#   --service         仅 Linux,需 root:同时安装并启动 systemd 服务 imgyoung(数据在 /var/lib/imgyoung)
+#   --service         仅 Linux,需 root:同时安装并启动 systemd 服务 imgyoung(数据在 /var/lib/imgyoung)。
+#                     此时 --dir 须为绝对路径且不在 /home、/root 下;服务文件每次按发布包重写,
+#                     本机定制用 systemctl edit imgyoung 写成 drop-in
 # 环境变量:
 #   IMGYOUNG_RELEASES 发布页地址,默认 https://github.com/x-haose/imgyoung/releases;
 #                     改用镜像站或内网分发时设置它,目录结构须与 GitHub Releases 一致
@@ -41,8 +43,12 @@ parse_args() {
 	while [ $# -gt 0 ]; do
 		case "$1" in
 		--version)
-			[ $# -ge 2 ] || fail "--version 需要一个版本号,如 v1.0.0"
-			version="$2"
+			[ $# -ge 2 ] || fail "--version 需要一个版本号,如 1.0.0"
+			version="v${2#v}"
+			case "$version" in
+			v[0-9]*) ;;
+			*) fail "版本号 $2 无效,应形如 1.0.0" ;;
+			esac
 			shift 2
 			;;
 		--dir)
@@ -135,11 +141,25 @@ check_service() {
 	[ "$(uname -s)" = Linux ] || fail "--service 只支持 Linux(systemd)"
 	[ "$(id -u)" -eq 0 ] || fail "--service 需要 root 权限"
 	need systemctl
+	case "$dir" in
+	"") ;;
+	/home | /home/* | /root | /root/* | /run/user | /run/user/*)
+		fail "--service 的二进制不能装在 $dir:服务启用了 ProtectHome,进程看不到家目录"
+		;;
+	/*) ;;
+	*) fail "--service 的 --dir 须为绝对路径,systemd 不接受相对路径" ;;
+	esac
 }
 
 # install_service 安装 systemd 服务并启动;已在运行时重启以换上新版本。
+# 服务文件按发布包重写,与现有内容不同时提示,本机改动不会悄无声息地丢掉。
 install_service() {
-	sed "s|^ExecStart=.*|ExecStart=$dir/imgyoung|" "$tmp/deploy/imgyoung.service" >"$UNIT_PATH"
+	unit="$tmp/imgyoung.service"
+	sed "s|^ExecStart=.*|ExecStart=$dir/imgyoung|" "$tmp/deploy/imgyoung.service" >"$unit"
+	if [ -f "$UNIT_PATH" ] && [ "$(cat "$unit")" != "$(cat "$UNIT_PATH")" ]; then
+		info "已按发布包重写 $UNIT_PATH;本机定制请用 systemctl edit imgyoung 写成 drop-in,升级不会覆盖"
+	fi
+	install -m 0644 "$unit" "$UNIT_PATH"
 	systemctl daemon-reload
 	systemctl enable imgyoung >/dev/null 2>&1
 	if systemctl is-active --quiet imgyoung; then
