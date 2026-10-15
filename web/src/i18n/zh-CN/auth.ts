@@ -8,7 +8,9 @@ export const auth = {
   passwordRequired: '请输入密码',
   loginHint:
     '首次登录:用户名 admin,默认密码 {password},登录后会要求你立即修改。',
-  forgotHint: '忘记密码?见 README 的密码重置步骤。',
+  forgotHint: '忘记密码?',
+  forgotLink: '查看重置步骤',
+  forgotUrl: 'https://imgyoung.x-haose.com/zh/docs/operations/password-reset',
   account: '账号',
   role: { admin: '管理员', user: '普通用户' },
   signOut: '退出登录',

@@ -3,23 +3,20 @@ import { i18n, type Language } from '@/lib/i18n'
 /** 源码仓库地址,导航栏、页脚与文档页「在 GitHub 上查看」共用。 */
 export const REPO_URL = 'https://github.com/x-haose/imgyoung'
 
+/** 正式站域名。 */
+const PRODUCTION_URL = 'https://imgyoung.x-haose.com'
+
 /**
  * 站点绝对地址。
  *
  * `robots.txt`、`sitemap.xml` 与页面 `<link rel="alternate">` 都要绝对 URL,而它们在构建期生成,
- * 拿不到运行期的请求主机名。正式站与预览部署经 `NEXT_PUBLIC_SITE_URL` 指定;本地开发回落到
- * dev server 地址;生产构建缺了它直接失败,不生成指向错误域名的链接。
+ * 拿不到运行期的请求主机名。生产构建取正式域名,本地开发回落到 dev server 地址;
+ * 预览部署等场合可用 `NEXT_PUBLIC_SITE_URL` 覆盖。
  */
-function resolveSiteURL(): string {
-  const configured = process.env.NEXT_PUBLIC_SITE_URL
-  if (configured) return configured.replace(/\/$/, '')
-  if (process.env.NODE_ENV === 'development') return 'http://localhost:3000'
-  throw new Error(
-    '构建文档站须设置 NEXT_PUBLIC_SITE_URL(站点对外的绝对地址,如 https://docs.example.com)'
-  )
-}
-
-export const SITE_URL = resolveSiteURL()
+export const SITE_URL = (
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:3000' : PRODUCTION_URL)
+).replace(/\/$/, '')
 
 /**
  * 一处内容在各语言下的绝对地址,键为 hreflang 值。

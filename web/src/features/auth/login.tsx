@@ -111,7 +111,15 @@ export function Login() {
       <p className='mt-5 text-center text-xs leading-relaxed text-muted-foreground'>
         {t(m.auth.loginHint, { password: DEFAULT_ADMIN_PASSWORD })}
         <br />
-        {m.auth.forgotHint}
+        {m.auth.forgotHint}{' '}
+        <a
+          href={m.auth.forgotUrl}
+          target='_blank'
+          rel='noreferrer'
+          className='font-medium text-foreground underline-offset-4 hover:underline'
+        >
+          {m.auth.forgotLink}
+        </a>
       </p>
     </AuthLayout>
   )

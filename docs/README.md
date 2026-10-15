@@ -9,16 +9,17 @@ cd docs
 pnpm install   # postinstall 会运行 fumadocs-mdx 生成 .source/(已忽略)
 pnpm dev       # http://localhost:3000
 pnpm lint      # 路由类型 + tsc + prettier
-NEXT_PUBLIC_SITE_URL=https://<站点域名> pnpm build
+pnpm build
 ```
 
-生产构建必须设置 `NEXT_PUBLIC_SITE_URL`(sitemap、canonical 与 hreflang 要绝对地址),缺了构建直接失败。
+正式站是 <https://imgyoung.x-haose.com>;sitemap、canonical 与 hreflang 默认用这个域名,预览部署可用
+`NEXT_PUBLIC_SITE_URL` 覆盖。
 
 ## 部署
 
 任意能跑 Next.js 的平台均可。以 Vercel 为例:项目连本仓库,Root Directory 设为 `docs`,并保持
 「Include files outside the root directory」开启——接口参考页在构建时读取仓库根的 `api/openapi.yaml`,
-示例配置页引用 `deploy/` 下的文件。环境变量设 `NEXT_PUBLIC_SITE_URL`。
+示例配置页引用 `deploy/` 下的文件。
 
 ## 目录
 

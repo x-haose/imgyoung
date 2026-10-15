@@ -9,7 +9,9 @@ export const auth = {
   passwordRequired: 'Enter your password',
   loginHint:
     'First sign-in: username admin, default password {password}. You will be asked to change it right away.',
-  forgotHint: 'Forgot the password? See the reset steps in the README.',
+  forgotHint: 'Forgot the password?',
+  forgotLink: 'See how to reset it',
+  forgotUrl: 'https://imgyoung.x-haose.com/en/docs/operations/password-reset',
   account: 'Account',
   role: { admin: 'Administrator', user: 'User' },
   signOut: 'Sign out',

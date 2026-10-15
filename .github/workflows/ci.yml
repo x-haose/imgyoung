@@ -67,9 +67,6 @@ jobs:
           cache-dependency-path: docs/pnpm-lock.yaml
       - name: Docs
         working-directory: docs
-        # 只验证能构建,产物不发布;站点地址只影响 sitemap 与 canonical 链接
-        env:
-          NEXT_PUBLIC_SITE_URL: http://localhost:3000
         run: |
           pnpm install --frozen-lockfile
           pnpm lint
