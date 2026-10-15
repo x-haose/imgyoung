@@ -26,7 +26,7 @@ Objects in channels are named by content hash; which image belongs to which shor
 - **At startup**: if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately; otherwise it is skipped. The first start after adding a channel therefore fills it in, and frequent restarts do not push the rotated history out with same-day snapshots.
 - **Retention**: after a successful write, each channel keeps only its own newest **Backups to keep** (`backup_keep`, 7 by default) snapshots; older ones are deleted.
 - **Failure**: a channel that fails does not stop the others from being written, but if any channel was not written the round counts as failed and opens a `backup_failed` alert; the channels that were written keep the snapshot. No healthy channel, or failing to take the snapshot, also counts as failure. The alert resolves after the next success; see [Monitoring & alerts](./monitoring.mdx).
-- **When a channel is deleted**: **Delete and purge** deletes the snapshots on the channel too; **Remove only** leaves every remote object, snapshots included, where it is.
+- **When a channel is deleted**: **Delete and purge** deletes the snapshots on the channel too; **Remove only** leaves every remote object, snapshots included, where it is. Writing snapshots and this cleanup exclude each other: a snapshot that is being written to the channel when it is marked as draining is waited for, and the cleanup lists and deletes only after that write finishes; a write that would reach the channel after it is marked is skipped and not counted among the round's channels. No snapshot is left behind on the remote.
 
 <Callout type="warn" title="Your data only lives on this host">
 If no healthy channel lives off this host's disk (only the built-in local channel, or every other channel is unhealthy), image replicas and snapshots exist only on this host and are lost with it; the dashboard then shows **Your data only lives on this host**. Add an object storage or cloud drive channel and snapshots are written to it as well — no priority changes needed.
@@ -40,11 +40,14 @@ A snapshot written to an encrypted channel is ciphertext, and the crypt password
 
 **Settings → Backups & export → Metadata snapshots** lists the union of the snapshots on all healthy channels, newest first; **Stored on** lists the channels holding each snapshot, in priority order.
 
-- **Back up now**: take a snapshot immediately and write it to every healthy channel, pruning each channel beyond the retention count. If some channels were not written, the request fails with an error naming them and why, like `备份失败:快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成: 渠道 "r2-main": 上传快照: …`; the channels that were written keep the snapshot. With no healthy channel it returns `没有健康渠道可存放快照`.
+- **Back up now**: take a snapshot immediately and write it to every healthy channel, pruning each channel beyond the retention count. On failure:
+  - some channels were not written: 500 with error code `backup_store_failed`; the message names the failed channels with their root-cause text, like `快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成(r2-main: i/o timeout)`, and the parameters are `snapshot`, `failed`, `total` and `detail`. The channels that were written keep the snapshot;
+  - the snapshot could not be taken: 500 with error code `backup_snapshot_failed`, message like `生成数据库快照失败: …`;
+  - no healthy channel: 503 with error code `no_healthy_channel`.
 - **Download**: reads the snapshot from the healthy channels holding it in priority order, moving on to the next one if a read fails. The downloaded file is a complete SQLite database.
 - **Restore**: reads the same way; see the next section.
 
-Snapshots on unhealthy channels or channels being deleted are not listed and are not used for downloads or restores. If listing any healthy channel fails, the whole list fails (500). With no healthy channel every action returns 503: `没有健康渠道,无法列举快照` for the list, `没有健康渠道,无法读取快照` for downloads and restores, and `没有健康渠道可存放快照` for **Back up now**. If no healthy channel has the requested snapshot, downloads and restores return 404 `快照不存在`; if some channels fail to read it and none succeeds, they return 500.
+Snapshots on unhealthy channels or channels being deleted are not listed and are not used for downloads or restores. If listing any healthy channel fails, the whole list fails (500, error code `internal`). With no healthy channel every action returns 503 with error code `no_healthy_channel` and the message `没有健康的渠道可用`. If no healthy channel has the requested snapshot, downloads and restores return 404 with error code `snapshot_not_found`; if some channels fail to read it and none succeeds, they return 500 with error code `internal`.
 
 ## Restoring from a snapshot
 
@@ -53,7 +56,7 @@ A live SQLite file cannot be replaced safely, so a restore happens in two steps:
 <Steps>
 <Step>
 
-**Stage and shut down**: click **Restore** on a snapshot row and confirm with **Restore and restart**. The service downloads the snapshot to `<data dir>/imgyoung.db.restore` (via a temporary file renamed once complete), writes a `backup.restore` audit entry, responds, and shuts down gracefully: it stops accepting new requests, waits up to 6 seconds for in-flight requests, then stops the background loops and replication jobs, waiting up to 2 more seconds.
+**Stage and shut down**: click **Restore** on a snapshot row and confirm with **Restore and restart**. The service downloads the snapshot to `<data dir>/imgyoung.db.restore` (via a temporary file renamed once complete), writes a `backup.restore` audit entry, responds with 202 (the body carries the snapshot name `snapshot` and the staged path `staged`), and shuts down gracefully: it stops accepting new requests, waits up to 6 seconds for in-flight requests, then stops the background loops and replication jobs, waiting up to 2 more seconds.
 
 </Step>
 <Step>
@@ -190,11 +193,11 @@ Between adding the channel and restoring, do not click **Back up now** and do no
 | Field | Contents |
 |---|---|
 | `users` | Users: ID, username, role, quota, default lifetime, disabled flag, usage and image count; no password hashes |
-| `channels` | Channels: ID, name, driver, priority, health, encrypted flag, direct-link flag, creation time, replica counts; no configuration parameters or credentials |
+| `channels` | Channels: ID, name, driver, priority, health, latest failure `failure`, encrypted flag, direct-link flag, creation time, replica counts; no configuration parameters or credentials |
 | `tokens` | Tokens: name, owner, plaintext prefix, scopes, revocation and issue times; no hashes |
 | `images` | Every image reference: short ID, stored image, owner and token, original file name, object key alias, lifetime, access statistics, cleanup flags |
 | `blobs` | Every stored image: SHA-256, perceptual hash, object key in the channels, MIME type, size, dimensions, reference count, deletion state |
-| `blob_channels` | Which channel holds each replica, its state and last error |
+| `blob_channels` | Which channel holds each replica, its state and attempt count, and the category `last_error_reason` and root-cause text `last_error` of its latest failure |
 
 The export is readable and self-contained: even without running ImgYoung you can use it to match the objects in your channels back to images. It is not a restore format; restores use snapshots. Runtime settings, hotlink rules, audit logs and alerts are not included.
 

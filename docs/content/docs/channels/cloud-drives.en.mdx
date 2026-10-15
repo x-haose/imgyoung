@@ -61,7 +61,7 @@ In the **Authorization** field switch to **Paste a token**, paste it, fill in th
 </Steps>
 
 - Both a plain token JSON and rclone's encoded config blob (what `rclone authorize` prints when given a config blob argument) are accepted; ImgYoung extracts the token.
-- A token that expires must include a refresh token, otherwise it cannot be renewed once the access token expires; saving then fails with `渠道参数非法: 缺少刷新令牌,访问令牌过期后无法续期(字段 token)` ("missing refresh token"). Tokens that never expire (such as pCloud's) need none. Content that cannot be parsed fails with `渠道参数非法: 令牌格式非法(字段 token)` ("malformed token").
+- A token that expires must include a refresh token, otherwise it cannot be renewed once the access token expires; saving then fails with 400 and error code `oauth_no_refresh_token` ("Invalid channel settings: the authorization token has no refresh token, so it cannot be renewed once the access token expires"). Tokens that never expire (such as pCloud's) need none. Content that cannot be parsed fails with error code `oauth_token_invalid` ("Invalid channel settings: the authorization token is malformed").
 - A token from `rclone authorize "<backend>"` is issued to rclone's built-in app: leave the app client ID and secret empty, and rclone renews it with the built-in app as well.
 - To use your own app, run `rclone authorize "<backend>" <client ID> <client secret>` (the app must register rclone's local callback URL `http://127.0.0.1:53682/`), then enter the same app's client ID and secret in the form.
 
@@ -71,7 +71,7 @@ This runs the whole OAuth authorization-code flow inside the admin console. It r
 
 <Steps>
 <Step>
-Set **Settings → Runtime settings → Access & links → Public site address** to ImgYoung's public address, such as `https://img.example.com`. Without it, starting authorization fails with `一键授权需先在设置中填写对外站点地址;或改用粘贴令牌方式` ("set the public site address first, or paste a token").
+Set **Settings → Runtime settings → Access & links → Public site address** to ImgYoung's public address, such as `https://img.example.com`. Without it, starting authorization fails with 400 and error code `oauth_base_url_required` ("One-click authorization needs the public site address in Settings first; or paste a token instead").
 </Step>
 <Step>
 Create an app on the provider's developer platform and register this callback URL — the public site address plus a fixed path:
@@ -86,32 +86,30 @@ The two must match character for character (scheme, host, port and path).
 Enter your app's credentials in the **App client ID** and **App client secret** fields above the **Authorization** field, then click **Authorize with …** under **One-click authorization**. The button stays disabled until a client ID is filled in. A new browser tab opens the provider's consent page.
 </Step>
 <Step>
-When it finishes, the callback page reads "授权成功,请回到后台继续。" ("authorized, return to the console"), the **Authorization** field turns **Authorized**, and you can save.
+When it finishes, the callback page reads `Authorization complete. Go back to the admin console to continue.`, the **Authorization** field turns **Authorized**, and you can save. The callback page is in English or Chinese according to the browser's `Accept-Language`.
 </Step>
 </Steps>
 
 - The callback requires an admin session, so finish the authorization **in the same browser you are signed in to the console with**.
 - An authorization session is valid for 10 minutes and the form waits for at most about 11 minutes; after that it shows "Timed out waiting for authorization, please start again".
 - The token is never written into the callback page; the form collects it with a one-time identifier, and it can be collected only once.
-- A failed token exchange shows `换取令牌失败,请核对应用凭证与回调地址` ("token exchange failed; check the app credentials and the callback URL") in the form; refusing or cancelling on the provider's page shows `授权被拒绝或取消:` plus the reason the provider returned.
-- When re-authorizing an existing channel, leaving the two app credential fields masked keeps the stored values.
+- A failed token exchange shows "Exchanging the token failed. Check the app credentials and the callback address" in the form (error code `oauth_exchange_failed`); refusing or cancelling on the provider's page shows "Authorization was denied or canceled:" plus the reason the provider returned (error code `oauth_denied`).
+- When re-authorizing an existing channel, leaving the two app credential fields masked keeps the stored values. A draining channel cannot be re-authorized: starting authorization answers 409 with error code `channel_deleting`.
 - The client ID and secret are stored with the channel, so rclone renews the token with the same app once it expires.
 
 ## Token renewal and persistence
 
 - Backend parameters are handed to rclone as a map with a write-back hook. When the access token nears expiry, rclone refreshes it itself and writes the new token back through the hook; ImgYoung immediately encrypts it with the master key and stores it in the channel configuration. Any other parameter rclone writes back at runtime takes the same path.
 - If storing fails, only a log line is written (`后端写回参数无法落库`) and the new token stays in use in memory; after a restart the old token from the database is used again.
-- If a backend built temporarily while saving a channel refreshes the token, the new token is stored with the configuration.
+- If a backend built temporarily while saving a channel refreshes the token, the new token is stored with the configuration when the save succeeds. When the save fails, the new token is not lost either:
+  - A token submitted in the form (for a new channel, or newly authorized or pasted while editing) comes back in the `token` field of the error response and replaces the one in the form, with the notice "Saving failed, but the provider refreshed the authorization token meanwhile. The form now holds the new token; fix the problem and save again, no need to authorize again."
+  - A stored token kept while editing is written straight back to the channel, which is then reloaded; it is not returned with the error.
 - When a token gets refreshed during **Test connection**, there are two cases:
   - A stored token being kept (the **Authorization** field left at **Authorized · using the stored token** while editing) is written straight back to the channel.
   - A token submitted in this form (refreshed even if the test fails) is handed back to the form: below the result the form notes "The provider refreshed the authorization token during the test. The form now holds the new token and will save it; the old one may no longer work.", the **Authorization** field shows **Authorized**, and saving submits the new token. In custom mode the new token goes into the `token` row of the backend parameters.
 - **There is exactly one refresher.** ImgYoung runs no refresh loop of its own: some providers invalidate the old refresh token on every refresh, so two refreshers would keep invalidating each other. The read-only requests of the periodic light check (every 60 s by default) are enough for rclone to refresh on time.
 - When editing a drive channel, the **Authorization** field shows **Authorized · using the stored token**; leave it to keep the token, or click **Authorize again** to replace it.
 - An [exported rclone config file](./encryption.mdx) carries the token too. Do not use that file while ImgYoung is still using the channel: with providers such as Box, whose refresh tokens are single-use, the two would keep invalidating each other's tokens. Once ImgYoung refreshes the token, the copy in the file is stale and you need to export again.
-
-<Callout type="warn" title="Tokens refreshed during a failed save are lost">
-When creating or editing a channel and the save ultimately fails (invalid parameters, the backend failing to build, the OneDrive drive lookup failing, a duplicate channel name and so on), a token the provider refreshed during the save is neither stored nor handed back to the form. With providers whose refresh tokens are single-use, such as Box, the original token is then dead and you have to authorize again. Running **Test connection** before saving lowers the risk: a token refreshed during the test is handed back to the form, so the save already uses the new one.
-</Callout>
 
 ## Other OneDrive drives
 

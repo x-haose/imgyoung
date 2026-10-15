@@ -41,7 +41,7 @@ ImgYoung 给所有 `s3` 渠道默认加上 `no_check_bucket=true`：rclone 上�
 因此：
 
 - **先在存储商控制台建好桶**，再创建渠道。
-- 凭证确有建桶权限、又想让 ImgYoung 建桶时，创建表单里打开「自动创建存储桶」：创建时尝试建一次桶（桶已存在不报错），失败则整个创建中止，返回 `渠道参数非法: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): ` 加原因。这个开关只在创建时出现，「测试连接」不会建桶。
+- 凭证确有建桶权限、又想让 ImgYoung 建桶时，创建表单里打开「自动创建存储桶」：创建时尝试建一次桶（桶已存在不报错），失败则整个创建中止，返回 400，错误码 `channel_bucket_failed`（文案 `自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): {detail}`，`detail` 为根因原文）。这个开关只在创建时出现，「测试连接」不会建桶。
 - 自定义模式里显式写 `no_check_bucket=false`，rclone 会恢复上传前检查并按需建桶的行为。
 
 ## 公开访问地址与 302 直链
@@ -110,35 +110,47 @@ WebDAV 渠道没有公开访问地址，表单里也不显示「允许 302 直�
 
 ## 常见报错与排查
 
-「测试连接」的失败原因，以及渠道状态列「异常」的悬停原因，都按底层错误的特征翻译成下表的提示（不区分大小写，自上而下匹配第一条）；无法归类的错误显示原文的前 200 个字符，「测试连接」还会抹掉其中的凭证（rclone 标记为密码或敏感信息的参数值）。
+### 失败原因
 
-| 提示 | 底层错误特征 | 排查 |
+「测试连接」的失败原因、渠道状态列「异常」的悬停原因、图片详情里副本的补齐失败原因，都是同一种结论：按底层错误的特征归类（不区分大小写，自上而下取第一条命中），归类说明后面的括号里附根因原文。根因原文是错误链最内层的错误，多为服务商或网络库的英文原文，已抹除凭证（rclone 标记为密码或敏感信息的参数值），截断到 200 个字符。无法归类时只显示根因原文。
+
+接口里这份结论是 `{reason, detail}`（渠道的结论另有失败环节 `stage`，见[渠道与容灾](./index.mdx)）。各归类如下，界面说明随界面语言显示：
+
+| 归类（`reason`）| 界面说明 | 底层错误特征 | 排查 |
+|---|---|---|---|
+| `s3_auth` | 「认证失败（403）：检查 Access Key / Secret Key 及其权限」| `InvalidAccessKeyId`、`SignatureDoesNotMatch`、`StatusCode: 403`（只出现在 S3 类后端）| 核对密钥是否抄错、是否已吊销，以及是否对这个桶有读、写、删权限。只读密钥会在深探测的写入环节失败 |
+| `app_credentials` | 「应用凭证无效：检查 Client ID / Client Secret 是否与签发令牌的应用一致」| `invalid_client`、`unauthorized_client` | 网盘渠道的「应用 Client ID」「应用 Client Secret」填错，或与签发令牌的应用不是同一个 |
+| `grant_revoked` | 「授权已失效：刷新令牌被拒绝，请重新授权」| `invalid_grant` | 令牌被吊销或已过期太久，在编辑表单里点「重新授权」 |
+| `auth` | 「认证失败（401）：检查用户名、密码或授权令牌是否有效」| `401 Unauthorized`、`unauthenticated`、`InvalidAuthenticationToken` | WebDAV 的用户名或密码（坚果云要用应用密码），或网盘的授权令牌 |
+| `forbidden` | 「无访问权限（403）：检查账号对存储位置的权限」| `AccessDenied`、`access denied`、`403 Forbidden` | 非 S3 后端的账号对存储目录没有读、写或删权限 |
+| `bucket_missing` | 「存储桶不存在或无权访问：检查桶名与凭证权限」| `NoSuchBucket`、`no such bucket`、`BucketRegionError` | 核对桶名（COS 带 APPID 后缀）；确认桶已建好 |
+| `region_mismatch` | 「区域不匹配：检查所选区域与存储桶实际所在区域」| `PermanentRedirect`、`AuthorizationHeaderMalformed` | 区域或端点与桶的实际区域不一致 |
+| `dns` | 「无法解析服务端点域名：检查 endpoint 配置」| `no such host`、`server misbehaving` | 端点拼写错误，或服务器 DNS 不通 |
+| `connect` | 「无法连接服务端点：检查 endpoint 地址与端口」| `connection refused`、`connection reset` | 端口、协议或防火墙问题 |
+| `tls` | 「TLS 证书校验失败：检查端点证书或改用正确协议」| `certificate`、`x509`、`tls handshake` | 自签证书，或把 `http` 服务写成了 `https` |
+| `timeout` | 「连接超时：检查端点地址与网络连通性」| 超时（含探测自身的 10 / 20 秒超时）| 网络不通或服务过慢 |
+| `permission` | 「存储路径无写入权限：检查目录权限」| `permission denied`、`read-only file system` | `local` 渠道的目录权限；容器内以 uid 65532 运行时，挂载目录要对它可写 |
+| `probe_mismatch` | 「探测对象读回内容不一致：存储端改写或截断了对象」| 深探测读回的内容与写入的不同 | 存储服务在静默改写或截断对象，检查它的设置，或换一个存储服务 |
+| `config_unreadable` | 「渠道配置无法解密：主密钥与写入配置时的不同」| 装载时渠道配置解不开 | 换回写入配置时的主密钥 |
+| `no_source` | 「没有可读的源副本」| 补齐副本时没有可读的源副本 | 只出现在副本上：持有就绪副本的渠道都不健康或读失败 |
+| `channel_unavailable` | 「目标渠道未装载」| 补齐的目标渠道未装载 | 只出现在副本上：先处理该渠道的装载失败 |
+| `object_missing` | 「对账发现渠道上缺少该对象」| 每日对账发现记为就绪的副本在渠道上已不存在 | 只出现在副本上：副本已改回待补齐，会重新复制 |
+| `unclassified` | 只显示根因原文 | 以上都不命中 | 按原文排查 |
+
+### 保存表单时的拒绝
+
+下列错误在提交时直接返回 400，不会建出渠道（渠道名重复与清理中渠道为 409）。接口的错误响应是 `{code, error, params}`：`code` 是稳定的错误码，`error` 是服务端的中文文案，`params` 填文案里的占位符；后台按错误码与参数显示当前界面语言的文案。
+
+| 错误码 | 服务端文案 | 原因 |
 |---|---|---|
-| `认证失败(403):检查 Access Key / Secret Key 及其权限` | `InvalidAccessKeyId`、`SignatureDoesNotMatch`、`StatusCode: 403`（只出现在 S3 类后端）| 核对密钥是否抄错、是否已吊销，以及是否对这个桶有读、写、删权限。只读密钥会在深探测的写入环节失败 |
-| `应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致` | `invalid_client`、`unauthorized_client` | 网盘渠道的「应用 Client ID」「应用 Client Secret」填错，或与签发令牌的应用不是同一个 |
-| `授权已失效:刷新令牌被拒绝,请重新授权` | `invalid_grant` | 令牌被吊销或已过期太久，在编辑表单里点「重新授权」 |
-| `认证失败(401):检查用户名、密码或授权令牌是否有效` | `401 Unauthorized`、`unauthenticated`、`InvalidAuthenticationToken` | WebDAV 的用户名或密码（坚果云要用应用密码），或网盘的授权令牌 |
-| `无访问权限(403):检查账号对存储位置的权限` | `AccessDenied`、`access denied`、`403 Forbidden` | 非 S3 后端的账号对存储目录没有读、写或删权限 |
-| `存储桶不存在或无权访问:检查桶名与凭证权限` | `NoSuchBucket`、`no such bucket`、`BucketRegionError` | 核对桶名（COS 带 APPID 后缀）；确认桶已建好 |
-| `区域不匹配:检查所选区域与存储桶实际所在区域` | `PermanentRedirect`、`AuthorizationHeaderMalformed` | 区域或端点与桶的实际区域不一致 |
-| `无法解析服务端点域名:检查 endpoint 配置` | `no such host`、`server misbehaving` | 端点拼写错误，或服务器 DNS 不通 |
-| `无法连接服务端点:检查 endpoint 地址与端口` | `connection refused`、`connection reset` | 端口、协议或防火墙问题 |
-| `TLS 证书校验失败:检查端点证书或改用正确协议` | `certificate`、`x509`、`tls handshake` | 自签证书，或把 `http` 服务写成了 `https` |
-| `连接超时:检查端点地址与网络连通性` | 超时（含探测自身的 10 / 20 秒超时）| 网络不通或服务过慢 |
-| `存储路径无写入权限:检查目录权限` | `permission denied`、`read-only file system` | `local` 渠道的目录权限；容器内以 uid 65532 运行时，挂载目录要对它可写 |
-
-保存表单时的常见拒绝（提交即返回，不会建出渠道）：
-
-| 提示 | 原因 |
-|---|---|
-| `渠道参数非法: 字段 <key> 必填` | 模板必填字段为空，字段以 key 指称，如 `渠道参数非法: 字段 bucket 必填` |
-| `渠道名已存在` | 渠道名重复（409）|
-| `渠道参数非法: 初始化 rclone 后端 "…": …` | 用填写的参数试构造后端失败，原因见冒号后的 rclone 原文 |
-| `渠道参数非法: 未知的 rclone 后端 "…"` | 自定义模式的驱动名拼错 |
-| `渠道参数非法: 配置键 "…" 非法(仅允许字母数字下划线)` | 自定义参数的键含其他字符（如 `-`）|
-| `渠道参数非法: 自动创建存储桶失败(…)` | 打开了「自动创建存储桶」，但凭证没有建桶权限 |
-| `渠道参数非法: 后端 "onedrive" 授权后的配置失败: …` | 新授权的 OneDrive 渠道选定驱动器时向服务商查询失败 |
-| `渠道参数非法: 字段 "…" 不是凭证,不能沿用已存值` | 掩码值 `__imgyoung_secret_keep__` 填在了不属于凭证的参数上 |
-| `渠道参数非法: 字段 "…" 无已存原值可保留,请重新填写` | 提交了掩码值，但该参数在已存配置里没有值 |
+| `channel_field_required` | `渠道参数非法: 字段 {field} 必填` | 模板必填字段为空，字段以 key 指称，如 `field` 为 `bucket` |
+| `channel_name_exists` | `渠道名已存在` | 渠道名重复（409）|
+| `channel_backend_failed` | `渠道参数非法: 后端初始化失败: {detail}` | 用填写的参数试构造后端失败，或新授权的 OneDrive 渠道选定驱动器时向服务商查询失败；`params` 里另有归类 `reason`，`detail` 是根因原文 |
+| `channel_unknown_backend` | `渠道参数非法: 未知的后端 {driver}` | 自定义模式的驱动名拼错 |
+| `channel_config_key_invalid` | `渠道参数非法: 配置键 {key} 非法(仅允许字母数字下划线)` | 自定义参数的键含其他字符（如 `-`）|
+| `channel_bucket_failed` | `自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): {detail}` | 打开了「自动创建存储桶」，但凭证没有建桶权限 |
+| `channel_keep_not_secret` | `渠道参数非法: 字段 {field} 不是凭证,不能沿用已存值` | 掩码值 `__imgyoung_secret_keep__` 填在了不属于凭证的参数上 |
+| `channel_keep_no_value` | `渠道参数非法: 字段 {field} 无已存原值可保留,请重新填写` | 提交了掩码值，但该参数在已存配置里没有值 |
+| `channel_deleting` | `渠道正在清理中,不能修改或探测` | 渠道已在「清理中」（409）|
 
 渠道已建好但状态为「异常」时，改好配置后在行菜单点「重新探测」，它会立即做一次深探测并刷新状态。探测与状态的规则见[渠道与容灾](./index.mdx)。

@@ -23,7 +23,7 @@ ImgYoung 的配置只分两类，没有配置文件，命令行参数只有 `-ve
 | 环境变量 | 默认 | 格式 | 作用 |
 |---|---|---|---|
 | `IMGYOUNG_LISTEN` | `:8721` | `host:port`，如 `127.0.0.1:8721`、`[::1]:8721`；端口为 `0` 时由系统分配 | HTTP 监听地址。ImgYoung 只提供明文 HTTP，HTTPS 由前置反向代理负责 |
-| `IMGYOUNG_DATA_DIR` | `data`（相对进程工作目录）| 目录路径；不存在时以 `0750` 权限创建 | 数据目录：元数据库 `imgyoung.db`、主密钥文件 `master.key`、内置 local 渠道的 `blobs/`、衍生图缓存 `variants/` |
+| `IMGYOUNG_DATA_DIR` | `data` | 目录路径；相对路径在启动时按当时的工作目录解析成绝对路径；不存在时以 `0750` 权限创建 | 数据目录：元数据库 `imgyoung.db`、主密钥文件 `master.key`、内置 local 渠道的 `blobs/`、衍生图缓存 `variants/`。「引导配置」卡片与导出的 local 渠道 rclone 配置里都是解析后的绝对路径 |
 | `IMGYOUNG_MASTER_KEY` | 空（使用数据目录下的 `master.key`）| 64 个十六进制字符（32 字节）| 主密钥。每次启动与库里记下的主密钥指纹核对，缺失或不符即拒绝启动，见下文[主密钥](#主密钥) |
 | `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | 逗号分隔的 CIDR 或单个 IP；单个 IP 视为只含该地址的网段 | 连接对端落在这些网段时才采信 `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`，见[反向代理与 HTTPS](./operations/reverse-proxy.mdx) |
 | `IMGYOUNG_METRICS_ALLOW` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | 同上 | 客户端地址落在这些网段时才放行 `/metrics`，其余一律 403，见[监控与告警](./operations/monitoring.mdx) |
@@ -97,12 +97,12 @@ sudo systemctl restart imgyoung
 
 运营配置在后台「设置」页修改，只有管理员可见。除「空 Referer 放行」在「防盗链」页签外，其余都在「运行配置」页签，按下列分组排列。
 
-- 保存时只提交改动过的项；整组改动一起校验，任一项非法则全部不生效并提示原因。
+- 保存时只提交改动过的项；整组改动一起校验，有任一项非法即整组拒绝，一项都不生效。错误码与参数见下文[非法取值的错误码](#非法取值的错误码)。
 - 生效即时：各后台循环的间隔改动后立刻按新值重新计时，不必等旧周期走完。
 - 每次实际生效的修改记一条审计日志（动作 `config.update`，含新旧值），Cloudflare API Token 只记「已配置 / 空」。
 - 同样的操作可经 `GET /api/admin/config/full` 与 `PUT /api/admin/config` 完成，请求体为「配置键 → 新值」的 JSON 对象，见[接口参考](./api/admin-overview.mdx)。
 - 时长类配置项统一以 100 年（876000 小时）为上限，按各自单位折算：天 36500、小时 876000、分钟 52,560,000、秒 3,153,600,000、
-  毫秒 3,153,600,000,000，超出即拒绝保存。下表「取值」一栏对这些项只写下限。
+  毫秒 3,153,600,000,000，超出即拒绝保存（`setting_too_large`）。下表「取值」一栏对这些项只写下限。
 
 下表的「默认」即出厂值，「取值」即服务端校验的范围。
 
@@ -111,7 +111,7 @@ sudo systemctl restart imgyoung
 | 配置键 | 界面名称 | 默认 | 取值 | 说明 |
 |---|---|---|---|---|
 | `access_mode` | 访问模式 | `proxy` | `proxy` / `redirect` | `proxy`：图片由本服务从渠道读出后输出，渠道读取失败即时换下一个渠道。`redirect`：原图请求 302 到允许直链的渠道，重定向带 `Cache-Control: no-store`，见 [CDN](./operations/cdn.mdx) |
-| `base_url` | 对外站点地址 | 空 | 带协议的站点根地址，如 `https://img.example.com`；保存时去掉末尾的 `/` | 空则按请求推导。经 CDN 或反代后对外域名与请求域名不一致、启用 CDN 缓存清除、网盘渠道一键授权时必须设置，见[反向代理与 HTTPS](./operations/reverse-proxy.mdx) |
+| `base_url` | 对外站点地址 | 空 | 空，或 `http` / `https` 的站点根地址，如 `https://img.example.com`，不带路径、查询参数、片段与账号信息；保存时先去掉末尾的 `/` 再校验 | 空则按请求推导。经 CDN 或反代后对外域名与请求域名不一致、启用 CDN 缓存清除、网盘渠道一键授权时必须设置，见[反向代理与 HTTPS](./operations/reverse-proxy.mdx) |
 | `min_success` | 最少同步副本 | `1` | ≥ 1 | 上传返回成功前必须同步写入的渠道数；健康渠道写不够这么多份时上传失败（503）|
 | `encrypt_new_channels` | 新渠道默认加密 | 关 | 开 / 关 | 新建渠道未显式选择时是否加密；加密属性在渠道创建时确定，之后不可改 |
 
@@ -190,6 +190,29 @@ Zone ID、API Token 与 `base_url` 三项齐备才启用缓存清除，分组标
 | `allow_empty_referer` | 空 Referer 放行 | 开 | 开 / 关 | Referer 白名单非空时，不带 Referer 的请求（地址栏直接打开、下载工具）是否放行。白名单为空时防盗链整体不启用，本项不起作用 |
 
 白名单规则本身在同一页签增删，不属于 `settings` 表。
+
+### 非法取值的错误码
+
+`PUT /api/admin/config` 拒绝保存时返回 400 与统一的错误信封：`code` 是下表的错误码，`error` 是填好参数的中文说明，`params` 的值都是字符串，`params.key` 指明是哪个配置键。一次提交里有多项非法时只报第一项。例如把备份间隔设得超过 100 年：
+
+```json
+{"code":"setting_too_large","error":"backup_interval_hours=900000 非法: 不可超过 876000","params":{"key":"backup_interval_hours","max":"876000","value":"900000"}}
+```
+
+| 错误码 | 原因 | `params` |
+|---|---|---|
+| `setting_unknown` | 没有这个配置键 | `key` |
+| `setting_type` | 取值类型不对，如开关项给了字符串 | `key` |
+| `setting_positive` | 需要正整数 | `key`、`value` |
+| `setting_non_negative` | 不可为负 | `key`、`value` |
+| `setting_too_large` | 超过上限（时长类配置的 100 年上限）| `key`、`value`、`max` |
+| `setting_range` | 不在允许的区间内（质量档、WebP 速度权衡）| `key`、`value`、`min`、`max` |
+| `setting_option` | 不是可选值之一（访问模式、EXIF 默认档、目标格式）| `key`、`value`、`options` |
+| `setting_url` | 不是带主机的 `http` / `https` 地址（告警 Webhook 地址）| `key`、`value` |
+| `setting_site_root` | 不是站点根地址：须为带主机的 `http` / `https` 地址，不带路径、查询参数、片段与账号信息（对外站点地址）| `key`、`value` |
+| `setting_empty` | 不可为空（目标格式）| `key` |
+
+请求体本身不是非空的「配置键 → 新值」JSON 对象时，返回 400 与错误码 `settings_body_invalid`。管理后台按错误码与参数用当前界面语言显示说明。
 
 ## 主密钥
 

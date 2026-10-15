@@ -48,7 +48,7 @@ the response sets the session cookie, and the body is `{"user": {…}, "csrf_tok
 <Step>
 
 **Call endpoints**: send the cookie with every request. `GET`, `HEAD`, and `OPTIONS` need only the cookie; every other
-method must also echo the `csrf_token` from login in the `X-CSRF-Token` header, or it gets a 403.
+method must also echo the `csrf_token` from login in the `X-CSRF-Token` header, or it gets a 403 with the error code `csrf_rejected`.
 
 </Step>
 <Step>
@@ -83,7 +83,7 @@ Session details:
 - While an account still has the factory default password, its session can use only three endpoints: log out
   (`POST /api/admin/auth/logout`), view itself (`GET /api/admin/me`, where `must_change_password` is true), and change
   the password (`PUT /api/admin/me/password`). Every other admin endpoint, including admin console uploads and issuing
-  tokens, returns 403 `须先修改出厂默认密码` (change the factory default password first) until the password is
+  tokens, returns 403 with the error code `must_change_password` until the password is
   changed and you log in again.
 
 Channels, users, hotlink protection, audit log, alerts, backups, export, and moderation endpoints, as well as reading
@@ -91,14 +91,33 @@ the full runtime settings and changing them, are for administrators only; a regu
 
 ## Error format
 
-Apart from the exception below, every error response is a JSON envelope:
+Apart from the exception below, every error response is a JSON envelope like this one (a file too large for the
+default per-image limit of 50 MB):
 
 ```json
-{ "error": "存储渠道暂不可用,请稍后重试" }
+{
+  "code": "upload_too_large",
+  "error": "文件超过大小上限(50 MB)",
+  "params": { "max": "50" }
+}
 ```
 
-`error` is a user-facing description (in Chinese) with no internal details or credentials. Programs should branch on
-the HTTP status code, not parse this text.
+| Field | Meaning |
+|---|---|
+| `code` | The error code, a stable machine-readable identifier. The same kind of failure always has the same code, regardless of changes to the wording; programs should branch on it rather than parse the text in `error` |
+| `error` | Message text in Chinese, with the parameters already filled in and no internal details or credentials. Callers that do not go through the admin console (PicGo, ShareX, curl, and so on) can show it to users directly |
+| `params` | Values for the placeholders in the message, keyed by placeholder name, all strings; omitted for error codes without parameters |
+
+There are about 100 error codes; the complete list is the `ErrorCode` enum in the API contract. Expand the `Error`
+schema in any endpoint's error responses in this reference to see it, or look it up in `/api/openapi.yaml`. The admin
+console renders the message in the current interface language from `code` and `params`, so the English interface never
+shows Chinese error messages.
+
+- When a runtime setting fails validation, the code tells which kind of failure it is (`setting_unknown`,
+  `setting_type`, `setting_positive`, `setting_non_negative`, `setting_too_large`, `setting_range`, `setting_option`,
+  `setting_url`, `setting_site_root`, `setting_empty`), and `params.key` is the offending setting key.
+- In the result of a batch image deletion, each item in `failed` has the same `code` / `error` / `params` plus the
+  image `id`; a failed cloud drive authorization result (`GET /api/admin/channel-oauth/result`) carries the same three fields.
 
 **The exception is the image access endpoints** (`/i/{id}`, `/o/{user_id}/{object_key}`, and the admin console
 preview `/api/admin/images/{id}/thumb`): apart from 400 for invalid processing parameters, which is still a JSON

@@ -1,6 +1,6 @@
 ---
 title: 上传客户端
-description: 把 PicGo、PicList、Typora、aws CLI、rclone 等客户端接到 ImgYoung：自定义 Web 图床与 S3 协议两种方式。
+description: 把 PicGo、PicList、ShareX、Typora、aws CLI、rclone 等客户端接到 ImgYoung：自定义 Web 图床与 S3 协议两种方式。
 ---
 
 ## 两种接入方式
@@ -8,7 +8,7 @@ description: 把 PicGo、PicList、Typora、aws CLI、rclone 等客户端接到 
 | | 自定义 Web 图床 | S3 协议 |
 |---|---|---|
 | 客户端要求 | 能发 multipart POST，并从 JSON 响应里取出链接 | 能向 S3 兼容存储上传（SigV4 签名、路径风格寻址）|
-| 典型客户端 | PicGo + web-uploader 插件、PicList「高级自定义」 | PicList 内置 AWS S3、PicGo + s3 插件、aws CLI、rclone、各语言 S3 SDK |
+| 典型客户端 | PicGo + web-uploader 插件、PicList「高级自定义」、ShareX 自定义上传器 | PicList 内置 AWS S3、PicGo + s3 插件、aws CLI、rclone、各语言 S3 SDK |
 | 凭证 | 上传 Token 明文 | 由上传 Token 派生的 access key 与 secret |
 | 返回的链接 | 服务端返回 `/i/<短ID>` | 客户端按对象键自己拼 `/o/<用户 id>/<对象键>` |
 | 有效期 | 可以逐次指定 | 只用默认值 |
@@ -23,6 +23,9 @@ description: 把 PicGo、PicList、Typora、aws CLI、rclone 等客户端接到 
 
 客户端把图片以 multipart 表单 POST 到 `/api/upload`，文件字段名 `file`，带 `Authorization: Bearer <Token>` 请求头，从响应 JSON 的 `url` 字段取链接。
 `url` 是绝对地址；经反向代理或 CDN 后对外域名与请求域名不一致时，先在「设置 → 运行配置」填好「对外站点地址」，否则返回的链接会是反代内侧的地址。
+
+上传失败时响应体是错误信封 `{code, error, params}`，例如 `{"code":"upload_quota_exceeded","error":"存储配额已满"}`，详见 [上传](./upload.mdx#错误响应)。
+`error` 是填好参数的中文原因，能读取响应正文的客户端可以直接把它展示出来，比如下文 ShareX 配置里的 `ErrorMessage`；自己写的脚本请按 `code` 判断失败种类，不要匹配文字。
 
 ### PicGo：web-uploader 插件
 
@@ -42,6 +45,29 @@ PicGo 本身没有通用的 HTTP 上传方式，需要在插件设置里搜索�
 
 PicList 内置的「高级自定义」图床填写同样的内容：接口地址 `https://img.example.com/api/upload`，请求方式 POST，文件字段名 `file`，请求头 `Authorization: Bearer imgy_xxxxxxxx`，返回值中链接的 JSON 路径 `url`。
 需要指定有效期或 EXIF 档位时，把 `ttl`、`exif_policy` 作为附加的表单字段。
+
+### ShareX：自定义上传器
+
+把下面的内容保存为 `imgyoung.sxcu`，在 ShareX 的自定义上传器设置里导入，再把图片上传目标选为它：
+
+```json title="imgyoung.sxcu"
+{
+  "Version": "17.0.0",
+  "Name": "ImgYoung",
+  "DestinationType": "ImageUploader",
+  "RequestMethod": "POST",
+  "RequestURL": "https://img.example.com/api/upload",
+  "Headers": {
+    "Authorization": "Bearer imgy_xxxxxxxx"
+  },
+  "Body": "MultipartFormData",
+  "FileFormName": "file",
+  "URL": "{json:url}",
+  "ErrorMessage": "{json:error}"
+}
+```
+
+`URL` 从响应里取图片链接；`ErrorMessage` 取错误信封里的 `error`，上传失败时 ShareX 显示的就是中文原因，如 `文件超过大小上限(50 MB)`。
 
 ## S3 协议
 
@@ -109,7 +135,7 @@ ImgYoung 在 `/s3` 下实现了 S3 协议的一个子集，凭证就是上传 To
 | 对象暂时读不出来（GET / HEAD）| 503 | `ServiceUnavailable` |
 | 其余服务端错误 | 500 | `InternalError` |
 
-上传并发已满或频率超限时返回 429，响应体是 JSON 而不是 XML。
+上传并发已满或频率超限时返回 429，响应体是 JSON 错误信封（错误码 `upload_busy` 或 `upload_rate_limited`）而不是 XML。
 
 ### 对象键别名 [#object-key-aliases]
 

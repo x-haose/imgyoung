@@ -23,7 +23,7 @@ Runtime settings live in the metadata database, so they are included in metadata
 | Variable | Default | Format | Purpose |
 |---|---|---|---|
 | `IMGYOUNG_LISTEN` | `:8721` | `host:port`, e.g. `127.0.0.1:8721` or `[::1]:8721`; port `0` lets the OS pick one | HTTP listen address. ImgYoung only speaks plain HTTP; HTTPS is the reverse proxy's job |
-| `IMGYOUNG_DATA_DIR` | `data` (relative to the working directory) | Directory path; created with mode `0750` if missing | Data directory: metadata database `imgyoung.db`, master key file `master.key`, the built-in local channel's `blobs/`, and the variant cache `variants/` |
+| `IMGYOUNG_DATA_DIR` | `data` | Directory path; a relative path is resolved against the working directory at startup into an absolute one; created with mode `0750` if missing | Data directory: metadata database `imgyoung.db`, master key file `master.key`, the built-in local channel's `blobs/`, and the variant cache `variants/`. The "Bootstrap configuration" card and exported local channel rclone configs show the resolved absolute path |
 | `IMGYOUNG_MASTER_KEY` | Empty (use `master.key` in the data directory) | 64 hex characters (32 bytes) | Master key. Checked against the master key fingerprint stored in the database at every start; a missing or mismatched key refuses to start. See [Master key](#master-key) below |
 | `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Comma-separated CIDRs or single IPs; a single IP means a network containing only that address | `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host` are honored only when the connecting peer is in one of these networks; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
 | `IMGYOUNG_METRICS_ALLOW` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Same as above | Clients in these networks may read `/metrics`; everyone else gets 403. See [Monitoring & alerts](./operations/monitoring.mdx) |
@@ -98,12 +98,12 @@ sudo systemctl restart imgyoung
 
 Runtime settings are edited under **Settings** in the admin console, which only administrators can see. **Allow empty referer** sits on the **Hotlink protection** tab; everything else is on the **Runtime settings** tab, grouped as below.
 
-- Saving submits only the fields you changed. All changes are validated together; if any value is invalid, none of them is applied and the reason is shown.
+- Saving submits only the fields you changed. All changes are validated together; if any value is invalid, the whole set is rejected and none of it is applied. See [Error codes for invalid values](#error-codes-for-invalid-values) below for the codes and parameters.
 - Changes apply immediately: background loops re-time themselves with a new interval right away instead of finishing the old one.
 - Every applied change writes an audit log entry (action `config.update`, with old and new values); the Cloudflare API token is only recorded as set or empty.
 - The same operations are available as `GET /api/admin/config/full` and `PUT /api/admin/config`, whose body is a JSON object mapping setting keys to new values; see the [API reference](./api/admin-overview.mdx).
 - Every duration setting is capped at 100 years (876,000 hours), converted to its own unit: 36,500 days, 876,000 hours,
-  52,560,000 minutes, 3,153,600,000 seconds, or 3,153,600,000,000 milliseconds; larger values are rejected on save. The
+  52,560,000 minutes, 3,153,600,000 seconds, or 3,153,600,000,000 milliseconds; larger values are rejected on save (`setting_too_large`). The
   "Valid values" column below lists only the lower bound for these settings.
 
 "Default" below is the factory value; "Valid values" is what the server accepts.
@@ -113,7 +113,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 | Key | UI label | Default | Valid values | Notes |
 |---|---|---|---|---|
 | `access_mode` | Access mode | `proxy` | `proxy` / `redirect` | `proxy`: images are read from a channel and served by ImgYoung; a failed read moves on to the next channel immediately. `redirect`: original-image requests get a 302 to a channel that allows direct links, sent with `Cache-Control: no-store`; see [CDN](./operations/cdn.mdx) |
-| `base_url` | Public site address | Empty | Site root with scheme, e.g. `https://img.example.com`; a trailing `/` is removed on save | Empty means it is derived from each request. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
+| `base_url` | Public site address | Empty | Empty, or an `http` / `https` site root such as `https://img.example.com`, with no path, query, fragment or user info; a trailing `/` is removed before the check | Empty means it is derived from each request. Required when the public domain differs from what reaches ImgYoung through a CDN or proxy, for CDN cache purging, and for one-click cloud drive authorization; see [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx) |
 | `min_success` | Minimum synced replicas | `1` | ≥ 1 | Channels that must be written synchronously before an upload succeeds; if the healthy channels cannot provide that many, the upload fails with 503 |
 | `encrypt_new_channels` | Encrypt new channels by default | Off | On / off | Whether a new channel is encrypted when the form does not choose explicitly; encryption is fixed when the channel is created |
 
@@ -192,6 +192,29 @@ Purging is enabled only when the Zone ID, the API token and `base_url` are all s
 | `allow_empty_referer` | Allow empty referer | On | On / off | With a non-empty Referer allowlist, whether requests without a Referer (typed into the address bar, download tools) are allowed. With an empty allowlist hotlink protection is off and this has no effect |
 
 The allowlist rules are managed on the same tab and are not part of the `settings` table.
+
+### Error codes for invalid values
+
+When `PUT /api/admin/config` refuses to save, it returns 400 with the standard error envelope: `code` is one of the codes below, `error` is the Chinese message with its parameters filled in, and `params` holds string values, with `params.key` naming the setting. If one request contains several invalid values, only the first is reported. For example, a backup interval longer than 100 years:
+
+```json
+{"code":"setting_too_large","error":"backup_interval_hours=900000 非法: 不可超过 876000","params":{"key":"backup_interval_hours","max":"876000","value":"900000"}}
+```
+
+| Code | Cause | `params` |
+|---|---|---|
+| `setting_unknown` | No such setting key | `key` |
+| `setting_type` | Wrong value type, e.g. a string for an on/off setting | `key` |
+| `setting_positive` | A positive integer is required | `key`, `value` |
+| `setting_non_negative` | Must not be negative | `key`, `value` |
+| `setting_too_large` | Above the limit (the 100-year cap on duration settings) | `key`, `value`, `max` |
+| `setting_range` | Outside the allowed range (quality levels, WebP speed trade-off) | `key`, `value`, `min`, `max` |
+| `setting_option` | Not one of the allowed values (access mode, default EXIF policy, target formats) | `key`, `value`, `options` |
+| `setting_url` | Not an `http` / `https` address with a host (alert webhook URL) | `key`, `value` |
+| `setting_site_root` | Not a site root: it must be an `http` / `https` address with a host and no path, query, fragment or user info (public site address) | `key`, `value` |
+| `setting_empty` | Must not be empty (target formats) | `key` |
+
+If the request body is not a non-empty JSON object mapping setting keys to new values, the response is 400 with code `settings_body_invalid`. The admin console uses the code and parameters to show the message in the current UI language.
 
 ## Master key
 

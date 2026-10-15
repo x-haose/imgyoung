@@ -13,8 +13,9 @@ description: The two forms of image links, caching and conditional requests, on-
 Both links are public and need no sign-in. They share one serving pipeline: hotlink protection, access counting, on-demand processing and failover reads across channels are identical.
 
 - A missing, deleted or expired image returns 404 (plain text). Links stop working as soon as an image is deleted, and an image with a lifetime returns 404 the moment it expires, without waiting for the cleanup sweep to reclaim it; see [Lifecycle and deduplication](./lifecycle.mdx).
-- If no healthy channel holds a usable replica, or every candidate channel fails to read, the response is 503 (plain text).
-- If looking up the image metadata fails (a database fault), the response is 500 (plain text) and can be retried later.
+- If no healthy channel holds a usable replica, or every candidate channel fails to read, the response is 503 (plain text `渠道暂不可用`, channel temporarily unavailable).
+- If looking up the image metadata fails (a database fault), the response is 500 (plain text `服务内部错误`, internal error) and can be retried later.
+- A `w` or `format` outside the allowed tiers returns 400 with a JSON error envelope, error code `variant_params_invalid`; see [Uploading](./upload.mdx#error-responses).
 - GET and HEAD are supported. HEAD returns the same status and headers as GET without a body and is not counted as an access; when no on-demand processing is needed it does not read the object from the channel, while a HEAD request that needs processing still produces the variant.
 
 The full API definition is in [API reference: image access](../api/image-access.mdx).
@@ -142,7 +143,7 @@ Hotlink protection allows or rejects a request based on its `Referer` header. Ru
 - With rules:
   - With a `Referer`: the request is allowed only if its host matches a rule; a `Referer` that cannot be parsed counts as no match.
   - Without a `Referer` (typed into the address bar, download tools, pages with `Referrer-Policy: no-referrer`): the **Allow empty referer** switch decides, which is the `allow_empty_referer` setting, on out of the box.
-- Rejected requests get 403 (plain text) and are not counted as accesses.
+- Rejected requests get 403 (plain text `禁止访问`, forbidden) and are not counted as accesses.
 
 Only the two public entrances, `/i/` and `/o/`, are covered. Thumbnails and previews in the admin console and S3 GetObject are not affected.
 

@@ -1,6 +1,6 @@
 ---
 title: Upload clients
-description: Connect PicGo, PicList, Typora, the aws CLI, rclone and other clients to ImgYoung, either as a custom web uploader or over the S3 protocol.
+description: Connect PicGo, PicList, ShareX, Typora, the aws CLI, rclone and other clients to ImgYoung, either as a custom web uploader or over the S3 protocol.
 ---
 
 ## Two ways to connect
@@ -8,7 +8,7 @@ description: Connect PicGo, PicList, Typora, the aws CLI, rclone and other clien
 | | Custom web uploader | S3 protocol |
 |---|---|---|
 | Client needs to | Send a multipart POST and read the link from a JSON response | Upload to S3-compatible storage (SigV4 signing, path-style addressing) |
-| Typical clients | PicGo with the web-uploader plugin, PicList "advanced custom" uploader | PicList's built-in AWS S3, PicGo with the s3 plugin, aws CLI, rclone, S3 SDKs |
+| Typical clients | PicGo with the web-uploader plugin, PicList "advanced custom" uploader, ShareX custom uploader | PicList's built-in AWS S3, PicGo with the s3 plugin, aws CLI, rclone, S3 SDKs |
 | Credential | The upload token itself | Access key and secret derived from an upload token |
 | Returned link | The server returns `/i/<short ID>` | The client builds `/o/<user id>/<object key>` from the key |
 | Lifetime | Can be set per upload | Defaults only |
@@ -23,6 +23,9 @@ Credentials always come from the **Upload tokens** page of the console. Issue on
 
 The client POSTs the image as a multipart form to `/api/upload` with the file in the `file` field and an `Authorization: Bearer <token>` header, then takes the link from the `url` field of the JSON response.
 `url` is absolute. If your public domain behind a reverse proxy or CDN differs from the host the server sees, set **Public site address** under **Settings → Runtime settings** first; otherwise the returned link points at the address inside the proxy.
+
+A failed upload returns the error envelope `{code, error, params}`, for example `{"code":"upload_quota_exceeded","error":"存储配额已满"}`; see [Uploading](./upload.mdx#error-responses).
+`error` is the Chinese reason with its parameters filled in, so any client that can read the response body can show it directly, such as `ErrorMessage` in the ShareX config below; your own scripts should branch on `code` rather than match the text.
 
 ### PicGo: the web-uploader plugin
 
@@ -42,6 +45,29 @@ Write the values in `customBody` as strings.
 
 Fill in PicList's built-in "advanced custom" uploader with the same information: endpoint `https://img.example.com/api/upload`, method POST, file field name `file`, header `Authorization: Bearer imgy_xxxxxxxx`, and `url` as the JSON path of the link in the response.
 To set a lifetime or EXIF policy, add `ttl` and `exif_policy` as extra form fields.
+
+### ShareX: custom uploader
+
+Save the following as `imgyoung.sxcu`, import it in ShareX's custom uploader settings, and pick it as the image upload destination:
+
+```json title="imgyoung.sxcu"
+{
+  "Version": "17.0.0",
+  "Name": "ImgYoung",
+  "DestinationType": "ImageUploader",
+  "RequestMethod": "POST",
+  "RequestURL": "https://img.example.com/api/upload",
+  "Headers": {
+    "Authorization": "Bearer imgy_xxxxxxxx"
+  },
+  "Body": "MultipartFormData",
+  "FileFormName": "file",
+  "URL": "{json:url}",
+  "ErrorMessage": "{json:error}"
+}
+```
+
+`URL` takes the image link from the response; `ErrorMessage` takes `error` from the error envelope, so when an upload fails ShareX shows the Chinese reason, such as `文件超过大小上限(50 MB)`.
 
 ## S3 protocol
 
@@ -109,7 +135,7 @@ Errors come back as S3-style XML, and clients act on the `Code`:
 | Object temporarily unreadable (GET / HEAD) | 503 | `ServiceUnavailable` |
 | Any other server error | 500 | `InternalError` |
 
-When the upload concurrency gate is full or the rate limit is hit, the response is 429 with a JSON body rather than XML.
+When the upload concurrency gate is full or the rate limit is hit, the response is 429 with a JSON error envelope (error code `upload_busy` or `upload_rate_limited`) rather than XML.
 
 ### Object key aliases
 

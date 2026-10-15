@@ -59,7 +59,38 @@ A successful upload returns 200:
   When the request arrives through a trusted reverse proxy, `X-Forwarded-Proto` and `X-Forwarded-Host` are used instead (which proxies are trusted is set by the `IMGYOUNG_TRUSTED_PROXIES` environment variable).
   If the public domain behind a reverse proxy or CDN differs from the host in the request, you must set `base_url`; see [Configuration](../configuration.mdx) and [Reverse proxy](../operations/reverse-proxy.mdx).
 
-Errors come back as `{"error": "…"}`; see [Status codes](#status-codes). The full API definition is in [API reference: data plane](../api/data-plane.mdx).
+Failures return an error envelope, described in [Error responses](#error-responses) below. The full API definition is in [API reference: data plane](../api/data-plane.mdx).
+
+### Error responses
+
+The upload endpoints and every JSON API of the admin console return the same envelope on failure (the plain-text errors of the image access entrances and the XML errors of the S3 protocol are the exceptions). For example, uploading an oversized file with the default 50 MB per-image limit returns:
+
+```json
+{
+  "code": "upload_too_large",
+  "error": "文件超过大小上限(50 MB)",
+  "params": { "max": "50" }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `code` | Error code, a stable machine-readable identifier. The same failure always has the same code, regardless of how the message is worded |
+| `error` | Chinese message with `params` already filled in. Callers that do not go through the admin console (PicGo, ShareX, curl and so on) can show it to people as is |
+| `params` | Values for the placeholders in the message, keyed by placeholder name, all strings; omitted for error codes without parameters |
+
+- Scripts should branch on `code` (together with the HTTP status), not match the text of `error`.
+- The admin console renders the message for `code` and `params` in the current interface language, so the English interface shows English.
+- Upload-related codes are listed in [Status codes](#status-codes) further down; the complete list is the `ErrorCode` schema in the API reference, for example [API reference: data plane](../api/data-plane.mdx).
+
+curl prints the body of a failed response by default (unless you pass `-f` / `--fail`), so the envelope shows up directly while debugging:
+
+```bash title="Terminal"
+curl -sS -H "Authorization: Bearer imgy_xxxxxxxx" \
+  -F "file=@huge.png" \
+  https://img.example.com/api/upload
+# {"code":"upload_too_large","error":"文件超过大小上限(50 MB)","params":{"max":"50"}}
+```
 
 ## Idempotency keys
 
@@ -157,18 +188,27 @@ All of these are changed under **Settings → Runtime settings** and take effect
 
 ### Status codes
 
-| Status | Meaning |
-|---|---|
-| 200 | Success (an idempotency key hit is also 200) |
-| 400 | Missing `file` field or unreadable body; image content cannot be decoded (including animated WebP); an invalid `ttl` or `exif_policy`, or one longer than 1 KiB; for URL fetches, an invalid body, a scheme other than http/https, or a destination that is not a public address |
-| 401 | Token missing, invalid, revoked or expired, or its owner is disabled |
-| 403 | Token lacks the upload scope, or the storage quota is full |
-| 413 | The file is over the per-image size limit, or the request body is over the limit + 64 KiB (for URL fetches, the remote content is too large) |
-| 415 | Not a supported image format |
-| 422 | Resolution exceeds the pixel budget |
-| 429 | The concurrency gate is full or the user is uploading too fast; retry after `Retry-After` |
-| 502 | URL fetch only: the remote server returned non-2xx, redirected too often, timed out or could not be reached |
-| 503 | No healthy channel to write to, or fewer synchronous copies than the minimum succeeded |
+| Status | Error code | Meaning |
+|---|---|---|
+| 200 | — | Success (an idempotency key hit is also 200) |
+| 400 | `upload_no_file` | Missing `file` field, or the body is not a valid multipart form |
+| 400 | `upload_invalid_image` | Image content cannot be decoded (including animated WebP) |
+| 400 | `upload_ttl_invalid` | Invalid `ttl` |
+| 400 | `upload_exif_policy` | Invalid `exif_policy` |
+| 400 | `upload_field_too_long` | `ttl` or `exif_policy` longer than 1 KiB |
+| 400 | `url_body_invalid` / `url_required` / `url_scheme` / `url_blocked` | URL fetch: invalid body, empty `url`, a scheme other than http/https, or a destination that is not a public address |
+| 401 | `upload_token_invalid` | Token missing, invalid, revoked or expired, or its owner is disabled |
+| 403 | `upload_token_scope` | Token lacks the upload scope |
+| 403 | `upload_quota_exceeded` | Storage quota full |
+| 413 | `upload_too_large` | The file is over the per-image size limit, or the request body is over the limit + 64 KiB |
+| 413 | `url_too_large` | URL fetch: the remote content is over the per-image size limit |
+| 415 | `upload_unsupported_type` | Not a supported image format |
+| 422 | `upload_too_many_pixels` | Resolution exceeds the pixel budget |
+| 429 | `upload_busy` | The upload concurrency gate is full; retry after `Retry-After` |
+| 429 | `upload_rate_limited` | The user is uploading too fast; retry after `Retry-After` |
+| 500 | `internal` | Internal server error |
+| 502 | `url_too_many_redirects` / `url_bad_status` / `url_fetch_failed` | URL fetch: too many redirects, the remote server returned non-2xx, or it timed out or could not be reached |
+| 503 | `upload_unavailable` | No healthy channel to write to, or fewer synchronous copies than the minimum succeeded |
 
 ## EXIF handling
 

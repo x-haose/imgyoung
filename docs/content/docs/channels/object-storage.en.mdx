@@ -13,10 +13,6 @@ After **New channel** on the Storage channels page, you first pick a type:
 
 Templates expose only the fields that matter and preset the rest. Saving merges them into the full backend parameters; editing reverses the merge to refill the form, including fields that were folded into the endpoint (account ID, region).
 
-<Callout type="info" title="Error messages are in Chinese">
-Template names, field labels and help texts follow the admin console language. Error messages come from the server and are always in Chinese; the tables below quote them as they appear, with a translation.
-</Callout>
-
 ## Object storage templates
 
 | Template | Fields to fill | Set by the template |
@@ -49,7 +45,7 @@ The reason: by default rclone attempts to create the bucket before uploading. Sc
 So:
 
 - **Create the bucket in your provider's console first**, then create the channel.
-- If your credentials can create buckets and you want ImgYoung to do it, turn on **Create the bucket automatically** in the create form. ImgYoung then tries to create the bucket once (an existing bucket is fine); if that fails the whole creation is aborted with `自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): ` plus the cause ("creating the bucket failed; check the key can create buckets, or create it in the console and turn this off"). The switch only exists at creation, and **Test connection** never creates a bucket.
+- If your credentials can create buckets and you want ImgYoung to do it, turn on **Create the bucket automatically** in the create form. ImgYoung then tries to create the bucket once (an existing bucket is fine); if that fails the whole creation is aborted with 400 and error code `channel_bucket_failed` ("Creating the bucket failed (check that the key may create buckets, or create the bucket in the console and turn this option off): " followed by the root cause). The switch only exists at creation, and **Test connection** never creates a bucket.
 - In custom mode, setting `no_check_bucket=false` explicitly restores rclone's check-and-create-if-missing before uploads.
 
 ## Public URL and 302 direct links
@@ -118,35 +114,47 @@ WebDAV channels have no public URL, and the form hides **Allow 302 direct links*
 
 ## Common errors
 
-Failure reasons from **Test connection**, and the reason shown when hovering **Unhealthy** in the Status column, are translated from the underlying error into the hints below (case-insensitive, first match from the top). An error that matches nothing is shown as its first 200 characters; **Test connection** additionally scrubs credentials from it (the values of parameters rclone flags as passwords or sensitive).
+### Failure reasons
 
-| Hint shown | Underlying error contains | What to check |
+The failure reason from **Test connection**, the reason shown when hovering **Unhealthy** in the Status column, and a replica's sync failure in the image details are all the same kind of conclusion: the underlying error is classified by its text (case-insensitive, first match from the top), and the root cause follows the classification in parentheses. The root cause is the innermost error of the error chain, usually the provider's or network library's own English text, with credentials scrubbed (the values of parameters rclone flags as passwords or sensitive) and cut to 200 characters. If nothing matches, only the root cause is shown.
+
+In the API this conclusion is `{reason, detail}` (a channel's conclusion also carries the stage, see [Channels and failover](./index.mdx)). The classifications, with the text the console shows in English:
+
+| Classification (`reason`) | Console text | Underlying error contains | What to check |
+|---|---|---|---|
+| `s3_auth` | "Authentication failed (403): check the Access Key / Secret Key and their permissions" | `InvalidAccessKeyId`, `SignatureDoesNotMatch`, `StatusCode: 403` (S3-type backends only) | Mistyped or revoked keys, or missing read, write or delete permission on the bucket. Read-only keys fail at the write step of the deep check |
+| `app_credentials` | "Invalid app credentials: check that the Client ID / Client Secret belong to the app that issued the token" | `invalid_client`, `unauthorized_client` | A drive channel's app client ID or secret is wrong, or belongs to a different app than the one that issued the token |
+| `grant_revoked` | "Authorization expired: the refresh token was rejected. Authorize again" | `invalid_grant` | The token was revoked or has lapsed; use **Authorize again** in the edit form |
+| `auth` | "Authentication failed (401): check the username, password or authorization token" | `401 Unauthorized`, `unauthenticated`, `InvalidAuthenticationToken` | The WebDAV user name or password (Nutstore needs an app password), or a drive's authorization token |
+| `forbidden` | "Access denied (403): check the account’s permissions on the storage location" | `AccessDenied`, `access denied`, `403 Forbidden` | On non-S3 backends, the account lacks read, write or delete permission on the folder |
+| `bucket_missing` | "The bucket does not exist or is not accessible: check the bucket name and credential permissions" | `NoSuchBucket`, `no such bucket`, `BucketRegionError` | The bucket name (COS needs the APPID suffix); whether the bucket exists |
+| `region_mismatch` | "Region mismatch: check that the selected region matches the bucket’s region" | `PermanentRedirect`, `AuthorizationHeaderMalformed` | The region or endpoint does not match the bucket's actual region |
+| `dns` | "Cannot resolve the endpoint host: check the endpoint setting" | `no such host`, `server misbehaving` | A typo in the endpoint, or DNS on the server |
+| `connect` | "Cannot connect to the endpoint: check its address and port" | `connection refused`, `connection reset` | Port, scheme or firewall |
+| `tls` | "TLS certificate verification failed: check the endpoint certificate or use the right protocol" | `certificate`, `x509`, `tls handshake` | A self-signed certificate, or `https` used for an `http` service |
+| `timeout` | "Connection timed out: check the endpoint address and network connectivity" | Timeouts, including the check's own 10 s / 20 s limits | Network reachability or a very slow service |
+| `permission` | "No write permission on the storage path: check the directory permissions" | `permission denied`, `read-only file system` | Folder permissions of a `local` channel; in the container image the process runs as uid 65532, so mounted folders must be writable by it |
+| `probe_mismatch` | "The probe object read back differently: the storage rewrote or truncated it" | The deep check read back something other than what it wrote | The storage service silently rewrites or truncates objects; check its settings or use another service |
+| `config_unreadable` | "The channel settings cannot be decrypted: the master key differs from the one they were written with" | The channel configuration cannot be decrypted while loading | Switch back to the master key the configuration was written with |
+| `no_source` | "No readable source replica" | No readable source replica while syncing | Replicas only: every channel holding a ready replica is unhealthy or failed to read |
+| `channel_unavailable` | "The target channel is not loaded" | The sync target channel is not loaded | Replicas only: fix the channel's load failure first |
+| `object_missing` | "Reconciliation found the object missing from the channel" | The daily reconciliation found a replica marked ready missing from the channel | Replicas only: the replica went back to pending and is copied again |
+| `unclassified` | Root cause only | Nothing above matches | Read the root cause |
+
+### Rejections when saving the form
+
+These errors come back with 400 as soon as you submit, and no channel is created (a duplicate name and a draining channel get 409). Error responses are `{code, error, params}`: `code` is a stable error code, `error` the server's Chinese message, and `params` fills the placeholders in it; the console shows the message for the code and parameters in its own language.
+
+| Error code | Console text | Cause |
 |---|---|---|
-| `认证失败(403):检查 Access Key / Secret Key 及其权限` — authentication failed (403) | `InvalidAccessKeyId`, `SignatureDoesNotMatch`, `StatusCode: 403` (S3-type backends only) | Mistyped or revoked keys, or missing read, write or delete permission on the bucket. Read-only keys fail at the write step of the deep check |
-| `应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致` — invalid app credentials | `invalid_client`, `unauthorized_client` | A drive channel's app client ID or secret is wrong, or belongs to a different app than the one that issued the token |
-| `授权已失效:刷新令牌被拒绝,请重新授权` — authorization expired | `invalid_grant` | The token was revoked or has lapsed; use **Authorize again** in the edit form |
-| `认证失败(401):检查用户名、密码或授权令牌是否有效` — authentication failed (401) | `401 Unauthorized`, `unauthenticated`, `InvalidAuthenticationToken` | The WebDAV user name or password (Nutstore needs an app password), or a drive's authorization token |
-| `无访问权限(403):检查账号对存储位置的权限` — access denied (403) | `AccessDenied`, `access denied`, `403 Forbidden` | On non-S3 backends, the account lacks read, write or delete permission on the folder |
-| `存储桶不存在或无权访问:检查桶名与凭证权限` — bucket missing or inaccessible | `NoSuchBucket`, `no such bucket`, `BucketRegionError` | The bucket name (COS needs the APPID suffix); whether the bucket exists |
-| `区域不匹配:检查所选区域与存储桶实际所在区域` — region mismatch | `PermanentRedirect`, `AuthorizationHeaderMalformed` | The region or endpoint does not match the bucket's actual region |
-| `无法解析服务端点域名:检查 endpoint 配置` — cannot resolve the endpoint | `no such host`, `server misbehaving` | A typo in the endpoint, or DNS on the server |
-| `无法连接服务端点:检查 endpoint 地址与端口` — cannot connect | `connection refused`, `connection reset` | Port, scheme or firewall |
-| `TLS 证书校验失败:检查端点证书或改用正确协议` — TLS verification failed | `certificate`, `x509`, `tls handshake` | A self-signed certificate, or `https` used for an `http` service |
-| `连接超时:检查端点地址与网络连通性` — timed out | Timeouts, including the check's own 10 s / 20 s limits | Network reachability or a very slow service |
-| `存储路径无写入权限:检查目录权限` — no write permission | `permission denied`, `read-only file system` | Folder permissions of a `local` channel; in the container image the process runs as uid 65532, so mounted folders must be writable by it |
-
-Common rejections when saving the form (returned immediately; no channel is created):
-
-| Message | Cause |
-|---|---|
-| `渠道参数非法: 字段 <key> 必填` | A required template field is empty; the field is named by its key, such as `渠道参数非法: 字段 bucket 必填` |
-| `渠道名已存在` | The channel name is taken (409) |
-| `渠道参数非法: 初始化 rclone 后端 "…": …` | Building the backend from these parameters failed; the rclone message after the colon gives the cause |
-| `渠道参数非法: 未知的 rclone 后端 "…"` | A misspelt backend name in custom mode |
-| `渠道参数非法: 配置键 "…" 非法(仅允许字母数字下划线)` | A custom parameter key contains other characters (such as `-`) |
-| `渠道参数非法: 自动创建存储桶失败(…)` | **Create the bucket automatically** is on but the key cannot create buckets |
-| `渠道参数非法: 后端 "onedrive" 授权后的配置失败: …` | Selecting the drive for a newly authorized OneDrive channel failed when querying the provider |
-| `渠道参数非法: 字段 "…" 不是凭证,不能沿用已存值` | The mask value `__imgyoung_secret_keep__` was put on a parameter that is not a credential |
-| `渠道参数非法: 字段 "…" 无已存原值可保留,请重新填写` | The mask value was submitted for a parameter that has no stored value |
+| `channel_field_required` | "Invalid channel settings: field `{field}` is required" | A required template field is empty; the field is named by its key, such as `bucket` |
+| `channel_name_exists` | "A channel with this name already exists" | The channel name is taken (409) |
+| `channel_backend_failed` | "Invalid channel settings: the backend failed to initialize: `{detail}`" | Building the backend from these parameters failed, or selecting the drive for a newly authorized OneDrive channel failed when querying the provider; `params` also carries the classification `reason`, and `detail` is the root cause |
+| `channel_unknown_backend` | "Invalid channel settings: unknown backend `{driver}`" | A misspelt backend name in custom mode |
+| `channel_config_key_invalid` | "Invalid channel settings: parameter key `{key}` is invalid (only letters, digits and underscores)" | A custom parameter key contains other characters (such as `-`) |
+| `channel_bucket_failed` | "Creating the bucket failed (check that the key may create buckets, or create the bucket in the console and turn this option off): `{detail}`" | **Create the bucket automatically** is on but the key cannot create buckets |
+| `channel_keep_not_secret` | "Invalid channel settings: field `{field}` is not a credential, so its stored value cannot be kept" | The mask value `__imgyoung_secret_keep__` was put on a parameter that is not a credential |
+| `channel_keep_no_value` | "Invalid channel settings: field `{field}` has no stored value to keep. Fill it in again" | The mask value was submitted for a parameter that has no stored value |
+| `channel_deleting` | "The channel is being cleaned up and cannot be changed or probed" | The channel is **Draining** (409) |
 
 Once a channel exists but shows **Unhealthy**, fix its configuration and use **Probe again** in the row menu: it runs a deep check right away and refreshes the status. The probe and status rules are in [Channels and failover](./index.mdx).

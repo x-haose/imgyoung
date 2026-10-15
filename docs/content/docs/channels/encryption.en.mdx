@@ -36,7 +36,7 @@ Encrypted channels carry an **Encrypted** badge in the list; the edit form only 
 
 ## Fixed at creation
 
-The encryption attribute is set at creation and cannot change afterwards. The API rejects changes with 409 and `加密属性创建后不可变(变更会造成密文/明文混存且不可恢复);如需调整请新建渠道并迁移数据` ("encryption cannot change after creation; create a new channel and migrate").
+The encryption attribute is set at creation and cannot change afterwards. The API rejects changes with 409 and error code `channel_encrypted_immutable` ("Encryption cannot change after creation (changing it would mix ciphertext and plaintext beyond recovery). Create a new channel and migrate the data instead").
 
 The reason: after flipping the switch, one channel would hold objects written under the old setting next to objects written under the new one, and the old objects could not be read back under the new setting.
 
@@ -60,7 +60,7 @@ Ciphertext cannot be handed to a browser, so encryption and **Allow 302 direct l
 
 - In the new-channel form, choosing **Force on** disables **Allow 302 direct links**; with direct links on, **Force on** cannot be selected.
 - The same applies when you choose **Inherit the global default** while the global default is on.
-- The API rejects a request asking for both with 400 and `渠道参数非法: 加密渠道不允许直链(密文无法直出)` ("invalid channel parameters: encrypted channels cannot serve direct links").
+- The API rejects a request asking for both with 400 and error code `channel_encrypted_direct_link` ("Invalid channel settings: encrypted channels cannot use direct links (ciphertext cannot be served directly)").
 - With `access_mode = redirect`, images on encrypted channels are always proxied.
 
 ## Where the keys come from
@@ -120,16 +120,16 @@ For an unencrypted channel read the backend remote plus the storage path, such a
 </Step>
 </Steps>
 
-The file exported for an encrypted R2 channel looks like this (the comments at the top are always in Chinese):
+The file exported for an encrypted R2 channel from the English console looks like this:
 
 ```ini title="imgyoung-channel-3.rclone.conf"
-# ImgYoung 渠道 "r2-backup"(ID 3,创建于 2026-10-15 08:00:00 UTC)的 rclone 配置。
-# 文件含渠道凭证与解密密码,与主密钥一样离线妥善保存。
+# rclone configuration of ImgYoung channel "r2-backup" (ID 3, created 2026-10-15 08:00:00 UTC).
+# This file contains the channel credentials and decryption passwords. Keep it offline and safe, like the master key.
 #
-# [imgyoung-3] 渠道后端(s3),参数与 ImgYoung 所用一致
-# [imgyoung-3-crypt] 渠道的加密层,指向渠道存储路径 imgyoung-3:my-bucket/imgyoung,经它读写的是明文
+# [imgyoung-3] channel backend (s3), parameters identical to those ImgYoung uses
+# [imgyoung-3-crypt] encryption layer of the channel, pointing at the channel storage path imgyoung-3:my-bucket/imgyoung; data read or written through it is plaintext
 #
-# 用法:
+# Usage:
 #   rclone --config imgyoung-channel-3.rclone.conf ls imgyoung-3-crypt:
 #   rclone --config imgyoung-channel-3.rclone.conf copy imgyoung-3-crypt: ./imgyoung-restore
 
@@ -151,9 +151,10 @@ remote = imgyoung-3:my-bucket/imgyoung
 ```
 
 - The backend remote has exactly the parameters ImgYoung hands to the backend, credentials and OAuth tokens included; password-type parameters are in rclone's encoded form, which rclone uses as is. s3 channels carry `no_check_bucket = true`.
-- For drive channels holding an OAuth token, the comments add two lines: rclone refreshes the token when using this file and writes it back into the file; with providers whose refresh tokens are single-use, such as Box, the file and an ImgYoung still using the channel invalidate each other's tokens, so do not use both at once. Also, once ImgYoung refreshes the token, the copy in the file is stale; with Box and the like its refresh token is invalidated and you need to export again.
-- A `local` channel's path is a path on the server (for the built-in local channel `<data dir>/blobs`, which is relative if the data directory is configured as a relative path); change it to the real location when using the file on another machine.
-- If a parameter value cannot be written into an rclone config file (a line break, for example), the export returns 422 and the error names only the remote and the parameter key. Every download is recorded in the audit log as "Export channel rclone config".
+- The comments come in English and Chinese. A download from the console follows the console language; calling `GET /api/admin/channels/{id}/rclone-config` directly takes the `lang` query parameter (`zh-CN` or `en`), falls back to the request's `Accept-Language`, and defaults to Chinese without that header. The `Content-Language` response header names the language; an invalid `lang` answers 400 with error code `lang_invalid`.
+- For drive channels holding an OAuth token, the comments add a short note: rclone refreshes the token when using this file and writes it back into the file; with providers whose refresh tokens are single-use, such as Box, the file and an ImgYoung still using the channel invalidate each other's tokens, so do not use both at once. Also, once ImgYoung refreshes the token, the copy in the file is stale; with Box and the like its refresh token is invalidated and you need to export again.
+- A `local` channel exports an absolute path on the server (for the built-in local channel `<data dir>/blobs`; a relative data directory is resolved against the working directory at startup); change it to the real location when using the file on another machine.
+- If a parameter value cannot be written into an rclone config file (a line break, for example), the export returns 422 with error code `channel_unrepresentable`; the error names only the remote and the parameter key, never the value. Every download is recorded in the audit log as "Export channel rclone config".
 
 ### Without an exported file: deriving by hand
 

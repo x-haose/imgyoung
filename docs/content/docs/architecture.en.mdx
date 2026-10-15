@@ -76,7 +76,7 @@ images (references) ──→ blobs (physical images) ──→ blob_channels (r
   source token, S3 object key alias, expiry time and access activity, the cold-image label, and cleanup exemption all
   live on the reference, not on the blob.
 - **`blob_channels`** records a blob's replica on a channel and doubles as the state of its replication task:
-  `pending → uploading → done / failed`, plus the attempt count and the last error.
+  `pending → uploading → done / failed`, plus the attempt count and the classification and root cause of the latest failure.
 
 Keeping the two layers apart puts each concern in its place: merging duplicates just repoints references at the
 surviving blob; TTL, cold images, and quotas are computed per reference; replicas, replication, and physical deletion work per blob.
@@ -92,13 +92,13 @@ The remaining tables:
 
 | Table | Contents |
 |---|---|
-| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest check result, whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
+| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest failure conclusion (stage, classification, and root cause; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
 | `variants` | Index of the variant cache: one row per blob and processing parameter set; the bytes live on local disk and are evicted LRU by last access |
 | `settings` | Runtime settings in a single-row wide table; each column's DEFAULT is the factory value. See [Configuration](./configuration.mdx) |
 | `users`, `tokens`, `sessions` | Users and quotas, upload tokens (hashes only), admin sessions (only a hash of the session id plus its bound CSRF token) |
 | `idempotency_keys` | Upload idempotency keys, scoped per user |
 | `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
-| `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records |
+| `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records (kind, target, Chinese description, and description parameters) |
 | `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. See [Master key](./configuration.mdx#master-key) |
 
 The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
@@ -250,11 +250,40 @@ channel being cleaned up (`drain_channel`: it first deletes the replica objects 
 remaining replica rows; then deletes the system objects under `_imgyoung/` on that channel, metadata snapshots included,
 along with deep check leftovers, leaving objects written by other programs alone; and finally deletes the channel record), and purging CDN caches
 (`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
-finally fails are reclaimed by reconciliation GC; the first time a drain job cannot delete an object, it writes the
-reason into the channel's check result and raises a `drain_failed` alert, then keeps retrying with backoff — once its
-attempts run out, reconciliation queues it again, so it never stops (the job's own timeout or a shutdown cancellation
-does not count as a failure); the way out is **Remove now** on the channel in the admin console (remote objects are kept). When a CDN purge finally
+finally fails are reclaimed by reconciliation GC; only when the same drain job still fails on its 4th attempt (about
+98 seconds after the first failure with River's default backoff) does it write the failure conclusion into the channel
+and raise a `drain_failed` alert — before that the channel just shows as being cleaned up, so a single network blip does
+not trigger an open/resolve pair of alerts. It keeps retrying with backoff; once its attempts run out, reconciliation
+queues a new job that counts from attempt 1 again, while the recorded conclusion and alert stay until the channel is
+cleaned out, so it never stops (the job's own timeout or a shutdown cancellation does not count as a failure); the way out is **Remove now** on the channel in the admin console (remote objects are kept). When a CDN purge finally
 fails, the edge cache expires once the CDN's own cache lifetime runs out.
+
+## Error codes and failure conclusions [#errors]
+
+The failure information the server hands to callers consists only of stable identifiers and parameters; the
+human-readable text lives in the admin console's dictionaries:
+
+- **API errors**: the envelope is `{code, error, params}`. Error codes are registered in one place,
+  `internal/infra/errcode`, each with a Chinese message template, and `error` is that template with `params` filled in;
+  an end-to-end test checks that the registered codes and the contract's `ErrorCode` enum match one to one. See the
+  [API reference](./api/index.mdx).
+- **Failure conclusions for channels and replicas**: a channel's `failure` is `{stage, reason, detail}` and a replica's
+  is `{reason, detail}`; both are null when the latest attempt succeeded or nothing has failed yet.
+  - `stage` is where it failed: `probe` (health check), `load` (building the driver from the configuration), or
+    `drain` (deleting objects from a channel being cleaned up).
+  - `reason` is the classification from the contract's `FailureReason` enum, determined from the text of the whole
+    error chain; it is `unclassified` when nothing matches.
+  - `detail` is the root cause verbatim: the innermost error in the chain, usually the provider's or network
+    library's English message, with credentials scrubbed and truncated to 200 characters.
+
+  Check results are only written to active channels, and drain failures only to channels being cleaned up, so the two never overwrite each other.
+- **Alerts**: `message` is a Chinese description, accompanied by `params` (string keys and values); webhook payloads carry the same.
+
+The server does not render text in the requester's language, the same approach as for channel template text: it only
+sends structure, and the text for each language is kept in the front-end dictionaries (`web/src/i18n/*/server.ts`),
+whose keys TypeScript type checking keeps in one-to-one correspondence with the contract's `ErrorCode`,
+`FailureReason`, and other enums, so a missing entry fails the build. The Chinese `error` and alert `message` remain
+for callers that bypass the admin console and for webhook receivers to show as they are.
 
 ## Periodic tasks
 

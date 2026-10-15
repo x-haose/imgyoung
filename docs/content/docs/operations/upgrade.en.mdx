@@ -86,6 +86,7 @@ Migrations are embedded in the binary and run automatically on every start, righ
 - the migration files are first checked against their checksum list, then every migration not yet applied runs in version order; when skipping several versions, all intermediate migrations are applied in turn. Applied versions are recorded in the `schema_revisions` table.
 - the replication subsystem's job queue tables are migrated at startup as well.
 - runtime settings added by a migration are filled in with their factory defaults; existing values are untouched.
+- the `b20_failure_reasons` migration adds a structured category to channel and replica failures: existing failures are recorded as `unclassified`, with the original sentence kept as the root-cause text, until the next check or replication attempt overwrites them.
 - if the database records a migration version this binary does not know (it was migrated by a newer version), startup is refused; see [Rolling back](#rolling-back) below.
 - if a migration fails, the process exits with an error naming the failing migration file. Roll back using your pre-upgrade snapshot (see below).
 

@@ -44,7 +44,7 @@ S3 协议面（`/s3/…`）按 AWS S3 规范实现，使用 XML 错误体，不�
 <Step>
 
 **调用接口**：每个请求都带上 cookie。`GET`、`HEAD`、`OPTIONS` 只需 cookie；其余方法还要以 `X-CSRF-Token` 头回传
-登录时拿到的 `csrf_token`，缺失或不匹配返回 403。
+登录时拿到的 `csrf_token`，缺失或不匹配返回 403，错误码 `csrf_rejected`。
 
 </Step>
 <Step>
@@ -76,19 +76,35 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 - 登录尝试过于频繁时返回 429。
 - 账号仍是出厂默认密码时，会话只能用三个接口：退出（`POST /api/admin/auth/logout`）、查看自己（`GET /api/admin/me`，
   其中 `must_change_password` 为 true）与改密（`PUT /api/admin/me/password`）。其余后台接口（包括后台上传、签发 Token）
-  一律返回 403 `须先修改出厂默认密码`，改密并重新登录后放行。
+  一律返回 403，错误码 `must_change_password`，改密并重新登录后放行。
 
 渠道、用户、防盗链、审计、告警、备份、导出、裁决，以及运营配置的全量读取与修改，仅管理员可用，普通用户调用返回 403。
 
 ## 错误格式
 
-除下面的例外，错误响应一律是 JSON 信封：
+除下面的例外，错误响应一律是这样的 JSON 信封（单图上限为出厂值 50 MB 时上传过大的文件）：
 
 ```json
-{ "error": "存储渠道暂不可用,请稍后重试" }
+{
+  "code": "upload_too_large",
+  "error": "文件超过大小上限(50 MB)",
+  "params": { "max": "50" }
+}
 ```
 
-`error` 是面向用户的描述（中文），不含内部细节与凭证。程序据 HTTP 状态码判断错误类别，不要解析这段文字。
+| 字段 | 含义 |
+|---|---|
+| `code` | 错误码，稳定的机器可读标识。同一种失败恒为同一个错误码，文案措辞变化不影响它；程序据它判断失败种类，不要解析 `error` 的文字 |
+| `error` | 中文文案，参数已经填入，不含内部细节与凭证。不经管理后台的调用方（PicGo、ShareX、curl 等）可以直接展示给用户 |
+| `params` | 文案里占位符的取值，键是占位符名，值都是字符串；没有参数的错误码省略这个字段 |
+
+错误码约有 100 个，完整列表是接口契约里的 `ErrorCode` 枚举：在本节任一接口的错误响应里展开 `Error` 结构即可看到，也可以在 `/api/openapi.yaml` 里查。
+管理后台按 `code` 与 `params` 用当前界面语言渲染文案，所以英文界面不会出现中文报错。
+
+- 运营配置校验失败时，错误码按失败种类细分（`setting_unknown`、`setting_type`、`setting_positive`、`setting_non_negative`、
+  `setting_too_large`、`setting_range`、`setting_option`、`setting_url`、`setting_site_root`、`setting_empty`），`params.key` 是出错的配置键。
+- 批量删除图片的结果里，`failed` 的每一项是同样的 `code` / `error` / `params`，另带图片 `id`；网盘授权结果
+  （`GET /api/admin/channel-oauth/result`）失败时同样带这三个字段。
 
 **例外是图片访问入口**（`/i/{id}`、`/o/{user_id}/{object_key}` 与后台预览图 `/api/admin/images/{id}/thumb`）：
 除了处理参数非法的 400 仍是 JSON 信封，其余错误响应都是纯文本：

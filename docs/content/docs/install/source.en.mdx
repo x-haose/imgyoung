@@ -8,7 +8,7 @@ description: Build the single binary with the admin console from source, and why
 | Tool | Version | Used for |
 |---|---|---|
 | Go | The version in the `go` directive of `go.mod`, or newer | Compiling the server |
-| Node.js | 22 | Building the admin console front end |
+| Node.js | 24 | Building the admin console front end |
 | pnpm | The `packageManager` field of `web/package.json`; after `corepack enable` that version is used automatically | Front-end dependencies and build |
 | [Task](https://taskfile.dev) | 3 | Build entry point; `task --list` lists every task |
 | Git | Any | Getting the source; the Go toolchain derives the version from Git when building |

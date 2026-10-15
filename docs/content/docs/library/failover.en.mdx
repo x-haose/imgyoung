@@ -126,7 +126,9 @@ Details of `DeepProbe`:
   bytes; random keys keep concurrent deep checks from interfering with each other.
 - The write and the read-back are bound by `ctx`. The delete uses its own 10-second timeout detached from `ctx`
   cancellation, so it still tries to clean up after a failed read-back or an expired `ctx`.
-- A failure in the write, the read-back, or the content comparison returns the corresponding error. If the read-back
+- A failure in the write, the read-back, or the content comparison returns the corresponding error. When the content
+  read back differs from what was written, the error matches `errors.Is(err, failover.ErrProbeMismatch)`, which means
+  the store is silently rewriting or truncating objects. If the read-back
   already failed, the delete result no longer affects the return value; if the read-back succeeded but the delete
   failed (with anything other than `driver.ErrNotFound`), the delete error is returned.
 - A failed delete leaves a temporary object behind. `failover.IsDeepProbeKey(key)` reports whether a key is a deep check temporary object, so your cleanup logic can claim and reclaim it.

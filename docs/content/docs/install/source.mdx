@@ -8,7 +8,7 @@ description: 从源码构建带管理后台的单二进制，以及构建参数�
 | 工具 | 版本 | 用途 |
 |---|---|---|
 | Go | `go.mod` 里 `go` 指令声明的版本或更新 | 编译服务端 |
-| Node.js | 22 | 构建管理后台前端 |
+| Node.js | 24 | 构建管理后台前端 |
 | pnpm | `web/package.json` 的 `packageManager` 字段；执行 `corepack enable` 后自动使用该版本 | 前端依赖与构建 |
 | [Task](https://taskfile.dev) | 3 | 构建入口，`task --list` 列出全部任务 |
 | Git | 任意 | 获取源码；构建时 Go 工具链从 Git 信息推导版本号 |

@@ -312,14 +312,29 @@ rclone --config rclone.conf ls mystore-crypt:
 
 The text is serialized with the same INI library rclone uses for its configuration files, then read back the way
 rclone reads it and checked. If a parameter cannot be written into the file as it is, the function returns an error
-wrapping `ErrUnrepresentable` instead of producing a file that is not equivalent to the driver. The error text names
-only the section and the parameter, never the value (the text itself is in Chinese):
+that matches `errors.Is(err, rclone.ErrUnrepresentable)` instead of producing a file that is not equivalent to the
+driver. The error names only the section and the parameter, never the value, which may be a credential (the text
+itself is in Chinese):
 
-| Situation | Error text |
-|---|---|
-| A parameter value contains a line break (`\n` or `\r`) | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>" 含换行` |
-| The generated text cannot be parsed the way rclone reads it | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
-| A parameter reads back as something other than its original value (leading or trailing whitespace, a `%(name)s` style reference, and so on) | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>"` |
+| Situation | Error returned | Error text |
+|---|---|---|
+| A parameter value contains a line break (`\n` or `\r`), or reads back as something other than its original value (leading or trailing whitespace, a `%(name)s` style reference, and so on) | `*rclone.UnrepresentableError`, with the section name in `Remote` and the parameter name in `Key` | `参数值无法写进 rclone 配置文件: 远端 "<section>" 的参数 "<parameter>"` |
+| The generated text cannot be parsed the way rclone reads it | An error wrapping `ErrUnrepresentable` | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
+
+To find out which parameter it was, extract the `*rclone.UnrepresentableError` with `errors.As`:
+
+```go
+text, err := rclone.ConfigFile(opts, "mystore", "mystore-crypt")
+var ue *rclone.UnrepresentableError
+switch {
+case errors.As(err, &ue):
+	log.Printf("parameter %s of remote %s cannot be written to the config file", ue.Key, ue.Remote)
+case errors.Is(err, rclone.ErrUnrepresentable):
+	// the text as a whole cannot be parsed the way rclone reads it
+case err != nil:
+	// unknown backend, invalid section name, or password encoding failure
+}
+```
 
 Other errors: an unknown backend name, a section name that breaks rclone's naming rules (only letters, digits, `_`,
 `-`, `.`, `+`, `@` and spaces), or a failure to encode a password.

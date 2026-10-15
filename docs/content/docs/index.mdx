@@ -31,7 +31,7 @@ ImgYoung 的设计目标是让图片链接长期可用：
 | 多用户与配额 | 管理员建号，每个用户有自己的图片、上传 Token 与存储配额，普通用户之间互相不可见。见 [管理后台](./guides/admin.mdx) |
 | 多种上传入口 | 后台拖拽或粘贴、HTTP 上传接口、URL 转存、S3 协议（PicList 内置的 AWS S3 图床直接可用，PicGo 装上 S3 插件后同样可用）、PicGo / PicList 自定义图床。见 [上传](./guides/upload.mdx) 与 [客户端接入](./guides/clients.mdx) |
 
-此外还有防盗链（Referer 白名单）、代理 / 302 两种访问模式、Cloudflare CDN 缓存清理、审计日志、告警 Webhook 与 Prometheus 指标。
+此外还有防盗链（Referer 白名单）、代理 / 302 两种访问模式、Cloudflare CDN 缓存清理、审计日志、告警 Webhook 与 Prometheus 指标。管理后台有简体中文与英文两种界面，服务端返回的错误、失败原因与告警描述都按界面语言显示；接口的错误响应带稳定的错误码，脚本据此判断失败种类。
 
 ## 适合与不适合
 

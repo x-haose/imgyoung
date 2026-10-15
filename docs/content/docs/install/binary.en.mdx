@@ -113,7 +113,7 @@ cd imgyoung
 
 Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away. `Ctrl+C` shuts it down gracefully.
 
-- **Data directory**: by default `data/` under the **current directory at startup**, not the directory of the binary. Start it from somewhere else and you get a fresh, empty instance. Pin the location with `IMGYOUNG_DATA_DIR`:
+- **Data directory**: by default `data/` under the **current directory at startup**, not the directory of the binary. Start it from somewhere else and you get a fresh, empty instance. A relative path is resolved against the working directory at startup into an absolute one; the "Bootstrap configuration" card at the bottom of "Settings → Runtime settings" shows the directory actually in use. Pin the location with `IMGYOUNG_DATA_DIR`:
 
   ```bash
   IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung

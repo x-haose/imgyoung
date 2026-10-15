@@ -96,7 +96,7 @@ A variable that is not set takes its default. Setting it to an empty string (or 
 
 ## Running as nonroot
 
-The image is based on `gcr.io/distroless/static-debian12:nonroot` and runs as the nonroot user (uid 65532). It contains no shell and no package manager, so `docker exec -it imgyoung sh` does not work. When you need to work on the data directly (for example editing the database to [reset a forgotten password](../operations/password-reset.mdx)), stop the container and mount the same volume into another container that has the tools.
+The image is based on `gcr.io/distroless/static-debian13:nonroot` and runs as the nonroot user (uid 65532). It contains no shell and no package manager, so `docker exec -it imgyoung sh` does not work. When you need to work on the data directly (for example editing the database to [reset a forgotten password](../operations/password-reset.mdx)), stop the container and mount the same volume into another container that has the tools.
 
 ## Behind a reverse proxy
 

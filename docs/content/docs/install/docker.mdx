@@ -96,7 +96,7 @@ docker run -d --name imgyoung --restart unless-stopped \
 
 ## 以 nonroot 运行
 
-镜像基于 `gcr.io/distroless/static-debian12:nonroot`，以 nonroot 用户（uid 65532）运行，里面没有 shell 和包管理器。所以 `docker exec -it imgyoung sh` 用不了；需要直接操作数据（比如 [忘记密码](../operations/password-reset.mdx) 时改数据库）的话，停掉容器，把同一个卷挂到另一个带工具的容器里操作。
+镜像基于 `gcr.io/distroless/static-debian13:nonroot`，以 nonroot 用户（uid 65532）运行，里面没有 shell 和包管理器。所以 `docker exec -it imgyoung sh` 用不了；需要直接操作数据（比如 [忘记密码](../operations/password-reset.mdx) 时改数据库）的话，停掉容器，把同一个卷挂到另一个带工具的容器里操作。
 
 ## 前面有反向代理
 

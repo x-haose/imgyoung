@@ -71,13 +71,22 @@ Alerts come from an evaluation loop that runs once at startup and then every **H
 
 | Kind | UI label | Target | Condition |
 |---|---|---|---|
-| `channel_unhealthy` | Channel unhealthy | Channel name | The latest health check of an in-service channel failed, or the channel failed to load; details give the reason |
+| `channel_unhealthy` | Channel unhealthy | Channel name | The latest health check of an in-service channel failed, or the channel failed to load; details give the failure (category explanation plus the root-cause text) |
 | `replication_failed` | Replication failed | Channel name | The channel has replicas whose replication failed; details give the count. Failed replicas are retried once the channel is healthy again |
 | `channel_quota_exceeded` | Channel over quota | Channel name | A **Channel usage alert threshold** is set and the channel's usage exceeds it |
-| `drain_failed` | Channel drain failed | Channel name | Opens on the first failure to delete an image replica or a system object this service wrote (metadata snapshots included) while a channel is being deleted with **Delete and purge**; details give the reason (the job's own timeout or a shutdown interruption does not count). Draining keeps retrying with backoff; once the channel is empty it is removed and the alert resolves. If the credentials are revoked or the bucket is gone, use **Remove now** on **Storage channels**; the remote objects are left as they are |
-| `backup_failed` | Backup failed | Empty | The most recent metadata backup failed: no healthy channel, the snapshot could not be taken, or some channels were not written. Details give the reason; when some channels failed it reads like `快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成: 渠道 "r2-main": 上传快照: …`, and the channels that were written keep the snapshot |
+| `drain_failed` | Channel drain failed | Channel name | Deleting an image replica or a system object this service wrote (metadata snapshots included) failed while a channel is being deleted with **Delete and purge**, and the same drain job is still failing on its 4th attempt (with the job queue's default backoff, about 98 seconds after the first failure); before that the channel only shows as **Draining**. The job's own timeout or a shutdown interruption does not count as a failure. Details give the failure. Draining keeps retrying: once the job runs out of attempts, reconciliation queues a new one that counts from its 1st attempt, and the open alert stays as it is until the channel is empty. The channel is then removed and the alert resolves. If the credentials are revoked or the bucket is gone, use **Remove now** on **Storage channels**; the remote objects are left as they are |
+| `backup_failed` | Backup failed | Empty | The most recent metadata backup failed: no healthy channel, the snapshot could not be taken, or some channels were not written. Details give the reason; when some channels failed it reads like `快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成(r2-main: i/o timeout)`, and the channels that were written keep the snapshot |
 
 `backup_failed` reflects the most recent backup in the current process, so after a restart it does not reappear until a backup fails again.
+
+Besides the Chinese description, every alert carries `params` (string keys and values); the admin console renders the description in the current UI language from the kind and these parameters:
+
+| Kind | `params` |
+|---|---|
+| `channel_unhealthy`, `drain_failed` | `stage`: where it failed — `probe` (health check), `load` (building the driver from the configuration) or `drain` (deleting objects from a channel being deleted); `reason`: the failure category, such as `s3_auth`, `grant_revoked`, `bucket_missing`, `dns`, `timeout` or `config_unreadable`, and `unclassified` when it cannot be categorized — see FailureReason in the [API reference](../api/admin-channels.mdx) for every value; `detail`: the root-cause text, usually the provider's or network library's English error, with credentials removed and cut to at most 200 characters. An empty object when the channel is unhealthy without ever having been checked |
+| `replication_failed` | `failed`: number of replicas whose replication failed |
+| `channel_quota_exceeded` | `bytes`: the channel's usage; `quota`: the alert threshold; both in bytes |
+| `backup_failed` | `code`: the error code — `no_healthy_channel` (no healthy channel), `backup_snapshot_failed` (the snapshot could not be taken; adds `detail`) or `backup_store_failed` (some channels were not written; adds `snapshot`, `failed`, `total` and `detail`, where `total` is the number of channels this round tried to write) |
 
 **Where to see them**: the **Alerts** card on the **Dashboard** lists open alerts; **History** leads to **Settings → Alert history**, which pages through every alert including resolved ones. Opening and resolving are also logged (`告警开启`, `告警恢复`).
 
@@ -89,7 +98,12 @@ With an `http` / `https` URL in **Settings → Runtime settings → Alerts & aud
 {
   "kind": "channel_unhealthy",
   "target": "r2-main",
-  "message": "连接超时",
+  "message": "连接超时:检查端点地址与网络连通性(i/o timeout)",
+  "params": {
+    "detail": "i/o timeout",
+    "reason": "timeout",
+    "stage": "probe"
+  },
   "status": "open",
   "opened_at": "2026-10-15 08:30:00"
 }
@@ -99,7 +113,12 @@ With an `http` / `https` URL in **Settings → Runtime settings → Alerts & aud
 {
   "kind": "channel_unhealthy",
   "target": "r2-main",
-  "message": "连接超时",
+  "message": "连接超时:检查端点地址与网络连通性(i/o timeout)",
+  "params": {
+    "detail": "i/o timeout",
+    "reason": "timeout",
+    "stage": "probe"
+  },
   "status": "resolved",
   "opened_at": "2026-10-15 08:30:00",
   "resolved_at": "2026-10-15 09:05:00"
@@ -111,6 +130,7 @@ With an `http` / `https` URL in **Settings → Runtime settings → Alerts & aud
 | `kind` | Alert kind, see the table above |
 | `target` | Alert target (a channel name); empty string for `backup_failed` |
 | `message` | Description from the latest evaluation (in Chinese) |
+| `params` | Description parameters with string keys and values, per kind as listed above; an empty object `{}` when there are none |
 | `status` | `open` or `resolved` |
 | `opened_at` | When the alert opened, UTC, formatted `YYYY-MM-DD HH:MM:SS` |
 | `resolved_at` | When it resolved, same format; present only when `status` is `resolved` |
@@ -137,9 +157,10 @@ Log lines worth knowing when troubleshooting:
 | `已生成主密钥文件,请立即备份……` | The data directory holds a brand-new database and no master key, so a new `master.key` was generated. Outside a first deployment this usually means the data directory path is wrong or the volume is not mounted |
 | `启动失败` with `err` containing `主密钥与数据库不符` or `找不到主密钥` | The database records a master key fingerprint and the current key does not match it, or `IMGYOUNG_MASTER_KEY` is unset and `master.key` does not exist. Put the original master key back and start again |
 | `CDN purge 已启用(Cloudflare)` / `CDN purge 未启用……` | Whether CDN cache purging was configured at startup |
-| `渠道装载失败,本渠道跳过,健康检查时重试` | A channel's configuration could not be decrypted or its driver could not be built; the channel shows as unhealthy with a reason starting with `装载失败:`, and loading is retried on every health check |
+| `渠道装载失败,本渠道跳过,健康检查时重试` | A channel's configuration could not be decrypted or its driver could not be built; the channel shows as unhealthy with the load stage as where it failed (`stage` is `load`), and loading is retried on every health check |
 | `告警开启` / `告警恢复` | An alert opened or resolved |
 | `元数据库快照已备份` | A snapshot was written to a channel; one line per channel, with fields `channel`, `key` and `bytes` |
+| `快照写入渠道失败` | A snapshot could not be written to a channel, with fields `channel`, `key` and `err`; the other channels are written as usual |
 | `启动备份未完成` / `定时备份未完成` | This backup round failed; `err` matches the details of the `backup_failed` alert |
 | `渠道对账完成` | Result of the daily reconciliation GC, with fields `objects`, `bytes`, `foreign` (objects with no record whose key is in another format or that predate the channel's binding time; counted, never deleted), `orphans_deleted` and `phantoms_requeued`; see [Backup & restore](./backup.mdx) |
 | `渠道已清理完毕并删除` | A channel deleted with **Delete and purge** has been emptied and its record removed; fields `objects` (image replicas deleted) and `system_objects` (system objects deleted, metadata snapshots and deep check leftovers included) |
