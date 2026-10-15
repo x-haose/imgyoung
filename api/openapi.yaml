@@ -19,46 +19,73 @@ info:
 servers:
   - url: /
     description: 与站点同源
-# x-slug:文档站接口参考页的路径段(/docs/api/<x-slug>),文档站构建时读取;新增标签须一并给出。
+# 标签名是英文标识;x-displayName 是中文显示名;description 为中文说明,x-description-en 为英文说明;
+# x-slug 是文档站接口参考页的路径段(/docs/api/<x-slug>)。文档站构建时读取这些字段,新增标签须全部给出。
 tags:
-  - name: 数据面
+  - name: Data plane
+    x-displayName: 数据面
     description: 上传 Token 认证的上传与 URL 转存
+    x-description-en: Uploads and URL fetch, authenticated with upload tokens
     x-slug: data-plane
-  - name: 图片访问
+  - name: Image access
+    x-displayName: 图片访问
     description: 公开的图片输出入口,受防盗链约束
+    x-description-en: Public image delivery, subject to hotlink protection
     x-slug: image-access
-  - name: 后台·会话
+  - name: Admin · Session
+    x-displayName: 后台·会话
     description: 登录、登出、当前用户与改密
+    x-description-en: Sign in, sign out, current user and password change
     x-slug: admin-session
-  - name: 后台·总览与配置
+  - name: Admin · Overview and settings
+    x-displayName: 后台·总览与配置
     description: 仪表盘与运行配置
+    x-description-en: Dashboard and runtime configuration
     x-slug: admin-overview
-  - name: 后台·上传
+  - name: Admin · Upload
+    x-displayName: 后台·上传
     description: 会话认证的后台上传,与数据面同一管道
+    x-description-en: Session-authenticated uploads through the same pipeline as the data plane
     x-slug: admin-upload
-  - name: 后台·图片
+  - name: Admin · Images
+    x-displayName: 后台·图片
     description: 图片列表、详情、修改与删除
+    x-description-en: Image list, details, edits and deletion
     x-slug: admin-images
-  - name: 后台·上传 Token
+  - name: Admin · Upload tokens
+    x-displayName: 后台·上传 Token
     description: 具名 Token 的签发、轮转、吊销与 S3 凭证
+    x-description-en: Issuing, rotating and revoking named upload tokens, and their S3 credentials
     x-slug: admin-tokens
-  - name: 后台·存储渠道
+  - name: Admin · Storage channels
+    x-displayName: 后台·存储渠道
     description: 渠道模板、创建、编辑、探测、删除与网盘授权
+    x-description-en: Channel templates, creation, editing, probing, deletion and cloud drive authorization
     x-slug: admin-channels
-  - name: 后台·用户
+  - name: Admin · Users
+    x-displayName: 后台·用户
     description: 多用户建号、配额与密码重置(仅管理员)
+    x-description-en: User accounts, quotas and password resets (admins only)
     x-slug: admin-users
-  - name: 后台·防盗链
+  - name: Admin · Hotlink protection
+    x-displayName: 后台·防盗链
     description: Referer 白名单(仅管理员)
+    x-description-en: Referer allowlist (admins only)
     x-slug: admin-referer
-  - name: 后台·裁决
+  - name: Admin · Review
+    x-displayName: 后台·裁决
     description: 相似重复与冷图待清理的裁决(仅管理员)
+    x-description-en: Review of similar duplicates and cold images awaiting cleanup (admins only)
     x-slug: admin-review
-  - name: 后台·运维
+  - name: Admin · Operations
+    x-displayName: 后台·运维
     description: 审计日志、告警、备份快照与元数据导出(仅管理员)
+    x-description-en: Audit log, alerts, backup snapshots and metadata export (admins only)
     x-slug: admin-operations
-  - name: 系统
+  - name: System
+    x-displayName: 系统
     description: 健康检查与接口文档
+    x-description-en: Health check and API document
     x-slug: system
 
 paths:
@@ -66,7 +93,7 @@ paths:
     get:
       operationId: health
       security: []
-      tags: [系统]
+      tags: [System]
       summary: 健康检查
       description: 进程存活即返回 200,不检查数据库与渠道。
       responses:
@@ -81,7 +108,7 @@ paths:
     get:
       operationId: openapiDocument
       security: []
-      tags: [系统]
+      tags: [System]
       summary: 接口文档
       description: 返回与运行中二进制一致的本文档。
       responses:
@@ -95,7 +122,7 @@ paths:
   /api/upload:
     post:
       operationId: upload
-      tags: [数据面]
+      tags: [Data plane]
       summary: 上传图片
       description: |
         multipart 表单上传。格式以 magic bytes 判定(jpeg / png / gif / webp),超过单图上限或像素预算即拒绝。
@@ -132,7 +159,7 @@ paths:
   /api/upload/url:
     post:
       operationId: uploadFromURL
-      tags: [数据面]
+      tags: [Data plane]
       summary: URL 转存
       description: 服务端抓取远端图片后走与直传相同的管道;仅允许公网 http/https 地址,远端声明的类型不参与判定。
       security:
@@ -175,7 +202,7 @@ paths:
     get:
       operationId: serveImage
       security: []
-      tags: [图片访问]
+      tags: [Image access]
       summary: 按短 ID 输出图片
       description: |
         计公开访问活跃度。带 `w` / `format` 参数时按需处理(宽度与格式须在后台允许的档位内);
@@ -207,7 +234,7 @@ paths:
     head:
       operationId: headImage
       security: []
-      tags: [图片访问]
+      tags: [Image access]
       summary: 按短 ID 查询图片响应头
       description: >-
         与 GET 同一处理,只返回响应头,不计访问。输出原图时不打开渠道对象;需要按需处理时与 GET 一样取或生成衍生图
@@ -251,7 +278,7 @@ paths:
     get:
       operationId: serveImageByObjectKey
       security: []
-      tags: [图片访问]
+      tags: [Image access]
       summary: 按 S3 对象键输出图片
       description: >-
         S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。
@@ -280,7 +307,7 @@ paths:
     head:
       operationId: headImageByObjectKey
       security: []
-      tags: [图片访问]
+      tags: [Image access]
       summary: 按 S3 对象键查询图片响应头
       description: >-
         与 GET 同一处理,只返回响应头,不计访问。输出原图时不打开渠道对象;需要按需处理时与 GET 一样取或生成衍生图
@@ -310,7 +337,7 @@ paths:
   /api/admin/auth/login:
     post:
       operationId: login
-      tags: [后台·会话]
+      tags: [Admin · Session]
       summary: 登录
       description: 校验凭证并下发会话 cookie(`imgyoung_session`,HttpOnly,SameSite=Lax,HTTPS 时带 Secure);响应体携带后续写请求要回传的 CSRF 令牌。按客户端地址与用户名限速。
       security: []
@@ -342,7 +369,7 @@ paths:
   /api/admin/auth/logout:
     post:
       operationId: logout
-      tags: [后台·会话]
+      tags: [Admin · Session]
       summary: 登出
       description: 删除服务端会话并清除 cookie,幂等。
       security:
@@ -359,7 +386,7 @@ paths:
   /api/admin/me:
     get:
       operationId: me
-      tags: [后台·会话]
+      tags: [Admin · Session]
       summary: 当前会话
       description: 返回会话主体与 CSRF 令牌,前端刷新后据此恢复登录态。
       security:
@@ -372,7 +399,7 @@ paths:
   /api/admin/me/password:
     put:
       operationId: changePassword
-      tags: [后台·会话]
+      tags: [Admin · Session]
       summary: 修改当前用户密码
       description: 校验旧密码;成功后该用户全部会话失效,须重新登录。新密码至少 8 个字符。
       security:
@@ -402,7 +429,7 @@ paths:
   /api/admin/dashboard:
     get:
       operationId: dashboard
-      tags: [后台·总览与配置]
+      tags: [Admin · Overview and settings]
       summary: 仪表盘
       description: 管理员得到全站概览,普通用户得到本人用量;以响应里是否有 `channels` 区分。
       security:
@@ -421,7 +448,7 @@ paths:
   /api/admin/config:
     get:
       operationId: runtimeConfig
-      tags: [后台·总览与配置]
+      tags: [Admin · Overview and settings]
       summary: 运行配置只读切面
       description: 全部登录用户可读:界面呈现阈值文案与档位所需的键,以及服务端构建信息;不含任何凭证。
       security:
@@ -439,7 +466,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     put:
       operationId: updateConfig
-      tags: [后台·总览与配置]
+      tags: [Admin · Overview and settings]
       summary: 修改运营配置
       description: |
         请求体为「配置键 → 新值」对象,只动出现的键,保存即热生效;未知键或任一取值非法整体拒绝,不做部分生效。
@@ -468,7 +495,7 @@ paths:
   /api/admin/config/full:
     get:
       operationId: fullConfig
-      tags: [后台·总览与配置]
+      tags: [Admin · Overview and settings]
       summary: 全量生效配置
       description: 引导配置只读展示、运营配置当前值(凭证字段抹空)与派生状态;仅管理员。
       security:
@@ -484,7 +511,7 @@ paths:
   /api/admin/upload:
     post:
       operationId: sessionUpload
-      tags: [后台·上传]
+      tags: [Admin · Upload]
       summary: 后台上传图片
       description: 与 `POST /api/upload` 同一管道与防护闸,归属为会话用户,来源 Token 记空。
       security:
@@ -520,7 +547,7 @@ paths:
   /api/admin/upload/url:
     post:
       operationId: sessionUploadFromURL
-      tags: [后台·上传]
+      tags: [Admin · Upload]
       summary: 后台 URL 转存
       description: 与 `POST /api/upload/url` 同一管道,归属为会话用户。
       security:
@@ -563,7 +590,7 @@ paths:
   /api/admin/images:
     get:
       operationId: listImages
-      tags: [后台·图片]
+      tags: [Admin · Images]
       summary: 图片列表
       description: 分页;普通用户只见自己的,管理员可按用户、Token、时间与关键词过滤。
       security:
@@ -609,7 +636,7 @@ paths:
   /api/admin/images/batch-delete:
     post:
       operationId: batchDeleteImages
-      tags: [后台·图片]
+      tags: [Admin · Images]
       summary: 批量删除图片
       description: 逐张按单删的权限与级联语义处理,单张失败不中断其余;他人图按不存在处理。单次至多 100 个 ID。
       security:
@@ -640,7 +667,7 @@ paths:
       - $ref: '#/components/parameters/imageID'
     get:
       operationId: getImage
-      tags: [后台·图片]
+      tags: [Admin · Images]
       summary: 图片详情
       description: 列表项字段之外附带各渠道的副本状态;普通用户查他人图一律 404,不泄露存在性。
       security:
@@ -656,7 +683,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     patch:
       operationId: patchImage
-      tags: [后台·图片]
+      tags: [Admin · Images]
       summary: 修改有效期或清理豁免
       description: 至少携带一个修改项。`ttl_hours` 对属主开放;`cleanup_exempt` 是冷图裁决的「保留」语义,仅管理员,普通用户携带即 403。
       security:
@@ -682,7 +709,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: deleteImage
-      tags: [后台·图片]
+      tags: [Admin · Images]
       summary: 删除图片
       description: 立即删除引用,渠道副本、衍生图与 CDN 缓存由清理任务级联;他人图一律 404。
       security:
@@ -701,7 +728,7 @@ paths:
   /api/admin/images/{id}/thumb:
     get:
       operationId: adminImageBytes
-      tags: [后台·图片]
+      tags: [Admin · Images]
       summary: 后台预览图
       description: 与 `/i/{id}` 同一处理管线,但走会话鉴权、不计公开访问活跃度、不受防盗链约束。
       security:
@@ -734,7 +761,7 @@ paths:
   /api/admin/tokens:
     get:
       operationId: listTokens
-      tags: [后台·上传 Token]
+      tags: [Admin · Upload tokens]
       summary: Token 列表
       description: 分页,缺省列本人的;管理员可带 `user_id` 查看指定用户的。只含识别前缀,无哈希无明文。
       security:
@@ -760,7 +787,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: issueToken
-      tags: [后台·上传 Token]
+      tags: [Admin · Upload tokens]
       summary: 签发 Token
       description: 为当前用户签发具名 Token;明文仅在本响应返回一次。
       security:
@@ -791,7 +818,7 @@ paths:
   /api/admin/tokens/{id}:
     delete:
       operationId: deleteToken
-      tags: [后台·上传 Token]
+      tags: [Admin · Upload tokens]
       summary: 删除已失效的 Token 记录
       description: 本人可删自己的,管理员可删任何人的;仍有效的 Token 返回 409,须先吊销。
       security:
@@ -819,7 +846,7 @@ paths:
   /api/admin/tokens/{id}/revoke:
     post:
       operationId: revokeToken
-      tags: [后台·上传 Token]
+      tags: [Admin · Upload tokens]
       summary: 吊销 Token
       description: 本人可吊销自己的,管理员可吊销任何人的;S3 协议面的同一凭证随之失效。
       security:
@@ -841,7 +868,7 @@ paths:
   /api/admin/tokens/{id}/rotate:
     post:
       operationId: rotateToken
-      tags: [后台·上传 Token]
+      tags: [Admin · Upload tokens]
       summary: 轮转 Token
       description: 同名新 Token 原子替换旧 Token,新明文仅此一次返回;仅限本人的有效 Token。
       security:
@@ -863,7 +890,7 @@ paths:
   /api/admin/tokens/{id}/s3-credential:
     post:
       operationId: tokenS3Credential
-      tags: [后台·上传 Token]
+      tags: [Admin · Upload tokens]
       summary: Token 的 S3 协议凭证
       description: 密钥由主密钥按 Token 派生、不落库,可随时重看;仅限本人的 Token。用 POST 是为了让凭证下发也过 CSRF 闸。
       security:
@@ -890,7 +917,7 @@ paths:
   /api/admin/channel-templates:
     get:
       operationId: channelTemplates
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 渠道模板清单
       description: 内置厂商模板:预填 rclone 后端与固定参数,只暴露必要字段;前端据此渲染表单。仅管理员。
       security:
@@ -909,7 +936,7 @@ paths:
   /api/admin/channels:
     get:
       operationId: listChannels
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 渠道列表
       description: 按优先级降序,含探测结果与副本水位,不含配置与凭证。仅管理员。
       security:
@@ -927,7 +954,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: createChannel
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 创建渠道
       description: 模板模式给 `template` + `inputs`,自定义模式给 `driver` + `config`。需授权的模板会先按后端配置流程补齐授权带出的参数(如 OneDrive 选定用户默认驱动器),向服务商查询失败返回 400。创建即深探测并落库,随后唤醒补齐管道回填存量;`encrypted` 创建时固化。仅管理员。
       security:
@@ -958,7 +985,7 @@ paths:
   /api/admin/channels/test:
     post:
       operationId: testChannel
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 测试连接
       description: 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回,补齐授权带出的参数时向服务商查询失败也在其中。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
       security:
@@ -989,7 +1016,7 @@ paths:
   /api/admin/channels/{id}:
     put:
       operationId: updateChannel
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 编辑渠道
       description: 配置整体替换;配置里原样回传的哨兵值表示保留原凭证,只在回读时掩码过的敏感参数上有效,落在其他键上返回 400。`encrypted` 不可变,试图变更返回 409。仅管理员。
       security:
@@ -1022,7 +1049,7 @@ paths:
                 $ref: '#/components/schemas/Error'
     delete:
       operationId: deleteChannel
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 删除渠道
       description: 持有任何图唯一副本的渠道拒绝删除(409)。`purge` 缺省为 true:只打清理中标记并入队排空任务,排空任务删除本服务写在该渠道上的对象——图片副本、`_imgyoung/` 下的系统对象(含元数据库快照)与深探测残留,别的程序写的对象不动——删完后渠道才消失(202);`purge=false` 立即删行,远端对象(含快照)保留(204)。仅管理员。
       security:
@@ -1057,7 +1084,7 @@ paths:
   /api/admin/channels/{id}/config:
     get:
       operationId: channelConfig
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 渠道配置的编辑视图
       description: 后端声明为密码或敏感信息的参数(rclone 选项元数据的 IsPassword / Sensitive,含访问密钥 ID、账号名、OAuth 应用凭证与令牌)以哨兵 `__imgyoung_secret_keep__` 掩码,明文永不下发;模板渠道附带还原出的表单字段值,同一口径掩码。仅管理员。
       security:
@@ -1082,7 +1109,7 @@ paths:
   /api/admin/channels/{id}/check:
     post:
       operationId: checkChannel
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 手动重检
       description: 对已有渠道执行深探测并返回探测后的完整描述;此前装载失败的渠道先重试装载,仍装不上则以装载失败作为结论。探测可能持续数十秒。仅管理员。
       security:
@@ -1104,7 +1131,7 @@ paths:
   /api/admin/channel-oauth/start:
     post:
       operationId: startChannelOAuth
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 发起网盘授权
       description: 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`,回调地址由它拼出并须与开放平台登记值逐字符一致;自建应用的 Client ID / Secret 是模板字段,随 `inputs` 提交并随渠道保存。编辑场景带 `channel_id`,字段里的哨兵还原为该渠道已存值后再发起。仅管理员。
       security:
@@ -1135,7 +1162,7 @@ paths:
   /api/admin/channel-oauth/callback:
     get:
       operationId: channelOAuthCallback
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 授权回调
       description: 由授权服务器把浏览器顶层跳转打回,换取令牌后交前端凭 `state` 领取;本端点返回提示页而非 JSON,令牌不写进页面。仅管理员会话。
       security:
@@ -1177,7 +1204,7 @@ paths:
   /api/admin/channel-oauth/result:
     get:
       operationId: channelOAuthResult
-      tags: [后台·存储渠道]
+      tags: [Admin · Storage channels]
       summary: 领取授权结果
       description: 结果只可领取一次;用户尚未完成授权时 `pending` 为 true。仅管理员。
       security:
@@ -1210,7 +1237,7 @@ paths:
   /api/admin/users:
     get:
       operationId: listUsers
-      tags: [后台·用户]
+      tags: [Admin · Users]
       summary: 用户列表
       description: 全部用户及其用量,不分页。仅管理员。
       security:
@@ -1228,7 +1255,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: createUser
-      tags: [后台·用户]
+      tags: [Admin · Users]
       summary: 创建用户
       description: 密码至少 8 个字符;`role` 缺省为 user。仅管理员。
       security:
@@ -1265,7 +1292,7 @@ paths:
       - $ref: '#/components/parameters/userID'
     put:
       operationId: updateUser
-      tags: [后台·用户]
+      tags: [Admin · Users]
       summary: 更新用户
       description: 全量语义,须给出全部键;内置管理员不可禁用或降级(403)。仅管理员。
       security:
@@ -1297,7 +1324,7 @@ paths:
                 $ref: '#/components/schemas/Error'
     delete:
       operationId: deleteUser
-      tags: [后台·用户]
+      tags: [Admin · Users]
       summary: 删除用户
       description: 名下仍有图片(409)、内置管理员(403)或当前登录用户(400)拒绝删除。仅管理员。
       security:
@@ -1324,7 +1351,7 @@ paths:
   /api/admin/users/{id}/password:
     post:
       operationId: resetUserPassword
-      tags: [后台·用户]
+      tags: [Admin · Users]
       summary: 重置用户密码
       description: 该用户全部会话失效;新密码至少 8 个字符。仅管理员。
       security:
@@ -1353,7 +1380,7 @@ paths:
   /api/admin/referer-whitelist:
     get:
       operationId: listRefererRules
-      tags: [后台·防盗链]
+      tags: [Admin · Hotlink protection]
       summary: 防盗链规则
       description: 白名单为空即不启用防盗链。仅管理员。
       security:
@@ -1371,7 +1398,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: addRefererRule
-      tags: [后台·防盗链]
+      tags: [Admin · Hotlink protection]
       summary: 添加规则
       description: 裸域(`example.com`,精确匹配)或子域通配(`*.example.com`,只匹配子域);添加即时生效。仅管理员。
       security:
@@ -1406,7 +1433,7 @@ paths:
   /api/admin/referer-whitelist/{id}:
     delete:
       operationId: deleteRefererRule
-      tags: [后台·防盗链]
+      tags: [Admin · Hotlink protection]
       summary: 删除规则
       description: 删除即时生效。仅管理员。
       security:
@@ -1435,7 +1462,7 @@ paths:
   /api/admin/dedup:
     get:
       operationId: listDedupCandidates
-      tags: [后台·裁决]
+      tags: [Admin · Review]
       summary: 疑似重复候选
       description: 后台相似扫描(pHash 汉明距离)发现的待裁决候选对,分页。仅管理员。
       security:
@@ -1457,7 +1484,7 @@ paths:
   /api/admin/dedup/{id}/merge:
     post:
       operationId: mergeDedupCandidate
-      tags: [后台·裁决]
+      tags: [Admin · Review]
       summary: 合并候选
       description: 保留指定的一方,另一方的引用并入;保留方必须是候选对中的一方。仅管理员。
       security:
@@ -1491,7 +1518,7 @@ paths:
   /api/admin/dedup/{id}/dismiss:
     post:
       operationId: dismissDedupCandidate
-      tags: [后台·裁决]
+      tags: [Admin · Review]
       summary: 忽略候选
       description: 该候选对不再提示。仅管理员。
       security:
@@ -1513,7 +1540,7 @@ paths:
   /api/admin/cleanup:
     get:
       operationId: listCleanup
-      tags: [后台·裁决]
+      tags: [Admin · Review]
       summary: 冷图待清理列表
       description: 超过冷图阈值未被公开访问的引用,分页。裁决走图片接口:保留为 `PATCH /api/admin/images/{id}` 置清理豁免,删除为 `DELETE /api/admin/images/{id}`。仅管理员。
       security:
@@ -1536,7 +1563,7 @@ paths:
   /api/admin/audit:
     get:
       operationId: listAudit
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 审计日志
       description: 分页,可按操作者、动作、目标与时间范围过滤;`target` 精确匹配。仅管理员。
       security:
@@ -1575,7 +1602,7 @@ paths:
   /api/admin/alerts:
     get:
       operationId: listAlerts
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 告警
       description: 缺省返回全部未恢复的告警(不分页);`status=all` 时分页返回全部历史,最新在前。仅管理员。
       security:
@@ -1603,7 +1630,7 @@ paths:
   /api/admin/backups:
     get:
       operationId: listBackups
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 备份快照列表
       description: 各健康渠道(不含清理中的渠道)上元数据库快照的并集,最新在前;每份快照列出持有它的渠道。仅管理员。
       security:
@@ -1621,7 +1648,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
     post:
       operationId: createBackup
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 立即备份
       description: 立即做一次元数据库快照,同一份快照写到每个健康渠道(不含清理中的渠道),各渠道各自按保留份数清理旧快照。仅管理员。
       security:
@@ -1654,7 +1681,7 @@ paths:
   /api/admin/backups/{name}:
     get:
       operationId: downloadBackup
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 下载快照
       description: 以附件形式输出 SQLite 快照文件;按优先级从持有该快照的健康渠道读取,读取失败的渠道换下一个,各健康渠道都没有该快照时 404。仅管理员。
       security:
@@ -1685,7 +1712,7 @@ paths:
   /api/admin/backups/{name}/restore:
     post:
       operationId: restoreBackup
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 从快照恢复
       description: 按优先级从持有该快照的健康渠道取回(读取失败的渠道换下一个,各健康渠道都没有该快照时 404),暂存到数据目录后触发优雅停机,进程被拉起时换入,原库改名保留;没有进程管理器拉起时,暂存文件等到下次启动再换入。仅管理员。
       security:
@@ -1711,7 +1738,7 @@ paths:
   /api/admin/export:
     get:
       operationId: exportMetadata
-      tags: [后台·运维]
+      tags: [Admin · Operations]
       summary: 导出全部元数据
       description: 图在哪些渠道、对象键与哈希全部在内,渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
       security:
