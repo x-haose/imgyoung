@@ -550,7 +550,7 @@ func TestUploadURLUsesBaseURL(t *testing.T) {
 	}
 }
 
-// TestAuthAndValidation 鉴权与输入校验:401 / 415 / 413。
+// TestAuthAndValidation 鉴权与输入校验:401 / 415 / 413,恰好等于单图上限的文件可上传。
 func TestAuthAndValidation(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, map[string]any{"max_upload_mb": 1})
@@ -572,6 +572,15 @@ func TestAuthAndValidation(t *testing.T) {
 	defer func() { _ = tooBig.Body.Close() }()
 	if tooBig.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Errorf("超限状态码 = %d, 期望 413", tooBig.StatusCode)
+	}
+
+	// 单图上限约束的是文件本身:恰好 1 MiB 的文件连同 multipart 边界与段头一起上传也应通过。
+	exact := pngBytes(t)
+	exact = append(exact, bytes.Repeat([]byte{0}, 1<<20-len(exact))...)
+	atLimit := upload(t, inst, inst.token, "exact.png", exact, nil, nil)
+	defer func() { _ = atLimit.Body.Close() }()
+	if atLimit.StatusCode != http.StatusOK {
+		t.Errorf("恰好等于单图上限的文件状态码 = %d, 期望 200", atLimit.StatusCode)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"time"
@@ -84,52 +85,142 @@ func (h *Handlers) HandleSessionUpload(w http.ResponseWriter, r *http.Request) {
 	h.serveUpload(w, r, si.Principal.UserID, 0)
 }
 
-// serveUpload 上传的共享 HTTP 管道:大小闸、multipart 解析、档位与 TTL 解析、
+// serveUpload 上传的共享 HTTP 管道:流式读取 multipart 表单、档位与 TTL 解析、
 // 调用上传服务并写响应;业务管道(格式校验/像素预算/净化/哈希/落库)在 upload.Service。
 // @param userID 归属用户 id,由认证中间件解析后显式传入
 // @param tokenID 来源 Token 记录 id,0 表示非 Token 途径(后台会话上传)
 func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID string, tokenID int64) {
 	set := h.cfg.Settings()
-	r.Body = http.MaxBytesReader(w, r.Body, set.MaxUploadBytes())
-
-	file, header, err := r.FormFile("file")
+	form, err := readUploadForm(w, r, set.MaxUploadBytes())
 	if err != nil {
-		h.writeReadError(w, set, err, "无法读取 file 字段(需要 multipart/form-data 的 file 字段)")
-		return
-	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil {
-			h.cfg.Logger.Debug("关闭上传文件失败", "err", cerr)
-		}
-	}()
-	data, err := io.ReadAll(file)
-	if err != nil {
-		h.writeReadError(w, set, err, "读取上传内容失败")
+		h.writeReadError(w, set, err)
 		return
 	}
 
 	// 档位决策:单次表单字段 > 全局默认(在 API 层定死,Service 不做隐式回退)。
-	policy := imaging.EXIFPolicy(r.FormValue("exif_policy"))
+	policy := imaging.EXIFPolicy(form.exifPolicy)
 	if policy == "" {
 		policy = set.EXIFPolicy
 	}
 
-	ttl, ttlSet, ok := parseTTL(r.FormValue("ttl"))
+	ttl, ttlSet, ok := parseTTL(form.ttl)
 	if !ok {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
 			fmt.Sprintf("ttl 取值非法(需要 0 到 %d 的整数秒,或 never 表示永久)", maxTTLSeconds))
 		return
 	}
 
-	h.runUpload(w, r, set, data, upload.Options{
+	h.runUpload(w, r, set, form.data, upload.Options{
 		UserID:         userID,
 		TokenID:        tokenID,
-		FileName:       header.Filename,
+		FileName:       form.fileName,
 		IdempotencyKey: r.Header.Get(idempotencyHeader),
 		EXIFPolicy:     policy,
 		TTL:            ttl,
 		TTLSet:         ttlSet,
 	})
+}
+
+// multipartOverhead 上传请求体在文件之外的余量:multipart 边界、各段头与 exif_policy / ttl 等短字段。
+const multipartOverhead = 64 << 10
+
+// maxFieldBytes 单个短字段(exif_policy / ttl)的字节上限。
+const maxFieldBytes = 1 << 10
+
+// 上传表单的读取错误,由 writeReadError 翻译成状态码。
+var (
+	errFileTooLarge = errors.New("publicapi: 上传文件超过单图上限")
+	errFieldTooLong = errors.New("publicapi: 表单字段过长")
+	errNoFile       = errors.New("publicapi: 缺少 file 文件段")
+)
+
+// uploadForm 从 multipart 请求体读出的上传表单。
+type uploadForm struct {
+	hasFile    bool   // 是否读到了带文件名的 file 段
+	fileName   string // file 段的文件名
+	data       []byte // file 段的完整字节
+	exifPolicy string // exif_policy 字段;空表示未指定
+	ttl        string // ttl 字段;空表示未指定
+}
+
+// readUploadForm 流式读取 multipart 上传表单:file 段直接读进内存,不落临时文件。
+// @Description: 单图上限只约束 file 段本身;请求体整体以单图上限加 multipartOverhead 为界,挡住超大请求体。
+// 只认第一个带文件名的 file 段与 exif_policy、ttl 两个短字段,其余段跳过不读。
+// @param maxFile 单图字节上限
+// @return 上传表单
+// @return errFileTooLarge 或 *http.MaxBytesError(超限)、errNoFile、errFieldTooLong 或 multipart 格式错误
+func readUploadForm(w http.ResponseWriter, r *http.Request, maxFile int64) (uploadForm, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxFile+multipartOverhead)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return uploadForm{}, err
+	}
+	var form uploadForm
+	for {
+		part, err := mr.NextPart()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return uploadForm{}, err
+		}
+		if err := form.readPart(part, maxFile); err != nil {
+			return uploadForm{}, err
+		}
+	}
+	if !form.hasFile {
+		return uploadForm{}, errNoFile
+	}
+	return form, nil
+}
+
+// readPart 按段名读入一段;不认识的段与第一个之后的 file 段不读,由下一次 NextPart 跳过。
+// @param part 当前段
+// @param maxFile 单图字节上限
+// @return 超限或读取失败时的错误
+func (f *uploadForm) readPart(part *multipart.Part, maxFile int64) error {
+	var err error
+	switch part.FormName() {
+	case "file":
+		if part.FileName() == "" || f.hasFile {
+			return nil
+		}
+		f.fileName, f.hasFile = part.FileName(), true
+		f.data, err = readLimited(part, maxFile, errFileTooLarge)
+	case "exif_policy":
+		f.exifPolicy, err = readField(part)
+	case "ttl":
+		f.ttl, err = readField(part)
+	default:
+		// 不认识的段不读,字节仍计入请求体上限。
+	}
+	return err
+}
+
+// readField 读一个短字段,超过 maxFieldBytes 即 errFieldTooLong。
+// @param part 字段段
+// @return 字段值
+// @return 超限或读取失败时的错误
+func readField(part *multipart.Part) (string, error) {
+	v, err := readLimited(part, maxFieldBytes, errFieldTooLong)
+	return string(v), err
+}
+
+// readLimited 读完 r,超过 limit 字节即返回 tooLarge。
+// @param r 数据源
+// @param limit 字节上限,恰好等于上限可通过
+// @param tooLarge 超限时返回的错误
+// @return 全部字节
+// @return 超限或读取失败时的错误
+func readLimited(r io.Reader, limit int64, tooLarge error) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, tooLarge
+	}
+	return data, nil
 }
 
 // runUpload 上传链路的公共尾段:调用上传服务、映射错误、写成功响应。
@@ -189,17 +280,21 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, set config.Settings, 
 	}
 }
 
-// writeReadError 把请求体读取错误写为带数值的用户可读响应。
-// @Description: 超过 MaxBytesReader 上限 → 413 并给出大小上限;其余按客户端请求错误 → 400 用 fallback 文案。
+// writeReadError 把上传表单的读取错误写为用户可读响应。
+// @Description: 文件或请求体超限 → 413 并给出大小上限;短字段过长与其余表单错误 → 400。
 // @param set 本次请求生效的配置快照,错误文案里的上限与大小闸同源
-// @param err 读取阶段的原始错误
-// @param fallback 非超限错误时的 400 文案
-func (h *Handlers) writeReadError(w http.ResponseWriter, set config.Settings, err error, fallback string) {
+// @param err readUploadForm 返回的错误
+func (h *Handlers) writeReadError(w http.ResponseWriter, set config.Settings, err error) {
 	var maxErr *http.MaxBytesError
-	if errors.As(err, &maxErr) {
+	switch {
+	case errors.Is(err, errFileTooLarge), errors.As(err, &maxErr):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusRequestEntityTooLarge,
 			fmt.Sprintf("文件超过大小上限(%d MB)", set.MaxUploadMB))
-		return
+	case errors.Is(err, errFieldTooLong):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
+			fmt.Sprintf("exif_policy 或 ttl 字段过长(上限 %d 字节)", maxFieldBytes))
+	default:
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest,
+			"无法读取 file 字段(需要 multipart/form-data 的 file 字段)")
 	}
-	httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, fallback)
 }
