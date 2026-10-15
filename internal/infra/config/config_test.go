@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -76,11 +77,15 @@ func mustBootstrap(t *testing.T) Bootstrap {
 }
 
 // TestLoadBootstrapDefaults 验证无环境变量时引导配置取文档约定的默认值:
-// 反代只信回环,/metrics 只对回环与私网开放。
+// 数据目录为工作目录下的 data(绝对路径),反代只信回环,/metrics 只对回环与私网开放。
 func TestLoadBootstrapDefaults(t *testing.T) {
 	clearEnv(t)
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
 	b := mustBootstrap(t)
-	if b.Listen != ":8721" || b.DataDir != "data" {
+	if b.Listen != ":8721" || b.DataDir != filepath.Join(wd, "data") {
 		t.Errorf("引导默认值异常: %+v", b)
 	}
 	if b.MasterKey != "" {

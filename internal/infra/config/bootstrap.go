@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ const (
 // 改动它们需要重启;其余运营配置一律走 settings 表(见 Store),后台修改热生效。
 type Bootstrap struct {
 	Listen         string         // HTTP 监听地址
-	DataDir        string         // 数据目录(SQLite、本地渠道与主密钥文件)
+	DataDir        string         // 数据目录(SQLite、本地渠道与主密钥文件)的绝对路径;相对路径按启动时的工作目录解析
 	MasterKey      string         // 主密钥(64 位 hex);空则用数据目录下的 master.key 文件
 	TrustedProxies []netip.Prefix // 连接对端落在这些网段时才采信 X-Forwarded-For / X-Forwarded-Proto / X-Forwarded-Host;空表示一概不信
 	MetricsAllow   []netip.Prefix // 客户端地址落在这些网段时才放行 /metrics;空表示对谁都不开放
@@ -41,9 +42,10 @@ type Bootstrap struct {
 // LoadBootstrap 从环境变量装配引导配置:未设置的变量取默认值,设为空串(或只有空白)即为空值。
 // @Description: 网段清单为空即一概不信转发头 / 对谁都不开放 /metrics,主密钥为空即用 master.key 文件,
 // 监听地址与数据目录不接受空值。网段清单在此解析,写错一项即启动失败并指出变量名与条目;监听地址与
-// 密钥格式的合法性由绑定端口 / 解析密钥的使用点快速失败,错误信息更贴近现场。
+// 密钥格式的合法性由绑定端口 / 解析密钥的使用点快速失败,错误信息更贴近现场。数据目录在此转为绝对路径,
+// 由它推出的路径(如导出的 local 渠道配置)脱离进程的工作目录仍然有效。
 // @return 引导配置
-// @return 网段清单无法解析、监听地址或数据目录设为空值时的错误
+// @return 网段清单无法解析、监听地址或数据目录设为空值、读取工作目录失败时的错误
 func LoadBootstrap() (Bootstrap, error) {
 	trusted, err := ParsePrefixes(envOrDefault(envTrustedProxies, defaultTrustedProxies))
 	if err != nil {
@@ -60,6 +62,9 @@ func LoadBootstrap() (Bootstrap, error) {
 	dataDir, err := requiredEnv(envDataDir, defaultDataDir)
 	if err != nil {
 		return Bootstrap{}, err
+	}
+	if dataDir, err = filepath.Abs(dataDir); err != nil {
+		return Bootstrap{}, fmt.Errorf("%s: %w", envDataDir, err)
 	}
 	return Bootstrap{
 		Listen:         listen,
