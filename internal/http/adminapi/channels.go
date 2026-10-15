@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -286,6 +287,39 @@ func (h *Handlers) HandleChannelConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, cfg)
+}
+
+// HandleChannelRcloneConfig 以附件下载渠道的 rclone 配置文件,标准 rclone 凭它即可脱离本服务读写渠道数据。
+// @Description: 文件含渠道凭证与加密渠道的解密密码:响应不进任何缓存,每次下载记一条审计。
+// 配置里有 rclone 配置文件无法表达的值时返回 422,原因只指出远端与参数名。
+func (h *Handlers) HandleChannelRcloneConfig(w http.ResponseWriter, r *http.Request) {
+	channelID, ok := h.channelIDParam(w, r)
+	if !ok {
+		return
+	}
+	file, err := h.cfg.Admin.RcloneConfig(r.Context(), channelID)
+	switch {
+	case errors.Is(err, channel.ErrChannelNotFound):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, "渠道不存在")
+		return
+	case errors.Is(err, channel.ErrInvalidChannel):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, templateErrMsg(err))
+		return
+	case err != nil:
+		h.cfg.Logger.Error("生成渠道 rclone 配置失败", "id", channelID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, "服务内部错误")
+		return
+	}
+	h.recordAudit(r.Context(), audit.ActionChannelExport, strconv.FormatInt(channelID, 10), "rclone-config")
+	hd := w.Header()
+	hd.Set("Content-Type", "text/plain; charset=utf-8")
+	hd.Set("Content-Length", strconv.Itoa(len(file.Content)))
+	hd.Set("Content-Disposition", `attachment; filename="`+file.Name+`"`)
+	hd.Set("Cache-Control", "no-store")
+	// 与快照下载一致以流式拷贝输出附件;显式纯文本类型 + 全局 nosniff,浏览器不会把它当页面渲染。
+	if _, err := io.Copy(w, strings.NewReader(file.Content)); err != nil {
+		h.cfg.Logger.Debug("输出渠道 rclone 配置中断", "id", channelID, "err", err)
+	}
 }
 
 // HandleChannelCheck 手动重检:对已有渠道执行深探测并返回探测后的完整描述。

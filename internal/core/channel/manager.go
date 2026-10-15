@@ -344,27 +344,41 @@ func (m *Manager) Get(channelID int64) (Handle, bool) {
 	return Handle{}, false
 }
 
-// openDriver 为一条渠道记录构造驱动:约定键拆出、crypt 密钥派生、写回落库。
+// openDriver 为一条渠道记录构造驱动,后端写回落库。
 // @param row 渠道记录
 // @param params 解密后的完整配置(含约定键)
 // @return 就绪的驱动
 // @return 密钥派生或后端初始化失败时的错误
 func (m *Manager) openDriver(ctx context.Context, row sqlc.Channel, params map[string]string) (*rclone.Driver, error) {
-	opts := m.driverOptions(row.Driver, params)
+	opts, err := m.channelOptions(row, params)
+	if err != nil {
+		return nil, err
+	}
 	channelID := row.ID
 	opts.OnChange = func(key, value string) { m.persistOwn(channelID, key, value) }
-	if row.Encrypted != 0 {
-		password, err := m.deriveHex(row, "crypt:password")
-		if err != nil {
-			return nil, err
-		}
-		salt, err := m.deriveHex(row, "crypt:salt")
-		if err != nil {
-			return nil, err
-		}
-		opts.Crypt = &rclone.CryptOptions{Password: password, Salt: salt}
-	}
 	return rclone.Open(ctx, opts)
+}
+
+// channelOptions 把渠道记录翻译成驱动构造参数:约定键拆出,加密渠道派生 crypt 密码与盐。
+// @param row 渠道记录
+// @param params 解密后的完整配置(含约定键)
+// @return 驱动构造参数(未设 OnChange)
+// @return 密钥派生失败时的错误
+func (m *Manager) channelOptions(row sqlc.Channel, params map[string]string) (rclone.Options, error) {
+	opts := m.driverOptions(row.Driver, params)
+	if row.Encrypted == 0 {
+		return opts, nil
+	}
+	password, err := m.deriveHex(row, "crypt:password")
+	if err != nil {
+		return rclone.Options{}, err
+	}
+	salt, err := m.deriveHex(row, "crypt:salt")
+	if err != nil {
+		return rclone.Options{}, err
+	}
+	opts.Crypt = &rclone.CryptOptions{Password: password, Salt: salt}
+	return opts, nil
 }
 
 // openTrial 用一份未落库的配置构造一次性驱动(试构造、测试连接、建桶),不套 crypt。

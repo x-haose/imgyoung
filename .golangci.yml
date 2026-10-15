@@ -34,6 +34,9 @@ linters:
       ignore-comments: true
     nestif:
       min-complexity: 4
+    misspell:
+      # unknwon 是 rclone 配置文件所用 INI 库 github.com/unknwon/goconfig 的上游账号名,出现在导入路径里
+      ignore-rules: [unknwon]
     nolintlint:
       allow-unused: false
       require-explanation: true

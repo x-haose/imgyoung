@@ -20,6 +20,7 @@ export const audit = {
     'channel.create': '新建渠道',
     'channel.update': '编辑渠道',
     'channel.delete': '删除渠道',
+    'channel.export': '导出渠道 rclone 配置',
     'token.issue': '签发 Token',
     'token.revoke': '吊销 Token',
     'token.rotate': '轮换 Token',

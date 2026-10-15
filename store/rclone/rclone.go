@@ -75,7 +75,7 @@ func Open(ctx context.Context, opts Options) (*Driver, error) {
 	}
 	innerName := inner.Name()
 	cache.Put(innerName+":", inner)
-	params, err := cryptParams(innerName, opts.Crypt)
+	params, err := cryptParams(innerName+":", opts.Crypt)
 	if err != nil {
 		cache.ClearConfig(innerName)
 		return nil, err
@@ -145,12 +145,12 @@ func withDefaults(backend string, params map[string]string) map[string]string {
 	return out
 }
 
-// cryptParams 生成 crypt 层参数:内层按登记名引用,密码按 rclone 要求编码。
-// @param innerName 内层 Fs 的登记名
+// cryptParams 生成 crypt 层参数:remote 指向内层,密码按 rclone 要求编码。
+// @param inner 内层的 rclone 路径,形如 name: 或 name:path
 // @param c 加密参数
 // @return crypt 后端参数
 // @return 编码失败时的错误
-func cryptParams(innerName string, c *CryptOptions) (map[string]string, error) {
+func cryptParams(inner string, c *CryptOptions) (map[string]string, error) {
 	pw, err := obscure.Obscure(c.Password)
 	if err != nil {
 		return nil, fmt.Errorf("编码 crypt 密码: %w", err)
@@ -160,7 +160,7 @@ func cryptParams(innerName string, c *CryptOptions) (map[string]string, error) {
 		return nil, fmt.Errorf("编码 crypt 盐: %w", err)
 	}
 	return map[string]string{
-		"remote":              innerName + ":",
+		"remote":              inner,
 		"password":            pw,
 		"password2":           pw2,
 		"filename_encryption": "standard",

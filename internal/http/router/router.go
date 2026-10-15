@@ -155,6 +155,7 @@ func mountAdminOnly(ad chi.Router, cfg Config) {
 	ad.Post("/channels/test", cfg.Admin.HandleChannelTest)
 	ad.Put("/channels/{id}", cfg.Admin.HandleChannelUpdate)
 	ad.Get("/channels/{id}/config", cfg.Admin.HandleChannelConfig)
+	ad.Get("/channels/{id}/rclone-config", cfg.Admin.HandleChannelRcloneConfig)
 	ad.Post("/channels/{id}/check", cfg.Admin.HandleChannelCheck)
 	ad.Delete("/channels/{id}", cfg.Admin.HandleChannelDelete)
 	ad.Get("/users", cfg.Admin.HandleUserList)

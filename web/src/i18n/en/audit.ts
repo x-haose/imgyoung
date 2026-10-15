@@ -21,6 +21,7 @@ export const audit = {
     'channel.create': 'Create channel',
     'channel.update': 'Edit channel',
     'channel.delete': 'Delete channel',
+    'channel.export': 'Export channel rclone config',
     'token.issue': 'Issue token',
     'token.revoke': 'Revoke token',
     'token.rotate': 'Rotate token',

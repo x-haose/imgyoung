@@ -1,4 +1,4 @@
-/** 存储渠道页文案:列表、删除、模板选择、配置表单与网盘授权。 */
+/** 存储渠道页文案:列表、删除、导出 rclone 配置、模板选择、配置表单与网盘授权。 */
 export const channels = {
   title: '存储渠道',
   description: '多渠道主备容灾;优先级最高的健康渠道承接上传主写',
@@ -29,6 +29,7 @@ export const channels = {
     '{n} 份副本补齐失败,将由对账任务重试;持续失败请检查渠道配置',
   actionCheck: '重新探测',
   actionRemoveNow: '直接移除',
+  actionExportConfig: '导出 rclone 配置',
   actionsMenu: '渠道操作',
   checkPassed: '渠道 {name} 探测通过',
   checkFailed: '渠道 {name} 探测失败:{error}',
@@ -50,6 +51,17 @@ export const channels = {
   deletedKept: '渠道已移除,远端对象保留',
   removeNowTitle: '直接移除渠道 {name}?',
   removeNowDesc: '停止清理,立即移除渠道;尚未删除的远端对象原样保留。',
+  exportConfigTitle: '导出 rclone 配置',
+  exportConfigDesc:
+    '渠道 {name} 的 rclone 配置文件:标准 rclone 凭它即可脱离 ImgYoung 读写这个渠道上的数据。',
+  exportConfigBackend: '后端远端:参数与渠道所用一致,含访问凭证与授权令牌',
+  exportConfigCrypt: '加密层远端:与服务端加密参数一致,读出的就是明文',
+  exportConfigUsage: '文件开头的注释写有各远端的说明与用法示例。',
+  exportConfigWarnEncrypted: '文件里含凭证与解密密码',
+  exportConfigWarnPlain: '文件里含渠道凭证',
+  exportConfigWarnDesc:
+    '和主密钥一样离线妥善保存:拿到它的人可以直接读写这个渠道上的全部数据。',
+  exportConfigDownload: '下载配置文件',
   pickType: '选择存储类型',
   groupObjectStorage: '对象存储',
   groupDrive: '网盘',

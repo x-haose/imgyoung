@@ -10,9 +10,10 @@ import { ChannelSheet } from './channel-sheet'
 import { ChannelTable } from './channel-table'
 import { channelsQueryOptions } from './data'
 import { DeleteChannelDialog, RemoveNowDialog } from './delete-dialog'
+import { ExportConfigDialog } from './export-dialog'
 import { type ChannelItem } from './types'
 
-/** 存储渠道页:列表 + 模板化创建 / 编辑 + 手动探测 + 删除(可选清理远端对象)。 */
+/** 存储渠道页:列表 + 模板化创建 / 编辑 + 手动探测 + 导出 rclone 配置 + 删除(可选清理远端对象)。 */
 export function Channels() {
   const m = useMessages()
   const list = useQuery(channelsQueryOptions())
@@ -22,6 +23,7 @@ export function Channels() {
   }>({ open: false, channel: null })
   const [removing, setRemoving] = useState<ChannelItem | null>(null)
   const [removingNow, setRemovingNow] = useState<ChannelItem | null>(null)
+  const [exporting, setExporting] = useState<ChannelItem | null>(null)
   const openCreate = () => setSheet({ open: true, channel: null })
 
   return (
@@ -49,6 +51,7 @@ export function Channels() {
               items={list.data}
               onCreate={openCreate}
               onEdit={(channel) => setSheet({ open: true, channel })}
+              onExport={setExporting}
               onDelete={setRemoving}
               onRemoveNow={setRemovingNow}
             />
@@ -69,6 +72,10 @@ export function Channels() {
       <RemoveNowDialog
         channel={removingNow}
         onClose={() => setRemovingNow(null)}
+      />
+      <ExportConfigDialog
+        channel={exporting}
+        onClose={() => setExporting(null)}
       />
     </Page>
   )

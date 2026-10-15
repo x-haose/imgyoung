@@ -3,6 +3,7 @@ export const AUDIT_ACTIONS = [
   'channel.create',
   'channel.update',
   'channel.delete',
+  'channel.export',
   'token.issue',
   'token.revoke',
   'token.rotate',

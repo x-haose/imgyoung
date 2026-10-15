@@ -82,6 +82,11 @@ export const testChannel = (body: ChannelTestBody) =>
 export const checkChannel = (id: number) =>
   api.post<ChannelItem>(`/api/admin/channels/${id}/check`)
 
+/** 渠道 rclone 配置文件的下载地址;浏览器直接下载,不走 fetch。 */
+export function rcloneConfigURL(id: number): string {
+  return `/api/admin/channels/${id}/rclone-config`
+}
+
 /** purge 为真时渠道先转为清理中,对象删完才移除;为假时立即移除、远端对象保留。 */
 export const deleteChannel = (id: number, purge: boolean) =>
   api.delete(`/api/admin/channels/${id}?purge=${purge}`)

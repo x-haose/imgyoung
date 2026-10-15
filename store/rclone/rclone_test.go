@@ -245,14 +245,14 @@ func TestWithDefaults(t *testing.T) {
 	}
 }
 
-// TestCryptParamsRevealable 验证 crypt 层参数:内层按登记名引用、密码经编码可还原。
+// TestCryptParamsRevealable 验证 crypt 层参数:remote 原样指向内层、密码经编码可还原。
 func TestCryptParamsRevealable(t *testing.T) {
-	params, err := cryptParams("imgyoung-test", &CryptOptions{Password: "file-pass", Salt: "salt-pass"})
+	params, err := cryptParams("imgyoung-test:bucket/dir", &CryptOptions{Password: "file-pass", Salt: "salt-pass"})
 	if err != nil {
 		t.Fatalf("cryptParams 返回错误: %v", err)
 	}
-	if params["remote"] != "imgyoung-test:" {
-		t.Errorf("remote = %q, 期望 imgyoung-test:", params["remote"])
+	if params["remote"] != "imgyoung-test:bucket/dir" {
+		t.Errorf("remote = %q, 期望 imgyoung-test:bucket/dir", params["remote"])
 	}
 	for key, want := range map[string]string{"password": "file-pass", "password2": "salt-pass"} {
 		if got, err := obscure.Reveal(params[key]); err != nil || got != want {

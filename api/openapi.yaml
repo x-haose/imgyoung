@@ -1106,6 +1106,51 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /api/admin/channels/{id}/rclone-config:
+    get:
+      operationId: channelRcloneConfig
+      tags: [Admin · Storage channels]
+      summary: 导出 rclone 配置
+      description: >-
+        以附件输出一份标准 rclone 可直接使用的配置文件(rclone.conf),凭它可脱离 ImgYoung 读写渠道数据。
+        远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致,含凭证与授权令牌,密码类参数按 rclone 规则以 obscure 形式写出;
+        加密渠道另有远端 `imgyoung-<渠道 id>-crypt`,指向渠道存储路径,参数与服务端的 crypt 层一致(`password` / `password2`
+        为 obscure 形式,`filename_encryption = standard`)。文件头的 `#` 注释说明各远端与用法。
+        文件里的凭证与解密密码与主密钥同等敏感;响应不缓存,每次下载记一条 `channel.export` 审计日志。仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/channelID'
+      responses:
+        '200':
+          description: rclone 配置文件
+          headers:
+            Content-Disposition:
+              description: 附件文件名 `imgyoung-channel-<渠道 id>.rclone.conf`
+              schema:
+                type: string
+            Cache-Control:
+              description: 恒为 `no-store`
+              schema:
+                type: string
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: 渠道配置里有 rclone 配置文件无法表达的参数值(含换行、首尾空白等);消息指出远端与参数名,不含参数值
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/admin/channels/{id}/check:
     post:
       operationId: checkChannel
@@ -1740,7 +1785,7 @@ paths:
       operationId: exportMetadata
       tags: [Admin · Operations]
       summary: 导出全部元数据
-      description: 图在哪些渠道、对象键与哈希全部在内,渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
+      description: 图在哪些渠道、对象键与哈希全部在内,渠道带 `id` 与 `created_at`(加密渠道的密钥派生输入),渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
       security:
         - session: []
       responses:
@@ -2914,6 +2959,7 @@ components:
         - last_error
         - deleting
         - replicas
+        - created_at
       properties:
         id:
           type: integer
@@ -2944,6 +2990,9 @@ components:
           description: 清理中:排空任务正在删除渠道上的对象,清完即消失
         replicas:
           $ref: '#/components/schemas/ReplicaStats'
+        created_at:
+          type: string
+          description: 创建时刻;与 `id` 一起参与加密渠道 crypt 密码与盐的派生
     ChannelList:
       type: object
       required: [items, total]

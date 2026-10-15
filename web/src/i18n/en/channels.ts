@@ -33,6 +33,7 @@ export const channels = {
     '{n} replicas failed to replicate; reconciliation retries them. Check the channel config if it keeps failing',
   actionCheck: 'Probe again',
   actionRemoveNow: 'Remove now',
+  actionExportConfig: 'Export rclone config',
   actionsMenu: 'Channel actions',
   checkPassed: 'Channel {name} passed the probe',
   checkFailed: 'Channel {name} failed the probe: {error}',
@@ -57,6 +58,20 @@ export const channels = {
   removeNowTitle: 'Remove channel {name} now?',
   removeNowDesc:
     'Stops draining and removes the channel immediately; objects not yet deleted are left as they are.',
+  exportConfigTitle: 'Export rclone config',
+  exportConfigDesc:
+    "An rclone config file for channel {name}. With it, a stock rclone can read and write this channel's data without ImgYoung.",
+  exportConfigBackend:
+    'Backend remote: the same parameters the channel uses, including access credentials and OAuth tokens',
+  exportConfigCrypt:
+    'Crypt remote: the same settings as the server-side encryption, so reads come back as plaintext',
+  exportConfigUsage:
+    'Comments at the top of the file describe each remote and show example commands.',
+  exportConfigWarnEncrypted: 'Contains credentials and decryption passwords',
+  exportConfigWarnPlain: "Contains the channel's credentials",
+  exportConfigWarnDesc:
+    "Keep it offline and safe, just like the master key: anyone who has it can read and write all of this channel's data.",
+  exportConfigDownload: 'Download config file',
   pickType: 'Choose a storage type',
   groupObjectStorage: 'Object storage',
   groupDrive: 'Cloud drives',

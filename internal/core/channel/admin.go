@@ -128,6 +128,7 @@ type Info struct {
 	LastError       string       `json:"last_error"`        // 最近探测失败原因(人话化);空 = 最近一次探测成功
 	Deleting        bool         `json:"deleting"`          // 清理中:排空任务正在删除渠道上的对象,清完即消失
 	Replicas        ReplicaStats `json:"replicas"`          // 副本补齐水位统计
+	CreatedAt       string       `json:"created_at"`        // 创建时刻,UTC 文本;与 ID 一起参与加密渠道的 crypt 密钥派生
 }
 
 // ReplicaStats 渠道的副本补齐水位(按 blob_channels 状态聚合)。
@@ -497,6 +498,7 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 			LastError:       row.LastError.String,
 			Deleting:        row.PendingDelete != 0,
 			Replicas:        ReplicaStats{Done: s.Done, Pending: s.Pending, Failed: s.Failed},
+			CreatedAt:       row.CreatedAt,
 		})
 	}
 	return out, nil

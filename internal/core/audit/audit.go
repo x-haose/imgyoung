@@ -17,6 +17,8 @@ const (
 	ActionChannelUpdate = "channel.update"
 	// ActionChannelDelete 渠道删除。
 	ActionChannelDelete = "channel.delete"
+	// ActionChannelExport 渠道 rclone 配置导出(含凭证与解密密码)。
+	ActionChannelExport = "channel.export"
 	// ActionTokenIssue Token 签发。
 	ActionTokenIssue = "token.issue"
 	// ActionTokenRevoke Token 吊销。

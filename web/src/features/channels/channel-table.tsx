@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { t } from '@/i18n'
 import {
+  FileDown,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -43,6 +44,7 @@ type ChannelTableProps = {
   items: ChannelItem[]
   onCreate: () => void
   onEdit: (channel: ChannelItem) => void
+  onExport: (channel: ChannelItem) => void // 导出渠道的 rclone 配置
   onDelete: (channel: ChannelItem) => void
   onRemoveNow: (channel: ChannelItem) => void // 清理中的渠道:放弃清理立即移除
 }
@@ -52,6 +54,7 @@ export function ChannelTable({
   items,
   onCreate,
   onEdit,
+  onExport,
   onDelete,
   onRemoveNow,
 }: ChannelTableProps) {
@@ -172,6 +175,7 @@ export function ChannelTable({
                     checking={check.isPending && check.variables === row.id}
                     onCheck={() => check.mutate(row.id)}
                     onEdit={() => onEdit(row)}
+                    onExport={() => onExport(row)}
                     onDelete={() => onDelete(row)}
                     onRemoveNow={() => onRemoveNow(row)}
                   />
@@ -303,6 +307,7 @@ type RowActionsProps = {
   checking: boolean
   onCheck: () => void
   onEdit: () => void
+  onExport: () => void
   onDelete: () => void
   onRemoveNow: () => void
 }
@@ -313,6 +318,7 @@ function RowActions({
   checking,
   onCheck,
   onEdit,
+  onExport,
   onDelete,
   onRemoveNow,
 }: RowActionsProps) {
@@ -345,6 +351,10 @@ function RowActions({
             <DropdownMenuItem onClick={onEdit}>
               <Pencil />
               {m.common.edit}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onExport}>
+              <FileDown />
+              {m.channels.actionExportConfig}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant='destructive' onClick={onDelete}>

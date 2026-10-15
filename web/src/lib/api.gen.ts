@@ -631,6 +631,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/channels/{id}/rclone-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导出 rclone 配置
+         * @description 以附件输出一份标准 rclone 可直接使用的配置文件(rclone.conf),凭它可脱离 ImgYoung 读写渠道数据。 远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致,含凭证与授权令牌,密码类参数按 rclone 规则以 obscure 形式写出; 加密渠道另有远端 `imgyoung-<渠道 id>-crypt`,指向渠道存储路径,参数与服务端的 crypt 层一致(`password` / `password2` 为 obscure 形式,`filename_encryption = standard`)。文件头的 `#` 注释说明各远端与用法。 文件里的凭证与解密密码与主密钥同等敏感;响应不缓存,每次下载记一条 `channel.export` 审计日志。仅管理员。
+         */
+        get: operations["channelRcloneConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/channels/{id}/check": {
         parameters: {
             query?: never;
@@ -1019,7 +1039,7 @@ export interface paths {
         };
         /**
          * 导出全部元数据
-         * @description 图在哪些渠道、对象键与哈希全部在内,渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
+         * @description 图在哪些渠道、对象键与哈希全部在内,渠道带 `id` 与 `created_at`(加密渠道的密钥派生输入),渠道凭证与密码哈希不在内;以附件形式输出。仅管理员。
          */
         get: operations["exportMetadata"];
         put?: never;
@@ -1591,6 +1611,8 @@ export interface components {
             /** @description 清理中:排空任务正在删除渠道上的对象,清完即消失 */
             deleting: boolean;
             replicas: components["schemas"]["ReplicaStats"];
+            /** @description 创建时刻;与 `id` 一起参与加密渠道 crypt 密码与盐的派生 */
+            created_at: string;
         };
         ChannelList: {
             items: components["schemas"]["Channel"][];
@@ -3335,6 +3357,46 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    channelRcloneConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 渠道 id */
+                id: components["parameters"]["channelID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description rclone 配置文件 */
+            200: {
+                headers: {
+                    /** @description 附件文件名 `imgyoung-channel-<渠道 id>.rclone.conf` */
+                    "Content-Disposition"?: string;
+                    /** @description 恒为 `no-store` */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 渠道配置里有 rclone 配置文件无法表达的参数值(含换行、首尾空白等);消息指出远端与参数名,不含参数值 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     checkChannel: {
