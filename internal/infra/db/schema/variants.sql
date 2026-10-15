@@ -2,9 +2,9 @@
 CREATE TABLE variants (
     id INTEGER PRIMARY KEY, -- 内部主键(rowid 别名,自增)
     blob_id INTEGER NOT NULL REFERENCES blobs (id), -- 源物理图
-    params_hash TEXT NOT NULL, -- 处理参数指纹(宽度+格式+质量档),兼本地文件名与缓存键
+    params_hash TEXT NOT NULL, -- 处理参数指纹(宽度+格式+质量档+编码调参),兼本地文件名与缓存键
     width INTEGER NOT NULL DEFAULT 0, -- 目标宽度像素,0 表示不缩放;CDN purge 据此还原公开 URL 的参数组合
-    format TEXT NOT NULL, -- 目标格式 webp/avif/jpeg,命中缓存时据此定 Content-Type
+    format TEXT NOT NULL, -- 目标格式 webp/jpeg/png,命中缓存时据此定 Content-Type
     size INTEGER NOT NULL, -- 衍生图字节大小,LRU 容量核算用
     last_access TEXT NOT NULL DEFAULT (datetime('now')), -- 最近访问时刻,UTC;LRU 淘汰依据
     created_at TEXT NOT NULL DEFAULT (datetime('now')) -- 创建时刻,UTC 文本

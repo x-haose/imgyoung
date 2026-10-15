@@ -65,7 +65,7 @@ func New(cfg Config) *Store { return &Store{cfg: cfg, touched: map[int64]struct{
 // @param width 目标宽度像素
 // @param format 目标格式
 // @param quality 质量档
-// @param tuning 编码调参(webp method / avif speed / jpeg 取 0)
+// @param tuning 编码调参(webp 为 method,jpeg 与 png 取 0)
 // @return 64 位十六进制缓存键
 func Key(blobID int64, width int, format string, quality, tuning int) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%d|%s|%d|%d", blobID, width, format, quality, tuning)))

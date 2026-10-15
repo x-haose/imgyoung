@@ -198,7 +198,7 @@ func EncodeSettingsFrom(set config.Settings) imaging.EncodeSettings {
 // @param set 本次处理生效的配置快照
 // @param format 目标格式
 // @return 质量档
-// @return 编码调参(webp method / avif speed / jpeg 取 0)
+// @return 编码调参(webp 为 method,jpeg 与 png 取 0)
 func encodeParams(set config.Settings, format string) (quality, tuning int) {
 	switch format {
 	case imaging.FormatWebP:
