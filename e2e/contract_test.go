@@ -70,12 +70,12 @@ func (c contractTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return resp, nil
 }
 
-// onlyPathMissing 判定违约是否只有「路径不在文档内」一种。
+// onlyPathMissing 判定违约是否只有「路径不在文档内」一种;路径在文档内而方法缺失不算,那是文档漏写。
 // @param violations 校验器报告的违约
 // @return 全部为路径缺失时为 true
 func onlyPathMissing(violations []*verrors.ValidationError) bool {
 	for _, v := range violations {
-		if v.ValidationType != helpers.PathValidation {
+		if v.ValidationType != helpers.PathValidation || v.ValidationSubType != helpers.ValidationMissing {
 			return false
 		}
 	}

@@ -34,24 +34,24 @@ const testAdminPass = "imgyoung123"
 // bootDeadline 等待实例就绪的上限。
 const bootDeadline = 10 * time.Second
 
-// binPath 编译产物路径,由 TestMain 填充;buildErr 非空时为空串。
+// binPath 编译产物路径,由 TestMain 填充;setupErr 非空时为空串。
 var binPath string
 
-// buildErr TestMain 编译二进制的结果;非空时每个用例在起实例处报告它。
-var buildErr error
+// setupErr TestMain 的前置失败:编译二进制或装载接口文档出错;非空时每个用例在起实例处报告它。
+var setupErr error
 
 // TestMain 编译一次真实二进制,供全部用例复用;退出码由测试运行器按 m.Run 结果处理。
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "imgyoung-e2e-bin")
 	if err != nil {
-		buildErr = fmt.Errorf("创建临时目录: %w", err)
+		setupErr = fmt.Errorf("创建临时目录: %w", err)
 		m.Run()
 		return
 	}
 	binPath = filepath.Join(dir, "imgyoung")
-	buildErr = buildBinary(binPath)
-	if buildErr == nil {
-		buildErr = loadContract()
+	setupErr = buildBinary(binPath)
+	if setupErr == nil {
+		setupErr = loadContract()
 	}
 	m.Run()
 	_ = os.RemoveAll(dir)
@@ -115,8 +115,8 @@ func configure(t *testing.T, inst *instance, settings map[string]any) {
 // @param settings 运营配置补丁(键为 config.Settings 的 JSON 名);渠道健康检查间隔已默认压到 1 秒
 func startInstance(t *testing.T, settings map[string]any) *instance {
 	t.Helper()
-	if buildErr != nil {
-		t.Fatalf("服务二进制不可用: %v", buildErr)
+	if setupErr != nil {
+		t.Fatalf("测试前置失败: %v", setupErr)
 	}
 	dataDir := t.TempDir()
 	inst := &instance{dataDir: dataDir, logPath: filepath.Join(dataDir, "server.log")}
