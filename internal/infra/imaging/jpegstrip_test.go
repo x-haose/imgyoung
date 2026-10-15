@@ -28,7 +28,7 @@ func spliceSegment(t *testing.T, jpg []byte, marker byte, payload []byte) []byte
 	}
 	seg := make([]byte, 0, 4+len(payload))
 	seg = append(seg, 0xFF, marker)
-	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2)) //nolint:gosec // 测试载荷为几十字节常量,远小于 uint16 上限
+	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
 
 	out := make([]byte, 0, len(jpg)+len(seg))

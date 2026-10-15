@@ -11,7 +11,7 @@ import (
 
 // SecretPlaceholder 敏感配置值的回读哨兵:配置回读时替代真实凭证下发,
 // 编辑提交时回传该值表示保留渠道已存的同键原值,凭证明文不经前端往返。
-const SecretPlaceholder = "__imgyoung_secret_keep__" //nolint:gosec // 公开的掩码哨兵字面量,不是凭证
+const SecretPlaceholder = "__imgyoung_secret_keep__"
 
 // EditConfig 渠道配置的编辑视图(敏感值已哨兵化,供编辑表单预填)。
 type EditConfig struct {

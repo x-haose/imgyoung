@@ -36,7 +36,7 @@ cd web && pnpm dev  # front-end hot reload; /api and image paths are proxied to 
 
 - Every declaration is commented: functions in goanno format (first line starts with the identifier), struct fields with a trailing comment; describe the current state only, never history or discussion.
 - Files < 800 lines, functions < 50 lines (test functions excepted), nesting ≤ 4, cognitive complexity ≤ 15, lines ≤ 120 characters; lint enforces all of it.
-- Errors are propagated, never swallowed; no `//nolint` to silence a check, and when one is justified it carries a one-line reason.
+- Errors are propagated, never swallowed; no `//nolint` or similar suppression comments: fix the code, and exclude a genuine false positive in `.golangci.yml` by file and rule, with the reason.
 - Only two kinds of tests: pure computation, and tests against a real database / storage / queue. Flows are covered end to end, not with fakes.
 - Front end: all copy goes through the i18n dictionaries (Simplified Chinese is the baseline, English is type-checked against it); route files do not import zod; requests only go through `web/src/lib/api.ts` and server state only through TanStack Query.
 

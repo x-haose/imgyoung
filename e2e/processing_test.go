@@ -193,7 +193,7 @@ func procJPEG(w, h, orient int) []byte {
 	le.PutUint16(ifd[2:], 0x0112)
 	le.PutUint16(ifd[4:], 3)
 	le.PutUint32(ifd[6:], 1)
-	le.PutUint16(ifd[10:], uint16(orient)) //nolint:gosec // orient 恒为 1–8
+	le.PutUint16(ifd[10:], uint16(orient))
 	tiff := make([]byte, 8)
 	copy(tiff, "II")
 	le.PutUint16(tiff[2:], 0x002A)
@@ -201,7 +201,7 @@ func procJPEG(w, h, orient int) []byte {
 	tiff = append(tiff, ifd...)
 	payload := append([]byte("Exif\x00\x00"), tiff...)
 	seg := []byte{0xFF, 0xE1}
-	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2)) //nolint:gosec // payload 为几十字节测试常量
+	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
 	out := append([]byte{}, data[:2]...)
 	out = append(out, seg...)

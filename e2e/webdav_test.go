@@ -18,9 +18,8 @@ import (
 
 // webdav 测试服务器的固定凭证。
 const (
-	davUser = "dav-user"
-	davPass = "dav-secret-pass"
-	//nolint:gosec // G101:测试桩值,用于断言错误凭证被拒
+	davUser      = "dav-user"
+	davPass      = "dav-secret-pass"
 	davWrongPass = "错误的密码"
 )
 

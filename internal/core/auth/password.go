@@ -58,8 +58,7 @@ func VerifyPassword(phc, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	//nolint:gosec // len(key) 来自解码结果,远小于 uint32 上限
-	got := argon2.IDKey([]byte(password), p.salt, p.iterations, p.memoryKiB, p.lanes, uint32(len(p.key)))
+	got := argon2.IDKey([]byte(password), p.salt, p.iterations, p.memoryKiB, p.lanes, argonKeyLen)
 	return subtle.ConstantTimeCompare(got, p.key) == 1, nil
 }
 
@@ -69,7 +68,7 @@ type phcParams struct {
 	iterations uint32 // 迭代轮数
 	lanes      uint8  // 并行 lane 数
 	salt       []byte // 盐
-	key        []byte // 派生密钥,非空
+	key        []byte // 派生密钥,长度恒为 argonKeyLen
 }
 
 // parsePHC 解析 argon2id PHC 串。
@@ -93,7 +92,7 @@ func parsePHC(phc string) (phcParams, error) {
 	if p.salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil {
 		return phcParams{}, errors.New("密码盐解码失败")
 	}
-	if p.key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(p.key) == 0 {
+	if p.key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(p.key) != argonKeyLen {
 		return phcParams{}, errors.New("密码密钥解码失败")
 	}
 	return p, nil

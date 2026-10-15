@@ -108,6 +108,26 @@ linters:
       - path: _test\.go$
         linters: [revive]
         text: "cognitive-complexity"
+      # gosec 针对的是攻击面,测试代码不是:构造固定字节载荷的整数转换、为造出不可写目录而 chmod、
+      # 断言错误凭证被拒用的桩值,都会被当成安全问题
+      - path: _test\.go$
+        linters: [gosec]
+      # 测试替身须与被测代码的回调签名一致,返回值恒为 nil 正是替身的本意
+      - path: _test\.go$
+        linters: [unparam]
+      # 感知哈希以位模式存进 SQLite 的有符号 INTEGER,与无符号哈希之间的转换是位重解释,不是数值转换;
+      # 这类转换全部收在这一个文件里
+      - path: internal/infra/imaging/phash\.go$
+        linters: [gosec]
+        text: "G115"
+      # 设置项的列名 cdn_cloudflare_api_token 与公开的掩码哨兵是常量字面量,不是凭证
+      - path: internal/infra/config/store\.go$|internal/core/channel/editconfig\.go$
+        linters: [gosec]
+        text: "G101"
+      # 按 rclone 的存储格式序列化 OAuth 令牌正是该函数的职责,产物随渠道配置以 AES-GCM 加密入库
+      - path: internal/core/channel/oauth\.go$
+        linters: [gosec]
+        text: "G117"
 
 formatters:
   enable:

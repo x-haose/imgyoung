@@ -290,7 +290,7 @@ func jpegWithEXIF(t *testing.T) []byte {
 	jpg := buf.Bytes()
 	payload := append([]byte("Exif\x00\x00"), bytes.Repeat([]byte{0xAB}, 16)...)
 	seg := []byte{0xFF, 0xE1}
-	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2)) //nolint:gosec // 测试载荷为几十字节常量
+	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
 	out := append([]byte{}, jpg[:2]...)
 	out = append(out, seg...)
@@ -675,7 +675,7 @@ func TestMultiChannelReplicationAndFailover(t *testing.T) {
 	if err := os.Chmod(fastDir, 0o000); err != nil {
 		t.Fatalf("模拟主渠道故障: %v", err)
 	}
-	defer func() { _ = os.Chmod(fastDir, 0o700) }() //nolint:gosec // 目录需执行位,0700 已最小
+	defer func() { _ = os.Chmod(fastDir, 0o700) }()
 	if got := fetchBytes(t, inst, url); !bytes.Equal(got, payload) {
 		t.Fatal("主渠道故障后取回字节不一致")
 	}

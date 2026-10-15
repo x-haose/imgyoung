@@ -280,7 +280,6 @@ func validateToken(raw string) (string, error) {
 // @return 令牌 JSON
 // @return 序列化失败时的错误
 func marshalToken(tok *oauth2.Token) (string, error) {
-	//nolint:gosec // G117:序列化令牌正是本函数的职责,产物存入渠道配置时由 AES-GCM 加密
 	b, err := json.Marshal(tok)
 	if err != nil {
 		return "", fmt.Errorf("序列化令牌: %w", err)

@@ -257,7 +257,7 @@ func TestManagerCheckAll(t *testing.T) {
 		t.Fatalf("模拟渠道故障: %v", err)
 	}
 	defer func() {
-		if cerr := os.Chmod(dir, 0o700); cerr != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		if cerr := os.Chmod(dir, 0o700); cerr != nil {
 			t.Errorf("恢复目录权限: %v", cerr)
 		}
 	}()
@@ -270,7 +270,7 @@ func TestManagerCheckAll(t *testing.T) {
 		t.Fatalf("故障后主渠道 = %v/%v, 期望降级回 local", primary.Name, err)
 	}
 
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("恢复渠道: %v", err)
 	}
 	changed, err = env.Manager.CheckAll(t.Context())

@@ -194,7 +194,11 @@ func StripWebPMetadata(data []byte) ([]byte, error) {
 	if vp8xFlagsAt >= 0 {
 		out[vp8xFlagsAt] &^= vp8xFlagEXIF | vp8xFlagXMP
 	}
-	//nolint:gosec // G115:输出不长于输入,RIFF 容器本身以 uint32 记长,合法输入不溢出
-	binary.LittleEndian.PutUint32(out[4:riffChunkHeader], uint32(len(out)-riffChunkHeader))
+	// 输出由输入删去若干 chunk 得到,不长于输入,而输入的长度来自 uint32 的 RIFF 长度字段。
+	riffSize := len(out) - riffChunkHeader
+	if riffSize < 0 || int64(riffSize) > math.MaxUint32 {
+		return nil, fmt.Errorf("imaging: WebP 剥离后的 RIFF 长度 %d 越界", riffSize)
+	}
+	binary.LittleEndian.PutUint32(out[4:riffChunkHeader], uint32(riffSize))
 	return out, nil
 }

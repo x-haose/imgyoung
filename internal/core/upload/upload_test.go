@@ -78,7 +78,7 @@ func jpegWithEXIF(t *testing.T) []byte {
 	jpg := buf.Bytes()
 	payload := append([]byte("Exif\x00\x00"), bytes.Repeat([]byte{0xCD}, 16)...)
 	seg := []byte{0xFF, 0xE1}
-	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2)) //nolint:gosec // 测试载荷为几十字节常量,远小于 uint16 上限
+	seg = binary.BigEndian.AppendUint16(seg, uint16(len(payload)+2))
 	seg = append(seg, payload...)
 
 	out := append([]byte{}, jpg[:2]...)
@@ -269,7 +269,7 @@ func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
 		t.Fatalf("模拟主渠道故障: %v", err)
 	}
 	defer func() {
-		if cerr := os.Chmod(brokenDir, 0o700); cerr != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		if cerr := os.Chmod(brokenDir, 0o700); cerr != nil {
 			t.Errorf("恢复目录权限: %v", cerr)
 		}
 	}()

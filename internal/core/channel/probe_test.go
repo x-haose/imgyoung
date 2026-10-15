@@ -200,7 +200,7 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 		t.Fatalf("模拟渠道故障: %v", err)
 	}
 	defer func() {
-		if cerr := os.Chmod(dir, 0o700); cerr != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		if cerr := os.Chmod(dir, 0o700); cerr != nil {
 			t.Errorf("恢复目录权限: %v", cerr)
 		}
 	}()
@@ -212,7 +212,7 @@ func TestManagerCheckAllPersistsProbeResult(t *testing.T) {
 		t.Fatalf("故障未落库: %+v", row)
 	}
 
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("恢复渠道: %v", err)
 	}
 	if _, err := env.Manager.CheckAll(t.Context()); err != nil {
@@ -232,11 +232,11 @@ func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
 	id, dir := env.AddLocalChannel(t, "readonly", 300, false)
 
 	// 目录只读:轻探测(只读 Stat)通过,深探测(写)失败。
-	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // 需保留读与执行位,只去掉写位才能构造可读不可写
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatalf("模拟只读渠道: %v", err)
 	}
 	defer func() {
-		if cerr := os.Chmod(dir, 0o700); cerr != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		if cerr := os.Chmod(dir, 0o700); cerr != nil {
 			t.Errorf("恢复目录权限: %v", cerr)
 		}
 	}()
@@ -258,7 +258,7 @@ func TestManagerCheckAllKeepsDeepProbeFailure(t *testing.T) {
 	}
 
 	// 恢复写权限后,轻探测轮询经深探测确认翻回健康。
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("恢复渠道: %v", err)
 	}
 	changed, err := env.Manager.CheckAll(t.Context())

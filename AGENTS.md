@@ -11,7 +11,7 @@
 
 ## 质量红线(不可协商)
 
-- **0 警告**:`golangci-lint run` 0 issue、`go vet` 0 警告、GoLand IDE 0 警告。lint 配置在 `.golangci.yml`(迭代 0 建立,linter 集合从严),CI 门禁,红了不合并。`//nolint` 必须附一行理由,否则视为违规。
+- **0 警告**:`golangci-lint run` 0 issue、`go vet` 0 警告、GoLand IDE 0 警告。lint 配置在 `.golangci.yml`(linter 集合从严),CI 门禁,红了不合并。不写 `//nolint`、`eslint-disable` 之类抑制注释:改代码;确属误报的,在 `.golangci.yml` 的 `exclusions.rules` 里按文件与规则排除并注明理由。
 - **注释全覆盖**:接口、方法、函数、结构体、字段——导出与非导出的都要有注释。
   - 函数/方法用 **goanno 格式**,但**首行必须以标识符名开头**(兼容 godoc 与 revive 的 exported 规则),随后接 `@Description` / `@param` / `@return`:
 

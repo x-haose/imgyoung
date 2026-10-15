@@ -24,7 +24,7 @@ var (
 )
 
 // cdnAPITokenKey 凭证类配置键:入库 AES-GCM 密文,内存明文,出口一律脱敏。
-const cdnAPITokenKey = "cdn_cloudflare_api_token" //nolint:gosec // 配置键名,非凭证本体
+const cdnAPITokenKey = "cdn_cloudflare_api_token"
 
 // 凭证类变更在审计里的脱敏表述。
 const (

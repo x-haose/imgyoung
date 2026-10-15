@@ -16,8 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/corona10/goimagehash"
-
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -316,15 +314,15 @@ func prepare(data []byte, mime string, policy imaging.EXIFPolicy) (prepared, err
 	if err != nil {
 		return prepared{}, fmt.Errorf("%w: %w", ErrInvalidImage, err)
 	}
-	ph, err := goimagehash.PerceptionHash(img)
+	ph, err := imaging.PHash(img)
 	if err != nil {
-		return prepared{}, fmt.Errorf("计算感知哈希: %w", err)
+		return prepared{}, err
 	}
 	sum := sha256.Sum256(data)
 	return prepared{
 		data:   data,
 		sha256: hex.EncodeToString(sum[:]),
-		phash:  int64(ph.GetHash()), //nolint:gosec // 64 位哈希按位存储,数值无语义,仅供汉明距离比较
+		phash:  ph,
 	}, nil
 }
 

@@ -84,7 +84,6 @@ func TestServiceSingleFlightMergesConcurrent(t *testing.T) {
 
 	var calls atomic.Int32
 	release := make(chan struct{})
-	//nolint:unparam // 须匹配 srcFn 回调签名 func(ctx)([]byte,error);测试替身不产生错误
 	srcFn := func(context.Context) ([]byte, error) {
 		calls.Add(1)
 		<-release // 卡住首个处理,直到全部并发调用方都已发起
@@ -120,7 +119,6 @@ func TestServiceBusyReturnsErrBusy(t *testing.T) {
 	hold := make(chan struct{})
 	entered := make(chan struct{})
 	// 源图拉取发生在抢到处理槽之后:它被调用即证明占槽者已在临界区,比固定睡眠可靠。
-	//nolint:unparam // 须匹配 srcFn 回调签名 func(ctx)([]byte,error);测试替身不产生错误
 	blockingSrc := func(context.Context) ([]byte, error) { close(entered); <-hold; return src, nil }
 	var wg sync.WaitGroup
 	wg.Go(func() {

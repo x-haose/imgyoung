@@ -9,6 +9,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
 // exportPayload 元数据全量导出的结构:图在哪些渠道、key、哈希全部在内,
@@ -181,7 +182,7 @@ func blobsExport(rows []sqlc.Blob) []blobExportItem {
 	items := make([]blobExportItem, 0, len(rows))
 	for _, b := range rows {
 		items = append(items, blobExportItem{
-			ID: b.ID, Sha256: b.Sha256, Phash: phashHex(b.Phash), StorageKey: b.StorageKey, Mime: b.Mime,
+			ID: b.ID, Sha256: b.Sha256, Phash: imaging.PHashHex(b.Phash), StorageKey: b.StorageKey, Mime: b.Mime,
 			Size: b.Size, Width: b.Width, Height: b.Height, RefCount: b.RefCount,
 			PendingDelete: b.PendingDelete != 0, DeleteAfter: nullableStr(b.DeleteAfter), CreatedAt: b.CreatedAt,
 		})
@@ -201,11 +202,4 @@ func blobChannelsExport(rows []sqlc.BlobChannel) []blobChannelExportItem {
 		})
 	}
 	return items
-}
-
-// phashHex 把库里按 int64 存放的 64 位感知哈希还原为 16 位十六进制。
-// @param phash 感知哈希的位模式
-// @return 零填充的十六进制文本
-func phashHex(phash int64) string {
-	return fmt.Sprintf("%016x", uint64(phash)) //nolint:gosec // 哈希取位模式,数值无语义
 }

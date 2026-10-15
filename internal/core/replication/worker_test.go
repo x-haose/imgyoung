@@ -139,11 +139,11 @@ func TestReplicateWorkerPutFailureRecordsCause(t *testing.T) {
 	testenv.SkipIfRoot(t)
 	we := newWorkerEnv(t)
 	args := we.seedReplica(t, true)
-	if err := os.Chmod(we.backupDir, 0o500); err != nil { //nolint:gosec // 需保留读与执行位,只去掉写位才能构造可读不可写
+	if err := os.Chmod(we.backupDir, 0o500); err != nil {
 		t.Fatalf("置目标目录只读: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := os.Chmod(we.backupDir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		if err := os.Chmod(we.backupDir, 0o700); err != nil {
 			t.Errorf("恢复目标目录权限: %v", err)
 		}
 	})
@@ -244,11 +244,11 @@ func TestReplicateWorkerCancelsWhenTargetDraining(t *testing.T) {
 func readOnly(t *testing.T, dir string) {
 	t.Helper()
 	testenv.SkipIfRoot(t)
-	if err := os.Chmod(dir, 0o500); err != nil { //nolint:gosec // 需保留读与执行位,只去掉写位才能构造可读不可写
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatalf("置目录只读: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 目录需执行位方可进入,0700 已是最小权限
+		if err := os.Chmod(dir, 0o700); err != nil {
 			t.Errorf("恢复目录权限: %v", err)
 		}
 	})

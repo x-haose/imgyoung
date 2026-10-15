@@ -25,7 +25,7 @@ func encodePNG(t *testing.T) []byte {
 
 // buildPNGChunk 组装一个带正确 CRC 的 PNG chunk。
 func buildPNGChunk(ctype string, payload []byte) []byte {
-	out := binary.BigEndian.AppendUint32(nil, uint32(len(payload))) //nolint:gosec // 测试载荷为常量小字节
+	out := binary.BigEndian.AppendUint32(nil, uint32(len(payload)))
 	out = append(out, ctype...)
 	out = append(out, payload...)
 	crc := crc32.NewIEEE()
@@ -77,7 +77,7 @@ func encodeWebP(t *testing.T) []byte {
 // buildRIFFChunk 组装一个 RIFF chunk(奇数长度自动补偶数填充字节)。
 func buildRIFFChunk(fourCC string, payload []byte) []byte {
 	out := append([]byte{}, fourCC...)
-	out = binary.LittleEndian.AppendUint32(out, uint32(len(payload))) //nolint:gosec // 测试载荷为常量小字节
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(payload)))
 	out = append(out, payload...)
 	if len(payload)%2 == 1 {
 		out = append(out, 0)
@@ -95,7 +95,7 @@ func wrapVP8XWithEXIF(t *testing.T, src []byte) []byte {
 	out := append([]byte{}, src...)
 	out[webpHeaderSize+8] |= vp8xFlagEXIF
 	out = append(out, buildRIFFChunk(webpChunkEXIF, []byte("Exif\x00\x00fake-payload!"))...)
-	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8)) //nolint:gosec // 测试构造的容器远小于 uint32 上限
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(out)-8))
 	return out
 }
 

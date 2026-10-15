@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math/bits"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
 // 相似裁决哨兵错误,调用方据此映射 HTTP 状态码。
@@ -44,7 +44,7 @@ func (m *Merger) ScanSimilarOnce(ctx context.Context) (int, error) {
 			continue
 		}
 		for j := range i {
-			dist := bits.OnesCount64(uint64(blob.Phash) ^ uint64(rows[j].Phash)) //nolint:gosec // 哈希按位比较,数值无语义
+			dist := imaging.PHashDistance(blob.Phash, rows[j].Phash)
 			if dist > threshold {
 				continue
 			}
