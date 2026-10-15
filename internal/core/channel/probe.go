@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -73,8 +74,9 @@ type TestParams struct {
 }
 
 // TestConfig 用一份未落库的渠道配置执行深探测(测试连接)。
-// @Description: 不创建渠道、不写任何库表;配置整理规则与 Create / Update 相同。加密属性不参与——
-// crypt 密钥派生依赖渠道 ID,本方法验证的是后端连通性与写读删权限。探测失败不算方法失败。
+// @Description: 不创建渠道;配置整理规则与 Create / Update 相同。加密属性不参与——crypt 密钥派生
+// 依赖渠道 ID,本方法验证的是后端连通性与写读删权限。探测失败不算方法失败。编辑场景下,一次性驱动
+// 对沿用的已存凭证的写回落到该渠道(见 trialProbe)。
 // @param p 测试参数
 // @return 探测失败的原因,已人话化并抹除凭证(提交的明文与其编码产物都抹),可直接展示;空串表示连接可用
 // @return ErrInvalidChannel(参数非法)、ErrChannelNotFound 或读取渠道失败时的错误
@@ -106,12 +108,42 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) 
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, prepared, stored); err != nil {
 		return redact(humanizeProbeError(err)), nil
 	}
-	d, err := m.openTrial(ctx, p.Driver, prepared)
+	probeErr, err := m.trialProbe(ctx, p, prepared)
 	if err != nil {
-		return redact(humanizeProbeError(err)), nil
+		return "", err
 	}
-	defer m.closeTrial(ctx, d, "测试连接")
-	return redact(humanizeProbeError(deepProbe(ctx, d))), nil
+	return redact(humanizeProbeError(probeErr)), nil
+}
+
+// trialProbe 用一次性驱动对整理好的配置做深探测。
+// @Description: 编辑场景下,沿用渠道已存值(提交为哨兵)的参数若被后端写回(访问令牌过期时的刷新),
+// 写回落到该渠道,随后重载让已装载的驱动换用新值——对刷新令牌只能用一次的服务商,否则库里与在用
+// 驱动手里的刷新令牌都已作废。创建场景没有可落的渠道,写回随驱动丢弃。
+// @param p 测试参数
+// @param config 已整理的配置
+// @return probeErr 构造或探测失败的原因;nil 表示连接可用
+// @return err 写回后重载失败时的错误
+func (m *Manager) trialProbe(ctx context.Context, p TestParams, config map[string]string) (probeErr, err error) {
+	var persisted atomic.Bool
+	var onChange func(key, value string)
+	if p.ChannelID > 0 {
+		onChange = func(key, value string) {
+			if p.Config[key] == SecretPlaceholder && m.persistParam(p.ChannelID, key, value) {
+				persisted.Store(true)
+			}
+		}
+	}
+	d, probeErr := m.openTrial(ctx, p.Driver, config, onChange)
+	if probeErr == nil {
+		probeErr = deepProbe(ctx, d)
+		m.closeTrial(ctx, d, "测试连接")
+	}
+	if persisted.Load() {
+		if err := m.Reload(ctx); err != nil && !errors.Is(err, errNothingLoaded) {
+			return nil, err
+		}
+	}
+	return probeErr, nil
 }
 
 // recordProbe 把一次探测结果写入渠道行(healthy / last_checked_at / last_error)

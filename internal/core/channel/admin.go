@@ -162,19 +162,8 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, nil); err != nil {
 		return 0, err
 	}
-	// 试构造:落库前验证后端名与参数能初始化(crypt 派生依赖渠道 ID,
-	// 加密渠道以明文形态试构造,包裹层在 Reload 时再生效)。
-	trial, err := m.openTrial(ctx, p.Driver, config)
-	if err != nil {
-		return 0, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
-	}
-	m.closeTrial(ctx, trial, "创建试构造")
-
-	// 可选自动建桶:在落库前主动建,失败即中止(不留"渠道已建但桶不存在"的坑)。
-	if p.AutoCreateBucket {
-		if err := m.ensureBucket(ctx, p.Driver, config); err != nil {
-			return 0, fmt.Errorf("%w: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): %w", ErrInvalidChannel, err)
-		}
+	if err := m.verifyConfig(ctx, p.Driver, config, p.AutoCreateBucket); err != nil {
+		return 0, err
 	}
 	sealed, err := m.sealConfigMap(config)
 	if err != nil {
@@ -311,12 +300,9 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
 		return err
 	}
-	// 试构造:与 Create 同规则,加密渠道以明文形态验证后端可初始化。
-	trial, err := m.openTrial(ctx, p.Driver, config)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+	if err := m.verifyConfig(ctx, p.Driver, config, false); err != nil {
+		return err
 	}
-	m.closeTrial(ctx, trial, "编辑试构造")
 	sealed, err := m.sealConfigMap(config)
 	if err != nil {
 		return err
@@ -333,17 +319,45 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	return nil
 }
 
+// verifyConfig 落库前以一次性驱动试构造整理好的配置,可选顺带建桶;试构造期间的写回并入配置(原地修改)。
+// @Description: 加密渠道以明文形态试构造——crypt 密钥派生依赖渠道 ID 与创建时刻,包裹层在 Reload 时
+// 生效。写回多为访问令牌过期时刷新得到的新令牌,随配置落库,刷新令牌只能用一次的服务商不因此作废。
+// 建桶在落库前进行,失败即中止,不留「渠道已建但桶不存在」的坑。
+// @param driverName rclone 后端名
+// @param config 已整理的配置
+// @param createBucket 是否主动建桶(需凭证有建桶权限);仅 s3 有意义
+// @return 后端初始化或建桶失败时的 ErrInvalidChannel
+func (m *Manager) verifyConfig(ctx context.Context, driverName string, config map[string]string,
+	createBucket bool) error {
+	var wb writeBacks
+	trial, err := m.openTrial(ctx, driverName, config, wb.record)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+	}
+	m.closeTrial(ctx, trial, "试构造")
+	if createBucket {
+		if err := m.ensureBucket(ctx, driverName, config, wb.record); err != nil {
+			return fmt.Errorf("%w: 自动创建存储桶失败(请确认密钥具备建桶权限,或先在控制台建好桶并关闭此项): %w",
+				ErrInvalidChannel, err)
+		}
+	}
+	wb.applyTo(config)
+	return nil
+}
+
 // ensureBucket 对 s3 类渠道主动建桶。
 // @Description: 用渠道配置构造一个显式 no_check_bucket=false 的裸驱动(不套 crypt——
 // 建桶是桶级操作,只需内层 s3),再调 EnsureBucket。渠道自身仍用默认 no_check_bucket=true,
 // 建好一次后续不必每次探测。
 // @param drv rclone 后端名
 // @param config 已整理的渠道配置(含约定键 path)
+// @param onChange 建桶驱动写回的去处
 // @return 建桶失败时的错误
-func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[string]string) error {
+func (m *Manager) ensureBucket(ctx context.Context, drv string, config map[string]string,
+	onChange func(key, value string)) error {
 	params := maps.Clone(config)
 	params["no_check_bucket"] = "false"
-	d, err := m.openTrial(ctx, drv, params)
+	d, err := m.openTrial(ctx, drv, params, onChange)
 	if err != nil {
 		return fmt.Errorf("初始化建桶驱动: %w", err)
 	}

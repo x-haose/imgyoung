@@ -365,7 +365,7 @@ func (m *Manager) Get(channelID int64) (Handle, bool) {
 func (m *Manager) openDriver(ctx context.Context, row sqlc.Channel, params map[string]string) (*rclone.Driver, error) {
 	opts := m.driverOptions(row.Driver, params)
 	channelID := row.ID
-	opts.OnChange = func(key, value string) { m.persistParam(channelID, key, value) }
+	opts.OnChange = func(key, value string) { m.persistOwn(channelID, key, value) }
 	if row.Encrypted != 0 {
 		password, err := m.deriveHex(row, "crypt:password")
 		if err != nil {
@@ -380,15 +380,47 @@ func (m *Manager) openDriver(ctx context.Context, row sqlc.Channel, params map[s
 	return rclone.Open(ctx, opts)
 }
 
-// openTrial 用一份未落库的配置构造一次性驱动(试构造、测试连接、建桶),不套 crypt、不落写回。
+// openTrial 用一份未落库的配置构造一次性驱动(试构造、测试连接、建桶),不套 crypt。
 // @Description: 加密属性不参与——crypt 密钥派生依赖渠道 ID 与创建时刻,试构造验证的是
-// 后端连通性与参数合法性。调用方用毕须 Close。
+// 后端连通性与参数合法性。后端运行期写回的参数(访问令牌过期时刷新得到的新令牌等)交给
+// onChange:调用方并入将要落库的配置,或写回令牌所属的渠道;对刷新令牌只能用一次的服务商,
+// 丢掉写回即作废原有的刷新令牌。调用方用毕须 Close。
 // @param driverName rclone 后端名
 // @param params 明文配置(含约定键)
+// @param onChange 写回的去处;nil 表示写回随驱动丢弃,仅用于没有可落之处的场景
 // @return 就绪的驱动
 // @return 后端初始化失败时的错误
-func (m *Manager) openTrial(ctx context.Context, driverName string, params map[string]string) (*rclone.Driver, error) {
-	return rclone.Open(ctx, m.driverOptions(driverName, params))
+func (m *Manager) openTrial(ctx context.Context, driverName string, params map[string]string,
+	onChange func(key, value string)) (*rclone.Driver, error) {
+	opts := m.driverOptions(driverName, params)
+	opts.OnChange = onChange
+	return rclone.Open(ctx, opts)
+}
+
+// writeBacks 收集一次性驱动的写回,关闭驱动后并入将要落库的配置。
+type writeBacks struct {
+	mu     sync.Mutex        // 后端可能在任意 goroutine 写回
+	values map[string]string // 参数名 → 最近一次写回的值
+}
+
+// record 记下一次写回;签名与 rclone.Options.OnChange 一致。
+// @param key 参数名
+// @param value 新值
+func (w *writeBacks) record(key, value string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.values == nil {
+		w.values = map[string]string{}
+	}
+	w.values[key] = value
+}
+
+// applyTo 把收集到的写回并入配置(原地修改)。
+// @param config 将要落库的配置
+func (w *writeBacks) applyTo(config map[string]string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	maps.Copy(config, w.values)
 }
 
 // driverOptions 把渠道配置翻译成驱动构造参数:约定键拆出,内置 local 缺省落 dataDir/blobs。
@@ -421,40 +453,55 @@ func (m *Manager) closeTrial(ctx context.Context, d *rclone.Driver, what string)
 // persistParam 把后端运行期写回的参数(刷新后的 OAuth 令牌等)并入渠道配置并落库。
 // @Description: 写回来自 rclone 内部,不带上下文,也不该被某个请求的取消牵连,故用独立上下文。
 // 落库失败只能记录——rclone 的写回接口无处接收错误;内存里的新值仍在用,重启后退回旧值。
-// 同步更新本渠道的驱动输入,下次 Reload 不会把写回误判为配置变更而重建驱动。
 // @param channelID 渠道主键
 // @param key 参数名
 // @param value 新值
-func (m *Manager) persistParam(channelID int64, key, value string) {
+// @return 库里是否已是该值(本次写入或原本相同);失败时为 false,原因已记录
+func (m *Manager) persistParam(channelID int64, key, value string) bool {
 	ctx := context.Background()
 	m.cfgMu.Lock()
 	defer m.cfgMu.Unlock()
 	row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 	if err != nil {
 		m.cfg.Logger.Error("后端写回参数无法落库:读取渠道失败", "channel_id", channelID, "key", key, "err", err)
-		return
+		return false
 	}
 	params, err := m.unsealConfigMap(row.ConfigSealed)
 	if err != nil {
 		m.cfg.Logger.Error("后端写回参数无法落库", "channel", row.Name, "key", key, "err", err)
-		return
+		return false
 	}
 	if params[key] == value {
-		return
+		return true
 	}
 	params[key] = value
 	sealed, err := m.sealConfigMap(params)
 	if err != nil {
 		m.cfg.Logger.Error("后端写回参数无法落库", "channel", row.Name, "key", key, "err", err)
-		return
+		return false
 	}
 	if err := m.cfg.Queries.UpdateChannelConfigSealed(ctx, sqlc.UpdateChannelConfigSealedParams{
 		ConfigSealed: sealed, ID: channelID,
 	}); err != nil {
 		m.cfg.Logger.Error("后端写回参数无法落库", "channel", row.Name, "key", key, "err", err)
+		return false
+	}
+	m.cfg.Logger.Info("渠道参数已由后端写回并落库", "channel", row.Name, "key", key)
+	return true
+}
+
+// persistOwn 落库渠道自己驱动的写回,并同步进该渠道的驱动输入。
+// @Description: 驱动手里已是新值,下次 Reload 不应把写回误判为配置变更而重建驱动。一次性驱动的写回
+// 只经 persistParam 落库、不同步,下次 Reload 据此重建在用驱动,换用新值。
+// @param channelID 渠道主键
+// @param key 参数名
+// @param value 新值
+func (m *Manager) persistOwn(channelID int64, key, value string) {
+	if !m.persistParam(channelID, key, value) {
 		return
 	}
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i := range m.channels {
 		if m.channels[i].handle.ID == channelID {
 			next := maps.Clone(m.channels[i].source.params)
@@ -462,8 +509,6 @@ func (m *Manager) persistParam(channelID int64, key, value string) {
 			m.channels[i].source.params = next
 		}
 	}
-	m.mu.Unlock()
-	m.cfg.Logger.Info("渠道参数已由后端写回并落库", "channel", row.Name, "key", key)
 }
 
 // sealConfigMap 把渠道配置编码为 JSON 并用主密钥加密成可入库密文。

@@ -9,8 +9,9 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 )
 
-// TestPersistParamUpdatesConfigWithoutRebuild 验证后端写回的参数并入渠道配置密文落库,
-// 且同步到驱动输入——随后的 Reload 不把写回误判为配置变更而重建驱动。
+// TestPersistParamUpdatesConfigWithoutRebuild 验证渠道自己驱动的写回并入渠道配置密文落库,
+// 且同步到驱动输入——随后的 Reload 不把写回误判为配置变更而重建驱动;一次性驱动的写回只落库,
+// 随后的 Reload 重建在用驱动换用新值。
 func TestPersistParamUpdatesConfigWithoutRebuild(t *testing.T) {
 	conn, queries := dbtest.New(t)
 	master, err := secret.NewMasterKey()
@@ -33,7 +34,7 @@ func TestPersistParamUpdatesConfigWithoutRebuild(t *testing.T) {
 	}
 	before, _ := m.Get(id)
 
-	m.persistParam(id, "token", `{"access_token":"new"}`)
+	m.persistOwn(id, "token", `{"access_token":"new"}`)
 
 	row, err := queries.GetChannel(t.Context(), id)
 	if err != nil {
@@ -51,5 +52,15 @@ func TestPersistParamUpdatesConfigWithoutRebuild(t *testing.T) {
 	}
 	if after, _ := m.Get(id); after.Driver != before.Driver {
 		t.Fatal("写回后 Reload 重建了驱动实例")
+	}
+
+	if !m.persistParam(id, "token", `{"access_token":"trial"}`) {
+		t.Fatal("一次性驱动的写回未落库")
+	}
+	if err := m.Reload(t.Context()); err != nil {
+		t.Fatalf("重载: %v", err)
+	}
+	if after, _ := m.Get(id); after.Driver == before.Driver {
+		t.Fatal("一次性驱动写回后 Reload 未重建在用驱动")
 	}
 }
