@@ -56,9 +56,9 @@ func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 
 // Work 删除渠道上全部副本对象并删除渠道记录。
 // @Description: 逐行"删对象 → 删副本行",进度持久在业务表,中断重试从剩余行继续;对象已不存在
-// 视为已删。任一对象删不掉即整体报错交 River 退避重试;最后一次尝试仍失败则把原因写进渠道的
-// last_error,渠道停在清理中状态,管理员可改为直接移除(保留远端对象)。渠道不在清理中
-// (已被直接移除)时任务作废。
+// 视为已删。任一对象删不掉即整体报错交 River 退避重试,并把原因写进渠道的 last_error;尝试次数
+// 用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除(保留
+// 远端对象)。任务自身超时或停机取消不算渠道失败,不写原因。渠道不在清理中(已被直接移除)时任务作废。
 func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChannelArgs]) error {
 	h, ok := w.cfg.Manager.Get(job.Args.ChannelID)
 	if !ok || !h.PendingDelete {
@@ -66,7 +66,7 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 	}
 	deleted, err := w.drain(ctx, h.ID, h.Driver)
 	if err != nil {
-		if job.Attempt >= job.MaxAttempts {
+		if ctx.Err() == nil {
 			w.recordFailure(ctx, h.ID, err)
 		}
 		return fmt.Errorf("排空渠道 %q: %w", h.Name, err)
@@ -110,11 +110,11 @@ func (w *drainChannelWorker) drain(ctx context.Context, channelID int64, d drive
 	}
 }
 
-// recordFailure 把排空的最终失败原因写进渠道的探测结果栏,渠道列表可见;写入失败只记录。
+// recordFailure 把排空失败原因写进渠道的探测结果栏,渠道列表与告警可见;写入失败只记录。
 // @param channelID 渠道主键
 // @param cause 失败原因
 func (w *drainChannelWorker) recordFailure(ctx context.Context, channelID int64, cause error) {
-	msg := "清理渠道对象失败,已停止重试;可改为直接移除(保留远端对象): " + cause.Error()
+	msg := "清理渠道对象失败,会自动重试;凭证已失效或存储桶已不存在时可直接移除(远端对象保留): " + cause.Error()
 	if err := w.cfg.Queries.UpdateChannelProbeResult(context.WithoutCancel(ctx), sqlc.UpdateChannelProbeResultParams{
 		Healthy: 0, LastError: sql.NullString{String: msg, Valid: true}, ID: channelID,
 	}); err != nil {

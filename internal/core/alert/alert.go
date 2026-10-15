@@ -18,7 +18,7 @@ const (
 	KindChannelUnhealthy     = "channel_unhealthy"      // 渠道探测不健康
 	KindReplicationFailed    = "replication_failed"     // 渠道上有补齐失败的副本
 	KindChannelQuotaExceeded = "channel_quota_exceeded" // 渠道用量超过配额阈值
-	KindDrainFailed          = "drain_failed"           // 清理中渠道的对象删除失败,已停止重试
+	KindDrainFailed          = "drain_failed"           // 清理中渠道的对象删除失败,排空仍在自动重试
 	KindBackupFailed         = "backup_failed"          // 最近一次元数据库备份失败
 )
 

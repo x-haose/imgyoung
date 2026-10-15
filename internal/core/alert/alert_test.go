@@ -200,7 +200,7 @@ func TestEvaluateDrainFailed(t *testing.T) {
 	if err := ae.Manager.Delete(t.Context(), id, true); err != nil {
 		t.Fatalf("标记清理中: %v", err)
 	}
-	ae.setProbe(t, id, false, "清理渠道对象失败,已停止重试")
+	ae.setProbe(t, id, false, "清理渠道对象失败,会自动重试")
 
 	ae.evaluate(t)
 	got := ae.openAlerts(t)
