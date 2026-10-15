@@ -48,7 +48,7 @@ export const guide = {
   baseUrlNote:
     '未配置对外站点地址时,返回的 url 按请求域名推导为绝对地址,直连场景开箱即用;经反代 / CDN 后对外域名与请求域名不一致时,到「设置 → 运行配置」把 base_url 填成你的对外域名。',
   s3Intro:
-    'PicGo / PicList / Typora / iOS 快捷指令普遍内置「Amazon S3」上传选项,本站同时以 S3 协议收图,选它即可、无需装插件。到上传 Token 页点某枚 Token 的「S3 配置」,照着弹窗逐项填写。',
+    '本站同时以 S3 协议收图:PicList 内置「AWS S3」图床,PicGo 装上 S3 插件后同样可用,Typora 经 PicGo 上传。到上传 Token 页点某枚 Token 的「S3 客户端配置」,照着弹窗逐项填写。',
   s3: {
     credentials: '凭证',
     credentialsDesc:
@@ -129,5 +129,5 @@ export const guide = {
     },
   },
   webUploadIntro:
-    '不想配客户端?在图片页点「上传」,走当前登录身份、无需 Token;上传后每张图都有短链,可一键复制。',
+    '不想配客户端?在图片页点「上传图片」,走当前登录身份、无需 Token;上传后每张图都有短链,可一键复制。',
 }

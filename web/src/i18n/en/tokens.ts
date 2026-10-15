@@ -75,7 +75,7 @@ export const tokens = {
   s3: {
     title: 'S3 client settings · {name}',
     intro:
-      'Choose "Amazon S3" in PicGo / PicList / Typora and fill in the fields below',
+      'Pick the "AWS S3" uploader in PicList, or in PicGo after installing its S3 plugin (Typora uploads through PicGo), then fill in the fields below',
     note: 'The secret is derived from the master key and can be viewed here any time; revoking the token invalidates it.',
     pathStyle:
       'Path-style addressing: a self-hosted server has no bucket subdomains, so enable "path style" if the client has such a switch.',

@@ -52,7 +52,7 @@ export const guide = {
   baseUrlNote:
     'Without a public site address configured, the returned url is derived from the request host, which works out of the box for direct access. Behind a reverse proxy / CDN whose public domain differs from the request host, set base_url to your public domain under Settings → Runtime config.',
   s3Intro:
-    'PicGo / PicList / Typora / iOS Shortcuts all ship an "Amazon S3" uploader, and this site also accepts images over the S3 protocol, so pick it, no plugin needed. On the upload tokens page, open "S3 config" on a token and copy the values into the client.',
+    'This site also accepts images over the S3 protocol: PicList has a built-in "AWS S3" uploader, PicGo supports it once the S3 plugin is installed, and Typora uploads through PicGo. On the upload tokens page, open "S3 client settings" on a token and copy the values into the client.',
   s3: {
     credentials: 'Credentials',
     credentialsDesc:

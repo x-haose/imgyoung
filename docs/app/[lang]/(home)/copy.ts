@@ -99,7 +99,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: '多种上传入口',
-        body: 'HTTP API、PicGo / PicList、S3 协议(PicGo 内置 S3、Typora 等直接可用)、URL 转存与后台拖拽粘贴,共用一条上传管道。',
+        body: 'HTTP API、PicGo / PicList、S3 协议(PicList 内置,PicGo 装插件即可)、URL 转存与后台拖拽粘贴,共用一条上传管道。',
       },
       {
         title: '按需处理',
@@ -177,7 +177,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: 'Many ways to upload',
-        body: 'HTTP API, PicGo / PicList, the S3 protocol (PicGo’s built-in S3 uploader, Typora and friends), URL import, and drag-and-drop in the admin console — all through one pipeline.',
+        body: 'HTTP API, PicGo / PicList, the S3 protocol (built into PicList, one plugin away in PicGo), URL import, and drag-and-drop in the admin console — all through one pipeline.',
       },
       {
         title: 'On-demand processing',

@@ -54,7 +54,7 @@ func (h *Handlers) HandleSessionUploadURL(w http.ResponseWriter, r *http.Request
 }
 
 // serveUploadURL URL 转存的共享管道:解析请求 → 带 SSRF 约束地抓取 → 交给上传管道。
-// @Description: 抓回的字节走与直传完全相同的编排(格式白名单/像素预算/净化/查重/配额),
+// @Description: 抓回的字节走与直传完全相同的编排(格式白名单/像素预算/净化/哈希/配额),
 // 远端声明的 Content-Type 不参与格式判定——判定一律以 magic bytes 为准。
 // @param userID 归属用户 id
 // @param tokenID 来源 Token 记录 id,0 表示非 Token 途径

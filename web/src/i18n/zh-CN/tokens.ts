@@ -69,7 +69,8 @@ export const tokens = {
   },
   s3: {
     title: 'S3 客户端配置 · {name}',
-    intro: '在 PicGo / PicList / Typora 里选「Amazon S3」,按下表填写即可',
+    intro:
+      'PicList 选「AWS S3」图床,PicGo 装 S3 插件后选它(Typora 经 PicGo 上传),按下表填写即可',
     note: '密钥由主密钥派生,可随时回此页重看;吊销该 Token 即同步失效。',
     pathStyle:
       '路径风格寻址(path-style):自部署没有桶子域名,客户端若有「使用路径风格」开关请勾上。',

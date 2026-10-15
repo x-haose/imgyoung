@@ -38,7 +38,7 @@ export const settings = {
       },
       process: {
         title: 'On-demand processing',
-        hint: 'Only in proxy access mode; whitelisted tiers keep arbitrary parameters from saturating the CPU',
+        hint: 'Requests with processing parameters are always proxied, even in redirect mode; whitelisted tiers keep arbitrary parameters from saturating the CPU',
       },
       dedup: {
         title: 'Deduplication',
@@ -60,7 +60,7 @@ export const settings = {
     fields: {
       access_mode: {
         label: 'Access mode',
-        hint: 'proxy serves through this service and enables on-demand processing; redirect sends a 302 to channels that allow direct links, saving bandwidth',
+        hint: 'proxy serves through this service; redirect sends a 302 to channels that allow direct links, saving bandwidth, while requests with processing parameters, and images no direct-link channel holds, are still proxied',
       },
       base_url: {
         label: 'Public site address',

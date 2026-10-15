@@ -30,7 +30,7 @@ export const settings = {
       lifecycle: { title: '生命周期', hint: '有效期、冷图与清理节奏' },
       process: {
         title: '按需处理',
-        hint: '仅 proxy 访问模式生效;档位白名单化防任意参数打满 CPU',
+        hint: '带处理参数的请求一律经服务代理,redirect 模式下也是;档位白名单化防任意参数打满 CPU',
       },
       dedup: { title: '查重', hint: '精确重复自动合并,相似图进候选' },
       reliability: { title: '可靠性与渠道', hint: '探测、备份与用量' },
@@ -43,7 +43,7 @@ export const settings = {
     fields: {
       access_mode: {
         label: '访问模式',
-        hint: 'proxy 经服务代理回源,可用按需处理;redirect 对允许直链的渠道 302,省服务器流量',
+        hint: 'proxy 经服务代理回源;redirect 对允许直链的渠道 302,省服务器流量,带处理参数的请求、以及没有可直链渠道持有副本的图仍走代理',
       },
       base_url: {
         label: '对外站点地址',
