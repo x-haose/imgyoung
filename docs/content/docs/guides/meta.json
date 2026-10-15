@@ -1,0 +1,11 @@
+{
+  "title": "使用指南",
+  "icon": "BookOpen",
+  "pages": [
+    "upload",
+    "clients",
+    "access",
+    "lifecycle",
+    "admin"
+  ]
+}

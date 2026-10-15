@@ -1,0 +1,20 @@
+{
+  "title": "ImgYoung",
+  "pages": [
+    "index",
+    "quick-start",
+    "---Install---",
+    "install",
+    "---Usage---",
+    "guides",
+    "---Storage channels---",
+    "channels",
+    "---Configure & operate---",
+    "configuration",
+    "operations",
+    "---Developers---",
+    "library",
+    "api",
+    "architecture"
+  ]
+}

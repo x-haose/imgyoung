@@ -1,0 +1,12 @@
+{
+  "title": "运维",
+  "icon": "Wrench",
+  "pages": [
+    "reverse-proxy",
+    "cdn",
+    "backup",
+    "upgrade",
+    "password-reset",
+    "monitoring"
+  ]
+}

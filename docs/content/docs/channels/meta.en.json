@@ -1,0 +1,10 @@
+{
+  "title": "Storage channels",
+  "icon": "HardDrive",
+  "pages": [
+    "index",
+    "object-storage",
+    "cloud-drives",
+    "encryption"
+  ]
+}

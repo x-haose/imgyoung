@@ -1,0 +1,20 @@
+{
+  "title": "ImgYoung",
+  "pages": [
+    "index",
+    "quick-start",
+    "---安装---",
+    "install",
+    "---使用---",
+    "guides",
+    "---存储渠道---",
+    "channels",
+    "---配置与运维---",
+    "configuration",
+    "operations",
+    "---开发者---",
+    "library",
+    "api",
+    "architecture"
+  ]
+}

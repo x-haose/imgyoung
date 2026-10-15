@@ -1,0 +1,9 @@
+{
+  "title": "Go 库",
+  "icon": "Package",
+  "pages": [
+    "index",
+    "driver",
+    "failover"
+  ]
+}

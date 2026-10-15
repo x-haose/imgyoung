@@ -33,12 +33,20 @@ tasks:
       - go test -tags e2e -count=1 ./e2e/ -timeout 300s
 
   lint:
-    desc: lint 门禁:Go、前端与安装脚本都 0 issue 才算过(质量红线);同时确认 go.mod/go.sum 已 tidy
+    desc: lint 门禁:Go、后台前端、文档站与安装脚本都 0 issue 才算过(质量红线);同时确认 go.mod/go.sum 已 tidy
     cmds:
       - golangci-lint run
       - go mod tidy -diff
       - cd web && pnpm lint
+      - cd docs && pnpm lint
       - shellcheck -s sh install.sh
+
+  docs:
+    desc: 文档站本地预览(http://localhost:3000;接口参考页读 api/openapi.yaml)
+    dir: docs
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm dev
 
   generate:
     desc: 重新生成 sqlc 查询代码

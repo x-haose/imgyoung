@@ -1,0 +1,10 @@
+{
+  "title": "存储渠道",
+  "icon": "HardDrive",
+  "pages": [
+    "index",
+    "object-storage",
+    "cloud-drives",
+    "encryption"
+  ]
+}

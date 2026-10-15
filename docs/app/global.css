@@ -1,0 +1,68 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/neutral.css';
+@import 'fumadocs-ui/css/preset.css';
+@import 'fumadocs-openapi/css/preset.css';
+
+/* fumadocs 与接口参考组件自身的类名需要被 Tailwind 扫描到才会生成样式 */
+@source '../node_modules/fumadocs-ui/dist/**/*.js';
+@source '../node_modules/fumadocs-openapi/dist/**/*.js';
+
+/*
+ * 视觉基调与管理后台同源:主色翡翠绿(语义「就绪 / 健康」),暗色以近黑分层表达深度,
+ * 亮色用低饱和灰阶保持同一气质。取值与 web/src/styles/theme.css 的同名语义一致。
+ */
+@theme {
+  --font-sans:
+    'IBM Plex Sans', 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --color-brand: #10b981;
+  --color-brand-ink: #06251b;
+  --color-sky: #38bdf8;
+  --color-danger: #e5534b;
+}
+
+:root {
+  --color-fd-background: #f7f8fa;
+  --color-fd-foreground: #12181d;
+  --color-fd-muted: #eef0f4;
+  --color-fd-muted-foreground: #667085;
+  --color-fd-popover: #ffffff;
+  --color-fd-popover-foreground: #12181d;
+  --color-fd-card: #ffffff;
+  --color-fd-card-foreground: #12181d;
+  --color-fd-border: #e3e7eb;
+  --color-fd-primary: #059669;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-secondary: #eceff3;
+  --color-fd-secondary-foreground: #12181d;
+  --color-fd-accent: #e3f5ee;
+  --color-fd-accent-foreground: #065f46;
+  --color-fd-ring: #059669;
+}
+
+.dark {
+  --color-fd-background: #0f1317;
+  --color-fd-foreground: #e6edf1;
+  --color-fd-muted: #181e25;
+  --color-fd-muted-foreground: #8b98a5;
+  --color-fd-popover: #1b2129;
+  --color-fd-popover-foreground: #e6edf1;
+  --color-fd-card: #151a20;
+  --color-fd-card-foreground: #e6edf1;
+  --color-fd-border: #242b34;
+  --color-fd-primary: #10b981;
+  --color-fd-primary-foreground: #052e22;
+  --color-fd-secondary: #1b2129;
+  --color-fd-secondary-foreground: #e6edf1;
+  --color-fd-accent: #15302a;
+  --color-fd-accent-foreground: #c8f5e5;
+  --color-fd-ring: #10b981;
+}
+
+/* 首页主备切换示意图:激活连线沿方向流动;偏移量取虚线周期(6 + 6)的整数倍,循环首尾无跳变 */
+@keyframes failover-flow {
+  to {
+    stroke-dashoffset: -24;
+  }
+}

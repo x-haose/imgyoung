@@ -1,4 +1,4 @@
-# CI 门禁:lint 0 issue + 生成文件未过期 + go.mod 已 tidy + 全量测试(-race)+ e2e + 纯 Go 构建 + Docker 镜像可构建 + 发布配置合法
+# CI 门禁:lint 0 issue + 生成文件未过期 + go.mod 已 tidy + 全量测试(-race)+ e2e + 纯 Go 构建 + 文档站可构建 + Docker 镜像可构建 + 发布配置合法
 name: ci
 
 on:
@@ -51,6 +51,29 @@ jobs:
         run: go test -tags e2e -count=1 ./e2e/ -timeout 300s
       - name: Build
         run: go build -trimpath ./cmd/imgyoung
+
+  # 文档站:类型检查、格式与构建;接口参考页在构建时由 api/openapi.yaml 生成,文档与契约不同步会在这里失败
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: docs/package.json
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: docs/pnpm-lock.yaml
+      - name: Docs
+        working-directory: docs
+        # 只验证能构建,产物不发布;站点地址只影响 sitemap 与 canonical 链接
+        env:
+          NEXT_PUBLIC_SITE_URL: http://localhost:3000
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm build
 
   docker:
     runs-on: ubuntu-latest

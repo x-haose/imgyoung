@@ -1,0 +1,12 @@
+{
+  "title": "Install",
+  "icon": "Download",
+  "pages": [
+    "index",
+    "script",
+    "docker",
+    "compose",
+    "binary",
+    "source"
+  ]
+}

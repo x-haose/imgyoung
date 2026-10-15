@@ -19,33 +19,47 @@ info:
 servers:
   - url: /
     description: 与站点同源
+# x-slug:文档站接口参考页的路径段(/docs/api/<x-slug>),文档站构建时读取;新增标签须一并给出。
 tags:
   - name: 数据面
     description: 上传 Token 认证的上传与 URL 转存
+    x-slug: data-plane
   - name: 图片访问
     description: 公开的图片输出入口,受防盗链约束
+    x-slug: image-access
   - name: 后台·会话
     description: 登录、登出、当前用户与改密
+    x-slug: admin-session
   - name: 后台·总览与配置
     description: 仪表盘与运行配置
+    x-slug: admin-overview
   - name: 后台·上传
     description: 会话认证的后台上传,与数据面同一管道
+    x-slug: admin-upload
   - name: 后台·图片
     description: 图片列表、详情、修改与删除
+    x-slug: admin-images
   - name: 后台·上传 Token
     description: 具名 Token 的签发、轮转、吊销与 S3 凭证
+    x-slug: admin-tokens
   - name: 后台·存储渠道
     description: 渠道模板、创建、编辑、探测、删除与网盘授权
+    x-slug: admin-channels
   - name: 后台·用户
     description: 多用户建号、配额与密码重置(仅管理员)
+    x-slug: admin-users
   - name: 后台·防盗链
     description: Referer 白名单(仅管理员)
+    x-slug: admin-referer
   - name: 后台·裁决
     description: 相似重复与冷图待清理的裁决(仅管理员)
+    x-slug: admin-review
   - name: 后台·运维
     description: 审计日志、告警、备份快照与元数据导出(仅管理员)
+    x-slug: admin-operations
   - name: 系统
     description: 健康检查与接口文档
+    x-slug: system
 
 paths:
   /healthz:
