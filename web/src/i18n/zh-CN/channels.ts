@@ -83,6 +83,8 @@ export const channels = {
   encryptOn: '强制开启',
   encryptOff: '强制关闭',
   encryptOnDirectLink: '已开直链的渠道无法强制加密:密文不能直出',
+  encryptInheritDirectLink:
+    '已开直链的渠道不能加密:强制开启与继承全局默认(当前为加密)都不可选',
   encryptedYes: '已加密',
   encryptedNo: '未加密',
   encryptedImmutable:
@@ -90,6 +92,8 @@ export const channels = {
   directLinkLabel: '允许 302 直链',
   directLinkHint: '访问时 302 跳到存储桶的公开地址,不经本站转发',
   directLinkEncrypted: '加密渠道无法 302 直链:密文不能直出',
+  directLinkInheritEncrypted:
+    '全局默认对新渠道加密,加密渠道无法 302 直链;需要直链请把服务端加密设为强制关闭',
   directLinkNeedsBaseURL:
     '未配置 public_base_url,302 直链不会生效,访问将回落代理',
   autoCreateBucketLabel: '自动创建存储桶',

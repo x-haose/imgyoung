@@ -94,6 +94,8 @@ export const channels = {
   encryptOff: 'Force off',
   encryptOnDirectLink:
     'A channel with direct links cannot be encrypted: ciphertext cannot be served directly',
+  encryptInheritDirectLink:
+    'A channel with direct links cannot be encrypted: neither Force on nor inheriting the global default (currently encrypted) is available',
   encryptedYes: 'Encrypted',
   encryptedNo: 'Not encrypted',
   encryptedImmutable:
@@ -103,6 +105,8 @@ export const channels = {
     'Visitors are redirected to the public bucket URL instead of being proxied through this site',
   directLinkEncrypted:
     'An encrypted channel cannot serve direct links: ciphertext cannot be served directly',
+  directLinkInheritEncrypted:
+    'The global default encrypts new channels, and encrypted channels cannot serve direct links; set server-side encryption to Force off to enable them',
   directLinkNeedsBaseURL:
     'public_base_url is not set, so direct links will not take effect and access falls back to proxying',
   autoCreateBucketLabel: 'Create the bucket automatically',

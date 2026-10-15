@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner'
 import { errorMessage } from '@/lib/errors'
 import { useMessages } from '@/context/locale-provider'
+import { useServerConfig } from '@/hooks/use-server-config'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -61,6 +62,9 @@ import {
 /** 创建时服务端加密的三态;继承态不提交该字段,由后端按全局默认固化。 */
 type EncryptChoice = 'inherit' | 'on' | 'off'
 
+/** 渠道最终是否加密:plain 不加密;inherited 因继承全局默认而加密;explicit 显式或固有加密。 */
+type EncryptionState = 'plain' | 'inherited' | 'explicit'
+
 type ConfigEntry = { key: string; value: string }
 
 type FormValues = {
@@ -80,7 +84,8 @@ const NAME_MAX_BYTES = 64
 /** 校验规则随模板变化:模板必填字段逐个检查,自定义模式检查驱动名与参数键。 */
 function buildSchema(
   m: Messages['channels'],
-  template: ChannelTemplate | null
+  template: ChannelTemplate | null,
+  encryption: (choice: EncryptChoice) => EncryptionState
 ) {
   const priorityMessage = m.priorityRange
   return z
@@ -143,11 +148,15 @@ function buildSchema(
           seen.add(key)
         })
       }
-      if (v.encrypted === 'on' && v.allow_direct_link) {
+      const state = encryption(v.encrypted)
+      if (state !== 'plain' && v.allow_direct_link) {
         ctx.addIssue({
           code: 'custom',
           path: ['allow_direct_link'],
-          message: m.directLinkEncrypted,
+          message:
+            state === 'inherited'
+              ? m.directLinkInheritEncrypted
+              : m.directLinkEncrypted,
         })
       }
     })
@@ -225,8 +234,16 @@ export function ChannelForm({
   const isEdit = channel !== null
   const isDrive = template?.category === CATEGORY_DRIVE
   const [testResult, setTestResult] = useState<TestResult | null>(null)
+  // 全局默认尚未取到时不据它禁用直链;冲突仍由后端拒绝。
+  const inheritEncrypted = useServerConfig()?.encrypt_new_channels === true
+  // 加密与 302 直链互斥(密文不能直出):编辑看渠道固有属性,创建看三态选择与全局默认。
+  const encryption = (choice: EncryptChoice): EncryptionState => {
+    if (channel) return channel.encrypted ? 'explicit' : 'plain'
+    if (choice === 'on') return 'explicit'
+    return choice === 'inherit' && inheritEncrypted ? 'inherited' : 'plain'
+  }
   const form = useForm<FormValues>({
-    resolver: zodResolver(buildSchema(m.channels, template)),
+    resolver: zodResolver(buildSchema(m.channels, template, encryption)),
     defaultValues: defaultValues(template, channel, prefill),
   })
   const configRows = useFieldArray({ control: form.control, name: 'config' })
@@ -241,8 +258,7 @@ export function ChannelForm({
     return () => sub.unsubscribe()
   }, [form])
 
-  // 加密与 302 直链互斥(密文不能直出):创建看三态选择,编辑看渠道固有属性。
-  const encryptedOn = isEdit ? channel.encrypted : encryptChoice === 'on'
+  const encryptionState = encryption(encryptChoice)
   const publicBaseURL = template
     ? (inputs.public_base_url ?? '')
     : (config.find((kv) => kv.key === 'public_base_url')?.value ?? '')
@@ -412,7 +428,10 @@ export function ChannelForm({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value='inherit'>
+                        <SelectItem
+                          value='inherit'
+                          disabled={allowDirectLink && inheritEncrypted}
+                        >
                           {m.channels.encryptInherit}
                         </SelectItem>
                         <SelectItem value='on' disabled={allowDirectLink}>
@@ -425,7 +444,9 @@ export function ChannelForm({
                     </Select>
                     {allowDirectLink && (
                       <FormDescription>
-                        {m.channels.encryptOnDirectLink}
+                        {inheritEncrypted
+                          ? m.channels.encryptInheritDirectLink
+                          : m.channels.encryptOnDirectLink}
                       </FormDescription>
                     )}
                     <FormMessage />
@@ -445,18 +466,20 @@ export function ChannelForm({
                     <div className='space-y-1'>
                       <FormLabel>{m.channels.directLinkLabel}</FormLabel>
                       <FormDescription>
-                        {encryptedOn
-                          ? m.channels.directLinkEncrypted
-                          : directLinkNeedsBaseURL
-                            ? m.channels.directLinkNeedsBaseURL
-                            : m.channels.directLinkHint}
+                        {encryptionState === 'inherited'
+                          ? m.channels.directLinkInheritEncrypted
+                          : encryptionState === 'explicit'
+                            ? m.channels.directLinkEncrypted
+                            : directLinkNeedsBaseURL
+                              ? m.channels.directLinkNeedsBaseURL
+                              : m.channels.directLinkHint}
                       </FormDescription>
                     </div>
                     <FormControl>
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
-                        disabled={encryptedOn}
+                        disabled={encryptionState !== 'plain'}
                       />
                     </FormControl>
                   </div>

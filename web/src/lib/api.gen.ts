@@ -1136,6 +1136,8 @@ export interface components {
              * @enum {string}
              */
             exif_policy: "passthrough" | "strip";
+            /** @description 新建渠道未显式指定时的加密默认值;为 true 时继承默认的新渠道不能开 302 直链 */
+            encrypt_new_channels: boolean;
             build: components["schemas"]["BuildInfo"];
         };
         /** @description 运营配置;属性名即配置键,真相在 settings 表,后台修改即热生效 */

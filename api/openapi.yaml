@@ -2143,6 +2143,7 @@ components:
         - base_url
         - access_mode
         - exif_policy
+        - encrypt_new_channels
         - build
       properties:
         cold_cleanup_days:
@@ -2177,6 +2178,9 @@ components:
           type: string
           enum: [passthrough, strip]
           description: 全局默认 EXIF 档位
+        encrypt_new_channels:
+          type: boolean
+          description: 新建渠道未显式指定时的加密默认值;为 true 时继承默认的新渠道不能开 302 直链
         build:
           $ref: '#/components/schemas/BuildInfo'
     Settings:
