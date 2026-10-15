@@ -23,6 +23,9 @@ tasks:
 
   test:
     desc: 全量测试(含数据竞争检测)
+    # 竞争检测运行时在 linux / windows 上需要 cgo,macOS 不需要;被测代码本身仍是纯 Go
+    env:
+      CGO_ENABLED: '{{if eq OS "darwin"}}0{{else}}1{{end}}'
     cmds:
       - go test -race ./...
 

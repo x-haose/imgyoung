@@ -6,7 +6,7 @@ Thanks for helping with ImgYoung. This document covers the development setup, wh
 
 | Tool | Version | Purpose |
 |---|---|---|
-| Go | the version in `go.mod` | server; build, test and lint always run with `CGO_ENABLED=0` and `-tags nodynamic` (set through `GOFLAGS` by the Taskfile and CI; without it the webp library makes the linux binary depend on the system dynamic linker and the image cannot start) |
+| Go | the version in `go.mod` | server; build, test and lint always run with `CGO_ENABLED=0` and `-tags nodynamic` (set through `GOFLAGS` by the Taskfile and CI; without it the webp library makes the linux binary depend on the system dynamic linker and the image cannot start). The one exception is the race detector in `task test`: on Linux and Windows it needs cgo and a C compiler, and the Taskfile turns cgo on for it |
 | Node.js + pnpm | Node 22; the pnpm version is in `packageManager` of `web/package.json` (`corepack enable` is enough) | admin console |
 | [Task](https://taskfile.dev) | 3 | development entry point, `task --list` shows every task |
 | golangci-lint | the version pinned in `.github/workflows/ci.yml` | Go lint gate |

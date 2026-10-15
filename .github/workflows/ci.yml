@@ -45,7 +45,10 @@ jobs:
       # runner 自带 shellcheck;安装脚本按 POSIX sh 检查,dash / busybox 下也要能跑
       - name: Shellcheck
         run: shellcheck -s sh install.sh
+      # 竞争检测运行时在 linux 上需要 cgo(被测代码本身仍是纯 Go,构建产物不受影响)
       - name: Test
+        env:
+          CGO_ENABLED: "1"
         run: go test -race ./...
       - name: E2E
         run: go test -tags e2e -count=1 ./e2e/ -timeout 300s
