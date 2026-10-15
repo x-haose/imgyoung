@@ -127,10 +127,15 @@ var probeErrorRules = []struct {
 	needles []string // 底层错误文本特征(小写)
 	message string   // 面向用户的排障文案
 }{
-	{[]string{
-		"invalidaccesskeyid", "signaturedoesnotmatch", "accessdenied", "access denied",
-		"statuscode: 403", "401 unauthorized",
-	}, "认证失败(403):检查 Access Key / Secret Key 及其权限"},
+	// S3(AWS SDK)的 403 错误文本恒带 "StatusCode: 403",据此与其他后端的 403 区分。
+	{[]string{"invalidaccesskeyid", "signaturedoesnotmatch", "statuscode: 403"},
+		"认证失败(403):检查 Access Key / Secret Key 及其权限"},
+	{[]string{"invalid_client", "unauthorized_client"},
+		"应用凭证无效:检查 Client ID / Client Secret 是否与签发令牌的应用一致"},
+	{[]string{"invalid_grant"}, "授权已失效:刷新令牌被拒绝,请重新授权"},
+	{[]string{"401 unauthorized", "unauthenticated", "invalidauthenticationtoken"},
+		"认证失败(401):检查用户名、密码或授权令牌是否有效"},
+	{[]string{"accessdenied", "access denied", "403 forbidden"}, "无访问权限(403):检查账号对存储位置的权限"},
 	{[]string{"nosuchbucket", "no such bucket", "bucketregionerror"}, "存储桶不存在或无权访问:检查桶名与凭证权限"},
 	{[]string{"permanentredirect", "authorizationheadermalformed"}, "区域不匹配:检查所选区域与存储桶实际所在区域"},
 	{[]string{"no such host", "server misbehaving"}, "无法解析服务端点域名:检查 endpoint 配置"},
