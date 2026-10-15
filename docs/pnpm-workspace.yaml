@@ -1,2 +1,5 @@
 # 发布不满一天的版本不装(单位分钟),给上游撤回带毒版本留出窗口。
 minimumReleaseAge: 1440
+# esbuild 的安装脚本只校验平台二进制并把命令行入口换成原生文件;fumadocs-mdx 经 JS API 调用 esbuild,不依赖它
+ignoredBuiltDependencies:
+  - esbuild
