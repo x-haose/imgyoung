@@ -35,6 +35,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/internal/infra/urlfetch"
+	"github.com/x-haose/imgyoung/internal/infra/version"
 	"github.com/x-haose/imgyoung/web"
 )
 
@@ -183,7 +184,7 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 	}()
 
 	if err := db.Migrate(conn); err != nil {
-		return infra{}, nil, err
+		return infra{}, nil, fmt.Errorf("迁移数据库(当前二进制 %s): %w", version.Current(), err)
 	}
 
 	queries := sqlc.New(conn)

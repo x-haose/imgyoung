@@ -2,7 +2,9 @@ package db
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ariga.io/atlas/sql/migrate"
@@ -103,6 +105,25 @@ func TestMigrateDoesNotReviveLocalChannel(t *testing.T) {
 	}
 	if got := queryString(t, conn, `SELECT COUNT(*) FROM channels WHERE name = 'local'`); got != "0" {
 		t.Fatalf("已删除的 local 渠道被重新播种(count=%s)", got)
+	}
+}
+
+// TestMigrateRejectsNewerSchema 库被更新版本的二进制迁移过(记有本二进制不认识的版本):拒绝启动,
+// 错误里有库里的最新版本。
+func TestMigrateRejectsNewerSchema(t *testing.T) {
+	conn := openTest(t)
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("首次迁移: %v", err)
+	}
+	const future = "29991231235959"
+	if _, err := conn.ExecContext(context.Background(), `INSERT INTO `+revisionsTable+
+		` (version, description, type, applied, total, executed_at, execution_time, hash)
+		VALUES (?, 'future', 2, 1, 1, '2999-12-31T23:59:59Z', 0, '')`, future); err != nil {
+		t.Fatalf("写入未来版本记录: %v", err)
+	}
+	err := Migrate(conn)
+	if !errors.Is(err, ErrSchemaNewer) || !strings.Contains(err.Error(), future) {
+		t.Fatalf("迁移错误 = %v, 期望 ErrSchemaNewer 且指出库里的版本 %s", err, future)
 	}
 }
 
