@@ -2201,6 +2201,15 @@ export interface components {
                 "text/plain": string;
             };
         };
+        /** @description 查询图片元数据失败(数据库故障),可稍后重试;纯文本 */
+        ImageInternalError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "text/plain": string;
+            };
+        };
     };
     parameters: {
         /** @description 客户端幂等键;保留期(运营配置 `idempotency_key_ttl_hours`)内同一用户同一键的重试返回同一张图 */
@@ -2398,6 +2407,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["RefererRejected"];
             404: components["responses"]["ImageNotFound"];
+            500: components["responses"]["ImageInternalError"];
             503: components["responses"]["ImageUnavailable"];
         };
     };
@@ -2427,6 +2437,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["RefererRejected"];
             404: components["responses"]["ImageNotFound"];
+            500: components["responses"]["ImageInternalError"];
             503: components["responses"]["ImageUnavailable"];
         };
     };
@@ -2458,6 +2469,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["RefererRejected"];
             404: components["responses"]["ImageNotFound"];
+            500: components["responses"]["ImageInternalError"];
             503: components["responses"]["ImageUnavailable"];
         };
     };
@@ -2489,6 +2501,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             403: components["responses"]["RefererRejected"];
             404: components["responses"]["ImageNotFound"];
+            500: components["responses"]["ImageInternalError"];
             503: components["responses"]["ImageUnavailable"];
         };
     };
@@ -2922,6 +2935,7 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["ImageNotFound"];
+            500: components["responses"]["ImageInternalError"];
             503: components["responses"]["ImageUnavailable"];
         };
     };

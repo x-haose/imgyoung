@@ -9,7 +9,7 @@ info:
 
     认证面只有两个:数据面用具名上传 Token(`Authorization: Bearer <token>`,在后台签发);
     管理后台用会话 cookie,状态变更请求须以 `X-CSRF-Token` 头回传登录或 `GET /api/admin/me` 下发的 CSRF 令牌。
-    错误响应一律为 `{"error": "<面向用户的描述>"}` 信封;图片访问入口的 403 / 404 / 503 例外,为纯文本。
+    错误响应一律为 `{"error": "<面向用户的描述>"}` 信封;图片访问入口的 403 / 404 / 500 / 503 例外,为纯文本。
     时刻字段除特别说明外均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`。
 
     本文档随二进制内嵌,运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本。
@@ -200,6 +200,8 @@ paths:
           $ref: '#/components/responses/RefererRejected'
         '404':
           $ref: '#/components/responses/ImageNotFound'
+        '500':
+          $ref: '#/components/responses/ImageInternalError'
         '503':
           $ref: '#/components/responses/ImageUnavailable'
     head:
@@ -226,6 +228,8 @@ paths:
           $ref: '#/components/responses/RefererRejected'
         '404':
           $ref: '#/components/responses/ImageNotFound'
+        '500':
+          $ref: '#/components/responses/ImageInternalError'
         '503':
           $ref: '#/components/responses/ImageUnavailable'
   /o/{user_id}/{object_key}:
@@ -267,6 +271,8 @@ paths:
           $ref: '#/components/responses/RefererRejected'
         '404':
           $ref: '#/components/responses/ImageNotFound'
+        '500':
+          $ref: '#/components/responses/ImageInternalError'
         '503':
           $ref: '#/components/responses/ImageUnavailable'
     head:
@@ -292,6 +298,8 @@ paths:
           $ref: '#/components/responses/RefererRejected'
         '404':
           $ref: '#/components/responses/ImageNotFound'
+        '500':
+          $ref: '#/components/responses/ImageInternalError'
         '503':
           $ref: '#/components/responses/ImageUnavailable'
 
@@ -714,6 +722,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ImageNotFound'
+        '500':
+          $ref: '#/components/responses/ImageInternalError'
         '503':
           $ref: '#/components/responses/ImageUnavailable'
 
@@ -1997,6 +2007,12 @@ components:
             type: string
     ImageUnavailable:
       description: 引用存在但当前没有健康渠道能读出对象;纯文本
+      content:
+        text/plain:
+          schema:
+            type: string
+    ImageInternalError:
+      description: 查询图片元数据失败(数据库故障),可稍后重试;纯文本
       content:
         text/plain:
           schema:
