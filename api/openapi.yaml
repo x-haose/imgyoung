@@ -181,6 +181,33 @@ paths:
         计公开访问活跃度。带 `w` / `format` 参数时按需处理(宽度与格式须在后台允许的档位内);
         `format` 缺省或为 `auto` 时按 `Accept` 协商,浏览器支持且档位允许则输出 WebP。
         访问模式为 `redirect` 且有允许直链的渠道时 302 到渠道公开地址;处理失败降级输出原图并 `Cache-Control: no-store`。
+        已到期、尚待清理回收的图返回 404。参数非法(400)的请求不计访问。
+      parameters:
+        - $ref: '#/components/parameters/imageID'
+        - $ref: '#/components/parameters/variantWidth'
+        - $ref: '#/components/parameters/variantFormat'
+        - $ref: '#/components/parameters/ifNoneMatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageBytes'
+        '302':
+          $ref: '#/components/responses/DirectLink'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/RefererRejected'
+        '404':
+          $ref: '#/components/responses/ImageNotFound'
+        '503':
+          $ref: '#/components/responses/ImageUnavailable'
+    head:
+      operationId: headImage
+      security: []
+      tags: [图片访问]
+      summary: 按短 ID 查询图片响应头
+      description: 与 GET 同一处理,只返回响应头;不打开渠道对象,也不计访问。
       parameters:
         - $ref: '#/components/parameters/imageID'
         - $ref: '#/components/parameters/variantWidth'
@@ -202,25 +229,53 @@ paths:
         '503':
           $ref: '#/components/responses/ImageUnavailable'
   /o/{user_id}/{object_key}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: 归属用户 id;对象键只在用户内唯一
+        schema:
+          type: string
+      - name: object_key
+        in: path
+        required: true
+        description: 客户端自取的对象键
+        schema:
+          type: string
     get:
       operationId: serveImageByObjectKey
       security: []
       tags: [图片访问]
       summary: 按 S3 对象键输出图片
-      description: S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。
+      description: >-
+        S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。
+        同键重传会让别名改指新图,故响应为 `Cache-Control: public, no-cache`,缓存方每次带 ETag 确认。
       parameters:
-        - name: user_id
-          in: path
-          required: true
-          description: 归属用户 id;对象键只在用户内唯一
-          schema:
-            type: string
-        - name: object_key
-          in: path
-          required: true
-          description: 客户端自取的对象键
-          schema:
-            type: string
+        - $ref: '#/components/parameters/variantWidth'
+        - $ref: '#/components/parameters/variantFormat'
+        - $ref: '#/components/parameters/ifNoneMatch'
+      responses:
+        '200':
+          $ref: '#/components/responses/ImageBytes'
+        '302':
+          $ref: '#/components/responses/DirectLink'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/RefererRejected'
+        '404':
+          $ref: '#/components/responses/ImageNotFound'
+        '503':
+          $ref: '#/components/responses/ImageUnavailable'
+    head:
+      operationId: headImageByObjectKey
+      security: []
+      tags: [图片访问]
+      summary: 按 S3 对象键查询图片响应头
+      description: 与 GET 同一处理,只返回响应头;不打开渠道对象,也不计访问。
+      parameters:
         - $ref: '#/components/parameters/variantWidth'
         - $ref: '#/components/parameters/variantFormat'
         - $ref: '#/components/parameters/ifNoneMatch'
@@ -372,6 +427,8 @@ paths:
       summary: 修改运营配置
       description: |
         请求体为「配置键 → 新值」对象,只动出现的键,保存即热生效;未知键或任一取值非法整体拒绝,不做部分生效。
+        以时长为单位的配置项(间隔、宽限、有效期、保留期、超时)上限为 100 年的折算值:876000 小时 / 36500 天 /
+        52560000 分钟 / 3153600000 秒 / 3153600000000 毫秒。
         `cdn_cloudflare_api_token` 传空串表示清除、不传表示不动。仅管理员。
       security:
         - session: []
@@ -1884,8 +1941,9 @@ components:
             $ref: '#/components/schemas/Channel'
     ImageBytes:
       description: >-
-        图片字节;内容不可变,缓存一年并带强 ETag。协商得到的格式随 `Accept` 变化时带 `Vary: Accept`;
-        处理失败降级输出原图时为 `Cache-Control: no-store`
+        图片字节(HEAD 只有响应头),带强 ETag。短 ID 下内容不可变,缓存一年(`immutable`);对象键别名可被同键重传
+        改指,为 `Cache-Control: public, no-cache`,每次带 ETag 确认、未变即 304。同一 URL 的输出格式随 `Accept`
+        协商时(未显式指定 `format`),原图与衍生图响应都带 `Vary: Accept`;处理失败降级输出原图时为 `Cache-Control: no-store`
       headers:
         ETag:
           description: 强 ETag;原图为内容哈希,衍生图为哈希加处理参数

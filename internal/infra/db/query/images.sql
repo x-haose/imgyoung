@@ -16,7 +16,13 @@ WHERE user_id = @user_id AND object_key = @object_key;
 SELECT i.id, i.file_name, i.blob_id, i.created_at, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
-WHERE i.id = ?;
+WHERE i.id = @id
+  AND (i.expire_at IS NULL OR i.expire_at > CAST(@now AS TEXT));
+
+-- name: GetImageBlobID :one
+SELECT blob_id
+FROM images
+WHERE id = ?;
 
 -- name: ListExpiredImages :many
 SELECT id, blob_id
@@ -122,6 +128,7 @@ UPDATE images
 SET expire_at = datetime(CAST(@now AS TEXT), '+' || ttl_seconds || ' seconds')
 WHERE id IN (sqlc.slice('ids'))
   AND expire_at IS NOT NULL
+  AND expire_at > CAST(@now AS TEXT)
   AND ttl_seconds IS NOT NULL;
 
 -- name: CountImages :one

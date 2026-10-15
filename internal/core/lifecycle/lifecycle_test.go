@@ -244,7 +244,7 @@ func TestSweepExpiresAndCascades(t *testing.T) {
 		t.Fatalf("SweepOnce 返回错误: %v", err)
 	}
 
-	if _, err := env.Queries.GetImageBlob(t.Context(), "img0000001"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := env.Queries.GetImageBlobID(t.Context(), "img0000001"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("到期引用未删除: err=%v", err)
 	}
 	// 宽限为 0:同一轮内标记并物理删。
@@ -416,7 +416,7 @@ func TestDeleteToleratesPurgeEnqueueFailure(t *testing.T) {
 	if !strings.Contains(logBuf.String(), "CDN purge 入队失败") {
 		t.Fatalf("入队失败未告警,日志:\n%s", logBuf.String())
 	}
-	if _, err := env.Queries.GetImageBlob(ctx, "purgefail01"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := env.Queries.GetImageBlobID(ctx, "purgefail01"); !errors.Is(err, sql.ErrNoRows) {
 		t.Errorf("引用未删除: err=%v", err)
 	}
 }
@@ -441,7 +441,7 @@ func TestSweepKeepsReferencedBlob(t *testing.T) {
 	}
 
 	// 到期引用删除,但 blob 仍被永久引用持有,不得物理删。
-	if _, err := env.Queries.GetImageBlob(t.Context(), "permanent1"); err != nil {
+	if _, err := env.Queries.GetImageBlobID(t.Context(), "permanent1"); err != nil {
 		t.Errorf("永久引用被误删: %v", err)
 	}
 	row, exists := readBlob(t, env.Conn, blobID)
@@ -484,7 +484,7 @@ func TestDeleteImageIdempotentUnderDoubleDelete(t *testing.T) {
 	if !exists || row.refCount != 1 || row.pendingDelete != 0 {
 		t.Fatalf("重复删除后 blob = %+v(存在 %v), 期望 ref=1 且未标待删(未多减未误删)", row, exists)
 	}
-	if _, err := q.GetImageBlob(ctx, "survivor01"); err != nil {
+	if _, err := q.GetImageBlobID(ctx, "survivor01"); err != nil {
 		t.Errorf("幸存引用被牵连: %v", err)
 	}
 }

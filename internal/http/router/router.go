@@ -71,6 +71,9 @@ func New(cfg Config) http.Handler {
 		g.Use(middleware.RefererCheck(cfg.RefererPatterns, func() bool { return cfg.Settings().AllowEmptyReferer }))
 		g.Get("/i/{id}", cfg.Public.HandleServe)
 		g.Get("/o/*", cfg.Public.HandleServeObjectKey)
+		// HEAD 与 GET 同一处理:只写响应头,不打开渠道对象,也不计访问
+		g.Head("/i/{id}", cfg.Public.HandleServe)
+		g.Head("/o/*", cfg.Public.HandleServeObjectKey)
 	})
 	if cfg.S3 != nil {
 		r.Route("/s3", func(s3 chi.Router) { mountS3(s3, cfg, guards) })

@@ -36,7 +36,7 @@ func (h *Handlers) HandleServeObjectKey(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "服务内部错误", http.StatusInternalServerError)
 		return
 	}
-	h.serveImageID(w, r, imageID, true)
+	h.serveImageID(w, r, imageID, imageAccess{touch: true, mutable: true})
 }
 
 // splitObjectPath 把 /o/ 之后的路径切成用户 id 与对象键。

@@ -173,14 +173,15 @@ func (s *Sweeper) expireImages(ctx context.Context) error {
 // @param imageID 目标引用短 ID
 // @return ErrImageNotFound 或基础设施错误
 func (s *Sweeper) DeleteImage(ctx context.Context, imageID string) error {
-	row, err := s.cfg.Queries.GetImageBlob(ctx, imageID)
+	// 不论是否已到期都可删:到期但尚未被扫描回收的引用同样在这里删掉。
+	blobID, err := s.cfg.Queries.GetImageBlobID(ctx, imageID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return ErrImageNotFound
 	case err != nil:
 		return fmt.Errorf("查询引用: %w", err)
 	}
-	return s.expireOne(ctx, row.ID, row.BlobID)
+	return s.expireOne(ctx, imageID, blobID)
 }
 
 // expireOne 在单事务内回收一条到期引用(引用计数是唯一真相,故删引用与减计数同事务)。

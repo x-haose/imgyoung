@@ -97,7 +97,9 @@ func TestRunOnceUploadsSnapshot(t *testing.T) {
 			t.Errorf("关闭快照数据库: %v", cerr)
 		}
 	}()
-	row, err := sqlc.New(restored).GetImageBlob(t.Context(), "restoreme01")
+	row, err := sqlc.New(restored).GetImageBlob(t.Context(), sqlc.GetImageBlobParams{
+		ID: "restoreme01", Now: sqlc.TimeText(time.Now()),
+	})
 	if err != nil || row.StorageKey != "k_00000000" {
 		t.Fatalf("快照中查询引用失败: %v (%+v)", err, row)
 	}

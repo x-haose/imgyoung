@@ -52,8 +52,8 @@ func (t *Tracker) Touch(imageID string) {
 }
 
 // Flush 把累积的访问批量落库:更新 last_public_access_at、access_count 加一、
-// 摘除 pending_cleanup 标签,并在开启访问续期时把本批带 TTL 的引用到期时刻
-// 顺延为 flush 时刻 + ttl_seconds。
+// 摘除 pending_cleanup 标签,并在开启访问续期时把本批带 TTL 且尚未到期的引用到期时刻
+// 顺延为 flush 时刻 + ttl_seconds;已到期的不续——到期即终态,等清理扫描回收。
 // @Description: 内存集合按引用 id 去重,access_count 的计数口径因此是 flush 周期粒度
 // (同图同周期内多次访问只 +1),非精确 PV。失败时把这批放回,留待下次重试——
 // 活跃度丢失只降冷图判定与计数精度,不影响正确性。
@@ -88,7 +88,7 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	}
 	if t.renewTTL() {
 		// IN 批量顺延,按 renewChunkSize 分片仍在同一事务内;
-		// 永久/无 ttl_seconds 的行由 WHERE 过滤,不逐行判断。
+		// 永久、无 ttl_seconds 与已到期的行由 WHERE 过滤,不逐行判断。
 		ids := make([]string, 0, len(batch))
 		for id := range batch {
 			ids = append(ids, id)

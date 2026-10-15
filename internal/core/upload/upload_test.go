@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -89,7 +90,7 @@ func jpegWithEXIF(t *testing.T) []byte {
 // fetchStored 按 imageID 取出渠道内的实际存储字节。
 func fetchStored(t *testing.T, env *testEnv, imageID string) []byte {
 	t.Helper()
-	row, err := env.Queries.GetImageBlob(t.Context(), imageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(imageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -127,7 +128,7 @@ func TestProcessStoresPNG(t *testing.T) {
 		t.Fatal("PNG 存储字节与上传不一致(PNG 不应被改动)")
 	}
 
-	row, err := env.Queries.GetImageBlob(t.Context(), res.ImageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestProcessStripsJPEGMetadata(t *testing.T) {
 		t.Fatal("存储字节仍包含 Exif 段")
 	}
 	// 哈希必须等于净化后字节的哈希,而非原始字节
-	row, err := env.Queries.GetImageBlob(t.Context(), res.ImageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -226,7 +227,7 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process 返回错误: %v", err)
 	}
-	row, err := env.Queries.GetImageBlob(t.Context(), res.ImageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -280,7 +281,7 @@ func TestProcessFallsBackWhenPrimaryFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("主渠道故障时上传应降级成功, 实际错误: %v", err)
 	}
-	row, err := env.Queries.GetImageBlob(t.Context(), res.ImageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -311,7 +312,7 @@ func TestProcessTruncatesLongFileName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process 返回错误: %v", err)
 	}
-	row, err := env.Queries.GetImageBlob(t.Context(), res.ImageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -413,7 +414,7 @@ func TestProcessMinSuccessWritesReplicasSynchronously(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Process 返回错误: %v", err)
 	}
-	row, err := env.Queries.GetImageBlob(t.Context(), res.ImageID)
+	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
 	if err != nil {
 		t.Fatalf("查询引用记录: %v", err)
 	}
@@ -464,4 +465,9 @@ func TestProcessMinSuccessUnmetRejects(t *testing.T) {
 	if blobs != 0 {
 		t.Fatalf("副本数不足仍落了 %d 条物理图", blobs)
 	}
+}
+
+// liveImage 构造按当前时刻查询未到期引用的参数。
+func liveImage(id string) sqlc.GetImageBlobParams {
+	return sqlc.GetImageBlobParams{ID: id, Now: sqlc.TimeText(time.Now())}
 }

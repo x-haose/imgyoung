@@ -226,8 +226,14 @@ const getImageBlob = `-- name: GetImageBlob :one
 SELECT i.id, i.file_name, i.blob_id, i.created_at, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
-WHERE i.id = ?
+WHERE i.id = ?1
+  AND (i.expire_at IS NULL OR i.expire_at > CAST(?2 AS TEXT))
 `
+
+type GetImageBlobParams struct {
+	ID  string
+	Now string
+}
 
 type GetImageBlobRow struct {
 	ID         string
@@ -240,8 +246,8 @@ type GetImageBlobRow struct {
 	Sha256     string
 }
 
-func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow, error) {
-	row := q.db.QueryRowContext(ctx, getImageBlob, id)
+func (q *Queries) GetImageBlob(ctx context.Context, arg GetImageBlobParams) (GetImageBlobRow, error) {
+	row := q.db.QueryRowContext(ctx, getImageBlob, arg.ID, arg.Now)
 	var i GetImageBlobRow
 	err := row.Scan(
 		&i.ID,
@@ -254,6 +260,19 @@ func (q *Queries) GetImageBlob(ctx context.Context, id string) (GetImageBlobRow,
 		&i.Sha256,
 	)
 	return i, err
+}
+
+const getImageBlobID = `-- name: GetImageBlobID :one
+SELECT blob_id
+FROM images
+WHERE id = ?
+`
+
+func (q *Queries) GetImageBlobID(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getImageBlobID, id)
+	var blob_id int64
+	err := row.Scan(&blob_id)
+	return blob_id, err
 }
 
 const getImageIDByObjectKey = `-- name: GetImageIDByObjectKey :one
@@ -554,6 +573,7 @@ UPDATE images
 SET expire_at = datetime(CAST(?1 AS TEXT), '+' || ttl_seconds || ' seconds')
 WHERE id IN (/*SLICE:ids*/?)
   AND expire_at IS NOT NULL
+  AND expire_at > CAST(?1 AS TEXT)
   AND ttl_seconds IS NOT NULL
 `
 

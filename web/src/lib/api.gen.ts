@@ -97,13 +97,18 @@ export interface paths {
          * @description 计公开访问活跃度。带 `w` / `format` 参数时按需处理(宽度与格式须在后台允许的档位内);
          *     `format` 缺省或为 `auto` 时按 `Accept` 协商,浏览器支持且档位允许则输出 WebP。
          *     访问模式为 `redirect` 且有允许直链的渠道时 302 到渠道公开地址;处理失败降级输出原图并 `Cache-Control: no-store`。
+         *     已到期、尚待清理回收的图返回 404。参数非法(400)的请求不计访问。
          */
         get: operations["serveImage"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
-        head?: never;
+        /**
+         * 按短 ID 查询图片响应头
+         * @description 与 GET 同一处理,只返回响应头;不打开渠道对象,也不计访问。
+         */
+        head: operations["headImage"];
         patch?: never;
         trace?: never;
     };
@@ -111,19 +116,28 @@ export interface paths {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description 归属用户 id;对象键只在用户内唯一 */
+                user_id: string;
+                /** @description 客户端自取的对象键 */
+                object_key: string;
+            };
             cookie?: never;
         };
         /**
          * 按 S3 对象键输出图片
-         * @description S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。
+         * @description S3 协议面上传时客户端自取的对象键是访问别名;解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。 同键重传会让别名改指新图,故响应为 `Cache-Control: public, no-cache`,缓存方每次带 ETag 确认。
          */
         get: operations["serveImageByObjectKey"];
         put?: never;
         post?: never;
         delete?: never;
         options?: never;
-        head?: never;
+        /**
+         * 按 S3 对象键查询图片响应头
+         * @description 与 GET 同一处理,只返回响应头;不打开渠道对象,也不计访问。
+         */
+        head: operations["headImageByObjectKey"];
         patch?: never;
         trace?: never;
     };
@@ -242,6 +256,8 @@ export interface paths {
         /**
          * 修改运营配置
          * @description 请求体为「配置键 → 新值」对象,只动出现的键,保存即热生效;未知键或任一取值非法整体拒绝,不做部分生效。
+         *     以时长为单位的配置项(间隔、宽限、有效期、保留期、超时)上限为 100 年的折算值:876000 小时 / 36500 天 /
+         *     52560000 分钟 / 3153600000 秒 / 3153600000000 毫秒。
          *     `cdn_cloudflare_api_token` 传空串表示清除、不传表示不动。仅管理员。
          */
         put: operations["updateConfig"];
@@ -2129,7 +2145,7 @@ export interface components {
                 "application/json": components["schemas"]["Channel"];
             };
         };
-        /** @description 图片字节;内容不可变,缓存一年并带强 ETag。协商得到的格式随 `Accept` 变化时带 `Vary: Accept`; 处理失败降级输出原图时为 `Cache-Control: no-store` */
+        /** @description 图片字节(HEAD 只有响应头),带强 ETag。短 ID 下内容不可变,缓存一年(`immutable`);对象键别名可被同键重传 改指,为 `Cache-Control: public, no-cache`,每次带 ETag 确认、未变即 304。同一 URL 的输出格式随 `Accept` 协商时(未显式指定 `format`),原图与衍生图响应都带 `Vary: Accept`;处理失败降级输出原图时为 `Cache-Control: no-store` */
         ImageBytes: {
             headers: {
                 /** @description 强 ETag;原图为内容哈希,衍生图为哈希加处理参数 */
@@ -2385,7 +2401,67 @@ export interface operations {
             503: components["responses"]["ImageUnavailable"];
         };
     };
+    headImage: {
+        parameters: {
+            query?: {
+                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                w?: components["parameters"]["variantWidth"];
+                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                format?: components["parameters"]["variantFormat"];
+            };
+            header?: {
+                /** @description 与上次响应的 ETag 一致时返回 304 */
+                "If-None-Match"?: components["parameters"]["ifNoneMatch"];
+            };
+            path: {
+                /** @description 图片短 ID */
+                id: components["parameters"]["imageID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ImageBytes"];
+            302: components["responses"]["DirectLink"];
+            304: components["responses"]["NotModified"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["RefererRejected"];
+            404: components["responses"]["ImageNotFound"];
+            503: components["responses"]["ImageUnavailable"];
+        };
+    };
     serveImageByObjectKey: {
+        parameters: {
+            query?: {
+                /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */
+                w?: components["parameters"]["variantWidth"];
+                /** @description 目标格式,须在运营配置 `process_formats` 内;缺省或 `auto` 按 `Accept` 协商 */
+                format?: components["parameters"]["variantFormat"];
+            };
+            header?: {
+                /** @description 与上次响应的 ETag 一致时返回 304 */
+                "If-None-Match"?: components["parameters"]["ifNoneMatch"];
+            };
+            path: {
+                /** @description 归属用户 id;对象键只在用户内唯一 */
+                user_id: string;
+                /** @description 客户端自取的对象键 */
+                object_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["ImageBytes"];
+            302: components["responses"]["DirectLink"];
+            304: components["responses"]["NotModified"];
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["RefererRejected"];
+            404: components["responses"]["ImageNotFound"];
+            503: components["responses"]["ImageUnavailable"];
+        };
+    };
+    headImageByObjectKey: {
         parameters: {
             query?: {
                 /** @description 目标宽度(像素),须在运营配置 `process_widths` 的档位内;缺省不缩放 */

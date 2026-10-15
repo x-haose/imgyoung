@@ -14,8 +14,21 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
-// cacheImmutable 衍生图与原图内容均不可变(URL 即版本),缓存一年。
+// cacheImmutable 短 ID 下的原图与衍生图内容不可变(URL 即版本),缓存一年。
 const cacheImmutable = "public, max-age=31536000, immutable"
+
+// cacheRevalidate 对象键别名可被同键重传改指:允许缓存,但每次使用前须带 ETag 向源站确认,未变即 304。
+const cacheRevalidate = "public, no-cache"
+
+// cacheControl 按 URL 内容是否可变选缓存策略。
+// @param mutable URL 指向的内容是否可能变化
+// @return Cache-Control 取值
+func cacheControl(mutable bool) string {
+	if mutable {
+		return cacheRevalidate
+	}
+	return cacheImmutable
+}
 
 // errVariantParams 处理参数不在允许档位内,应回 400。
 var errVariantParams = errors.New("非法的处理参数:宽度或格式不在允许档位")
@@ -129,14 +142,16 @@ func (h *Handlers) formatAllowed(f string) bool {
 // @param r 请求
 // @param row 引用与物理图信息
 // @param req 处理诉求
-func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow, req variantRequest) {
+// @param mutable URL 指向的内容是否可能变化(对象键别名)
+func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow,
+	req variantRequest, mutable bool) {
 	// 衍生图内容由(原图 + 宽度 + 格式)唯一决定,据此构造强 ETag。
 	etag := `"` + row.Sha256 + "-" + strconv.Itoa(req.params.Width) + "-" + req.params.Format + `"`
 	if match := r.Header.Get("If-None-Match"); match == etag {
 		hd := w.Header()
 		hd.Set("ETag", etag)
 		setVary(hd, req.varyAccept)
-		hd.Set("Cache-Control", cacheImmutable)
+		hd.Set("Cache-Control", cacheControl(mutable))
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -146,14 +161,14 @@ func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc
 	if err != nil {
 		// 处理繁忙或失败:降级回退原图,保证可用性;degraded=true 确保不把全尺寸原图当衍生图缓存。
 		h.cfg.Logger.Warn("按需处理失败,降级回退原图", "id", row.ID, "err", err)
-		h.serveOriginal(w, r, row, true)
+		h.serveOriginal(w, r, row, originalOpts{degraded: true})
 		return
 	}
 
 	hd := w.Header()
 	hd.Set("Content-Type", mime)
 	hd.Set("Content-Length", strconv.Itoa(len(data)))
-	hd.Set("Cache-Control", cacheImmutable)
+	hd.Set("Cache-Control", cacheControl(mutable))
 	hd.Set("ETag", etag)
 	setVary(hd, req.varyAccept)
 	hd.Set("X-Content-Type-Options", "nosniff")
