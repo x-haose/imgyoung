@@ -322,9 +322,9 @@ func (h *Handlers) HandleChannelList(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleChannelDelete 删除渠道;持有唯一副本时返回 409。
-// @Description: 查询参数 purge(缺省 true)决定是否清理渠道上的对象:清理时只打清理中标记、
-// 入队排空任务并返回 202,渠道在列表里停留为"清理中"直到对象删完;purge=false 立即删行
-// 返回 204,远端对象原样保留。排空入队失败只告警——标记已落库,定期对账会补入队。
+// @Description: 查询参数 purge(缺省 true)决定是否清理本服务写在渠道上的对象(图片副本、系统目录下的
+// 快照等与深探测残留):清理时只打清理中标记、入队排空任务并返回 202,渠道在列表里停留为"清理中"直到
+// 对象删完;purge=false 立即删行返回 204,远端对象原样保留。排空入队失败只告警——标记已落库,定期对账会补入队。
 func (h *Handlers) HandleChannelDelete(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := h.channelIDParam(w, r)
 	if !ok {

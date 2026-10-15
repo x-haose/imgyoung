@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/failover"
 )
 
 // drainBatch 排空任务每批取出的副本行数;逐行删对象再删行,批与批之间不留状态。
@@ -19,7 +21,7 @@ const drainBatch = 200
 // drainJobTimeout 单次排空执行上限;超时中断后交 River 重试,已删的行不回退,从剩余行继续。
 const drainJobTimeout = time.Hour
 
-// DrainChannelArgs 排空一个清理中渠道的任务参数:删除其上全部对象,清完删渠道记录。
+// DrainChannelArgs 排空一个清理中渠道的任务参数:删除本服务写在其上的对象,清完删渠道记录。
 type DrainChannelArgs struct {
 	ChannelID int64 `json:"channel_id"` // 目标渠道主键
 }
@@ -54,17 +56,22 @@ func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 	return drainJobTimeout
 }
 
-// Work 删除渠道上全部副本对象并删除渠道记录。
-// @Description: 逐行"删对象 → 删副本行",进度持久在业务表,中断重试从剩余行继续;对象已不存在
-// 视为已删。任一对象删不掉即整体报错交 River 退避重试,并把原因写进渠道的 last_error;尝试次数
-// 用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除(保留
-// 远端对象)。任务自身超时或停机取消不算渠道失败,不写原因。渠道不在清理中(已被直接移除)时任务作废。
+// Work 删除本服务写在渠道上的全部对象并删除渠道记录。
+// @Description: 先逐行"删副本对象 → 删副本行",进度持久在业务表,中断重试从剩余行继续;再删系统目录下的
+// 对象(含元数据库快照)与深探测残留,别的程序写的对象不动。对象已不存在视为已删。任一对象删不掉即整体
+// 报错交 River 退避重试,并把原因写进渠道的 last_error;尝试次数用尽后对账为清理中渠道重新入队,重试不会
+// 停止,渠道停在清理中,直到清完或管理员直接移除(保留远端对象)。任务自身超时或停机取消不算渠道失败,
+// 不写原因。渠道不在清理中(已被直接移除)时任务作废。
 func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChannelArgs]) error {
 	h, ok := w.cfg.Manager.Get(job.Args.ChannelID)
 	if !ok || !h.PendingDelete {
 		return river.JobCancel(fmt.Errorf("渠道 %d 不在清理中", job.Args.ChannelID))
 	}
-	deleted, err := w.drain(ctx, h.ID, h.Driver)
+	replicas, err := w.drain(ctx, h.ID, h.Driver)
+	system := 0
+	if err == nil {
+		system, err = purgeSystemObjects(ctx, h.Driver)
+	}
 	if err != nil {
 		if ctx.Err() == nil {
 			w.recordFailure(ctx, h.ID, err)
@@ -74,7 +81,7 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 	if err := w.cfg.Manager.Remove(ctx, h.ID); err != nil {
 		return fmt.Errorf("渠道 %q 对象已清完,删除记录失败: %w", h.Name, err)
 	}
-	w.cfg.Logger.Info("渠道已清理完毕并删除", "channel", h.Name, "objects", deleted)
+	w.cfg.Logger.Info("渠道已清理完毕并删除", "channel", h.Name, "objects", replicas, "system_objects", system)
 	return nil
 }
 
@@ -108,6 +115,29 @@ func (w *drainChannelWorker) drain(ctx context.Context, channelID int64, d drive
 			deleted++
 		}
 	}
+}
+
+// purgeSystemObjects 删除本服务写在渠道上的系统对象:系统目录下的全部对象与深探测残留。
+// @Description: 深探测残留在渠道根下,驱动只能递归列举,故列举整个渠道再按键名挑出。
+// @param d 渠道驱动
+// @return 删除的对象数
+// @return 列举或删除失败时的错误
+func purgeSystemObjects(ctx context.Context, d driver.Driver) (int, error) {
+	objs, err := d.List(ctx, "")
+	if err != nil {
+		return 0, fmt.Errorf("列举渠道对象: %w", err)
+	}
+	deleted := 0
+	for _, o := range objs {
+		if !strings.HasPrefix(o.Key, systemPrefix) && !failover.IsDeepProbeKey(o.Key) {
+			continue
+		}
+		if err := d.Delete(ctx, o.Key); err != nil && !errors.Is(err, driver.ErrNotFound) {
+			return deleted, fmt.Errorf("删除系统对象 %q: %w", o.Key, err)
+		}
+		deleted++
+	}
+	return deleted, nil
 }
 
 // recordFailure 把排空失败原因写进渠道的探测结果栏,渠道列表与告警可见;写入失败只记录。

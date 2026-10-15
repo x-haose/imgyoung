@@ -44,11 +44,11 @@ export const channels = {
   deleteTitle: 'Delete channel {name}',
   deleteDesc:
     'A channel holding the only replica of any image is refused, so no data is lost.',
-  purgeLabel: 'Also delete the objects stored on this channel',
+  purgeLabel: 'Also delete what this service stored on the channel',
   purgeOnHint:
-    'Objects are deleted one by one in the background; the channel shows as draining until they are gone. Untick this if the credentials are already revoked or the bucket no longer exists.',
+    'Image replicas and metadata snapshots are deleted one by one in the background; the channel shows as draining until they are gone. Files this service did not write are left alone. Untick this if the credentials are already revoked or the bucket no longer exists.',
   purgeOffHint:
-    'The channel is removed immediately and the remote objects are left as they are.',
+    'The channel is removed immediately; the image replicas and metadata snapshots on it are left as they are.',
   deleteAndPurge: 'Delete and purge',
   removeOnly: 'Remove only',
   deletedPurging:

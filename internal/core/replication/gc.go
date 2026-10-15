@@ -20,7 +20,7 @@ const gcInterval = 24 * time.Hour
 // 覆盖"渠道已写入、落库尚未完成"的正常中间态。
 const orphanGrace = 48 * time.Hour
 
-// systemPrefix 渠道内系统对象目录前缀,对账一律豁免;
+// systemPrefix 渠道内系统对象目录前缀,对账一律豁免,渠道排空时整个删除;
 // reliability.Dir 等系统目录均约定置于该前缀之下。
 const systemPrefix = "_imgyoung/"
 

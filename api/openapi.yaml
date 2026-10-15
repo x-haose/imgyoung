@@ -1024,7 +1024,7 @@ paths:
       operationId: deleteChannel
       tags: [后台·存储渠道]
       summary: 删除渠道
-      description: 持有任何图唯一副本的渠道拒绝删除(409)。`purge` 缺省为 true:只打清理中标记并入队排空任务,对象删完后渠道才消失(202);`purge=false` 立即删行,远端对象保留(204)。仅管理员。
+      description: 持有任何图唯一副本的渠道拒绝删除(409)。`purge` 缺省为 true:只打清理中标记并入队排空任务,排空任务删除本服务写在该渠道上的对象——图片副本、`_imgyoung/` 下的系统对象(含元数据库快照)与深探测残留,别的程序写的对象不动——删完后渠道才消失(202);`purge=false` 立即删行,远端对象(含快照)保留(204)。仅管理员。
       security:
         - session: []
       parameters:
@@ -1032,7 +1032,7 @@ paths:
         - $ref: '#/components/parameters/csrfToken'
         - name: purge
           in: query
-          description: 是否清理渠道上的对象;缺省 true
+          description: 是否清理本服务写在渠道上的对象;缺省 true
           schema:
             type: boolean
       responses:
