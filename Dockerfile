@@ -5,6 +5,8 @@ RUN corepack enable pnpm
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# 前端构建先从接口文档生成类型,文档在上一级的 api/
+COPY api/openapi.yaml /src/api/openapi.yaml
 RUN pnpm build
 
 # 构建阶段:纯 Go 静态编译(内嵌前端产物),并预创建数据目录(属主 nonroot)
