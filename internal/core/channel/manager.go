@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
 	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/failover"
 	"github.com/x-haose/imgyoung/store/rclone"
 )
 
@@ -295,6 +297,26 @@ func (m *Manager) CandidatesForBlob(ctx context.Context, blobID int64) ([]Handle
 		}
 	}
 	return out, nil
+}
+
+// OpenFirst 按候选顺序容灾读取对象,返回第一个成功打开的读取流。
+// @Description: 读取失败的候选逐个告警后切到下一个;短链访问、S3 取对象与按需处理取源图共用。
+// @param candidates 候选渠道,按优先级降序(通常取自 CandidatesForBlob)
+// @param key 渠道内对象键
+// @return 读取流,调用方负责 Close
+// @return 候选为空或全部读取失败时的错误(语义见 failover.Open)
+func (m *Manager) OpenFirst(ctx context.Context, candidates []Handle, key string) (io.ReadCloser, error) {
+	drivers := make([]driver.Driver, len(candidates))
+	for i, c := range candidates {
+		drivers[i] = c.Driver
+	}
+	rc, attempts, err := failover.Open(ctx, drivers, key)
+	for _, a := range attempts {
+		if a.Err != nil {
+			m.cfg.Logger.Warn("渠道读取失败,切换下一候选", "channel", candidates[a.Index].Name, "key", key, "err", a.Err)
+		}
+	}
+	return rc, err
 }
 
 // Get 按 ID 返回渠道句柄,含清理中的渠道(调用方按 PendingDelete 自行取舍)。

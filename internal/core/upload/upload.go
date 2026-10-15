@@ -23,6 +23,8 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
+	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/failover"
 
 	// 注册白名单格式的解码器(gif/jpeg/png 标准库)。
 	_ "image/gif"
@@ -82,17 +84,6 @@ type ChannelSelector interface {
 // putTimeout 单次渠道同步写入的超时上限——远端渠道半死时不允许无限挂起
 // 占用并发闸名额(上限按 50MB 大图过慢速链路放宽)。
 const putTimeout = 10 * time.Minute
-
-// putWithTimeout 带超时地向渠道写入一份对象。
-// @param h 目标渠道
-// @param key 对象键
-// @param data 完整字节
-// @return 写入失败或超时时的错误
-func putWithTimeout(ctx context.Context, h channel.Handle, key string, data []byte) error {
-	putCtx, cancel := context.WithTimeout(ctx, putTimeout)
-	defer cancel()
-	return h.Driver.Put(putCtx, key, bytes.NewReader(data), int64(len(data)))
-}
 
 // ReplicationEnqueuer 副本补齐任务的入队口(由 replication.Runner 实现)。
 type ReplicationEnqueuer interface {
@@ -339,7 +330,8 @@ func prepare(data []byte, mime string, policy imaging.EXIFPolicy) (prepared, err
 }
 
 // writeReplicas 按优先级向健康渠道同步写入,直到凑够 need 份;写入失败自动顺延下一渠道。
-// @Description: 首个成功者即本次主渠道;其余渠道由补齐任务异步复制。
+// @Description: 首个成功者即本次主渠道;其余渠道由补齐任务异步复制。每次写入都记渠道成败指标,
+// 失败的写入逐条告警。
 // @param ctx 控制超时与取消
 // @param key 对象键
 // @param data 待存字节
@@ -351,23 +343,29 @@ func (s *Service) writeReplicas(ctx context.Context, key string, data []byte, ne
 	if len(healthy) == 0 {
 		return nil, fmt.Errorf("选择主渠道: %w", channel.ErrNoHealthyChannel)
 	}
+	drivers := make([]driver.Driver, len(healthy))
+	for i, h := range healthy {
+		drivers[i] = h.Driver
+	}
+	attempts, err := failover.Write(ctx, drivers, key, bytes.NewReader(data), int64(len(data)),
+		failover.WriteOptions{Need: need, AttemptTimeout: putTimeout})
 	doneIDs := make([]int64, 0, need)
-	for _, h := range healthy {
-		if len(doneIDs) >= need {
-			break
-		}
-		err := putWithTimeout(ctx, h, key, data)
+	for _, a := range attempts {
+		h := healthy[a.Index]
 		if s.cfg.Metrics != nil {
-			s.cfg.Metrics.RecordChannelPut(h.Name, err == nil)
+			s.cfg.Metrics.RecordChannelPut(h.Name, a.Err == nil)
 		}
-		if err != nil {
-			s.cfg.Logger.Warn("渠道写入失败,顺延下一渠道", "channel", h.Name, "err", err)
+		if a.Err != nil {
+			s.cfg.Logger.Warn("渠道写入失败,顺延下一渠道", "channel", h.Name, "err", a.Err)
 			continue
 		}
 		doneIDs = append(doneIDs, h.ID)
 	}
-	if len(doneIDs) < need {
-		return nil, fmt.Errorf("%w: 要求 %d 份,仅写入 %d 份", ErrInsufficientReplicas, need, len(doneIDs))
+	if errors.Is(err, failover.ErrInsufficient) {
+		return nil, fmt.Errorf("%w: %w", ErrInsufficientReplicas, err)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return doneIDs, nil
 }

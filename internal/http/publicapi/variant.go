@@ -182,9 +182,9 @@ func (h *Handlers) fetchBlobBytes(ctx context.Context, row sqlc.GetImageBlobRow)
 	if err != nil {
 		return nil, fmt.Errorf("查询渠道候选: %w", err)
 	}
-	rc := h.openFirstReadable(ctx, candidates, row)
-	if rc == nil {
-		return nil, errors.New("无可用渠道提供源图")
+	rc, err := h.cfg.Channels.OpenFirst(ctx, candidates, row.StorageKey)
+	if err != nil {
+		return nil, fmt.Errorf("读取源图: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
 	// 多读 1 字节以区分"恰好足额"与"超限被截断":截断的残缺字节喂解码器会误判为坏图。

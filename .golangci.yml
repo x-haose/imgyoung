@@ -61,6 +61,11 @@ linters:
           deny:
             - pkg: github.com/x-haose/imgyoung/internal/http
               desc: core 不得依赖传输层(入站适配器只能反向依赖 core)
+        http:
+          files: ["**/internal/http/**"]
+          deny:
+            - pkg: github.com/x-haose/imgyoung/store
+              desc: 选路与容灾属于 core,传输层经 core 访问存储
     revive:
       enable-all-rules: true
       rules:

@@ -4,6 +4,7 @@ package publicapi
 
 import (
 	"context"
+	"io"
 	"log/slog"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -13,10 +14,12 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
-// BlobChannels 按 blob 提供可服务的渠道候选(由 channel.Manager 实现)。
+// BlobChannels 按 blob 提供可服务的渠道候选与容灾读取(由 channel.Manager 实现)。
 type BlobChannels interface {
 	// CandidatesForBlob 返回健康且副本就绪的渠道,按优先级降序。
 	CandidatesForBlob(ctx context.Context, blobID int64) ([]channel.Handle, error)
+	// OpenFirst 按候选顺序容灾读取对象,返回第一个成功打开的读取流。
+	OpenFirst(ctx context.Context, candidates []channel.Handle, key string) (io.ReadCloser, error)
 }
 
 // URLFetcher 按地址抓取远端内容(由 urlfetch.Fetcher 实现)。

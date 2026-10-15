@@ -8,6 +8,7 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/store/failover"
 )
 
 // gcInterval 对账 GC 周期(每日低频任务)。
@@ -96,7 +97,7 @@ func takeInventory(ctx context.Context, h channel.Handle) (inventory, error) {
 	}
 	inv := inventory{sizes: make(map[string]int64, len(objs))}
 	for _, o := range objs {
-		if strings.HasPrefix(o.Key, systemPrefix) || o.Key == channel.HealthProbeKey {
+		if strings.HasPrefix(o.Key, systemPrefix) || o.Key == failover.ProbeKey {
 			continue
 		}
 		inv.sizes[o.Key] = o.Size

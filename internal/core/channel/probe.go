@@ -1,84 +1,32 @@
 package channel
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/failover"
 )
 
 // deepProbeTimeout 深探测(写→读→删三次往返)的整体超时。
 const deepProbeTimeout = 20 * time.Second
 
-// probeKeyPrefix 深探测临时对象键的前缀;探后即删,崩溃残留由对账 GC 按孤儿回收。
-const probeKeyPrefix = ".imgyoung-probe-"
-
 // probeErrorMaxLen 无法归类的探测错误兜底截断长度(按字符计)。
 const probeErrorMaxLen = 200
 
-// probePayload 深探测写入的对象内容(固定小对象,读回校验一致性)。
-var probePayload = []byte("imgyoung-deep-probe")
-
-// DeepProbe 对驱动执行一次写→读→删探测。
-// @Description: 相比只读 Stat 的轻探测,能暴露只读凭证"轻探测健康却写不进"的
-// 假健康;探测对象用随机键,并发探测互不干扰。删除阶段用独立于探测超时的
-// 上下文,读回超时不连累清理。
+// deepProbe 在深探测整体超时内对驱动执行一次写→读→删探测。
 // @param d 目标渠道驱动
 // @return 任一环节失败时的原始错误(展示前应经 humanizeProbeError)
-func DeepProbe(ctx context.Context, d driver.Driver) error {
+func deepProbe(ctx context.Context, d driver.Driver) error {
 	ctx, cancel := context.WithTimeout(ctx, deepProbeTimeout)
 	defer cancel()
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Errorf("生成探测键: %w", err)
-	}
-	key := probeKeyPrefix + hex.EncodeToString(buf[:])
-	if err := d.Put(ctx, key, bytes.NewReader(probePayload), int64(len(probePayload))); err != nil {
-		return fmt.Errorf("写入探测对象: %w", err)
-	}
-	readErr := readBackProbe(ctx, d, key)
-	delCtx, delCancel := context.WithTimeout(context.WithoutCancel(ctx), probeTimeout)
-	defer delCancel()
-	delErr := d.Delete(delCtx, key)
-	if readErr != nil {
-		return readErr
-	}
-	if delErr != nil && !errors.Is(delErr, driver.ErrNotFound) {
-		return fmt.Errorf("删除探测对象: %w", delErr)
-	}
-	return nil
-}
-
-// readBackProbe 读回探测对象并核对内容一致。
-// @param d 目标渠道驱动
-// @param key 探测对象键
-// @return 读取失败或内容不一致时的错误
-func readBackProbe(ctx context.Context, d driver.Driver, key string) error {
-	rc, err := d.Open(ctx, key)
-	if err != nil {
-		return fmt.Errorf("读回探测对象: %w", err)
-	}
-	got, err := io.ReadAll(rc)
-	if cerr := rc.Close(); cerr != nil && err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return fmt.Errorf("读取探测对象内容: %w", err)
-	}
-	if !bytes.Equal(got, probePayload) {
-		return errors.New("探测对象读回内容不一致")
-	}
-	return nil
+	return failover.DeepProbe(ctx, d)
 }
 
 // ProbeChannel 对指定渠道执行深探测并把结果落库。
@@ -91,7 +39,7 @@ func readBackProbe(ctx context.Context, d driver.Driver, key string) error {
 func (m *Manager) ProbeChannel(ctx context.Context, channelID int64) error {
 	var probeErr error
 	if h, ok := m.Get(channelID); ok {
-		probeErr = DeepProbe(ctx, h.Driver)
+		probeErr = deepProbe(ctx, h.Driver)
 	} else {
 		row, err := m.cfg.Queries.GetChannel(ctx, channelID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -121,7 +69,7 @@ func (m *Manager) probeUnloaded(ctx context.Context, row sqlc.Channel) error {
 		return fmt.Errorf("驱动构造失败: %w", err)
 	}
 	defer m.closeTrial(ctx, d, "探测未装载渠道")
-	return DeepProbe(ctx, d)
+	return deepProbe(ctx, d)
 }
 
 // TestConfig 用一份未落库的渠道配置执行深探测(测试连接)。
@@ -147,7 +95,7 @@ func (m *Manager) TestConfig(ctx context.Context, driverName string, config map[
 		return errors.New(redact(humanizeProbeError(err)))
 	}
 	defer m.closeTrial(ctx, d, "测试连接")
-	if perr := DeepProbe(ctx, d); perr != nil {
+	if perr := deepProbe(ctx, d); perr != nil {
 		return errors.New(redact(humanizeProbeError(perr)))
 	}
 	return nil

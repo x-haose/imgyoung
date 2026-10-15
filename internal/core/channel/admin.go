@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/store/driver"
+	"github.com/x-haose/imgyoung/store/failover"
 	"github.com/x-haose/imgyoung/store/rclone"
 )
 
@@ -439,9 +440,6 @@ func (m *Manager) List(ctx context.Context) ([]Info, error) {
 // probeTimeout 单渠道轻探测超时;各渠道独立计时,慢渠道不拖累其他渠道。
 const probeTimeout = 10 * time.Second
 
-// HealthProbeKey 健康探测使用的约定对象键(从不真正写入;对账 GC 应豁免)。
-const HealthProbeKey = ".imgyoung-health-probe"
-
 // CheckAll 对全部渠道并行做一次健康探测,结果逐渠道落库并更新内存标记。
 // @Description: 轻探测 = 只读 Stat 一个约定不存在的对象:ErrNotFound 与成功都视为
 // 健康(后端可达),其余错误视为不健康。轻探测只能降级健康渠道,不能独自恢复不健康
@@ -500,18 +498,14 @@ func probeForHealth(ctx context.Context, d driver.Driver, healthy bool) error {
 	if err := probe(ctx, d); err != nil || healthy {
 		return err
 	}
-	return DeepProbe(ctx, d)
+	return deepProbe(ctx, d)
 }
 
-// probe 轻量探测单个渠道可达性(独立超时,只读不写)。
+// probe 在轻探测超时内探测单个渠道可达性(只读不写)。
 // @param d 渠道驱动
 // @return 渠道不可达时的原因错误;nil 表示健康
 func probe(ctx context.Context, d driver.Driver) error {
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	_, err := d.Stat(probeCtx, HealthProbeKey)
-	if err == nil || errors.Is(err, driver.ErrNotFound) {
-		return nil
-	}
-	return err
+	return failover.Probe(ctx, d)
 }

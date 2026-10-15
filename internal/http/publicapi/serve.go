@@ -1,7 +1,6 @@
 package publicapi
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -107,9 +106,9 @@ func (h *Handlers) serveOriginal(w http.ResponseWriter, r *http.Request, row sql
 		return
 	}
 
-	rc := h.openFirstReadable(r.Context(), candidates, row)
-	if rc == nil {
-		h.cfg.Logger.Error("全部候选渠道读取失败", "id", row.ID, "key", row.StorageKey)
+	rc, err := h.cfg.Channels.OpenFirst(r.Context(), candidates, row.StorageKey)
+	if err != nil {
+		h.cfg.Logger.Error("全部候选渠道读取失败", "id", row.ID, "key", row.StorageKey, "err", err)
 		http.Error(w, "渠道暂不可用", http.StatusServiceUnavailable)
 		return
 	}
@@ -140,23 +139,6 @@ func redirectToDirectLink(w http.ResponseWriter, r *http.Request, candidates []c
 		}
 	}
 	return false
-}
-
-// openFirstReadable 按候选优先级逐个尝试打开对象,返回第一个成功的读取流;全部失败返回 nil。
-// @param ctx 上下文
-// @param candidates 候选渠道,按优先级降序
-// @param row 引用与物理图信息
-// @return 读取流,调用方负责关闭;nil 表示无候选可读
-func (h *Handlers) openFirstReadable(ctx context.Context, candidates []channel.Handle,
-	row sqlc.GetImageBlobRow) io.ReadCloser {
-	for _, cand := range candidates {
-		rc, err := cand.Driver.Open(ctx, row.StorageKey)
-		if err == nil {
-			return rc
-		}
-		h.cfg.Logger.Warn("渠道读取失败,切换下一候选", "id", row.ID, "channel", cand.Name, "err", err)
-	}
-	return nil
 }
 
 // writeOriginalHeaders 设置原图响应头:降级响应 no-store;正常响应内容不可变(URL 即版本)缓存一年,
@@ -218,9 +200,9 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 	if err != nil {
 		return fmt.Errorf("查询渠道候选: %w", err)
 	}
-	rc := h.openFirstReadable(r.Context(), candidates, row)
-	if rc == nil {
-		return ErrObjectUnavailable
+	rc, err := h.cfg.Channels.OpenFirst(r.Context(), candidates, row.StorageKey)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrObjectUnavailable, err)
 	}
 	defer func() {
 		if cerr := rc.Close(); cerr != nil {
