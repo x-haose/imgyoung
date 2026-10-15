@@ -153,8 +153,9 @@ func (m *Manager) Reload(ctx context.Context) error {
 }
 
 // recordLoadFailure 把渠道装载失败作为探测结论落库(不健康,环节为装载)。
-// @Description: ctx 已取消(停机、请求断开)时不落库——取消造成的失败不是渠道的结论。配置解得开时
-// 失败原文抹除其中的凭证;解不开时失败本身就是解密失败,原文里没有配置值。
+// @Description: 在役与清理中的渠道都写:清理中的渠道装不上,排空任务也跑不起来,原因须在列表与告警里可见。
+// ctx 已取消(停机、请求断开)时不落库——取消造成的失败不是渠道的结论。配置解得开时失败原文抹除其中的凭证;
+// 解不开时失败本身就是解密失败,原文里没有配置值。落库脱离调用方的取消。
 // @param row 渠道记录
 // @param loadErr 装载失败原因
 // @return 落库失败时的错误
@@ -166,7 +167,15 @@ func (m *Manager) recordLoadFailure(ctx context.Context, row sqlc.Channel, loadE
 	if params, err := m.unsealConfigMap(row.ConfigSealed); err == nil {
 		secrets = secretsIn(row.Driver, params)
 	}
-	return m.recordResult(ctx, row.ID, &LastFailure{Stage: StageLoad, Failure: Explain(loadErr, secrets...)})
+	f := Explain(loadErr, secrets...)
+	if err := m.cfg.Queries.RecordChannelLoadFailure(context.WithoutCancel(ctx), sqlc.RecordChannelLoadFailureParams{
+		LastErrorReason: sql.NullString{String: string(f.Reason), Valid: true},
+		LastError:       sql.NullString{String: f.Detail, Valid: true},
+		ID:              row.ID,
+	}); err != nil {
+		return fmt.Errorf("写回渠道 %d 装载失败: %w", row.ID, err)
+	}
+	return nil
 }
 
 // loadChannel 为一条渠道记录装配运行态:驱动输入未变则沿用既有实例并从 previous 摘除,否则构造新实例。

@@ -22,6 +22,15 @@ SET healthy           = ?,
     last_error        = ?
 WHERE id = ? AND pending_delete = 0;
 
+-- name: RecordChannelLoadFailure :exec
+UPDATE channels
+SET healthy           = 0,
+    last_checked_at   = datetime('now'),
+    last_error_stage  = 'load',
+    last_error_reason = ?,
+    last_error        = ?
+WHERE id = ?;
+
 -- name: RecordChannelDrainFailure :execrows
 UPDATE channels
 SET healthy           = 0,

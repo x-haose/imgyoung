@@ -185,6 +185,34 @@ func TestLoadFailureVisibleAndRetried(t *testing.T) {
 	assertLoaded(true)
 }
 
+// TestLoadFailureRecordedWhileDraining 验证清理中的渠道装不上时同样落库装载失败:排空任务跑不起来,
+// 原因须可见;探测结果则不会写到清理中的渠道上。
+func TestLoadFailureRecordedWhileDraining(t *testing.T) {
+	env := testenv.New(t)
+	id, _ := env.AddLocalChannel(t, "leaving", 300, false)
+	if err := env.Manager.Delete(t.Context(), id, true); err != nil {
+		t.Fatalf("标记清理中: %v", err)
+	}
+	if err := env.Queries.UpdateChannelConfigSealed(t.Context(), sqlc.UpdateChannelConfigSealedParams{
+		ConfigSealed: "not-a-sealed-config", ID: id,
+	}); err != nil {
+		t.Fatalf("改写渠道配置密文: %v", err)
+	}
+	if err := env.Manager.Reload(t.Context()); err != nil {
+		t.Fatalf("重载: %v", err)
+	}
+	row := mustGetChannel(t, env, id)
+	if row.PendingDelete == 0 || row.LastErrorStage.String != string(channel.StageLoad) ||
+		row.LastErrorReason.String != string(channel.ReasonConfigUnreadable) {
+		t.Fatalf("清理中渠道装载失败后记录 = %+v, 期望仍在清理中且失败栏为装载环节", row)
+	}
+	if n, err := env.Queries.UpdateChannelProbeResult(t.Context(), sqlc.UpdateChannelProbeResultParams{
+		Healthy: 1, ID: id,
+	}); err != nil || n != 0 {
+		t.Fatalf("探测结果不应写到清理中的渠道: 改动 %d 行, err=%v", n, err)
+	}
+}
+
 // TestManagerCheckAllPersistsProbeResult 验证轻探测落库:每轮更新 last_checked_at,
 // 失败存失败结论(环节、归类、原文),恢复后清空。
 func TestManagerCheckAllPersistsProbeResult(t *testing.T) {

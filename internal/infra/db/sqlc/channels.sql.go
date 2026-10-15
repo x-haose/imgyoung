@@ -211,6 +211,27 @@ func (q *Queries) RecordChannelDrainFailure(ctx context.Context, arg RecordChann
 	return result.RowsAffected()
 }
 
+const recordChannelLoadFailure = `-- name: RecordChannelLoadFailure :exec
+UPDATE channels
+SET healthy           = 0,
+    last_checked_at   = datetime('now'),
+    last_error_stage  = 'load',
+    last_error_reason = ?,
+    last_error        = ?
+WHERE id = ?
+`
+
+type RecordChannelLoadFailureParams struct {
+	LastErrorReason sql.NullString
+	LastError       sql.NullString
+	ID              int64
+}
+
+func (q *Queries) RecordChannelLoadFailure(ctx context.Context, arg RecordChannelLoadFailureParams) error {
+	_, err := q.db.ExecContext(ctx, recordChannelLoadFailure, arg.LastErrorReason, arg.LastError, arg.ID)
+	return err
+}
+
 const updateChannelConfig = `-- name: UpdateChannelConfig :exec
 UPDATE channels
 SET name              = ?,
