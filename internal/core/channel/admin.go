@@ -245,7 +245,7 @@ type UpdateParams struct {
 // Update 编辑渠道:校验后整体替换配置,重建驱动实例并立即深探测。
 // @Description: encrypted 不可变(翻转会造成密文/明文混存)。配置中的
 // SecretPlaceholder 值先还原为该渠道已存配置的同键原值(编辑表单不必重录凭证),
-// 沿用已存授权时授权带出的参数一并保留。
+// 沿用已存授权时授权带出的参数一并保留。后端名或配置有任何改动即把绑定时刻重置为当前时刻。
 // 成功后 Reload 重建本渠道驱动,再对该渠道深探测落库。编辑不改变副本集合语义,不触发存量回填。
 // @param channelID 渠道主键
 // @param p 编辑参数
@@ -265,6 +265,9 @@ func (m *Manager) Update(ctx context.Context, channelID int64, p UpdateParams) e
 }
 
 // updateRecord 校验编辑参数并写回渠道记录;配置密文的读改写全程持锁,与后端写回互斥。
+// @Description: 后端名或落库配置(哨兵还原后的参数)与原有的有任何不同,即把绑定时刻重置为当前时刻:
+// 决定存储位置的参数因后端而异(如 OneDrive 的 drive_id 属敏感参数),一律按改了位置处理,保证对账 GC
+// 不回收新位置上原有的对象。比较在试构造之前,试构造期间令牌刷新的写回不计入。
 // @param channelID 渠道主键
 // @param p 编辑参数
 // @return ErrChannelNotFound / ErrEncryptedImmutable / ErrChannelNameExists /
@@ -279,27 +282,11 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	if err != nil {
 		return fmt.Errorf("读取渠道 %d: %w", channelID, err)
 	}
-	encrypted := row.Encrypted != 0
-	if p.Encrypted != nil && *p.Encrypted != encrypted {
-		return ErrEncryptedImmutable
-	}
-	if err := validateCreateParams(CreateParams{
-		Name: p.Name, Driver: p.Driver, Config: p.Config,
-		Encrypted: encrypted, AllowDirectLink: p.AllowDirectLink,
-	}); err != nil {
-		return err
-	}
-	old, err := m.unsealConfigMap(row.ConfigSealed)
+	old, config, err := m.editedConfig(ctx, row, p)
 	if err != nil {
 		return err
 	}
-	config, err := prepareConfig(p.Driver, p.Config, old, p.Template != "")
-	if err != nil {
-		return err
-	}
-	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidChannel, err)
-	}
+	rebind := p.Driver != row.Driver || !maps.Equal(old, config)
 	if err := m.verifyConfig(ctx, p.Driver, config, false); err != nil {
 		return err
 	}
@@ -307,9 +294,13 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	if err != nil {
 		return err
 	}
+	boundAt := row.BoundAt
+	if rebind {
+		boundAt = sqlc.TimeText(time.Now())
+	}
 	if err := m.cfg.Queries.UpdateChannelConfig(ctx, sqlc.UpdateChannelConfigParams{
 		Name: p.Name, Driver: p.Driver, ConfigSealed: sealed, Priority: p.Priority,
-		AllowDirectLink: boolToInt(p.AllowDirectLink), Template: p.Template, ID: channelID,
+		AllowDirectLink: boolToInt(p.AllowDirectLink), Template: p.Template, BoundAt: boundAt, ID: channelID,
 	}); err != nil {
 		if db.IsUniqueViolation(err, "channels.name") {
 			return ErrChannelNameExists
@@ -317,6 +308,38 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 		return fmt.Errorf("更新渠道记录: %w", err)
 	}
 	return nil
+}
+
+// editedConfig 校验编辑参数,并把提交的配置整理成将要落库的形态(哨兵还原、密码编码、补齐授权带出的参数)。
+// @param row 渠道现有记录
+// @param p 编辑参数
+// @return old 渠道已存的配置
+// @return config 将要落库的配置
+// @return ErrEncryptedImmutable / ErrInvalidChannel 或解密已存配置失败时的错误
+func (m *Manager) editedConfig(ctx context.Context, row sqlc.Channel, p UpdateParams) (old, config map[string]string,
+	err error) {
+	encrypted := row.Encrypted != 0
+	if p.Encrypted != nil && *p.Encrypted != encrypted {
+		return nil, nil, ErrEncryptedImmutable
+	}
+	if err := validateCreateParams(CreateParams{
+		Name: p.Name, Driver: p.Driver, Config: p.Config,
+		Encrypted: encrypted, AllowDirectLink: p.AllowDirectLink,
+	}); err != nil {
+		return nil, nil, err
+	}
+	old, err = m.unsealConfigMap(row.ConfigSealed)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err = prepareConfig(p.Driver, p.Config, old, p.Template != "")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidChannel, err)
+	}
+	return old, config, nil
 }
 
 // verifyConfig 落库前以一次性驱动试构造整理好的配置,可选顺带建桶;试构造期间的写回并入配置(原地修改)。

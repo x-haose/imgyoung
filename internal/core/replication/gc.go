@@ -29,15 +29,15 @@ type GCResult struct {
 	Channel          string // 渠道名
 	Objects          int    // 渠道对象总数(不含系统对象)
 	Bytes            int64  // 渠道对象总字节(不含系统对象)
-	Foreign          int    // 库里没有记录、不是本库写出的对象数(键名不是本服务格式,或修改时间早于渠道记录创建);不回收
+	Foreign          int    // 库里没有记录、不是本库写出的对象数(键名不是本服务格式,或修改时间早于渠道的绑定时刻);不回收
 	OrphansDeleted   int    // 回收的孤儿对象数
 	PhantomsRequeued int    // 重置补齐的幻影副本数
 }
 
 // RunGC 对全部健康渠道执行一轮双向对账。
 // @Description: 孤儿 = 渠道有、库里没有任何状态的副本记录、键名是本服务的对象键格式、修改时间不早于
-// 渠道记录创建且已过宽限期,回收(按量付费渠道防烧钱)。本库只以该格式命名对象,且只可能在渠道记录创建
-// 之后写入;其余对象(别的程序写的文件、灾备时新实例接入旧桶而元数据尚未恢复)只计数不回收。
+// 渠道的绑定时刻且已过宽限期,回收(按量付费渠道防烧钱)。本库只以该格式命名对象,且只在绑定时刻之后
+// 往渠道当前位置写入;其余对象(别的程序写的文件、灾备接入的旧桶、恢复的快照之后写入的对象)只计数不回收。
 // 深探测删除失败留下的临时对象过宽限期即回收。
 // 幻影 = DB 记为就绪、渠道实际缺失(回退 pending 并重新入队补齐)。
 // 顺带产出各渠道用量统计。单渠道失败跳过,不中断其余渠道。
@@ -77,7 +77,7 @@ func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, err
 	if err != nil {
 		return res, fmt.Errorf("读取渠道记录: %w", err)
 	}
-	createdAt, err := sqlc.ParseTimeText(row.CreatedAt)
+	boundAt, err := sqlc.ParseTimeText(row.BoundAt)
 	if err != nil {
 		return res, err
 	}
@@ -97,7 +97,7 @@ func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, err
 			done[rep.StorageKey] = rep.BlobID
 		}
 	}
-	inv := takeInventory(objs, known, createdAt, time.Now())
+	inv := takeInventory(objs, known, boundAt, time.Now())
 	res.Objects, res.Bytes, res.Foreign = len(inv.sizes), inv.bytes, inv.foreign
 	res.OrphansDeleted = r.reclaimOrphans(ctx, h, inv.orphans)
 	res.PhantomsRequeued = r.requeuePhantoms(ctx, h, done, inv.sizes)
@@ -107,10 +107,10 @@ func (r *Runner) gcChannel(ctx context.Context, h channel.Handle) (GCResult, err
 // takeInventory 盘点渠道对象:统计总量,对照库内副本记录挑出可回收的孤儿。
 // @param objs 渠道上的全部对象
 // @param known 库内该渠道任一状态副本记录的对象键
-// @param createdAt 渠道记录的创建时刻;本库只可能写出修改时间不早于它的对象
+// @param boundAt 渠道的绑定时刻;本库只可能写出修改时间不早于它的对象
 // @param now 盘点时刻,宽限期据此计算
 // @return 盘点结果
-func takeInventory(objs []driver.ObjectInfo, known map[string]struct{}, createdAt, now time.Time) inventory {
+func takeInventory(objs []driver.ObjectInfo, known map[string]struct{}, boundAt, now time.Time) inventory {
 	inv := inventory{sizes: make(map[string]int64, len(objs))}
 	for _, o := range objs {
 		if strings.HasPrefix(o.Key, systemPrefix) || o.Key == failover.ProbeKey {
@@ -129,7 +129,7 @@ func takeInventory(objs []driver.ObjectInfo, known map[string]struct{}, createdA
 			continue
 		}
 		switch {
-		case !id.IsStorageKey(o.Key) || o.ModTime.Before(createdAt):
+		case !id.IsStorageKey(o.Key) || o.ModTime.Before(boundAt):
 			inv.foreign++
 		case now.Sub(o.ModTime) > orphanGrace:
 			inv.orphans = append(inv.orphans, o.Key)

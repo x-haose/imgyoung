@@ -166,3 +166,57 @@ func TestRunSkipsStartupBackupWhenRecent(t *testing.T) {
 		t.Fatalf("新渠道上没有快照时再启动,新渠道快照数 = %d, 期望 1", n)
 	}
 }
+
+// TestRebindAfterRestore 验证换入快照后的收尾:没有换入时不动渠道绑定时刻;ApplyStaged 换入时留下标记,
+// 迁移之后的收尾据此把全部渠道的绑定时刻重置为当前时刻并删除标记,再次收尾不再重置。
+// 标记落在数据目录、跨进程留存,换入之后、收尾之前启动失败的,下次启动照样重置。
+func TestRebindAfterRestore(t *testing.T) {
+	env := newTestEnv(t)
+	env.AddLocalChannel(t, "mirror", 50, false)
+	const longAgo = "2000-01-01 00:00:00"
+	setLongAgo := func() {
+		t.Helper()
+		if _, err := env.Conn.ExecContext(t.Context(), "UPDATE channels SET bound_at = ?", longAgo); err != nil {
+			t.Fatalf("回拨绑定时刻: %v", err)
+		}
+	}
+	earliest := func() string {
+		t.Helper()
+		var s string
+		if err := env.Conn.QueryRowContext(t.Context(), "SELECT MIN(bound_at) FROM channels").Scan(&s); err != nil {
+			t.Fatalf("读绑定时刻: %v", err)
+		}
+		return s
+	}
+	rebind := func() {
+		t.Helper()
+		if err := reliability.RebindAfterRestore(t.Context(), env.Queries, env.DataDir, env.Logger); err != nil {
+			t.Fatalf("换入后收尾: %v", err)
+		}
+	}
+
+	setLongAgo()
+	rebind()
+	if got := earliest(); got != longAgo {
+		t.Fatalf("没有换入时绑定时刻 = %s, 期望不变", got)
+	}
+
+	// 换入只做改名,暂存文件的内容本测试不打开。
+	staged := filepath.Join(env.DataDir, reliability.DBFileName+".restore")
+	if err := os.WriteFile(staged, []byte("snapshot"), 0o600); err != nil {
+		t.Fatalf("写暂存快照: %v", err)
+	}
+	if err := reliability.ApplyStaged(env.DataDir, env.Logger); err != nil {
+		t.Fatalf("换入暂存快照: %v", err)
+	}
+	from := sqlc.TimeText(time.Now())
+	rebind()
+	if got := earliest(); got < from {
+		t.Fatalf("换入后收尾绑定时刻最早为 %s, 期望全部重置到不早于 %s", got, from)
+	}
+	setLongAgo()
+	rebind()
+	if got := earliest(); got != longAgo {
+		t.Fatalf("标记已消费后再收尾绑定时刻 = %s, 期望不再重置", got)
+	}
+}

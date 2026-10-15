@@ -27,8 +27,13 @@ SET name              = ?,
     config_sealed     = ?,
     priority          = ?,
     allow_direct_link = ?,
-    template          = ?
+    template          = ?,
+    bound_at          = ?
 WHERE id = ?;
+
+-- name: RebindAllChannels :execrows
+UPDATE channels
+SET bound_at = datetime('now');
 
 -- name: MarkChannelPendingDelete :exec
 UPDATE channels

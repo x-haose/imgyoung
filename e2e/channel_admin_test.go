@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // channelInfo 渠道描述响应的断言用投影。
@@ -127,8 +128,15 @@ func TestChannelCreateValidation(t *testing.T) {
 	}
 }
 
+// channelBoundAt 直接读渠道记录的绑定时刻(UTC 文本)。
+func channelBoundAt(t *testing.T, inst *instance, id int64) string {
+	t.Helper()
+	return queryInstanceString(t, inst, "SELECT bound_at FROM channels WHERE id = ?", id)
+}
+
 // TestChannelUpdate 编辑渠道:改名改优先级即返回最新描述(含编辑即探测的结果),
 // 新优先级立即生效于选路;encrypted 翻转 409;渠道不存在 404。
+// 只改名与优先级不动绑定时刻,改了配置(存储路径)即重置为当前时刻;创建时刻始终不变。
 func TestChannelUpdate(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
@@ -137,12 +145,18 @@ func TestChannelUpdate(t *testing.T) {
 	id := createChannel(t, inst, fmt.Sprintf(
 		`{"name":"editable","driver":"local","priority":10,"config":{"path":%q}}`, dir))
 	url := fmt.Sprintf("%s/api/admin/channels/%d", inst.baseURL, id)
+	createdAt := queryInstanceString(t, inst, "SELECT created_at FROM channels WHERE id = ?", id)
+	const longAgo = "2000-01-01 00:00:00"
+	execInstanceDB(t, inst, "UPDATE channels SET bound_at = ? WHERE id = ?", longAgo, id)
 
 	updated := adminReq(t, client, csrf, http.MethodPut, url,
 		fmt.Sprintf(`{"name":"edited","driver":"local","priority":500,"config":{"path":%q}}`, dir))
 	info := decodeChannelInfo(t, updated, http.StatusOK)
 	if info.Name != "edited" || info.Priority != 500 || !info.Healthy || info.LastCheckedAt == "" {
 		t.Fatalf("编辑响应异常: %+v", info)
+	}
+	if got := channelBoundAt(t, inst, id); got != longAgo {
+		t.Fatalf("只改名与优先级后绑定时刻 = %s, 期望不变(%s)", got, longAgo)
 	}
 
 	// 新优先级(500 > 内置 100)使该渠道成为主渠道,上传同步落其目录。
@@ -164,6 +178,21 @@ func TestChannelUpdate(t *testing.T) {
 	_ = missing.Body.Close()
 	if code != http.StatusNotFound {
 		t.Fatalf("编辑不存在渠道状态码 = %d, 期望 404", code)
+	}
+
+	editedAt := time.Now().UTC().Truncate(time.Second).Format(dbTimeLayout)
+	moved := adminReq(t, client, csrf, http.MethodPut, url,
+		fmt.Sprintf(`{"name":"edited","driver":"local","priority":500,"config":{"path":%q}}`, t.TempDir()))
+	code = moved.StatusCode
+	_ = moved.Body.Close()
+	if code != http.StatusOK {
+		t.Fatalf("改存储路径状态码 = %d, 期望 200", code)
+	}
+	if got := channelBoundAt(t, inst, id); got < editedAt {
+		t.Fatalf("改存储路径后绑定时刻 = %s, 期望重置到不早于 %s", got, editedAt)
+	}
+	if got := queryInstanceString(t, inst, "SELECT created_at FROM channels WHERE id = ?", id); got != createdAt {
+		t.Fatalf("编辑后创建时刻 = %s, 期望不变(%s,参与加密渠道的密钥派生)", got, createdAt)
 	}
 }
 

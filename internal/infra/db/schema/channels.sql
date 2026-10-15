@@ -8,7 +8,8 @@ CREATE TABLE channels (
     healthy INTEGER NOT NULL DEFAULT 1, -- 健康标记,由健康检查维护,参与渠道筛选
     encrypted INTEGER NOT NULL DEFAULT 0, -- 存储加密(crypt 包裹),创建时固化,建后不可变
     allow_direct_link INTEGER NOT NULL DEFAULT 0, -- 是否允许 302 直链,密文渠道与本地渠道应为 0
-    created_at TEXT NOT NULL DEFAULT (datetime('now')), -- 创建时刻,UTC 文本
+    created_at TEXT NOT NULL DEFAULT (datetime('now')), -- 创建时刻,UTC 文本;参与加密渠道的密钥派生,建后不变
+    bound_at TEXT NOT NULL DEFAULT (datetime('now')), -- 绑定时刻,UTC 文本:本记录开始对应当前存储位置的时刻,新建时与 created_at 同值,编辑改动配置或换入恢复快照时重置;对账 GC 只回收修改时间不早于它的孤儿
     last_checked_at TEXT, -- 最近一次健康探测时刻,UTC 文本;NULL 表示尚未探测过
     last_error TEXT, -- 最近一次探测失败原因(人话化文案,不含凭证);NULL 表示最近一次探测成功
     template TEXT NOT NULL DEFAULT '', -- 配置所用模板 id,空串表示自定义配置;仅供编辑表单还原,不参与驱动构造

@@ -147,7 +147,7 @@ func build(logger *slog.Logger) (*app, func(), error) {
 	return a, cleanup, nil
 }
 
-// buildInfra 装配基础设施:建数据目录 → 开库 → 迁移 → 主密钥 → 运营配置存储。
+// buildInfra 装配基础设施:建数据目录 → 换入恢复快照 → 开库 → 迁移 → 恢复收尾 → 主密钥 → 运营配置存储。
 // @Description: 内部自持 ok 闸,装配任一步失败即关闭已开的库;成功则把清理函数返给
 // 调用方(供其覆盖后续装配失败与正常退出)。
 // @param logger 结构化日志
@@ -164,7 +164,7 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 	}
 
 	// 开库之前换入暂存的恢复快照:全部句柄都指着库文件,只有这个时刻能安全替换。
-	if _, err := reliability.ApplyStaged(boot.DataDir, logger); err != nil {
+	if err := reliability.ApplyStaged(boot.DataDir, logger); err != nil {
 		return infra{}, nil, fmt.Errorf("换入恢复快照: %w", err)
 	}
 	conn, err := db.Open(filepath.Join(boot.DataDir, reliability.DBFileName))
@@ -188,6 +188,9 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 	}
 
 	queries := sqlc.New(conn)
+	if err := reliability.RebindAfterRestore(context.Background(), queries, boot.DataDir, logger); err != nil {
+		return infra{}, nil, fmt.Errorf("换入恢复快照后的收尾: %w", err)
+	}
 	master, err := loadMasterKey(context.Background(), boot, queries, logger)
 	if err != nil {
 		return infra{}, nil, err

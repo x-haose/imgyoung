@@ -295,18 +295,19 @@ func TestBackfillNewChannel(t *testing.T) {
 	}
 }
 
-// TestGCRemovesExpiredOrphans 验证孤儿回收:键名是本服务格式、渠道记录创建之后写入、库里没有任何副本
-// 记录且超宽限期的对象被删;新鲜对象、早于渠道记录创建的对象(别的库写出,如灾备接入的旧桶)、键名不是
-// 本服务格式的对象(别的程序写的文件)、有未就绪副本记录的对象与系统目录对象一律保留;深探测残留
-// 不论写入时刻,过宽限期即删。
+// TestGCRemovesExpiredOrphans 验证孤儿回收:键名是本服务格式、渠道绑定时刻之后写入、库里没有任何副本
+// 记录且超宽限期的对象被删;新鲜对象、早于绑定时刻的对象(哪怕晚于渠道记录创建,如恢复的快照之后写入、
+// 灾备接入的旧桶)、键名不是本服务格式的对象(别的程序写的文件)、有未就绪副本记录的对象与系统目录
+// 对象一律保留;深探测残留不论写入时刻,过宽限期即删。
 func TestGCRemovesExpiredOrphans(t *testing.T) {
 	env := newTestEnv(t)
 	ctx := t.Context()
 	now := time.Now()
-	// 渠道记录回拨到 30 天前创建,才能在它之后、宽限期之外造出本库写出的孤儿。
-	if _, err := env.conn.ExecContext(ctx, "UPDATE channels SET created_at = ? WHERE id = ?",
-		sqlc.TimeText(now.Add(-30*24*time.Hour)), env.local.ID); err != nil {
-		t.Fatalf("回拨渠道创建时刻: %v", err)
+	// 渠道记录回拨到 90 天前创建、30 天前绑定:绑定之后、宽限期之外才造得出本库写出的孤儿,
+	// 创建与绑定之间的对象检验回收边界是绑定时刻而不是创建时刻。
+	if _, err := env.conn.ExecContext(ctx, "UPDATE channels SET created_at = ?, bound_at = ? WHERE id = ?",
+		sqlc.TimeText(now.Add(-90*24*time.Hour)), sqlc.TimeText(now.Add(-30*24*time.Hour)), env.local.ID); err != nil {
+		t.Fatalf("回拨渠道创建与绑定时刻: %v", err)
 	}
 	put := func(key string, modTime time.Time) {
 		t.Helper()
@@ -347,7 +348,7 @@ func TestGCRemovesExpiredOrphans(t *testing.T) {
 		t.Fatalf("RunGC 返回错误: %v", err)
 	}
 	// 盘点口径:五个业务对象各 6 字节,系统目录对象与深探测残留不计;回收 1 个孤儿与 1 个深探测残留
-	// (早于渠道记录创建也回收),早于渠道记录创建与键名不符的各 1 个不是本库写出,无幻影。
+	// (早于绑定时刻也回收),早于绑定时刻与键名不符的各 1 个不是本库写出,无幻影。
 	got := gcResultFor(t, results, "local")
 	want := replication.GCResult{Channel: "local", Objects: 5, Bytes: 30, Foreign: 2, OrphansDeleted: 2}
 	if got != want {

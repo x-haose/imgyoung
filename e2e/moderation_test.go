@@ -4,43 +4,25 @@ package e2e
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
-
-	// 注册 modernc 纯 Go SQLite 驱动,用例直接改实例的元数据库制造冷图。
-	_ "modernc.org/sqlite"
 )
 
 // backdateImage 把一条引用的上传时刻改到 days 天前,制造冷图。
-// @Description: 直接写服务进程正在使用的元数据库:WAL 模式下跨进程写安全,两边都带 busy_timeout 排队。
 // @param id 引用短 ID
 // @param days 回拨的天数
 func backdateImage(t *testing.T, inst *instance, id string, days int) {
 	t.Helper()
-	dsn := "file:" + filepath.Join(inst.dataDir, "imgyoung.db") + "?_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		t.Fatalf("打开实例元数据库: %v", err)
-	}
-	defer func() { _ = db.Close() }()
-	old := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour).Format("2006-01-02 15:04:05")
-	res, err := db.ExecContext(context.Background(),
-		"UPDATE images SET created_at = ? WHERE id = ?", old, id)
-	if err != nil {
-		t.Fatalf("回拨上传时刻: %v", err)
-	}
-	if n, _ := res.RowsAffected(); n != 1 {
+	old := time.Now().UTC().Add(-time.Duration(days) * 24 * time.Hour).Format(dbTimeLayout)
+	if n := execInstanceDB(t, inst, "UPDATE images SET created_at = ? WHERE id = ?", old, id); n != 1 {
 		t.Fatalf("回拨上传时刻影响 %d 行, 期望 1", n)
 	}
 }

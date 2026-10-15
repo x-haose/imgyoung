@@ -7,6 +7,8 @@ package e2e
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -26,6 +28,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	// 注册 modernc 纯 Go SQLite 驱动,用例直接读改实例的元数据库。
+	_ "modernc.org/sqlite"
 )
 
 // defaultAdminPass 管理员出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
@@ -471,6 +476,49 @@ func createChannel(t *testing.T, inst *instance, body string) int64 {
 		t.Fatalf("解析创建渠道响应: %v", err)
 	}
 	return created.ID
+}
+
+// dbTimeLayout 元数据库里 UTC 文本时间的格式,与 SQLite datetime('now') 一致;字典序即时间序。
+const dbTimeLayout = "2006-01-02 15:04:05"
+
+// openInstanceDB 打开实例正在使用的元数据库;WAL 模式下跨进程读写安全,两边都带 busy_timeout 排队。
+// @Description: 调用方用毕即关:换入恢复快照会把库文件改名,留着的连接会继续指向旧文件。
+func openInstanceDB(t *testing.T, inst *instance) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(inst.dataDir, "imgyoung.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("打开实例元数据库: %v", err)
+	}
+	return db
+}
+
+// execInstanceDB 在实例的元数据库上直接执行一条写语句。
+// @return 影响行数
+func execInstanceDB(t *testing.T, inst *instance, query string, args ...any) int64 {
+	t.Helper()
+	db := openInstanceDB(t, inst)
+	defer func() { _ = db.Close() }()
+	res, err := db.ExecContext(context.Background(), query, args...)
+	if err != nil {
+		t.Fatalf("执行 %q: %v", query, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("读取影响行数: %v", err)
+	}
+	return n
+}
+
+// queryInstanceString 在实例的元数据库上直接查询单行单列文本。
+func queryInstanceString(t *testing.T, inst *instance, query string, args ...any) string {
+	t.Helper()
+	db := openInstanceDB(t, inst)
+	defer func() { _ = db.Close() }()
+	var s string
+	if err := db.QueryRowContext(context.Background(), query, args...).Scan(&s); err != nil {
+		t.Fatalf("查询 %q: %v", query, err)
+	}
+	return s
 }
 
 // countObjects 统计渠道存储目录下的对象文件数;排除 _imgyoung 下的备份等系统对象,

@@ -5,6 +5,7 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -160,7 +161,8 @@ func createBackup(t *testing.T, inst *instance, client *http.Client, csrf string
 
 // TestBackupListDownloadRestore 备份闭环:立即备份把同一份快照写到每个健康渠道并出现在列表;
 // 优先级最高的渠道上的快照丢了,下载与恢复改从下一个持有它的渠道读。快照之后再传一张图,
-// 用该快照恢复 → 进程自行退出,重启后换入:快照前的图仍在,快照后的引用不存在。
+// 用该快照恢复 → 进程自行退出,重启后换入:快照前的图仍在,快照后的引用不存在;
+// 全部渠道的绑定时刻重置到重启之后,快照之后写进渠道的对象不会被对账回收。
 func TestBackupListDownloadRestore(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
@@ -169,6 +171,8 @@ func TestBackupListDownloadRestore(t *testing.T) {
 		`{"name":"mirror","driver":"local","priority":50,"config":{"path":%q}}`, t.TempDir()))
 	payload := pngBytes(t)
 	_, before := mustUpload(t, inst, payload, nil, nil)
+	// 快照里的绑定时刻回拨到很久以前,重启后看得出是否重置过。
+	execInstanceDB(t, inst, "UPDATE channels SET bound_at = '2000-01-01 00:00:00'")
 
 	snap := createBackup(t, inst, admin, csrf)
 	want := []string{"local", "mirror"}
@@ -214,10 +218,17 @@ func TestBackupListDownloadRestore(t *testing.T) {
 		t.Fatalf("停机后应留有暂存快照: %v", err)
 	}
 
+	restartedAt := time.Now().UTC().Truncate(time.Second).Format(dbTimeLayout)
 	inst2 := startInstanceAt(t, inst, strings.TrimPrefix(inst.baseURL, "http://"))
 	kept, err := filepath.Glob(filepath.Join(inst.dataDir, "imgyoung.db.pre-restore-*"))
 	if err != nil || len(kept) == 0 {
 		t.Fatalf("换入后原库应留存: %v %v", kept, err)
+	}
+	if got := queryInstanceString(t, inst2, "SELECT MIN(bound_at) FROM channels"); got < restartedAt {
+		t.Fatalf("换入后渠道绑定时刻最早为 %s, 期望全部重置到不早于 %s", got, restartedAt)
+	}
+	if _, err := os.Stat(filepath.Join(inst.dataDir, "imgyoung.db.restored")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("重置绑定时刻后换入标记应已删除: %v", err)
 	}
 	if got := fetchBytes(t, inst2, before); !bytes.Equal(got, payload) {
 		t.Fatal("快照前上传的图恢复后不可访问或字节不一致")

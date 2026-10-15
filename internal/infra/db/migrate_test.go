@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -164,5 +165,56 @@ func TestMigrateBackfillsLegacyRows(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("外键完整性违例 %d 处", n)
+	}
+}
+
+// TestMigrateBackfillsChannelBoundAt 渠道表加绑定时刻的迁移重建了表:存量渠道的绑定时刻取各自的创建时刻,
+// 指向渠道的副本记录与外键完好;迁移之后新建的渠道,绑定时刻与创建时刻同值。
+func TestMigrateBackfillsChannelBoundAt(t *testing.T) {
+	conn := openTest(t)
+	dir, err := embeddedDir()
+	if err != nil {
+		t.Fatalf("装载迁移目录: %v", err)
+	}
+	files, err := dir.Files()
+	if err != nil {
+		t.Fatalf("读取迁移文件: %v", err)
+	}
+	idx := slices.IndexFunc(files, func(f migrate.File) bool {
+		return strings.HasSuffix(f.Name(), "_b19_channel_bound_at.sql")
+	})
+	if idx < 0 {
+		t.Fatal("找不到加绑定时刻的迁移")
+	}
+	applyN(t, conn, idx)
+	const createdAt = "2020-01-02 03:04:05"
+	for _, stmt := range []string{
+		`INSERT INTO channels (id, name, driver, created_at) VALUES (7, 'legacy', 'local', '` + createdAt + `')`,
+		`INSERT INTO blobs (sha256, phash, storage_key, mime, size, width, height)
+		 VALUES ('aa', 1, 'k_aa', 'image/png', 10, 1, 1)`,
+		`INSERT INTO blob_channels (blob_id, channel_id, state) VALUES (1, 7, 'done')`,
+	} {
+		if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
+			t.Fatalf("写入旧版数据 %q: %v", stmt, err)
+		}
+	}
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("升级迁移: %v", err)
+	}
+	if got := queryString(t, conn, `SELECT bound_at FROM channels WHERE id = 7`); got != createdAt {
+		t.Errorf("存量渠道绑定时刻 = %q, 期望取创建时刻 %q", got, createdAt)
+	}
+	if got := queryString(t, conn, `SELECT COUNT(*) FROM blob_channels WHERE channel_id = 7`); got != "1" {
+		t.Errorf("重建渠道表后副本记录数 = %s, 期望 1", got)
+	}
+	if got := queryString(t, conn, `SELECT COUNT(*) FROM pragma_foreign_key_check`); got != "0" {
+		t.Errorf("外键完整性违例 %s 处", got)
+	}
+	fresh := `INSERT INTO channels (name, driver) VALUES ('fresh', 's3')`
+	if _, err := conn.ExecContext(context.Background(), fresh); err != nil {
+		t.Fatalf("新建渠道: %v", err)
+	}
+	if got := queryString(t, conn, `SELECT bound_at = created_at FROM channels WHERE name = 'fresh'`); got != "1" {
+		t.Error("新建渠道的绑定时刻应与创建时刻同值")
 	}
 }

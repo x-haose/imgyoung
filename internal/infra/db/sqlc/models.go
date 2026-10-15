@@ -62,6 +62,7 @@ type Channel struct {
 	Encrypted       int64
 	AllowDirectLink int64
 	CreatedAt       string
+	BoundAt         string
 	LastCheckedAt   sql.NullString
 	LastError       sql.NullString
 	Template        string

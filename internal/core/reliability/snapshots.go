@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/store/driver"
 )
 
@@ -27,6 +28,9 @@ const DBFileName = "imgyoung.db"
 
 // restoreFileName 待换入的快照在数据目录下的文件名;启动时开库前换入。
 const restoreFileName = DBFileName + ".restore"
+
+// restoredMarkerName 换入标记在数据目录下的文件名:ApplyStaged 换入前写下,RebindAfterRestore 重置完渠道绑定时刻后删除。
+const restoredMarkerName = DBFileName + ".restored"
 
 // Snapshot 一份元数据库快照及持有它的渠道。
 type Snapshot struct {
@@ -159,32 +163,64 @@ func (s *Service) Stage(ctx context.Context, name string) (string, error) {
 	return target, nil
 }
 
-// ApplyStaged 在开库前检查数据目录里的暂存快照,存在则换入:现库连同 WAL 边车改名留存,暂存文件改名为库文件。
+// ApplyStaged 在开库前检查数据目录里的暂存快照,存在则换入:写下换入标记,现库连同 WAL 边车改名留存,
+// 暂存文件改名为库文件。
 // @Description: 换入只做改名,任一步失败都不碰剩余文件,留给操作者处理;留存的旧库名带时间戳,不会被下次覆盖。
+// 换入标记由迁移之后的 RebindAfterRestore 消费。
 // @param dataDir 数据目录
 // @param logger 结构化日志
-// @return 是否换入了快照
-// @return 改名失败时的错误
-func ApplyStaged(dataDir string, logger *slog.Logger) (bool, error) {
+// @return 写标记或改名失败时的错误
+func ApplyStaged(dataDir string, logger *slog.Logger) error {
 	staged := filepath.Join(dataDir, restoreFileName)
 	if _, err := os.Stat(staged); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
+			return nil
 		}
-		return false, fmt.Errorf("检查暂存快照: %w", err)
+		return fmt.Errorf("检查暂存快照: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, restoredMarkerName), nil, 0o600); err != nil {
+		return fmt.Errorf("写入换入标记: %w", err)
 	}
 	live := filepath.Join(dataDir, DBFileName)
 	keep := live + ".pre-restore-" + time.Now().UTC().Format(snapshotTimeLayout)
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		if err := os.Rename(live+suffix, keep+suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return false, fmt.Errorf("留存现库 %s: %w", live+suffix, err)
+			return fmt.Errorf("留存现库 %s: %w", live+suffix, err)
 		}
 	}
 	if err := os.Rename(staged, live); err != nil {
-		return false, fmt.Errorf("换入暂存快照: %w", err)
+		return fmt.Errorf("换入暂存快照: %w", err)
 	}
 	logger.Warn("已用暂存快照换入元数据库,原库留存", "kept", keep)
-	return true, nil
+	return nil
+}
+
+// RebindAfterRestore 在迁移之后检查换入标记,存在则把全部渠道的绑定时刻重置为当前时刻,再删除标记。
+// @Description: 快照之后写进渠道的对象在换入的库里没有记录,键名与修改时间却和本库写出的孤儿无异;绑定时刻
+// 挪到换入之后,对账 GC 便只计数不回收它们。换入的库可能来自旧版本,绑定时刻列由迁移补上之后才能重置。
+// 标记在换入前写下、重置成功才删除:换入之后、重置之前启动失败(如库比本二进制新而被迁移拒绝),
+// 下次启动照样重置;重复重置无害。
+// @param q 已迁移库上的查询集
+// @param dataDir 数据目录
+// @param logger 结构化日志
+// @return 检查或删除标记、重置失败时的错误
+func RebindAfterRestore(ctx context.Context, q *sqlc.Queries, dataDir string, logger *slog.Logger) error {
+	marker := filepath.Join(dataDir, restoredMarkerName)
+	if _, err := os.Stat(marker); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("检查换入标记: %w", err)
+	}
+	n, err := q.RebindAllChannels(ctx)
+	if err != nil {
+		return fmt.Errorf("重置渠道绑定时刻: %w", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		return fmt.Errorf("删除换入标记: %w", err)
+	}
+	logger.Warn("换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收", "channels", n)
+	return nil
 }
 
 // snapshotKeyOf 把快照名还原为渠道内对象键,并校验其形态。

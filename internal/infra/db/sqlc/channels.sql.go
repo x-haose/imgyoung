@@ -89,7 +89,7 @@ func (q *Queries) DeleteChannel(ctx context.Context, id int64) error {
 }
 
 const getChannel = `-- name: GetChannel :one
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template, pending_delete
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, bound_at, last_checked_at, last_error, template, pending_delete
 FROM channels
 WHERE id = ?
 `
@@ -107,6 +107,7 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 		&i.Encrypted,
 		&i.AllowDirectLink,
 		&i.CreatedAt,
+		&i.BoundAt,
 		&i.LastCheckedAt,
 		&i.LastError,
 		&i.Template,
@@ -116,7 +117,7 @@ func (q *Queries) GetChannel(ctx context.Context, id int64) (Channel, error) {
 }
 
 const listChannels = `-- name: ListChannels :many
-SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, last_checked_at, last_error, template, pending_delete
+SELECT id, name, driver, config_sealed, priority, healthy, encrypted, allow_direct_link, created_at, bound_at, last_checked_at, last_error, template, pending_delete
 FROM channels
 ORDER BY priority DESC, id ASC
 `
@@ -140,6 +141,7 @@ func (q *Queries) ListChannels(ctx context.Context) ([]Channel, error) {
 			&i.Encrypted,
 			&i.AllowDirectLink,
 			&i.CreatedAt,
+			&i.BoundAt,
 			&i.LastCheckedAt,
 			&i.LastError,
 			&i.Template,
@@ -169,6 +171,19 @@ func (q *Queries) MarkChannelPendingDelete(ctx context.Context, id int64) error 
 	return err
 }
 
+const rebindAllChannels = `-- name: RebindAllChannels :execrows
+UPDATE channels
+SET bound_at = datetime('now')
+`
+
+func (q *Queries) RebindAllChannels(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rebindAllChannels)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateChannelConfig = `-- name: UpdateChannelConfig :exec
 UPDATE channels
 SET name              = ?,
@@ -176,7 +191,8 @@ SET name              = ?,
     config_sealed     = ?,
     priority          = ?,
     allow_direct_link = ?,
-    template          = ?
+    template          = ?,
+    bound_at          = ?
 WHERE id = ?
 `
 
@@ -187,6 +203,7 @@ type UpdateChannelConfigParams struct {
 	Priority        int64
 	AllowDirectLink int64
 	Template        string
+	BoundAt         string
 	ID              int64
 }
 
@@ -198,6 +215,7 @@ func (q *Queries) UpdateChannelConfig(ctx context.Context, arg UpdateChannelConf
 		arg.Priority,
 		arg.AllowDirectLink,
 		arg.Template,
+		arg.BoundAt,
 		arg.ID,
 	)
 	return err
