@@ -270,13 +270,15 @@ func findTemplate(templateID string) *Template {
 
 // TemplateInputsFromConfig 从渠道 config 反解出模板表单字段值(供编辑表单预填)。
 // @Description: 与 BuildTemplateConfig 互逆——直落 configKey 的字段取同键值,
-// 参与 endpoint 拼接的字段按模板 endpoint 模式反向提取;密码字段以
-// SecretPlaceholder 掩码,凭证明文不下发。
+// 参与 endpoint 拼接的字段按模板 endpoint 模式反向提取;落在敏感键上的字段(密码、
+// 授权令牌、访问密钥 ID 等)以 SecretPlaceholder 掩码,明文不下发。
 // @param templateID 模板标识
 // @param config 解密后的渠道 config
+// @param secret 须保密的键(见 secretKeysOf)
 // @return 表单字段值(键为 TemplateField.Key)
 // @return 模板是否存在
-func TemplateInputsFromConfig(templateID string, config map[string]string) (map[string]string, bool) {
+func TemplateInputsFromConfig(templateID string, config map[string]string,
+	secret map[string]bool) (map[string]string, bool) {
 	tpl := findTemplate(templateID)
 	if tpl == nil {
 		return nil, false
@@ -284,8 +286,8 @@ func TemplateInputsFromConfig(templateID string, config map[string]string) (map[
 	inputs := make(map[string]string, len(tpl.Fields))
 	for _, f := range tpl.Fields {
 		switch {
-		// 授权令牌与密码同属凭证,明文一律不回传;前端据哨兵显示「已授权」。
-		case f.Type == FieldPassword, f.Type == FieldOAuth:
+		// 前端据授权字段的哨兵显示「已授权」。
+		case secret[f.configKey]:
 			if config[f.configKey] != "" {
 				inputs[f.Key] = SecretPlaceholder
 			}

@@ -2,10 +2,33 @@ package rclone
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/config/obscure"
 )
+
+// SensitiveParams 返回后端声明为密码或敏感信息的参数名,按名排序、无重复。
+// @Description: 判定依据是后端选项元数据的 IsPassword 与 Sensitive,与 rclone config redacted 的口径一致:
+// 除密码、密钥与 OAuth 令牌外,访问密钥 ID、账号名这类身份信息也在其中。不是后端选项的键不在返回值里。
+// 调用方据此决定回显时掩码哪些值、从错误文案里抹除哪些值。
+// @param backend rclone 后端名
+// @return 参数名
+// @return 后端不存在时的错误
+func SensitiveParams(backend string) ([]string, error) {
+	ri, err := fs.Find(backend)
+	if err != nil {
+		return nil, fmt.Errorf("未知的 rclone 后端 %q", backend)
+	}
+	var names []string
+	for _, opt := range ri.Options {
+		if opt.IsPassword || opt.Sensitive {
+			names = append(names, opt.Name)
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
+}
 
 // ObscureSecrets 把后端声明为密码类的参数值按 rclone 要求编码(原地修改 params)。
 // @Description: 判定依据取自后端自身的选项元数据,新增模板无需逐个标注;漏编码的密码会被

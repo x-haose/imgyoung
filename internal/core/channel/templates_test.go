@@ -104,8 +104,12 @@ func TestBuildTemplateConfigRequired(t *testing.T) {
 }
 
 // TestTemplateInputsFromConfig 表单字段反解与 BuildTemplateConfig 互逆:
-// 直落键取回原值、拼接字段从 endpoint 反提、密码字段哨兵掩码。
+// 直落键取回原值、拼接字段从 endpoint 反提、敏感字段哨兵掩码。
 func TestTemplateInputsFromConfig(t *testing.T) {
+	secret, err := secretKeysOf("s3")
+	if err != nil {
+		t.Fatalf("取 s3 敏感键: %v", err)
+	}
 	cases := map[string]struct {
 		template   string
 		config     map[string]string
@@ -120,7 +124,7 @@ func TestTemplateInputsFromConfig(t *testing.T) {
 				"public_base_url": "https://cdn.example.com",
 			},
 			wantInputs: map[string]string{
-				"access_key_id": "AK", "secret_access_key": SecretPlaceholder,
+				"access_key_id": SecretPlaceholder, "secret_access_key": SecretPlaceholder,
 				"account_id": "acc123", "bucket": "imgs", "public_base_url": "https://cdn.example.com",
 			},
 		},
@@ -131,7 +135,7 @@ func TestTemplateInputsFromConfig(t *testing.T) {
 				"endpoint": "cos.ap-shanghai.myqcloud.com", "path": "b-125",
 			},
 			wantInputs: map[string]string{
-				"access_key_id": "SID", "secret_access_key": SecretPlaceholder,
+				"access_key_id": SecretPlaceholder, "secret_access_key": SecretPlaceholder,
 				"region": "ap-shanghai", "bucket": "b-125",
 			},
 		},
@@ -142,14 +146,14 @@ func TestTemplateInputsFromConfig(t *testing.T) {
 				"endpoint": "https://minio.local", "path": "b",
 			},
 			wantInputs: map[string]string{
-				"access_key_id": "AK", "secret_access_key": SecretPlaceholder,
+				"access_key_id": SecretPlaceholder, "secret_access_key": SecretPlaceholder,
 				"endpoint": "https://minio.local", "bucket": "b",
 			},
 		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			inputs, ok := TemplateInputsFromConfig(tc.template, tc.config)
+			inputs, ok := TemplateInputsFromConfig(tc.template, tc.config, secret)
 			if !ok {
 				t.Fatalf("模板 %q 应存在", tc.template)
 			}
@@ -160,11 +164,11 @@ func TestTemplateInputsFromConfig(t *testing.T) {
 			}
 		})
 	}
-	if _, ok := TemplateInputsFromConfig("no-such", nil); ok {
+	if _, ok := TemplateInputsFromConfig("no-such", nil, secret); ok {
 		t.Error("未知模板应返回 ok=false")
 	}
 	// 端点与模式不匹配(如手工改过配置)时拼接字段缺省而非误配。
-	inputs, ok := TemplateInputsFromConfig("r2", map[string]string{"endpoint": "https://other.example.com"})
+	inputs, ok := TemplateInputsFromConfig("r2", map[string]string{"endpoint": "https://other.example.com"}, secret)
 	if !ok {
 		t.Fatal("r2 模板应存在")
 	}
@@ -269,9 +273,13 @@ func TestOAuthTemplatesCarryTokenField(t *testing.T) {
 // @Description: 令牌等同凭证,明文下发前端会经浏览器历史、截图、日志外泄。
 func TestOAuthTokenNeverLeavesInPlaintext(t *testing.T) {
 	const secretToken = `{"access_token":"AT","refresh_token":"RT"}`
+	secret, err := secretKeysOf("drive")
+	if err != nil {
+		t.Fatalf("取 drive 敏感键: %v", err)
+	}
 	inputs, ok := TemplateInputsFromConfig("googledrive", map[string]string{
 		ConfigKeyToken: secretToken, "path": "imgyoung",
-	})
+	}, secret)
 	if !ok {
 		t.Fatal("模板不存在")
 	}
@@ -284,6 +292,45 @@ func TestOAuthTokenNeverLeavesInPlaintext(t *testing.T) {
 	// 非凭证字段仍应原样回读,否则编辑表单预填不出来。
 	if inputs["path"] != "imgyoung" {
 		t.Errorf("path = %q, 期望原样回读", inputs["path"])
+	}
+}
+
+// TestTemplateCredentialFieldsAreSecret 验证模板的密码与授权字段都落在后端声明的敏感键上。
+// @Description: 回读掩码以后端选项元数据为准;凭证字段若落在元数据不认的键上,编辑回读会把明文下发。
+func TestTemplateCredentialFieldsAreSecret(t *testing.T) {
+	for _, tpl := range Templates() {
+		secret, err := secretKeysOf(tpl.Driver)
+		if err != nil {
+			t.Fatalf("模板 %q 的后端 %q: %v", tpl.ID, tpl.Driver, err)
+		}
+		for _, f := range tpl.Fields {
+			if (f.Type == FieldPassword || f.Type == FieldOAuth) && !secret[f.configKey] {
+				t.Errorf("模板 %q 的凭证字段 %q 落在非敏感键 %q 上", tpl.ID, f.Key, f.configKey)
+			}
+		}
+	}
+}
+
+// TestMaskSecretsByBackendMetadata 验证回读掩码以后端选项元数据为准:WebDAV 的密码与账号名掩码,
+// 服务地址与约定键 path / public_base_url 照常回显。
+func TestMaskSecretsByBackendMetadata(t *testing.T) {
+	secret, err := secretKeysOf("webdav")
+	if err != nil {
+		t.Fatalf("取 webdav 敏感键: %v", err)
+	}
+	masked := maskSecrets(map[string]string{
+		"url": "https://dav.example.com/", "user": "u", "pass": "obscured-value",
+		configKeyPath: "imgyoung", configKeyPublicBaseURL: "https://cdn.example.com",
+	}, secret)
+	for _, k := range []string{"pass", "user"} {
+		if masked[k] != SecretPlaceholder {
+			t.Errorf("%s = %q, 期望哨兵掩码", k, masked[k])
+		}
+	}
+	for _, k := range []string{"url", configKeyPath, configKeyPublicBaseURL} {
+		if masked[k] == SecretPlaceholder {
+			t.Errorf("%s 被误掩码", k)
+		}
 	}
 }
 

@@ -597,7 +597,7 @@ export interface paths {
         get?: never;
         /**
          * 编辑渠道
-         * @description 配置整体替换;配置里原样回传的哨兵值表示保留原凭证。`encrypted` 不可变,试图变更返回 409。仅管理员。
+         * @description 配置整体替换;配置里原样回传的哨兵值表示保留原凭证,只在回读时掩码过的敏感参数上有效,落在其他键上返回 400。`encrypted` 不可变,试图变更返回 409。仅管理员。
          */
         put: operations["updateChannel"];
         post?: never;
@@ -620,7 +620,7 @@ export interface paths {
         };
         /**
          * 渠道配置的编辑视图
-         * @description 敏感值以哨兵 `__imgyoung_secret_keep__` 掩码,凭证明文永不下发;模板渠道附带还原出的表单字段值。仅管理员。
+         * @description 后端声明为密码或敏感信息的参数(rclone 选项元数据的 IsPassword / Sensitive,含访问密钥 ID、账号名、OAuth 应用凭证与令牌)以哨兵 `__imgyoung_secret_keep__` 掩码,明文永不下发;模板渠道附带还原出的表单字段值,同一口径掩码。仅管理员。
          */
         get: operations["channelConfig"];
         put?: never;
@@ -1662,7 +1662,7 @@ export interface components {
             config: {
                 [key: string]: string;
             };
-            /** @description 模板表单字段值;仅模板渠道 */
+            /** @description 模板表单字段值,落在敏感参数上的字段同样以哨兵掩码;仅模板渠道 */
             inputs?: {
                 [key: string]: string;
             };

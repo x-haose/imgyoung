@@ -163,12 +163,14 @@ func TestWebDAVChannelEditKeepsPassword(t *testing.T) {
 	resp := adminReq(t, client, csrf, http.MethodGet,
 		fmt.Sprintf("%s/api/admin/channels/%d/config", inst.baseURL, id), "")
 	var view struct {
+		Config map[string]string `json:"config"`
 		Inputs map[string]string `json:"inputs"`
 	}
 	err = json.NewDecoder(resp.Body).Decode(&view)
 	_ = resp.Body.Close()
-	if err != nil || view.Inputs["pass"] != maskedValue {
-		t.Fatalf("编辑视图的密码 = %q(err=%v), 期望哨兵", view.Inputs["pass"], err)
+	if err != nil || view.Inputs["pass"] != maskedValue || view.Config["pass"] != maskedValue {
+		t.Fatalf("编辑视图的密码 inputs=%q config=%q(err=%v), 期望两处都是哨兵",
+			view.Inputs["pass"], view.Config["pass"], err)
 	}
 	view.Inputs["path"] = "imgyoung-edited"
 

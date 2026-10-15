@@ -345,7 +345,7 @@ export function ChannelForm({
                 field={f}
                 template={template}
                 inputs={inputs}
-                isEdit={isEdit}
+                kept={prefill?.inputs?.[f.key] === SECRET_PLACEHOLDER}
                 disabled={busy}
               />
             ))
@@ -576,21 +576,22 @@ type TemplateFieldInputProps = {
   field: TemplateField
   template: ChannelTemplate
   inputs: Record<string, string>
-  isEdit: boolean
+  kept: boolean // 编辑回显为哨兵:后端掩码的敏感值,原样提交即保留
   disabled: boolean
 }
 
-/** 按模板字段类型渲染控件;编辑模式的密码字段说明哨兵语义。 */
+/** 按模板字段类型渲染控件;回显为哨兵的敏感字段一律掩码输入,并说明哨兵语义。 */
 function TemplateFieldInput({
   field: f,
   template,
   inputs,
-  isEdit,
+  kept,
   disabled,
 }: TemplateFieldInputProps) {
   const m = useMessages()
+  const masked = f.type === 'password' || kept
   const help =
-    isEdit && f.type === 'password'
+    kept && f.type !== 'oauth'
       ? [f.help, m.channels.secretKeepHint].filter(Boolean).join(';')
       : f.help
   return (
@@ -622,7 +623,7 @@ function TemplateFieldInput({
                 ))}
               </SelectContent>
             </Select>
-          ) : f.type === 'password' ? (
+          ) : masked ? (
             <FormControl>
               <PasswordInput
                 placeholder={f.placeholder}

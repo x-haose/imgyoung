@@ -11,6 +11,18 @@ import (
 	"github.com/x-haose/imgyoung/store/rclone"
 )
 
+// ExampleSensitiveParams 查询 webdav 后端的敏感参数:密码(IsPassword)与账号名、令牌(Sensitive)都在其中。
+func ExampleSensitiveParams() {
+	names, err := rclone.SensitiveParams("webdav")
+	if err != nil {
+		fmt.Println("sensitive params:", err)
+		return
+	}
+	fmt.Println(strings.Join(names, " "))
+	// Output:
+	// bearer_token pass user
+}
+
 // Example 用 rclone 的内存后端走一遍驱动的基本操作:写入、查询、读回、删除。
 func Example() {
 	ctx := context.Background()

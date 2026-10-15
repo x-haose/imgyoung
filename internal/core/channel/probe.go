@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -109,7 +108,13 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	redact := func(msg string) string { return redactSecrets(redactSecrets(msg, p.Config), prepared) }
+	secret, err := secretKeysOf(p.Driver)
+	if err != nil {
+		return "", err
+	}
+	redact := func(msg string) string {
+		return redactSecrets(redactSecrets(msg, p.Config, secret), prepared, secret)
+	}
 	d, err := m.openTrial(ctx, p.Driver, prepared)
 	if err != nil {
 		return redact(humanizeProbeError(err)), nil
@@ -197,16 +202,14 @@ func truncateRunes(s string, limit int) string {
 	return string(r[:limit]) + "…"
 }
 
-// secretKeyPattern 判定配置键是否属于敏感凭证(其值必须从错误文案中抹除)。
-var secretKeyPattern = regexp.MustCompile(`(?i)key|secret|password|token|credential`)
-
 // redactSecrets 把配置中敏感字段的值从文案里替换为掩码,兜底防凭证回显。
 // @param msg 待清洗文案
-// @param config 明文配置
+// @param config 配置
+// @param secret 须保密的键(见 secretKeysOf)
 // @return 清洗后的文案
-func redactSecrets(msg string, config map[string]string) string {
+func redactSecrets(msg string, config map[string]string, secret map[string]bool) string {
 	for k, v := range config {
-		if v != "" && secretKeyPattern.MatchString(k) {
+		if v != "" && secret[k] {
 			msg = strings.ReplaceAll(msg, v, "***")
 		}
 	}

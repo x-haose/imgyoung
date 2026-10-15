@@ -75,27 +75,34 @@ func validateCreateParams(p CreateParams) error {
 }
 
 // prepareConfig 把提交的配置整理成可入库形态:哨兵值还原为已存原值,本次提交的密码类值按 rclone 要求编码。
-// @Description: 还原出的值取自已入库配置,本就是编码产物,不再编码;只编码本次提交的值——模板表单的值
-// 确定是明文,一律编码;自定义参数来源不明,已是编码产物的值原样保留(见 rclone.ObscurePlainSecrets)。
+// @Description: 哨兵只在回读时掩码过的敏感键上有效。还原出的值取自已入库配置,本就是编码产物,
+// 不再编码;只编码本次提交的值——模板表单的值确定是明文,一律编码;自定义参数来源不明,
+// 已是编码产物的值原样保留(见 rclone.ObscurePlainSecrets)。
 // @param driverName rclone 后端名
 // @param submitted 提交的配置,可为 nil;不修改
 // @param stored 渠道已存的配置;创建场景为 nil
 // @param fromTemplate 配置是否由模板表单合并而来
 // @return 整理后的新配置
-// @return 哨兵无原值可还原或后端不存在时的 ErrInvalidChannel
+// @return 哨兵落在非敏感键或无原值可还原、后端不存在时的 ErrInvalidChannel
 func prepareConfig(driverName string, submitted, stored map[string]string,
 	fromTemplate bool) (map[string]string, error) {
+	secret, err := secretKeysOf(driverName)
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]string, len(submitted))
 	kept := make(map[string]string)
 	for k, v := range submitted {
-		if v != SecretPlaceholder {
+		switch {
+		case v != SecretPlaceholder:
 			out[k] = v
-			continue
-		}
-		if stored[k] == "" {
+		case !secret[k]:
+			return nil, fmt.Errorf("%w: 字段 %q 不是凭证,不能沿用已存值", ErrInvalidChannel, k)
+		case stored[k] == "":
 			return nil, fmt.Errorf("%w: 字段 %q 无已存原值可保留,请重新填写", ErrInvalidChannel, k)
+		default:
+			kept[k] = stored[k]
 		}
-		kept[k] = stored[k]
 	}
 	encode := rclone.ObscurePlainSecrets
 	if fromTemplate {

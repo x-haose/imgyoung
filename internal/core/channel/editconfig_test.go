@@ -36,8 +36,8 @@ func createMinioChannel(t *testing.T, env *testenv.Env) int64 {
 	return id
 }
 
-// TestManagerConfigForEdit 验证配置回读:模板 id 持久化、敏感值哨兵掩码、
-// 非敏感值明文预填,模板表单字段可还原。
+// TestManagerConfigForEdit 验证配置回读:模板 id 持久化、后端声明的敏感值在配置与表单字段两处
+// 同一口径掩码、非敏感值明文预填,模板表单字段可还原。
 func TestManagerConfigForEdit(t *testing.T) {
 	env := testenv.New(t)
 	id := createMinioChannel(t, env)
@@ -49,17 +49,15 @@ func TestManagerConfigForEdit(t *testing.T) {
 	if ec.Template != "minio" || ec.Driver != "s3" {
 		t.Fatalf("模板/后端未还原: %+v", ec)
 	}
-	if ec.Config["secret_access_key"] != channel.SecretPlaceholder {
-		t.Fatalf("敏感配置值未掩码: %q", ec.Config["secret_access_key"])
+	for _, k := range []string{"access_key_id", "secret_access_key"} {
+		if ec.Config[k] != channel.SecretPlaceholder || ec.Inputs[k] != channel.SecretPlaceholder {
+			t.Fatalf("敏感值 %s 未掩码: config=%q inputs=%q", k, ec.Config[k], ec.Inputs[k])
+		}
 	}
 	if ec.Config["endpoint"] != "http://127.0.0.1:1" || ec.Config["path"] != "bkt" {
 		t.Fatalf("非敏感配置未明文回读: %+v", ec.Config)
 	}
-	if ec.Inputs["secret_access_key"] != channel.SecretPlaceholder {
-		t.Fatalf("密码字段未掩码: %+v", ec.Inputs)
-	}
-	if ec.Inputs["access_key_id"] != "AKTEST" || ec.Inputs["bucket"] != "bkt" ||
-		ec.Inputs["endpoint"] != "http://127.0.0.1:1" {
+	if ec.Inputs["bucket"] != "bkt" || ec.Inputs["endpoint"] != "http://127.0.0.1:1" {
 		t.Fatalf("模板表单字段未还原: %+v", ec.Inputs)
 	}
 
@@ -103,5 +101,14 @@ func TestManagerUpdateKeepsSecretSentinel(t *testing.T) {
 		Name: "minio-edit", Driver: "s3", Config: bad, Template: "",
 	}); !errors.Is(err, channel.ErrInvalidChannel) {
 		t.Fatalf("无原值哨兵错误 = %v, 期望 ErrInvalidChannel", err)
+	}
+
+	// 哨兵只在回读掩码过的敏感键上有效;落在非敏感键上是非法提交。
+	plainKey := map[string]string{"access_key_id": channel.SecretPlaceholder,
+		"secret_access_key": channel.SecretPlaceholder, "endpoint": channel.SecretPlaceholder, "path": "bkt2"}
+	if err := env.Manager.Update(t.Context(), id, channel.UpdateParams{
+		Name: "minio-edit", Driver: "s3", Config: plainKey, Template: "",
+	}); !errors.Is(err, channel.ErrInvalidChannel) {
+		t.Fatalf("非敏感键哨兵错误 = %v, 期望 ErrInvalidChannel", err)
 	}
 }
