@@ -109,6 +109,10 @@ func (m *Manager) TestConfig(ctx context.Context, p TestParams) (string, error) 
 	redact := func(msg string) string {
 		return redactSecrets(redactSecrets(msg, p.Config, secret), prepared, secret)
 	}
+	// 补齐授权带出的参数要向后端查询,查询失败与连接失败同属探测结论。
+	if err := completeTemplateConfig(ctx, p.Template, p.Config, prepared, stored); err != nil {
+		return redact(humanizeProbeError(err)), nil
+	}
 	d, err := m.openTrial(ctx, p.Driver, prepared)
 	if err != nil {
 		return redact(humanizeProbeError(err)), nil

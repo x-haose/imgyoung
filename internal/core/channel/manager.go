@@ -394,7 +394,7 @@ func (m *Manager) closeTrial(ctx context.Context, d *rclone.Driver, what string)
 	}
 }
 
-// persistParam 把后端运行期写回的参数(刷新后的 OAuth 令牌、onedrive 的 drive_id 等)并入渠道配置并落库。
+// persistParam 把后端运行期写回的参数(刷新后的 OAuth 令牌等)并入渠道配置并落库。
 // @Description: 写回来自 rclone 内部,不带上下文,也不该被某个请求的取消牵连,故用独立上下文。
 // 落库失败只能记录——rclone 的写回接口无处接收错误;内存里的新值仍在用,重启后退回旧值。
 // 同步更新本渠道的驱动输入,下次 Reload 不会把写回误判为配置变更而重建驱动。

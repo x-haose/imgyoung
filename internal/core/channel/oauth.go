@@ -192,7 +192,7 @@ func ParsePastedToken(pasted string) (string, error) {
 	return validateToken(pasted)
 }
 
-// configWalkLimit 跟随后端配置状态机寻找授权环节的最大步数;正常后端两三步内即到达。
+// configWalkLimit 跟随后端配置状态机的最大步数;内置模板的后端十步内走完,超出视为状态机打转。
 const configWalkLimit = 16
 
 // backendOAuthOptions 取后端声明的 OAuth 选项。

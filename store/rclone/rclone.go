@@ -36,7 +36,7 @@ type Options struct {
 	Params   map[string]string       // 后端参数,密码类值须已按 rclone 要求编码(见 ObscureSecrets);可为 nil
 	Path     string                  // 后端内路径(桶名或目录);空为后端根
 	Crypt    *CryptOptions           // 非 nil 时在后端之上套 crypt 加密层
-	OnChange func(key, value string) // 后端运行期写回参数(刷新后的 OAuth 令牌、onedrive 的 drive_id 等)时的持久化回调;nil 表示写回只留在内存
+	OnChange func(key, value string) // 后端运行期写回参数(刷新后的 OAuth 令牌等)时的持久化回调;nil 表示写回只留在内存
 }
 
 // CryptOptions crypt 加密层参数;文件名加密固定取 standard。

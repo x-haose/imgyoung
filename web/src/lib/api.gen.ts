@@ -558,7 +558,7 @@ export interface paths {
         put?: never;
         /**
          * 创建渠道
-         * @description 模板模式给 `template` + `inputs`,自定义模式给 `driver` + `config`。创建即深探测并落库,随后唤醒补齐管道回填存量;`encrypted` 创建时固化。仅管理员。
+         * @description 模板模式给 `template` + `inputs`,自定义模式给 `driver` + `config`。需授权的模板会先按后端配置流程补齐授权带出的参数(如 OneDrive 选定用户默认驱动器),向服务商查询失败返回 400。创建即深探测并落库,随后唤醒补齐管道回填存量;`encrypted` 创建时固化。仅管理员。
          */
         post: operations["createChannel"];
         delete?: never;
@@ -578,7 +578,7 @@ export interface paths {
         put?: never;
         /**
          * 测试连接
-         * @description 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
+         * @description 按创建同构的请求体深探测,不落库;探测成败以 `{ok, error}` 返回,补齐授权带出的参数时向服务商查询失败也在其中。编辑场景带 `channel_id`,配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
          */
         post: operations["testChannel"];
         delete?: never;

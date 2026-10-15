@@ -126,6 +126,34 @@ func TestOAuthFlowAppliesBackendDefaults(t *testing.T) {
 	}
 }
 
+// TestTemplateEditKeepsAuthorizationParams 验证编辑 OneDrive 模板渠道而不重新授权时,授权带出的
+// drive_id / drive_type 随授权保留,模板字段照常替换;缺了它们后端无法构造。
+func TestTemplateEditKeepsAuthorizationParams(t *testing.T) {
+	stored := map[string]string{
+		"region": "global", ConfigKeyToken: `{"access_token":"AT"}`, "path": "old",
+		"drive_id": "DRIVE-A", "drive_type": "personal",
+	}
+	drv, submitted, err := BuildTemplateConfig("onedrive", map[string]string{
+		"region": "global", ConfigKeyToken: SecretPlaceholder, "path": "new",
+	})
+	if err != nil {
+		t.Fatalf("合并模板配置: %v", err)
+	}
+	config, err := prepareConfig(drv, submitted, stored, true)
+	if err != nil {
+		t.Fatalf("整理配置: %v", err)
+	}
+	if err := completeTemplateConfig(t.Context(), "onedrive", submitted, config, stored); err != nil {
+		t.Fatalf("补齐授权参数: %v", err)
+	}
+	if config["drive_id"] != "DRIVE-A" || config["drive_type"] != "personal" {
+		t.Errorf("授权带出的参数未保留: %v", config)
+	}
+	if config["path"] != "new" || config[ConfigKeyToken] != stored[ConfigKeyToken] {
+		t.Errorf("模板字段未替换或令牌未沿用: %v", config)
+	}
+}
+
 // TestOAuthFlowExchange 验证授权码换取令牌并归一化为 rclone 存储格式。
 func TestOAuthFlowExchange(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

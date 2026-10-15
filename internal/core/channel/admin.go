@@ -145,9 +145,9 @@ func boolToInt(b bool) int64 {
 	return 0
 }
 
-// Create 创建渠道:试构造验证配置 → 落库并播种存量副本 → 重载 → 立即深探测。
-// @Description: 深探测失败不回滚创建——渠道保留,healthy=false 且 last_error
-// 可见,管理员据此修配置或重检。
+// Create 创建渠道:整理配置 → 试构造验证 → 落库并播种存量副本 → 重载 → 立即深探测。
+// @Description: 整理配置含编码密码与补齐授权带出的参数(见 completeTemplateConfig)。深探测失败
+// 不回滚创建——渠道保留,healthy=false 且 last_error 可见,管理员据此修配置或重检。
 // @param p 创建参数
 // @return 新渠道 ID
 // @return 参数非法、后端初始化失败或落库失败时的错误
@@ -157,6 +157,9 @@ func (m *Manager) Create(ctx context.Context, p CreateParams) (int64, error) {
 	}
 	config, err := prepareConfig(p.Driver, p.Config, nil, p.Template != "")
 	if err != nil {
+		return 0, err
+	}
+	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, nil); err != nil {
 		return 0, err
 	}
 	// 试构造:落库前验证后端名与参数能初始化(crypt 派生依赖渠道 ID,
@@ -252,7 +255,8 @@ type UpdateParams struct {
 
 // Update 编辑渠道:校验后整体替换配置,重建驱动实例并立即深探测。
 // @Description: encrypted 不可变(翻转会造成密文/明文混存)。配置中的
-// SecretPlaceholder 值先还原为该渠道已存配置的同键原值(编辑表单不必重录凭证)。
+// SecretPlaceholder 值先还原为该渠道已存配置的同键原值(编辑表单不必重录凭证),
+// 沿用已存授权时授权带出的参数一并保留。
 // 成功后 Reload 重建本渠道驱动,再对该渠道深探测落库。编辑不改变副本集合语义,不触发存量回填。
 // @param channelID 渠道主键
 // @param p 编辑参数
@@ -302,6 +306,9 @@ func (m *Manager) updateRecord(ctx context.Context, channelID int64, p UpdatePar
 	}
 	config, err := prepareConfig(p.Driver, p.Config, old, p.Template != "")
 	if err != nil {
+		return err
+	}
+	if err := completeTemplateConfig(ctx, p.Template, p.Config, config, old); err != nil {
 		return err
 	}
 	// 试构造:与 Create 同规则,加密渠道以明文形态验证后端可初始化。
