@@ -2158,10 +2158,11 @@ export interface components {
                 "image/*": unknown;
             };
         };
-        /** @description 访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址 */
+        /** @description 访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址。重定向目标随渠道健康与配置变化, 响应为 `Cache-Control: no-store`,不进 CDN 与浏览器缓存 */
         DirectLink: {
             headers: {
                 Location: string;
+                "Cache-Control": "no-store";
                 [name: string]: unknown;
             };
             content?: never;

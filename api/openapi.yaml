@@ -1980,13 +1980,20 @@ components:
       content:
         image/*: {}
     DirectLink:
-      description: 访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址
+      description: >-
+        访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址。重定向目标随渠道健康与配置变化,
+        响应为 `Cache-Control: no-store`,不进 CDN 与浏览器缓存
       headers:
         Location:
           required: true
           schema:
             type: string
             format: uri
+        Cache-Control:
+          required: true
+          schema:
+            type: string
+            const: no-store
     NotModified:
       description: ETag 命中,内容未变
       headers:

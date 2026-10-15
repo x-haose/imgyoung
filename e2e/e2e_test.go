@@ -710,7 +710,7 @@ func TestEncryptedChannel(t *testing.T) {
 	}
 }
 
-// TestRedirectMode 302 省流量模式:允许直链的渠道返回重定向。
+// TestRedirectMode 302 省流量模式:允许直链的渠道返回重定向,且重定向不可缓存。
 func TestRedirectMode(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, map[string]any{"access_mode": "redirect"})
@@ -732,6 +732,9 @@ func TestRedirectMode(t *testing.T) {
 	}
 	if loc := resp.Header.Get("Location"); !strings.HasPrefix(loc, "https://cdn.example.com/pub/") {
 		t.Fatalf("Location = %q", loc)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, 期望 no-store(重定向目标随渠道变化,不可缓存)", cc)
 	}
 }
 

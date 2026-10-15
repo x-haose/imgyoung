@@ -152,6 +152,8 @@ func (h *Handlers) servingCandidates(w http.ResponseWriter, r *http.Request,
 }
 
 // redirectToDirectLink 向第一个允许直链、未加密且配置了公开地址的候选渠道发 302;无此候选报告 false。
+// @Description: 重定向一律 no-store:目标随渠道健康、优先级与直链配置变化,被 CDN 或浏览器缓存后
+// 渠道切换、删除与到期都要等缓存过期才生效,缓存命中的访问也不计活跃度。
 // @param w 响应写入器
 // @param r 请求
 // @param candidates 候选渠道,按优先级降序
@@ -160,6 +162,7 @@ func (h *Handlers) servingCandidates(w http.ResponseWriter, r *http.Request,
 func redirectToDirectLink(w http.ResponseWriter, r *http.Request, candidates []channel.Handle, storageKey string) bool {
 	for _, cand := range candidates {
 		if cand.AllowDirectLink && !cand.Encrypted && cand.PublicBaseURL != "" {
+			w.Header().Set("Cache-Control", "no-store")
 			http.Redirect(w, r, cand.PublicBaseURL+"/"+storageKey, http.StatusFound)
 			return true
 		}
