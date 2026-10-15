@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -28,6 +27,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/adminapi"
+	"github.com/x-haose/imgyoung/internal/http/apitest"
 	"github.com/x-haose/imgyoung/internal/http/publicapi"
 	"github.com/x-haose/imgyoung/internal/http/router"
 	"github.com/x-haose/imgyoung/internal/infra/config"
@@ -299,26 +299,5 @@ func loginAs(t *testing.T, ts *httptest.Server, name, password string) (*http.Cl
 	return client, lr.CSRFToken
 }
 
-// adminReq 以管理员会话发送请求(状态变更自动带 CSRF 头)。
-func adminReq(t *testing.T, client *http.Client, csrf, method, url, body string) *http.Response {
-	t.Helper()
-	var rd io.Reader
-	if body != "" {
-		rd = strings.NewReader(body)
-	}
-	req, err := http.NewRequest(method, url, rd)
-	if err != nil {
-		t.Fatalf("构造管理请求: %v", err)
-	}
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if method != http.MethodGet {
-		req.Header.Set("X-CSRF-Token", csrf)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("发送管理请求: %v", err)
-	}
-	return resp
-}
+// adminReq 以管理员会话发送管理接口请求(见 apitest.AdminRequest)。
+var adminReq = apitest.AdminRequest

@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/config"
-	"github.com/rclone/rclone/fs/config/configfile"
+
+	"github.com/x-haose/imgyoung/internal/core/testenv"
 
 	// 导出的配置文件只用到这两种后端:WebDAV 渠道与其上的 crypt 层。
 	_ "github.com/rclone/rclone/backend/crypt"
@@ -111,19 +111,7 @@ func loadRcloneConfig(t *testing.T, text string) {
 	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatalf("写配置文件: %v", err)
 	}
-	oldPath, oldData := config.GetConfigPath(), config.Data()
-	// 加载配置时 rclone 会改写该环境变量;登记后由测试框架在结束时还原。
-	t.Setenv("RCLONE_CONFIG_DIR", os.Getenv("RCLONE_CONFIG_DIR"))
-	if err := config.SetConfigPath(path); err != nil {
-		t.Fatalf("设置 rclone 配置路径: %v", err)
-	}
-	configfile.Install()
-	t.Cleanup(func() {
-		if err := config.SetConfigPath(oldPath); err != nil {
-			t.Errorf("还原 rclone 配置路径: %v", err)
-		}
-		config.SetData(oldData)
-	})
+	testenv.UseRcloneConfig(t, path)
 }
 
 // readWithRclone 按 rclone 路径构造 Fs 并读出一个对象。

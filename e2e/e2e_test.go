@@ -31,6 +31,8 @@ import (
 
 	// 注册 modernc 纯 Go SQLite 驱动,用例直接读改实例的元数据库。
 	_ "modernc.org/sqlite"
+
+	"github.com/x-haose/imgyoung/internal/http/apitest"
 )
 
 // defaultAdminPass 管理员出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
@@ -432,30 +434,8 @@ func loginSession(t *testing.T, inst *instance, name, password string) (*http.Cl
 	return client, lr.CSRFToken
 }
 
-// adminReq 以管理员会话发送管理 API 请求(状态变更自动带 CSRF 头)。
-// @return 响应对象(调用方负责关闭与断言)
-func adminReq(t *testing.T, client *http.Client, csrf, method, url, body string) *http.Response {
-	t.Helper()
-	var rd io.Reader
-	if body != "" {
-		rd = strings.NewReader(body)
-	}
-	req, err := http.NewRequest(method, url, rd)
-	if err != nil {
-		t.Fatalf("构造管理请求: %v", err)
-	}
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if method != http.MethodGet {
-		req.Header.Set("X-CSRF-Token", csrf)
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("发送管理请求: %v", err)
-	}
-	return resp
-}
+// adminReq 以管理员会话发送管理接口请求(见 apitest.AdminRequest)。
+var adminReq = apitest.AdminRequest
 
 // createChannel 通过管理 API 创建渠道并断言 201(自动登录管理员),返回渠道 id。
 func createChannel(t *testing.T, inst *instance, body string) int64 {

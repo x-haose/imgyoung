@@ -41,6 +41,32 @@ func newSimilarMerger(t *testing.T, conn *sql.DB, q *sqlc.Queries) *dedup.Merger
 	})
 }
 
+// similarPair 两张感知哈希相近的图扫描出一条相似候选后的装配。
+type similarPair struct {
+	conn   *sql.DB       // 数据库连接
+	merger *dedup.Merger // 相似图合并器
+	a, b   int64         // 两张物理图的主键:a 被引用为 imageaaaa1,b 被引用为 imagebbbb1
+	candID int64         // 扫描出的相似候选主键
+}
+
+// scanSimilarPair 建两张感知哈希相差 1 位的图,扫描出它们的相似候选。
+// @return 装配
+func scanSimilarPair(t *testing.T) similarPair {
+	t.Helper()
+	conn, q := setup(t)
+	ctx := t.Context()
+	p := similarPair{conn: conn, merger: newSimilarMerger(t, conn, q)}
+	p.a = mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
+	p.b = mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 1)
+	if _, err := p.merger.ScanSimilarOnce(ctx); err != nil {
+		t.Fatalf("扫描失败: %v", err)
+	}
+	if err := conn.QueryRow("SELECT id FROM dedup_candidates").Scan(&p.candID); err != nil {
+		t.Fatalf("查候选: %v", err)
+	}
+	return p
+}
+
 // countCandidates 统计指定状态的候选行数。
 func countCandidates(t *testing.T, conn *sql.DB, status string) int {
 	t.Helper()
@@ -117,19 +143,9 @@ func TestScanSimilarDismissAbsorbsRescan(t *testing.T) {
 // TestMergeCandidateRepointsAndCleans 裁决合并:引用改指向保留方、计数并入、
 // 被并方标记待删、涉其候选全部出队。
 func TestMergeCandidateRepointsAndCleans(t *testing.T) {
-	conn, q := setup(t)
 	ctx := t.Context()
-	a := mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
-	b := mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 1)
-
-	m := newSimilarMerger(t, conn, q)
-	if _, err := m.ScanSimilarOnce(ctx); err != nil {
-		t.Fatalf("扫描失败: %v", err)
-	}
-	var candID int64
-	if err := conn.QueryRow("SELECT id FROM dedup_candidates").Scan(&candID); err != nil {
-		t.Fatalf("查候选: %v", err)
-	}
+	pair := scanSimilarPair(t)
+	conn, m, a, b, candID := pair.conn, pair.merger, pair.a, pair.b, pair.candID
 
 	if err := m.MergeCandidate(ctx, candID, 999); !errors.Is(err, dedup.ErrBadKeeper) {
 		t.Fatalf("非候选方应拒绝, got %v", err)
@@ -169,19 +185,9 @@ func TestMergeCandidateRepointsAndCleans(t *testing.T) {
 
 // TestMergeCandidateStaleBlob 候选一方已进入删除流程时拒绝合并。
 func TestMergeCandidateStaleBlob(t *testing.T) {
-	conn, q := setup(t)
 	ctx := t.Context()
-	a := mkBlobWithPhash(t, ctx, q, "sha-a", "key-a", "imageaaaa1", 0)
-	b := mkBlobWithPhash(t, ctx, q, "sha-b", "key-b", "imagebbbb1", 1)
-
-	m := newSimilarMerger(t, conn, q)
-	if _, err := m.ScanSimilarOnce(ctx); err != nil {
-		t.Fatalf("扫描失败: %v", err)
-	}
-	var candID int64
-	if err := conn.QueryRow("SELECT id FROM dedup_candidates").Scan(&candID); err != nil {
-		t.Fatalf("查候选: %v", err)
-	}
+	pair := scanSimilarPair(t)
+	conn, m, a, b, candID := pair.conn, pair.merger, pair.a, pair.b, pair.candID
 	if _, err := conn.Exec("UPDATE blobs SET pending_delete = 1 WHERE id = ?", a); err != nil {
 		t.Fatalf("标记删除: %v", err)
 	}

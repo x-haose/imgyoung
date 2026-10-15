@@ -11,8 +11,6 @@ import (
 
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/cache"
-	"github.com/rclone/rclone/fs/config"
-	"github.com/rclone/rclone/fs/config/configfile"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/testenv"
@@ -47,7 +45,7 @@ func TestRcloneConfigRoundTrip(t *testing.T) {
 			if err := os.WriteFile(confPath, []byte(text), 0o600); err != nil {
 				t.Fatalf("写配置文件: %v", err)
 			}
-			useRcloneConfigFile(t, confPath)
+			testenv.UseRcloneConfig(t, confPath)
 
 			backend := fmt.Sprintf("imgyoung-%d", id)
 			t.Cleanup(func() { cache.ClearConfig(backend) })
@@ -67,25 +65,6 @@ func TestRcloneConfigRoundTrip(t *testing.T) {
 			}
 		})
 	}
-}
-
-// useRcloneConfigFile 让本进程的 rclone 从 path 加载配置文件,测试结束恢复原有的配置路径与存储。
-// @param path 配置文件路径
-func useRcloneConfigFile(t *testing.T, path string) {
-	t.Helper()
-	oldPath, oldData := config.GetConfigPath(), config.Data()
-	// 加载配置时 rclone 会改写该环境变量;登记后由测试框架在结束时还原。
-	t.Setenv("RCLONE_CONFIG_DIR", os.Getenv("RCLONE_CONFIG_DIR"))
-	if err := config.SetConfigPath(path); err != nil {
-		t.Fatalf("设置 rclone 配置路径: %v", err)
-	}
-	configfile.Install()
-	t.Cleanup(func() {
-		if err := config.SetConfigPath(oldPath); err != nil {
-			t.Errorf("还原 rclone 配置路径: %v", err)
-		}
-		config.SetData(oldData)
-	})
 }
 
 // readObject 按 rclone 路径构造 Fs 并读出一个对象的全部内容。

@@ -214,21 +214,7 @@ func TestProcessMarksReplicaStates(t *testing.T) {
 		t.Fatalf("创建渠道: %v", err)
 	}
 
-	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
-		UserID:   sqlc.DefaultUserID,
-		FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
-	})
-	if err != nil {
-		t.Fatalf("Process 返回错误: %v", err)
-	}
-	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
-	if err != nil {
-		t.Fatalf("查询引用记录: %v", err)
-	}
-	replicas, err := env.Queries.ListBlobChannels(t.Context(), row.BlobID)
-	if err != nil {
-		t.Fatalf("查询副本状态: %v", err)
-	}
+	_, replicas := env.uploadPNG(t)
 	if len(replicas) != 2 {
 		t.Fatalf("副本记录数 = %d, 期望 2(每渠道一条)", len(replicas))
 	}
@@ -402,20 +388,7 @@ func TestProcessMinSuccessWritesReplicasSynchronously(t *testing.T) {
 	env := newTestEnv(t, func(s *config.Settings) { s.MinSuccess = 2 })
 	secondID, secondDir := env.AddLocalChannel(t, "second", 200, false)
 
-	res, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
-		UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
-	})
-	if err != nil {
-		t.Fatalf("Process 返回错误: %v", err)
-	}
-	row, err := env.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
-	if err != nil {
-		t.Fatalf("查询引用记录: %v", err)
-	}
-	replicas, err := env.Queries.ListBlobChannels(t.Context(), row.BlobID)
-	if err != nil {
-		t.Fatalf("查询副本状态: %v", err)
-	}
+	row, replicas := env.uploadPNG(t)
 	if len(replicas) != 2 {
 		t.Fatalf("副本记录数 = %d, 期望 2", len(replicas))
 	}
@@ -464,4 +437,26 @@ func TestProcessMinSuccessUnmetRejects(t *testing.T) {
 // liveImage 构造按当前时刻查询未到期引用的参数。
 func liveImage(id string) sqlc.GetImageBlobParams {
 	return sqlc.GetImageBlobParams{ID: id, Now: sqlc.TimeText(time.Now())}
+}
+
+// uploadPNG 以默认用户、原样保留元数据上传一张小 PNG,读回其引用记录与各渠道的副本状态。
+// @return row 新图的引用与物理图记录
+// @return replicas 物理图在各渠道的副本状态
+func (e *testEnv) uploadPNG(t *testing.T) (sqlc.GetImageBlobRow, []sqlc.ListBlobChannelsRow) {
+	t.Helper()
+	res, err := e.svc.Process(t.Context(), pngBytes(t), upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+	})
+	if err != nil {
+		t.Fatalf("Process 返回错误: %v", err)
+	}
+	row, err := e.Queries.GetImageBlob(t.Context(), liveImage(res.ImageID))
+	if err != nil {
+		t.Fatalf("查询引用记录: %v", err)
+	}
+	replicas, err := e.Queries.ListBlobChannels(t.Context(), row.BlobID)
+	if err != nil {
+		t.Fatalf("查询副本状态: %v", err)
+	}
+	return row, replicas
 }
