@@ -13,7 +13,7 @@ env:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -24,7 +24,7 @@ jobs:
           package_json_file: web/package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - name: Web
@@ -57,7 +57,7 @@ jobs:
 
   # 文档站:类型检查、格式与构建;接口参考页在构建时由 api/openapi.yaml 生成,文档与契约不同步会在这里失败
   docs:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -65,7 +65,7 @@ jobs:
           package_json_file: docs/package.json
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
           cache-dependency-path: docs/pnpm-lock.yaml
       - name: Docs
@@ -76,7 +76,7 @@ jobs:
           pnpm build
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - name: Build image
@@ -86,7 +86,7 @@ jobs:
         run: docker run --rm imgyoung:ci -version
 
   release-config:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v7
       - uses: goreleaser/goreleaser-action@v7

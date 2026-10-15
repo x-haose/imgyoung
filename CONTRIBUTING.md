@@ -7,7 +7,7 @@
 | 工具 | 版本 | 用途 |
 |---|---|---|
 | Go | `go.mod` 里的版本 | 服务端；构建、测试、lint 全程 `CGO_ENABLED=0`，且带 `-tags nodynamic`（Taskfile 与 CI 经 `GOFLAGS` 设置；没有它 webp 库会让 linux 二进制依赖系统动态链接器，镜像起不来）。例外是 `task test` 的竞争检测：Linux / Windows 上它需要 cgo 与 C 编译器，Taskfile 会自动打开 |
-| Node.js + pnpm | Node 22；pnpm 版本见 `web/package.json` 的 `packageManager`（`corepack enable` 即可）| 管理后台前端 |
+| Node.js + pnpm | Node 24；pnpm 版本见 `web/package.json` 的 `packageManager`（`corepack enable` 即可）| 管理后台前端 |
 | [Task](https://taskfile.dev) | 3 | 开发入口，`task --list` 列出全部任务 |
 | golangci-lint | `.github/workflows/ci.yml` 里钉的版本 | Go lint 门禁 |
 | ShellCheck | 近期任意版本 | 安装脚本 `install.sh` 的 lint |

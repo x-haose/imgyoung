@@ -1,5 +1,5 @@
 # 前端阶段:构建管理后台产物,交给下方 go:embed
-FROM node:22-alpine AS web
+FROM node:24-alpine AS web
 WORKDIR /src/web
 RUN corepack enable pnpm
 COPY web/package.json web/pnpm-lock.yaml ./
