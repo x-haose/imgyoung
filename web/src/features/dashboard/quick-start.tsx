@@ -59,7 +59,9 @@ export function QuickStart({ admin }: { admin: boolean }) {
           <Rocket className='size-4 text-primary' />
           {m.dashboard.quickStartTitle}
         </CardTitle>
-        <CardDescription>{m.dashboard.quickStartDesc}</CardDescription>
+        <CardDescription>
+          {admin ? m.dashboard.quickStartDesc : m.dashboard.quickStartUserDesc}
+        </CardDescription>
       </CardHeader>
       <CardContent className='grid gap-3 sm:grid-cols-2 lg:grid-cols-3'>
         {steps.map((step, i) => (

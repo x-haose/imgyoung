@@ -4,7 +4,7 @@ import {
   useSuspenseQuery,
 } from '@tanstack/react-query'
 import { type ParsedLocation, redirect } from '@tanstack/react-router'
-import { api, type Schema, setCsrfToken } from './api'
+import { api, type Schema, sessionExpired, setCsrfToken } from './api'
 import { hasStatus } from './errors'
 
 /** 会话主体信息,由登录与 /me 响应返回。 */
@@ -82,11 +82,13 @@ export async function requireSession(
 }
 
 /**
- * 后台重新校验会话,本次导航不等它。
- * 校验失败已写进会话查询的缓存,由读会话的页面显示;会话失效(401)另由请求层的 onUnauthorized 处理器跳登录页。
+ * 后台重新校验会话,本次导航不等它。会话已失效(401)即按会话失效处理、跳登录页;
+ * 其余失败(网络、服务端故障)不改变本次导航,页面自己的请求会遇到同一故障并提示。
  */
 function revalidateSession(queryClient: QueryClient): void {
-  queryClient.query(sessionQueryOptions()).catch(() => undefined)
+  queryClient.query(sessionQueryOptions()).catch((err: unknown) => {
+    if (hasStatus(err, 401)) sessionExpired()
+  })
 }
 
 /** 路由守卫:仅管理员可进的页面,普通用户回总览。 */

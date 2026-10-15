@@ -11,6 +11,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/password-input'
 import { type FormValues } from './form-model'
 import { SECRET_PLACEHOLDER } from './types'
 
@@ -19,7 +20,10 @@ type CustomFieldsProps = {
   isEdit: boolean
 }
 
-/** 自定义模式:rclone 后端名 + 键值对参数;编辑模式说明哨兵语义。 */
+/**
+ * 自定义模式:rclone 后端名 + 键值对参数;编辑模式说明哨兵语义。
+ * 哪些参数是凭证由后端决定,这里无从判断,参数值一律以掩码输入框显示,可逐栏点开查看。
+ */
 export function CustomFields({ rows, isEdit }: CustomFieldsProps) {
   const m = useMessages()
   return (
@@ -61,9 +65,9 @@ export function CustomFields({ rows, isEdit }: CustomFieldsProps) {
                 render={({ field }) => (
                   <FormItem className='flex-1'>
                     <FormControl>
-                      <Input
+                      <PasswordInput
                         placeholder={m.channels.configValuePlaceholder}
-                        className='font-mono text-xs'
+                        autoComplete='off'
                         {...field}
                       />
                     </FormControl>

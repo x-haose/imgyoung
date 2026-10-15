@@ -70,7 +70,7 @@ export const CONFIG_GROUPS: FieldGroup[] = [
       {
         key: 'process_quality_webp',
         kind: 'int',
-        min: 0,
+        min: 1,
         max: 100,
       },
       {

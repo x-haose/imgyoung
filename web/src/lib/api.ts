@@ -50,9 +50,15 @@ export function setCsrfToken(token: string, userId = ''): void {
   sessionUserId = userId
 }
 
-/** 注册会话失效(401)时的处理;登录接口的 401 是密码错误,me 接口的 401 由路由守卫处理,二者不触发。 */
+/** 注册会话失效(401)时的处理;登录接口的 401 是密码错误,me 接口的 401 由会话守卫处理,二者不自动触发。 */
 export function onUnauthorized(handler: () => void): void {
   unauthorizedHandler = handler
+}
+
+/** 会话已失效:清掉 CSRF 令牌并交给 onUnauthorized 注册的处理。 */
+export function sessionExpired(): void {
+  setCsrfToken('')
+  unauthorizedHandler()
 }
 
 const authExemptPaths = new Set(['/api/admin/auth/login', '/api/admin/me'])
@@ -131,11 +137,8 @@ function parseEnvelope(raw: string): Envelope | undefined {
     : undefined
 }
 
-/** 发起 API 请求;非 2xx 一律抛 ApiError(消息按错误码取当前语言的文案),空响应体(204、202 等)返回 undefined。 */
-export async function apiFetch<T>(
-  path: string,
-  init?: RequestInit
-): Promise<T> {
+/** 发起请求并返回成功的响应;非 2xx 一律抛 ApiError(消息按错误码取当前语言的文案)。 */
+async function request(path: string, init?: RequestInit): Promise<Response> {
   const method = (init?.method ?? 'GET').toUpperCase()
   const withCsrf = method !== 'GET' && method !== 'HEAD'
   let resp = await rawFetch(path, init, withCsrf)
@@ -151,12 +154,48 @@ export async function apiFetch<T>(
     failure = resp.ok ? undefined : await readError(resp)
   }
   if (resp.status === 401 && !authExemptPaths.has(path.split('?')[0])) {
-    setCsrfToken('')
-    unauthorizedHandler()
+    sessionExpired()
   }
   if (failure) throw failure
-  const text = await resp.text()
+  return resp
+}
+
+/** 发起 API 请求;非 2xx 一律抛 ApiError,空响应体(204、202 等)返回 undefined。 */
+export async function apiFetch<T>(
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  const text = await (await request(path, init)).text()
   return (text === '' ? undefined : JSON.parse(text)) as T
+}
+
+/**
+ * 下载附件:整个响应体取回成功后才交给浏览器保存,失败(错误响应、传输中断)抛 ApiError 由界面提示,
+ * 不会把错误响应或残缺的内容存成文件。文件名取响应头 Content-Disposition。
+ */
+async function download(path: string): Promise<void> {
+  const resp = await request(path)
+  let blob: Blob
+  try {
+    blob = await resp.blob()
+  } catch (err) {
+    throw new ApiError(0, messages().common.networkError, { cause: err })
+  }
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = attachmentName(resp)
+  a.click()
+  // 点击时浏览器已解析并持有这条 blob 地址指向的内容,随即撤销不影响下载。
+  URL.revokeObjectURL(url)
+}
+
+/** 响应头 Content-Disposition 里的文件名;没有时为空串,由浏览器按地址取名。 */
+function attachmentName(resp: Response): string {
+  const m = /filename="([^"]*)"/.exec(
+    resp.headers.get('Content-Disposition') ?? ''
+  )
+  return m?.[1] ?? ''
 }
 
 /** 查询参数值;undefined、null 与空串不进入查询串。 */
@@ -199,6 +238,9 @@ export const api = {
   /** 表单上传:Content-Type 连同 boundary 由浏览器自设。 */
   form: <T>(path: string, body: FormData) =>
     apiFetch<T>(path, { method: 'POST', body }),
+  /** 下载附件,取回成功后才交给浏览器保存;失败抛 ApiError。 */
+  download: (path: string, params?: Record<string, QueryValue>) =>
+    download(withQuery(path, params)),
 }
 
 /** 后端列表统一信封;total 为过滤后的总条数,供分页。 */

@@ -130,7 +130,7 @@ export const settings = {
         label: 'Default EXIF policy',
         hint: 'A per-upload form field can override it; S3 uploads are always stored byte for byte',
       },
-      process_quality_webp: { label: 'WebP quality', hint: '0 to 100' },
+      process_quality_webp: { label: 'WebP quality', hint: '1 to 100' },
       process_quality_jpeg: { label: 'JPEG quality', hint: '1 to 100' },
       process_webp_method: {
         label: 'WebP effort',

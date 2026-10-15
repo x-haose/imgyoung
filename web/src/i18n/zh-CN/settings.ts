@@ -110,7 +110,7 @@ export const settings = {
         label: 'EXIF 默认档',
         hint: '单次上传的表单字段可覆盖；S3 上传不受影响，一律按原字节保存',
       },
-      process_quality_webp: { label: 'WebP 质量档', hint: '0 到 100' },
+      process_quality_webp: { label: 'WebP 质量档', hint: '1 到 100' },
       process_quality_jpeg: { label: 'JPEG 质量档', hint: '1 到 100' },
       process_webp_method: {
         label: 'WebP 速度权衡',

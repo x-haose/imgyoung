@@ -1,6 +1,6 @@
 import { queryOptions, useQueryClient } from '@tanstack/react-query'
 import { getLocale } from '@/i18n'
-import { api, type ListResponse, type Schema, withQuery } from '@/lib/api'
+import { api, type ListResponse, type Schema } from '@/lib/api'
 import type {
   ChannelItem,
   ChannelTemplate,
@@ -83,9 +83,9 @@ export const testChannel = (body: ChannelTestBody) =>
 export const checkChannel = (id: number) =>
   api.post<ChannelItem>(`/api/admin/channels/${id}/check`)
 
-/** 渠道 rclone 配置文件的下载地址;浏览器直接下载、不走 fetch,文件头注释的语言随当前界面语言。 */
-export function rcloneConfigURL(id: number): string {
-  return withQuery(`/api/admin/channels/${id}/rclone-config`, {
+/** 下载渠道的 rclone 配置文件;文件头注释的语言随当前界面语言。 */
+export function downloadRcloneConfig(id: number) {
+  return api.download(`/api/admin/channels/${id}/rclone-config`, {
     lang: getLocale(),
   })
 }

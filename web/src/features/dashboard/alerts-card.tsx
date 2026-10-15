@@ -30,7 +30,7 @@ export function AlertsCard({ className }: { className?: string }) {
         <CardDescription>{m.dashboard.alertsDesc}</CardDescription>
         <CardAction>
           <Button asChild variant='ghost' size='sm'>
-            <Link to='/settings'>
+            <Link to='/settings' search={{ tab: 'alerts' }}>
               {m.dashboard.alertHistory}
               <ArrowRight />
             </Link>

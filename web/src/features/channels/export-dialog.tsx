@@ -1,5 +1,12 @@
+import { useMutation } from '@tanstack/react-query'
 import { t } from '@/i18n'
-import { FileDown, LockKeyhole, Server, TriangleAlert } from 'lucide-react'
+import {
+  FileDown,
+  Loader2,
+  LockKeyhole,
+  Server,
+  TriangleAlert,
+} from 'lucide-react'
 import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -11,7 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { rcloneConfigURL } from './data'
+import { downloadRcloneConfig } from './data'
 import { type ChannelItem } from './types'
 
 type ExportConfigDialogProps = {
@@ -19,7 +26,7 @@ type ExportConfigDialogProps = {
   onClose: () => void
 }
 
-/** 导出渠道的 rclone 配置:先说明文件里有什么、该怎么保管,确认后由浏览器直接下载。 */
+/** 导出渠道的 rclone 配置:先说明文件里有什么、该怎么保管,确认后下载;下载成功才关闭,失败留在对话框里重试。 */
 export function ExportConfigDialog({
   channel,
   onClose,
@@ -27,6 +34,10 @@ export function ExportConfigDialog({
   const m = useMessages()
   const c = m.channels
   const encrypted = channel?.encrypted === true
+  const dl = useMutation({
+    mutationFn: downloadRcloneConfig,
+    onSuccess: onClose,
+  })
   return (
     <Dialog open={channel !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className='sm:max-w-md'>
@@ -57,11 +68,16 @@ export function ExportConfigDialog({
             {m.common.cancel}
           </Button>
           {channel && (
-            <Button asChild>
-              <a href={rcloneConfigURL(channel.id)} download onClick={onClose}>
+            <Button
+              disabled={dl.isPending}
+              onClick={() => dl.mutate(channel.id)}
+            >
+              {dl.isPending ? (
+                <Loader2 className='animate-spin' />
+              ) : (
                 <FileDown />
-                {c.exportConfigDownload}
-              </a>
+              )}
+              {c.exportConfigDownload}
             </Button>
           )}
         </DialogFooter>

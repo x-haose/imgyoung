@@ -44,6 +44,7 @@ export const dashboard = {
     '本机磁盘以外没有健康的渠道，图片副本和元数据库快照都只在这台主机上，主机损坏即全部丢失。添加一个对象存储或网盘渠道即可解除；已经有了就查看它为什么不健康。',
   quickStartTitle: '快速开始',
   quickStartDesc: '站里还没有图片，三步把图床用起来',
+  quickStartUserDesc: '你还没有上传过图片，两步开始使用',
   step1Title: '确认存储渠道',
   step1Desc:
     '已内置 local 本地渠道，开箱即用；要接 S3 / R2 等云存储就在渠道页新建。',

@@ -34,11 +34,11 @@ import {
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { QueryState } from '@/components/query-state'
 import {
-  EXPORT_URL,
   type Snapshot,
-  backupDownloadURL,
   backupsQueryOptions,
   createBackup,
+  downloadBackup,
+  downloadExport,
   restoreBackup,
 } from './data'
 import { formatInstant } from './format'
@@ -55,6 +55,7 @@ export function BackupTab() {
 
 function ExportCard() {
   const x = useMessages().settings.export
+  const exp = useMutation({ mutationFn: downloadExport })
   return (
     <Card>
       <CardHeader>
@@ -67,11 +68,14 @@ function ExportCard() {
           <AlertTitle>{x.keyWarningTitle}</AlertTitle>
           <AlertDescription>{x.keyWarningDesc}</AlertDescription>
         </Alert>
-        <Button asChild variant='outline' className='w-fit'>
-          <a href={EXPORT_URL} download='imgyoung-export.json'>
-            <Download />
-            {x.download}
-          </a>
+        <Button
+          variant='outline'
+          className='w-fit'
+          disabled={exp.isPending}
+          onClick={() => exp.mutate()}
+        >
+          {exp.isPending ? <Loader2 className='animate-spin' /> : <Download />}
+          {x.download}
         </Button>
       </CardContent>
     </Card>
@@ -169,6 +173,7 @@ type SnapshotTableProps = {
 function SnapshotTable({ items, onRestore }: SnapshotTableProps) {
   const m = useMessages()
   const b = m.settings.backup
+  const dl = useMutation({ mutationFn: downloadBackup })
   return (
     <div className='overflow-hidden rounded-lg border'>
       <Table>
@@ -208,11 +213,18 @@ function SnapshotTable({ items, onRestore }: SnapshotTableProps) {
               </TableCell>
               <TableCell className='pe-2 text-end'>
                 <div className='flex justify-end gap-1'>
-                  <Button asChild variant='ghost' size='sm'>
-                    <a href={backupDownloadURL(snap.name)} download={snap.name}>
+                  <Button
+                    variant='ghost'
+                    size='sm'
+                    disabled={dl.isPending}
+                    onClick={() => dl.mutate(snap.name)}
+                  >
+                    {dl.isPending && dl.variables === snap.name ? (
+                      <Loader2 className='animate-spin' />
+                    ) : (
                       <Download />
-                      {b.download}
-                    </a>
+                    )}
+                    {b.download}
                   </Button>
                   <Button
                     variant='ghost'

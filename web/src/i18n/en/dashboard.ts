@@ -52,6 +52,8 @@ export const dashboard = {
     'No healthy channel lives off this host’s disk, so image replicas and metadata snapshots exist only here; losing the host loses everything. Add an object storage or cloud drive channel to clear this, or find out why the one you have is unhealthy.',
   quickStartTitle: 'Quick start',
   quickStartDesc: 'No images yet. Three steps to get going',
+  quickStartUserDesc:
+    "You haven't uploaded any images yet. Two steps to get going",
   step1Title: 'Check storage channels',
   step1Desc:
     'The built-in local channel works out of the box; add S3 / R2 and the like on the channels page.',

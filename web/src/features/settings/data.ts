@@ -37,8 +37,10 @@ export function removeRefererRule(id: number) {
   return api.delete(`/api/admin/referer-whitelist/${id}`)
 }
 
-/** 元数据全量导出地址;浏览器直接下载,不走 fetch。 */
-export const EXPORT_URL = '/api/admin/export'
+/** 下载元数据全量导出。 */
+export function downloadExport() {
+  return api.download('/api/admin/export')
+}
 
 /** 备份渠道上的一份元数据库快照。 */
 export type Snapshot = Schema<'Snapshot'>
@@ -62,9 +64,9 @@ export function restoreBackup(name: string) {
   )
 }
 
-/** 快照下载地址;浏览器直接下载,不走 fetch。 */
-export function backupDownloadURL(name: string): string {
-  return `/api/admin/backups/${encodeURIComponent(name)}`
+/** 下载一份快照。 */
+export function downloadBackup(name: string) {
+  return api.download(`/api/admin/backups/${encodeURIComponent(name)}`)
 }
 
 /** 告警类型,与后端 alert 包的 Kind 常量一致;顺序即筛选器的展示顺序。 */
