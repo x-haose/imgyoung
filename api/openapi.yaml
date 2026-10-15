@@ -404,6 +404,8 @@ paths:
                 $ref: '#/components/schemas/Dashboard'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/admin/config:
     get:
       operationId: runtimeConfig
@@ -421,6 +423,8 @@ paths:
                 $ref: '#/components/schemas/RuntimeConfig'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     put:
       operationId: updateConfig
       tags: [后台·总览与配置]
@@ -588,6 +592,8 @@ paths:
                 $ref: '#/components/schemas/ImageList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /api/admin/images/batch-delete:
     post:
       operationId: batchDeleteImages
@@ -632,6 +638,8 @@ paths:
           $ref: '#/components/responses/ImageDetailResponse'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -702,6 +710,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/ImageNotFound'
         '503':
@@ -732,6 +742,8 @@ paths:
                 $ref: '#/components/schemas/TokenList'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     post:
       operationId: issueToken
       tags: [后台·上传 Token]
@@ -1863,7 +1875,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: 无权限:CSRF 校验失败、需要管理员,或该操作不对当前角色开放
+      description: 无权限:CSRF 校验失败、仍为出厂默认密码(改密前只放行退出、查看自己与改密)、需要管理员,或该操作不对当前角色开放
       content:
         application/json:
           schema:

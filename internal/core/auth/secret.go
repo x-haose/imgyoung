@@ -13,7 +13,7 @@ const TokenPrefix = "imgy_"
 
 // DefaultAdminPassword 内置管理员的出厂默认密码,首启播种。
 // @Description: 公开的固定初始凭证——仅为开箱可登录,任何暴露实例改密前都可被此密码登入。
-// 播种时置 must_change_password=1,后台在改掉它之前只放行改密页。
+// 播种时置 must_change_password=1,改掉它之前会话只能退出、查看自己与改密(服务端拦截)。
 const DefaultAdminPassword = "imgyoung123"
 
 const (

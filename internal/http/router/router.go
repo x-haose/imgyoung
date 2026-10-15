@@ -85,7 +85,8 @@ func New(cfg Config) http.Handler {
 	return r
 }
 
-// mountAdmin 挂管理面:登录端点在会话门外,其余经会话 + CSRF;全站资源再套管理员门。
+// mountAdmin 挂管理面:登录端点在会话门外,其余经会话 + CSRF;仍为出厂默认密码的会话只放行退出、
+// 查看自己与改密,其余接口另套默认密码门槛,全站资源再套管理员门。
 // @param a /api/admin 下的子路由
 // @param cfg 路由依赖
 // @param guards 上传防护闸
@@ -95,36 +96,48 @@ func mountAdmin(a chi.Router, cfg Config, guards uploadGuards) {
 	a.Group(func(g chi.Router) {
 		g.Use(middleware.SessionAuth(cfg.Auth, cfg.Logger))
 		g.Use(middleware.CSRF(cfg.Logger))
+		// 仍为出厂默认密码的会话只能用这三个:退出、查看自己(含改密标记)、改密。
 		g.Post("/auth/logout", cfg.Admin.HandleLogout)
-		// 后台上传:所有登录用户可用,与数据面同一上传管道与防护闸。
-		g.With(guards.rate, guards.gate).Post("/upload", cfg.Public.HandleSessionUpload)
-		g.With(guards.rate, guards.gate).Post("/upload/url", cfg.Public.HandleSessionUploadURL)
 		g.Get("/me", cfg.Admin.HandleMe)
 		g.Put("/me/password", cfg.Admin.HandleChangePassword)
-		g.Get("/dashboard", cfg.Admin.HandleDashboard)
-		// 运行配置只读切面:上传上限/删除宽限/缩略档位等对普通用户的
-		// 操作反馈同样必要,故随会话开放、不进管理员组;不含凭证与密钥。
-		g.Get("/config", cfg.Admin.HandleConfig)
-		g.Get("/tokens", cfg.Admin.HandleTokenList)
-		g.Post("/tokens", cfg.Admin.HandleTokenCreate)
-		g.Post("/tokens/{id}/revoke", cfg.Admin.HandleTokenRevoke)
-		g.Post("/tokens/{id}/rotate", cfg.Admin.HandleTokenRotate)
-		// 取长期密钥用 POST:CSRF 中间件放行全部 GET,凭证下发不该走在防护之外。
-		g.Post("/tokens/{id}/s3-credential", cfg.Admin.HandleTokenS3Credential)
-		g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
-		g.Get("/images", cfg.Admin.HandleImageList)
-		// 后台缩略图/预览走会话鉴权的不计数通道,避免管理员浏览污染
-		// 公开访问统计与冷图裁决;对外分享链接仍走 /i/。
-		g.Get("/images/{id}/thumb", cfg.Public.HandleAdminServe)
-		g.Post("/images/batch-delete", cfg.Admin.HandleImageBatchDelete)
-		g.Get("/images/{id}", cfg.Admin.HandleImageGet)
-		g.Patch("/images/{id}", cfg.Admin.HandleImagePatch)
-		g.Delete("/images/{id}", cfg.Admin.HandleImageDelete)
-		// 全站资源(渠道/用户/审计/导出)仅管理员可见可改。
-		g.Group(func(ad chi.Router) {
-			ad.Use(middleware.RequireAdmin(cfg.Logger))
-			mountAdminOnly(ad, cfg)
+		g.Group(func(p chi.Router) {
+			p.Use(middleware.RequirePasswordChanged(cfg.Logger))
+			mountSession(p, cfg, guards)
 		})
+	})
+}
+
+// mountSession 挂改过出厂默认密码的会话可用的接口:登录用户共用的部分,再套管理员门挂全站资源。
+// @param g 已套会话、CSRF 与默认密码门槛的子路由
+// @param cfg 路由依赖
+// @param guards 上传入口共用的频控与并发闸
+func mountSession(g chi.Router, cfg Config, guards uploadGuards) {
+	// 后台上传:所有登录用户可用,与数据面同一上传管道与防护闸。
+	g.With(guards.rate, guards.gate).Post("/upload", cfg.Public.HandleSessionUpload)
+	g.With(guards.rate, guards.gate).Post("/upload/url", cfg.Public.HandleSessionUploadURL)
+	g.Get("/dashboard", cfg.Admin.HandleDashboard)
+	// 运行配置只读切面:上传上限/删除宽限/缩略档位等对普通用户的
+	// 操作反馈同样必要,故随会话开放、不进管理员组;不含凭证与密钥。
+	g.Get("/config", cfg.Admin.HandleConfig)
+	g.Get("/tokens", cfg.Admin.HandleTokenList)
+	g.Post("/tokens", cfg.Admin.HandleTokenCreate)
+	g.Post("/tokens/{id}/revoke", cfg.Admin.HandleTokenRevoke)
+	g.Post("/tokens/{id}/rotate", cfg.Admin.HandleTokenRotate)
+	// 取长期密钥用 POST:CSRF 中间件放行全部 GET,凭证下发不该走在防护之外。
+	g.Post("/tokens/{id}/s3-credential", cfg.Admin.HandleTokenS3Credential)
+	g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
+	g.Get("/images", cfg.Admin.HandleImageList)
+	// 后台缩略图/预览走会话鉴权的不计数通道,避免管理员浏览污染
+	// 公开访问统计与冷图裁决;对外分享链接仍走 /i/。
+	g.Get("/images/{id}/thumb", cfg.Public.HandleAdminServe)
+	g.Post("/images/batch-delete", cfg.Admin.HandleImageBatchDelete)
+	g.Get("/images/{id}", cfg.Admin.HandleImageGet)
+	g.Patch("/images/{id}", cfg.Admin.HandleImagePatch)
+	g.Delete("/images/{id}", cfg.Admin.HandleImageDelete)
+	// 全站资源(渠道/用户/审计/导出)仅管理员可见可改。
+	g.Group(func(ad chi.Router) {
+		ad.Use(middleware.RequireAdmin(cfg.Logger))
+		mountAdminOnly(ad, cfg)
 	})
 }
 

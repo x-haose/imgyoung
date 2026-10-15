@@ -2035,7 +2035,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 无权限:CSRF 校验失败、需要管理员,或该操作不对当前角色开放 */
+        /** @description 无权限:CSRF 校验失败、仍为出厂默认密码(改密前只放行退出、查看自己与改密)、需要管理员,或该操作不对当前角色开放 */
         Forbidden: {
             headers: {
                 [name: string]: unknown;
@@ -2619,6 +2619,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     runtimeConfig: {
@@ -2640,6 +2641,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     updateConfig: {
@@ -2789,6 +2791,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     batchDeleteImages: {
@@ -2835,6 +2838,7 @@ export interface operations {
         responses: {
             200: components["responses"]["ImageDetailResponse"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
         };
     };
@@ -2916,6 +2920,7 @@ export interface operations {
             304: components["responses"]["NotModified"];
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["ImageNotFound"];
             503: components["responses"]["ImageUnavailable"];
         };
@@ -2946,6 +2951,7 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
         };
     };
     issueToken: {

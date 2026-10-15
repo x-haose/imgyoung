@@ -61,7 +61,7 @@ type Principal struct {
 	UserID             string // 用户 id
 	Name               string // 登录名
 	Role               string // 角色:admin / user
-	MustChangePassword bool   // 当前仍为出厂默认密码,前端据此强制跳改密页
+	MustChangePassword bool   // 当前仍为出厂默认密码:前端强制跳改密页,服务端只放行退出、查看自己与改密
 }
 
 // IsAdmin 判定主体是否具备管理员角色。

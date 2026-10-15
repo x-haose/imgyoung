@@ -14,29 +14,6 @@ import (
 	"time"
 )
 
-// loginUser 以指定用户登录,返回带会话 cookie 的客户端与 CSRF 令牌。
-func loginUser(t *testing.T, inst *instance, name, password string) (*http.Client, string) {
-	t.Helper()
-	client := newSessionClient(t)
-	body := fmt.Sprintf(`{"name":%q,"password":%q}`, name, password)
-	resp, err := client.Post(inst.baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("发送登录请求: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("登录状态码 = %d, 期望 200; body=%s", resp.StatusCode, raw)
-	}
-	var lr struct {
-		CSRFToken string `json:"csrf_token"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&lr); err != nil {
-		t.Fatalf("解析登录响应: %v", err)
-	}
-	return client, lr.CSRFToken
-}
-
 // createUser 经管理 API 建号并断言 201,返回用户 id。
 func createUser(t *testing.T, inst *instance, admin *http.Client, csrf, name, password string,
 	quotaBytes int64) string {
@@ -108,7 +85,7 @@ func TestMultiUserIsolation(t *testing.T) {
 	admin, adminCSRF := adminSession(t, inst)
 	createUser(t, inst, admin, adminCSRF, "bob", "bob-secret-1", 0)
 
-	bob, bobCSRF := loginUser(t, inst, "bob", "bob-secret-1")
+	bob, bobCSRF := loginSession(t, inst, "bob", "bob-secret-1")
 	_, bobToken := issueToken(t, inst, bob, bobCSRF, "picgo")
 
 	// 各自上传一张。
@@ -204,7 +181,7 @@ func TestQuotaEnforced(t *testing.T) {
 	admin, adminCSRF := adminSession(t, inst)
 	createUser(t, inst, admin, adminCSRF, "tiny", "tiny-secret-1", 10)
 
-	tinyClient, tinyCSRF := loginUser(t, inst, "tiny", "tiny-secret-1")
+	tinyClient, tinyCSRF := loginSession(t, inst, "tiny", "tiny-secret-1")
 	_, tinyToken := issueToken(t, inst, tinyClient, tinyCSRF, "picgo")
 
 	resp := upload(t, inst, tinyToken, "a.png", pngBytes(t), nil, nil)
@@ -240,7 +217,7 @@ func TestUserDeleteGuards(t *testing.T) {
 	admin, csrf := adminSession(t, inst)
 	userID := createUser(t, inst, admin, csrf, "carol", "carol-secret-1", 0)
 
-	carol, carolCSRF := loginUser(t, inst, "carol", "carol-secret-1")
+	carol, carolCSRF := loginSession(t, inst, "carol", "carol-secret-1")
 	_, carolToken := issueToken(t, inst, carol, carolCSRF, "cli")
 	up := upload(t, inst, carolToken, "c.png", pngBytes(t), nil, nil)
 	var img struct {

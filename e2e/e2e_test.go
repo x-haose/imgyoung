@@ -28,8 +28,12 @@ import (
 	"time"
 )
 
-// testAdminPass 全部实例的管理员登录密码,即出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
-const testAdminPass = "imgyoung123"
+// defaultAdminPass 管理员出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
+const defaultAdminPass = "imgyoung123"
+
+// testAdminPass 实例就绪后管理员改成的密码:仍为出厂默认密码的会话只能退出、查看自己与改密,
+// 其余用例都要先过这一步。
+const testAdminPass = "imgyoung456"
 
 // bootDeadline 等待实例就绪的上限。
 const bootDeadline = 10 * time.Second
@@ -115,14 +119,8 @@ func configure(t *testing.T, inst *instance, settings map[string]any) {
 // @param settings 运营配置补丁(键为 config.Settings 的 JSON 名);渠道健康检查间隔已默认压到 1 秒
 func startInstance(t *testing.T, settings map[string]any) *instance {
 	t.Helper()
-	if setupErr != nil {
-		t.Fatalf("测试前置失败: %v", setupErr)
-	}
-	dataDir := t.TempDir()
-	inst := &instance{dataDir: dataDir, logPath: filepath.Join(dataDir, "server.log")}
-	spawn(t, inst, "127.0.0.1:0")
-	inst.baseURL = "http://" + listenAddr(t, inst.logPath)
-	waitReady(t, inst)
+	inst := bootInstance(t)
+	retireDefaultPassword(t, inst)
 	seedToken(t, inst)
 	// 健康检查间隔全实例压到 1 秒:用例等渠道状态翻转,出厂间隔太长会把每个用例拖成分钟级。
 	patch := map[string]any{"health_check_seconds": 1}
@@ -131,6 +129,33 @@ func startInstance(t *testing.T, settings map[string]any) *instance {
 	}
 	configure(t, inst, patch)
 	return inst
+}
+
+// bootInstance 以独立数据目录与系统分配的端口启动一个全新实例并等其就绪;管理员仍为出厂默认密码。
+func bootInstance(t *testing.T) *instance {
+	t.Helper()
+	if setupErr != nil {
+		t.Fatalf("测试前置失败: %v", setupErr)
+	}
+	dataDir := t.TempDir()
+	inst := &instance{dataDir: dataDir, logPath: filepath.Join(dataDir, "server.log")}
+	spawn(t, inst, "127.0.0.1:0")
+	inst.baseURL = "http://" + listenAddr(t, inst.logPath)
+	waitReady(t, inst)
+	return inst
+}
+
+// retireDefaultPassword 以出厂默认密码登录管理员并改成 testAdminPass。
+func retireDefaultPassword(t *testing.T, inst *instance) {
+	t.Helper()
+	client, csrf := loginSession(t, inst, "admin", defaultAdminPass)
+	resp := adminReq(t, client, csrf, http.MethodPut, inst.baseURL+"/api/admin/me/password",
+		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, defaultAdminPass, testAdminPass))
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("改掉出厂默认密码状态码 = %d, 期望 204; body=%s", resp.StatusCode, raw)
+	}
 }
 
 // spawn 启动服务进程,日志落 inst.logPath;进程随测试结束被 SIGTERM 收尾,超时则强杀,
@@ -375,11 +400,17 @@ func fetchBytes(t *testing.T, inst *instance, url string) []byte {
 	return data
 }
 
-// adminSession 登录管理员,返回带会话 cookie 的客户端与 CSRF 令牌。
+// adminSession 以 testAdminPass 登录管理员,返回带会话 cookie 的客户端与 CSRF 令牌。
 func adminSession(t *testing.T, inst *instance) (*http.Client, string) {
 	t.Helper()
+	return loginSession(t, inst, "admin", testAdminPass)
+}
+
+// loginSession 以给定账号登录后台,断言 200,返回带会话 cookie 的客户端与 CSRF 令牌。
+func loginSession(t *testing.T, inst *instance, name, password string) (*http.Client, string) {
+	t.Helper()
 	client := newSessionClient(t)
-	body := fmt.Sprintf(`{"name":"admin","password":%q}`, testAdminPass)
+	body := fmt.Sprintf(`{"name":%q,"password":%q}`, name, password)
 	resp, err := client.Post(inst.baseURL+"/api/admin/auth/login", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("发送登录请求: %v", err)

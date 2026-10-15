@@ -48,9 +48,9 @@ func postLogin(t *testing.T, client *http.Client, baseURL, name, password string
 // TestDefaultAdminPassword 零配置首启:出厂默认密码可直接登录,且响应标记须改密;错误密码 401。
 func TestDefaultAdminPassword(t *testing.T) {
 	t.Parallel()
-	inst := startInstance(t, nil)
+	inst := bootInstance(t)
 
-	code, mustChange := loginMustChange(t, inst.baseURL, "admin", testAdminPass)
+	code, mustChange := loginMustChange(t, inst.baseURL, "admin", defaultAdminPass)
 	if code != http.StatusOK {
 		t.Fatalf("默认密码登录状态码 = %d, 期望 200", code)
 	}
@@ -67,12 +67,12 @@ func TestDefaultAdminPassword(t *testing.T) {
 // TestFirstRunPasswordChange 强制改密闭环:默认密码改掉后,新密码登录不再须改密,旧默认密码失效。
 func TestFirstRunPasswordChange(t *testing.T) {
 	t.Parallel()
-	inst := startInstance(t, nil)
-	client, csrf := adminSession(t, inst)
+	inst := bootInstance(t)
+	client, csrf := loginSession(t, inst, "admin", defaultAdminPass)
 
 	const newPass = "brand-new-admin-pass"
 	resp := adminReq(t, client, csrf, http.MethodPut, inst.baseURL+"/api/admin/me/password",
-		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, testAdminPass, newPass))
+		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, defaultAdminPass, newPass))
 	code := resp.StatusCode
 	_ = resp.Body.Close()
 	if code != http.StatusNoContent {
@@ -87,8 +87,39 @@ func TestFirstRunPasswordChange(t *testing.T) {
 		t.Fatal("改密后 must_change_password 应为 false")
 	}
 	// 旧默认密码改后即失效。
-	if c := postLogin(t, newClient(t), inst.baseURL, "admin", testAdminPass); c != http.StatusUnauthorized {
+	if c := postLogin(t, newClient(t), inst.baseURL, "admin", defaultAdminPass); c != http.StatusUnauthorized {
 		t.Fatalf("改密后旧默认密码状态码 = %d, 期望 401", c)
+	}
+}
+
+// TestDefaultPasswordGate 仍为出厂默认密码的会话只能退出、查看自己与改密,其余接口一律 403;改密后放行。
+func TestDefaultPasswordGate(t *testing.T) {
+	t.Parallel()
+	inst := bootInstance(t)
+	client, csrf := loginSession(t, inst, "admin", defaultAdminPass)
+	status := func(c *http.Client, token, method, path, body string) int {
+		t.Helper()
+		resp := adminReq(t, c, token, method, inst.baseURL+path, body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodGet, "/api/admin/dashboard", ""},
+		{http.MethodPost, "/api/admin/tokens", `{"name":"script"}`},
+		{http.MethodGet, "/api/admin/channels", ""},
+	} {
+		if code := status(client, csrf, c.method, c.path, c.body); code != http.StatusForbidden {
+			t.Errorf("默认密码会话 %s %s = %d, 期望 403", c.method, c.path, code)
+		}
+	}
+	if code := status(client, csrf, http.MethodGet, "/api/admin/me", ""); code != http.StatusOK {
+		t.Fatalf("默认密码会话 GET /me = %d, 期望 200", code)
+	}
+
+	retireDefaultPassword(t, inst)
+	admin, adminCSRF := adminSession(t, inst)
+	if code := status(admin, adminCSRF, http.MethodGet, "/api/admin/dashboard", ""); code != http.StatusOK {
+		t.Fatalf("改密后 GET /dashboard = %d, 期望 200", code)
 	}
 }
 

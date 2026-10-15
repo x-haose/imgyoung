@@ -146,6 +146,24 @@ func RequireAdmin(l *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// RequirePasswordChanged 出厂默认密码门槛:仍用出厂默认密码的会话一律 403。
+// @Description: 须挂在 SessionAuth 之后。出厂默认密码是公开值,改掉它之前会话只该能退出、查看自己与改密;
+// 签发 Token、建渠道、上传等接口一概不放行,不论请求来自后台页面还是脚本。
+// @param l 结构化日志
+// @return 中间件
+func RequirePasswordChanged(l *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			info, ok := SessionFrom(r.Context())
+			if !ok || info.Principal.MustChangePassword {
+				httpx.WriteError(l, w, http.StatusForbidden, "须先修改出厂默认密码")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // SecurityHeaders 全局安全响应头中间件。
 // @Description: nosniff 强制信任服务端类型判定;DENY 拒绝被嵌入 frame(防点击劫持);
 // Referrer-Policy 限制跨站 referrer 泄露。对所有响应生效。

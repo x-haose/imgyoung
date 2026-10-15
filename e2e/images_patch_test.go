@@ -141,7 +141,7 @@ func TestImagePatchPermissions(t *testing.T) {
 	admin, adminCSRF := adminSession(t, inst)
 	adminImg, _ := mustUpload(t, inst, pngBytes(t), nil, nil)
 	createUser(t, inst, admin, adminCSRF, "bob", "bob-secret-1", 0)
-	bob, bobCSRF := loginUser(t, inst, "bob", "bob-secret-1")
+	bob, bobCSRF := loginSession(t, inst, "bob", "bob-secret-1")
 	_, bobToken := issueToken(t, inst, bob, bobCSRF, "cli")
 	bobImg := uploadAs(t, inst, bobToken)
 

@@ -397,7 +397,7 @@ func TestS3DeleteObject(t *testing.T) {
 
 	// 另一个用户拿自己的凭证删这个键:成功但不动管理员的对象。
 	createUser(t, inst, env.client, env.csrf, "bob", "bob-secret-1", 0)
-	bob, bobCSRF := loginUser(t, inst, "bob", "bob-secret-1")
+	bob, bobCSRF := loginSession(t, inst, "bob", "bob-secret-1")
 	bobTokenID, _ := issueToken(t, inst, bob, bobCSRF, "bob-s3")
 	bobS3 := newS3Client(t, fetchS3Credential(t, inst, bob, bobCSRF, bobTokenID))
 	if err := del(bobS3); err != nil {
