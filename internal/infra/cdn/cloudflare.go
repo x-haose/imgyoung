@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-// purgeBatchSize 单次 purge API 调用的 URL 上限(Cloudflare 每请求最多 30 个文件)。
-const purgeBatchSize = 30
+// purgeBatchSize 单次 purge API 调用的 URL 上限:Cloudflare 按 URL 清除时每个请求最多 100 个(企业版 500),
+// 取各套餐通用的 100。
+const purgeBatchSize = 100
 
 // requestTimeout 单次 API 调用超时;失败由上层任务队列按退避重试,此处不重试。
 const requestTimeout = 30 * time.Second
@@ -91,7 +92,7 @@ func (p *CloudflarePurger) purgeBatch(ctx context.Context, urls []string) error 
 	if err != nil {
 		return fmt.Errorf("编码 purge 请求: %w", err)
 	}
-	endpoint := p.apiBase + "/zones/" + p.zoneID + "/purge_cache/files"
+	endpoint := p.apiBase + "/zones/" + p.zoneID + "/purge_cache"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("构造 purge 请求: %w", err)

@@ -22,7 +22,7 @@ type fakeCF struct {
 func (f *fakeCF) handler(t *testing.T) http.HandlerFunc {
 	t.Helper()
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, "/zones/zone123/purge_cache/files") {
+		if !strings.HasSuffix(r.URL.Path, "/zones/zone123/purge_cache") {
 			t.Errorf("purge 路径错误: %s", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer tok456" {
@@ -47,15 +47,15 @@ func newPurger(srvURL string) *CloudflarePurger {
 	return NewCloudflareAt(srvURL, "zone123", "tok456")
 }
 
-// TestPurgeBatching 验证 URL 收集与分批:65 个 URL 按 30/30/5 三批顺序发出,内容与顺序完整。
+// TestPurgeBatching 验证 URL 收集与分批:两批满额加 5 个余数按三批顺序发出,内容与顺序完整。
 func TestPurgeBatching(t *testing.T) {
 	fake := &fakeCF{status: http.StatusOK, body: `{"success":true}`}
 	srv := httptest.NewServer(fake.handler(t))
 	defer srv.Close()
 
-	urls := make([]string, 65)
+	urls := make([]string, 2*purgeBatchSize+5)
 	for i := range urls {
-		urls[i] = fmt.Sprintf("https://img.example.com/i/id%02d", i)
+		urls[i] = fmt.Sprintf("https://img.example.com/i/id%03d", i)
 	}
 	if err := newPurger(srv.URL).Purge(t.Context(), urls); err != nil {
 		t.Fatalf("Purge: %v", err)
@@ -64,7 +64,7 @@ func TestPurgeBatching(t *testing.T) {
 	if len(fake.batches) != 3 {
 		t.Fatalf("批次数 = %d, 期望 3", len(fake.batches))
 	}
-	wantSizes := []int{30, 30, 5}
+	wantSizes := []int{purgeBatchSize, purgeBatchSize, 5}
 	got := 0
 	for i, batch := range fake.batches {
 		if len(batch) != wantSizes[i] {
