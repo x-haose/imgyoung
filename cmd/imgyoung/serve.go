@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 
@@ -17,14 +18,18 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/version"
 )
 
-// shutdownTimeout 优雅停机的整体预算:HTTP 收敛 + 后台循环退出 + 补齐子系统排空。
-const shutdownTimeout = 30 * time.Second
+// drainTimeout 停机第一段:停收新请求后等在途 HTTP 请求结束的上限,到时强制断开剩余连接。
+const drainTimeout = 6 * time.Second
+
+// stopTimeout 停机第二段:取消后台循环与在途补齐任务后等补齐子系统退出的上限。
+// 两段合计 8 秒,落在 Docker 默认 10 秒的强杀时限之内;deploy/ 下的停止等待时间按此留余量。
+const stopTimeout = 2 * time.Second
 
 // serve 用 run.Group 统一编排 HTTP、补齐子系统与后台循环:并发运行,任一退出(收到
-// SIGINT/SIGTERM 或某组件致命错误)即触发全组停机,待所有 actor 退出才返回。
-// @Description: 优雅停机由各 actor 的 interrupt 完成(HTTP 走 Shutdown、River 走 Stop、
-// 循环走 ctx 取消)。"末批 Token 使用时刻落库先于关库"仍成立:认证循环的 execute 在
-// ctx 取消后 flush 完才返回,Run 等全部 execute 退出才返回,而关库是本函数返回后的 defer。
+// SIGINT/SIGTERM、后台请求停机或某组件致命错误)即触发全组停机,待所有 actor 退出才返回。
+// @Description: 各 actor 的 interrupt 都触发同一个只执行一次的按序停机(见 shutdown)。"末批 Token
+// 使用时刻落库先于关库"仍成立:认证循环的 execute 在 ctx 取消后 flush 完才返回,Run 等全部 execute
+// 退出才返回,而关库是本函数返回后的 defer。
 // @return 非信号触发的致命错误;信号触发的正常停机返回 nil
 func (a *app) serve() error {
 	// 监听 fail-fast:绑定失败即返回,不进入运行组。
@@ -35,41 +40,29 @@ func (a *app) serve() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	shutdown := sync.OnceFunc(func() { a.shutdown(cancel) })
 
 	var g run.Group
 	g.Add(run.SignalHandler(ctx, os.Interrupt, syscall.SIGTERM))
-	a.addStopRequest(ctx, &g, cancel)
-	a.addLoops(ctx, &g, cancel)
+	a.addStopRequest(ctx, &g, shutdown)
+	a.addLoops(ctx, &g, shutdown)
 
-	// 补齐子系统(River):启动后阻塞至停机,interrupt 排空在途任务。
+	// 补齐子系统(River):启动后阻塞至 ctx 取消;在途任务随 ctx 取消,由 shutdown 等其退出。
 	g.Add(func() error {
 		if serr := a.runner.Start(ctx); serr != nil {
 			return fmt.Errorf("启动补齐子系统: %w", serr)
 		}
 		<-ctx.Done()
 		return nil
-	}, func(error) {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer stopCancel()
-		if serr := a.runner.Stop(stopCtx); serr != nil {
-			a.logger.Error("补齐子系统停机失败", "err", serr)
-		}
-		cancel()
-	})
+	}, func(error) { shutdown() })
 
-	// HTTP:Serve 阻塞,interrupt 走优雅 Shutdown;正常关停的 ErrServerClosed 不算错误。
+	// HTTP:Serve 阻塞,shutdown 先对它做优雅 Shutdown;正常关停的 ErrServerClosed 不算错误。
 	g.Add(func() error {
 		if serr := a.httpSrv.Serve(ln); serr != nil && !errors.Is(serr, http.ErrServerClosed) {
 			return fmt.Errorf("HTTP 服务异常退出: %w", serr)
 		}
 		return nil
-	}, func(error) {
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer stopCancel()
-		if serr := a.httpSrv.Shutdown(stopCtx); serr != nil {
-			a.logger.Error("HTTP 优雅停机失败", "err", serr)
-		}
-	})
+	}, func(error) { shutdown() })
 
 	// 打印实际绑定地址:监听端口配 0 时由系统分配,配置值无法告知调用方真实端口。
 	build := version.Current()
@@ -82,11 +75,32 @@ func (a *app) serve() error {
 	return nil
 }
 
+// shutdown 按序停机:先停收新请求并等在途请求结束,再取消后台循环与补齐任务、等补齐子系统退出。
+// @Description: 在途请求还要写库、入队补齐任务,后台部分须在 HTTP 收敛之后才停。被取消的补齐任务
+// 状态留在业务表,下次启动由对账重新入队,无需排空。关库在 serve 返回之后。
+// @param cancel 取消后台循环与补齐子系统共用的生命周期上下文
+func (a *app) shutdown(cancel context.CancelFunc) {
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), drainTimeout)
+	defer drainCancel()
+	if err := a.httpSrv.Shutdown(drainCtx); err != nil {
+		a.logger.Warn("在途请求未在时限内结束,强制断开", "err", err)
+		if cerr := a.httpSrv.Close(); cerr != nil {
+			a.logger.Error("强制断开 HTTP 连接失败", "err", cerr)
+		}
+	}
+	cancel()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), stopTimeout)
+	defer stopCancel()
+	if err := a.runner.Stop(stopCtx); err != nil {
+		a.logger.Error("补齐子系统停机失败", "err", err)
+	}
+}
+
 // addStopRequest 把后台请求的停机(恢复快照)作为 actor 加入运行组:actor 退出即触发全组停机,等同一次正常停机。
 // @param ctx 运行组生命周期
 // @param g 运行组
-// @param cancel 触发全组停机的取消函数
-func (a *app) addStopRequest(ctx context.Context, g *run.Group, cancel context.CancelFunc) {
+// @param shutdown 按序停机,只执行一次
+func (a *app) addStopRequest(ctx context.Context, g *run.Group, shutdown func()) {
 	g.Add(func() error {
 		select {
 		case <-a.stop:
@@ -94,23 +108,23 @@ func (a *app) addStopRequest(ctx context.Context, g *run.Group, cancel context.C
 		case <-ctx.Done():
 		}
 		return nil
-	}, func(error) { cancel() })
+	}, func(error) { shutdown() })
 }
 
 // addLoops 把全部后台周期循环(用量/查重/清理/活跃度/衍生图访问时间/健康/告警/备份/认证维护)作为 actor 加入运行组。
-// @Description: 各循环共用 ctx,execute 跑到 ctx 取消即返回,interrupt 取消共享 ctx(幂等);
+// @Description: 各循环共用 ctx,execute 跑到 ctx 取消即返回;ctx 由按序停机在 HTTP 收敛之后取消。
 // 间隔取自配置快照,后台改间隔即刻重排当前等待。均为兜底型循环。
 // @param ctx 循环生命周期;取消即各自收敛退出
 // @param g 运行组
-// @param cancel 触发全组停机的取消函数
-func (a *app) addLoops(ctx context.Context, g *run.Group, cancel context.CancelFunc) {
+// @param shutdown 按序停机,只执行一次
+func (a *app) addLoops(ctx context.Context, g *run.Group, shutdown func()) {
 	seconds := func(pick func(config.Settings) int) waitFunc {
 		return a.waiter(func(s config.Settings) time.Duration {
 			return time.Duration(pick(s)) * time.Second
 		})
 	}
 	add := func(fn func()) {
-		g.Add(func() error { fn(); return nil }, func(error) { cancel() })
+		g.Add(func() error { fn(); return nil }, func(error) { shutdown() })
 	}
 
 	add(func() { authMaintenanceLoop(ctx, a.auth, a.logger) })

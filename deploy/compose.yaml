@@ -6,6 +6,8 @@ services:
     image: ghcr.io/x-haose/imgyoung:latest # 生产环境建议钉大小版本(如 1.0)或具体版本
     # 后台「从快照恢复」会让服务优雅退出,靠重启策略重新拉起后换入快照;正常退出也要拉起
     restart: unless-stopped
+    # 优雅停机先停收新请求、等在途请求至多 6 秒,再停后台任务至多 2 秒;多出的是关库与退出的余量
+    stop_grace_period: 15s
     ports:
       - "8721:8721"
     volumes:

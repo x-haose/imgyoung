@@ -23,8 +23,8 @@ StateDirectory=imgyoung
 # 后台「从快照恢复」会让服务优雅退出,靠这里重新拉起后换入快照;正常退出也要拉起
 Restart=always
 RestartSec=3s
-# 优雅停机依次排空补齐任务与 HTTP 连接,各有 30 秒上限
-TimeoutStopSec=75s
+# 优雅停机先停收新请求、等在途请求至多 6 秒,再停后台任务至多 2 秒;多出的是关库与退出的余量
+TimeoutStopSec=15s
 
 # 数据目录里有 master.key,新建文件只给运行用户自己读写
 UMask=0077
