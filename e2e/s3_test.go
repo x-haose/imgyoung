@@ -301,7 +301,7 @@ func s3Status(err error) int {
 }
 
 // TestS3HeadAndGetObject HEAD/GET 闭环:上传后 HEAD 给出长度、类型、内容哈希 ETag 与上传时刻;GET 字节一致、
-// ETag 与 HEAD 相同;If-None-Match 命中 304;不存在的键 404。
+// ETag 与 HEAD 相同;If-None-Match 命中 304 且带与 200 相同的 Cache-Control;不存在的键 404。
 func TestS3HeadAndGetObject(t *testing.T) {
 	t.Parallel()
 	env := s3Setup(t, nil)
@@ -354,8 +354,11 @@ func TestS3HeadAndGetObject(t *testing.T) {
 	_, err = s3c.GetObject(context.Background(), &s3.GetObjectInput{
 		Bucket: aws.String(cred.Bucket), Key: aws.String(objectKey), IfNoneMatch: head.ETag,
 	})
-	if s3Status(err) != http.StatusNotModified {
+	var respErr *awshttp.ResponseError
+	if !errors.As(err, &respErr) || respErr.HTTPStatusCode() != http.StatusNotModified {
 		t.Errorf("If-None-Match 命中状态码 = %d, 期望 304 (err=%v)", s3Status(err), err)
+	} else if cc := respErr.Response.Header.Get("Cache-Control"); cc != "public, no-cache" {
+		t.Errorf("304 Cache-Control = %q, 期望与 200 相同的 public, no-cache", cc)
 	}
 	_, err = s3c.HeadObject(context.Background(), &s3.HeadObjectInput{
 		Bucket: aws.String(cred.Bucket), Key: aws.String("album/missing.png"),

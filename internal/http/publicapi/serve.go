@@ -89,11 +89,7 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 func (h *Handlers) serveOriginal(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow, o originalOpts) {
 	etag := `"` + row.Sha256 + `"`
 	if !o.degraded && r.Header.Get("If-None-Match") == etag {
-		hd := w.Header()
-		hd.Set("ETag", etag)
-		hd.Set("Cache-Control", cacheControl(o.mutable))
-		setVary(hd, o.varyAccept)
-		w.WriteHeader(http.StatusNotModified)
+		writeNotModified(w, etag, o.mutable, o.varyAccept)
 		return
 	}
 	candidates, ok := h.servingCandidates(w, r, row)
@@ -217,14 +213,13 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 	if err != nil {
 		return fmt.Errorf("查询引用记录: %w", err)
 	}
-	etag := `"` + row.Sha256 + `"`
-	if r.Header.Get("If-None-Match") == etag {
-		w.Header().Set("ETag", etag)
-		w.WriteHeader(http.StatusNotModified)
-		return nil
-	}
 	// 对象键可被同键重传改指,缓存语义同 /o/ 别名
 	opts := originalOpts{mutable: true}
+	etag := `"` + row.Sha256 + `"`
+	if r.Header.Get("If-None-Match") == etag {
+		writeNotModified(w, etag, opts.mutable, opts.varyAccept)
+		return nil
+	}
 	if r.Method == http.MethodHead {
 		writeOriginalHeaders(w.Header(), row, opts)
 		w.WriteHeader(http.StatusOK)

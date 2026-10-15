@@ -148,11 +148,7 @@ func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc
 	// 衍生图内容由(原图 + 宽度 + 格式)唯一决定,据此构造强 ETag。
 	etag := `"` + row.Sha256 + "-" + strconv.Itoa(req.params.Width) + "-" + req.params.Format + `"`
 	if match := r.Header.Get("If-None-Match"); match == etag {
-		hd := w.Header()
-		hd.Set("ETag", etag)
-		setVary(hd, req.varyAccept)
-		hd.Set("Cache-Control", cacheControl(mutable))
-		w.WriteHeader(http.StatusNotModified)
+		writeNotModified(w, etag, mutable, req.varyAccept)
 		return
 	}
 
@@ -185,6 +181,18 @@ func setVary(h http.Header, varyAccept bool) {
 	if varyAccept {
 		h.Set("Vary", "Accept")
 	}
+}
+
+// writeNotModified 写 304,带上 200 响应会有的 ETag、Cache-Control 与 Vary,缓存方据此续用已存的副本。
+// @param etag 强 ETag(含引号)
+// @param mutable URL 指向的内容是否可能变化(对象键别名)
+// @param varyAccept 响应是否随 Accept 协商变化
+func writeNotModified(w http.ResponseWriter, etag string, mutable, varyAccept bool) {
+	hd := w.Header()
+	hd.Set("ETag", etag)
+	hd.Set("Cache-Control", cacheControl(mutable))
+	setVary(hd, varyAccept)
+	w.WriteHeader(http.StatusNotModified)
 }
 
 // fetchBlobBytes 按渠道优先级容灾读取原图全部字节,供处理引擎解码。
