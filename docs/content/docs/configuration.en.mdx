@@ -9,7 +9,7 @@ ImgYoung has two kinds of settings and no configuration file. The only command-l
 
 | | Bootstrap settings | Runtime settings |
 |---|---|---|
-| What | What the process needs before it can start: listen address, data directory, master key, trusted proxies, networks allowed on `/metrics` | Every other operational parameter |
+| What | What has to be settled before the process starts: listen address, data directory, master key, trusted proxies, networks allowed on `/metrics`, and the built-in administrator's initial password | Every other operational parameter |
 | Source | Environment variables `IMGYOUNG_*` only | The metadata database; environment variables are not read |
 | Changing | Change the variable and restart the process | Edit under **Settings** in the admin console; takes effect on save, no restart |
 | Where to see them | The read-only **Bootstrap configuration** card at the bottom of **Settings → Runtime settings** | **Settings** in the admin console |

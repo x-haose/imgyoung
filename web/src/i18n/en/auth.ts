@@ -23,6 +23,7 @@ export const auth = {
   oldPasswordRequired: 'Enter your current password',
   initialPassword: 'Initial password',
   initialPasswordRequired: 'Enter the initial password',
+  initialPasswordIncorrect: 'The initial password is incorrect',
   newPasswordRequired: 'Enter a new password',
   confirmRequired: 'Enter the new password again',
   passwordTooShort: 'At least {min} characters',

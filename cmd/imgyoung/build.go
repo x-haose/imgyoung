@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -413,10 +414,15 @@ func seedAdminPassword(queries *sqlc.Queries, initial string, logger *slog.Logge
 	if err != nil {
 		return fmt.Errorf("哈希管理员初始密码: %w", err)
 	}
-	if _, err := queries.SeedAdminPassword(ctx, sqlc.SeedAdminPasswordParams{
+	n, err := queries.SeedAdminPassword(ctx, sqlc.SeedAdminPasswordParams{
 		PasswordHash: phc, ID: sqlc.DefaultUserID,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("设置管理员初始密码: %w", err)
+	}
+	// 读到空密码、写时却已有密码,只可能是另一个进程同时在用这个数据目录;不打印这个没有生效的密码。
+	if n == 0 {
+		return errors.New("设置管理员初始密码: 内置管理员的密码已被另一个进程设置,同一个数据目录只能由一个进程使用")
 	}
 	if initial == "" {
 		logger.Warn("已为内置管理员生成初始密码,请用它登录并立即修改", "user", admin.Name, "password", password)

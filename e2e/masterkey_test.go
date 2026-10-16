@@ -65,8 +65,7 @@ func runUntilExit(t *testing.T, dataDir string, env ...string) string {
 	ctx, cancel := context.WithTimeout(t.Context(), bootDeadline)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath)
-	cmd.Env = append(os.Environ(), "IMGYOUNG_DATA_DIR="+dataDir, "IMGYOUNG_LISTEN=127.0.0.1:0")
-	cmd.Env = append(cmd.Env, env...)
+	cmd.Env = serverEnv(dataDir, "127.0.0.1:0", env...)
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
 		t.Fatalf("进程未在 %s 内退出:\n%s", bootDeadline, out)

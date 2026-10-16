@@ -86,7 +86,7 @@ type instance struct {
 	dataDir string    // 数据目录
 	cmd     *exec.Cmd // 进程句柄
 	logPath string    // 服务日志文件路径
-	env     []string  // 追加给服务进程的环境变量(KEY=VALUE),重启时沿用
+	env     []string  // 追加给服务进程的环境变量(KEY=VALUE),原地重启与 startInstanceAt 都沿用
 	token   string    // 就绪后经管理 API 签发的管理员上传 Token 明文,数据面测试统一用它
 }
 
@@ -184,8 +184,7 @@ func spawn(t *testing.T, inst *instance, listen string) {
 		t.Fatalf("创建日志文件: %v", err)
 	}
 	cmd := exec.Command(binPath)
-	cmd.Env = append(os.Environ(), "IMGYOUNG_DATA_DIR="+inst.dataDir, "IMGYOUNG_LISTEN="+listen)
-	cmd.Env = append(cmd.Env, inst.env...)
+	cmd.Env = serverEnv(inst.dataDir, listen, inst.env...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -208,6 +207,23 @@ func spawn(t *testing.T, inst *instance, listen string) {
 			t.Logf("服务日志尾部:\n%s", logTail(inst.logPath))
 		}
 	})
+}
+
+// serverEnv 组装服务进程的环境变量。
+// @Description: 继承测试进程的环境,但去掉其中全部 IMGYOUNG_ 变量,服务只看到用例显式给出的引导配置,
+// 不受开发者本机设置的影响。
+// @param dataDir 数据目录
+// @param listen 监听地址
+// @param extra 追加的环境变量(KEY=VALUE)
+// @return 完整的环境变量列表
+func serverEnv(dataDir, listen string, extra ...string) []string {
+	env := []string{"IMGYOUNG_DATA_DIR=" + dataDir, "IMGYOUNG_LISTEN=" + listen}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "IMGYOUNG_") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, extra...)
 }
 
 // logTailBytes 用例失败时回显的服务日志尾部长度。
@@ -932,7 +948,7 @@ func stopInstance(t *testing.T, inst *instance) {
 }
 
 // startInstanceAt 在原数据目录上重启实例(重启场景)。
-// @Description: 沿用原实例的 Token 与运营配置——两者都在库里,重启不该重新签发或重配。
+// @Description: 沿用原实例的环境变量、Token 与运营配置——后两者都在库里,重启不该重新签发或重配。
 // @param prev 已停止的原实例
 // @param listen 监听地址(与原实例一致才能复用其 URL)
 func startInstanceAt(t *testing.T, prev *instance, listen string) *instance {
@@ -941,6 +957,7 @@ func startInstanceAt(t *testing.T, prev *instance, listen string) *instance {
 		baseURL: "http://" + listen,
 		dataDir: prev.dataDir,
 		logPath: filepath.Join(prev.dataDir, "server-restart.log"),
+		env:     prev.env,
 		token:   prev.token,
 	}
 	spawn(t, inst, listen)

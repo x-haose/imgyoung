@@ -6,7 +6,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { type Messages } from '@/i18n'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, setCsrfToken } from '@/lib/api'
+import { api, ApiError, setCsrfToken } from '@/lib/api'
 import { errorMessage } from '@/lib/errors'
 import { passwordSchema } from '@/lib/password'
 import { useMessages } from '@/context/locale-provider'
@@ -74,7 +74,15 @@ export function ChangePasswordForm({
       queryClient.clear()
       navigate({ to: '/login', replace: true })
     },
-    onError: (err) => form.setError('root', { message: errorMessage(err) }),
+    onError: (err) => {
+      if (err instanceof ApiError && err.code === 'old_password_incorrect') {
+        form.setError('old_password', {
+          message: firstRun ? m.auth.initialPasswordIncorrect : err.message,
+        })
+        return
+      }
+      form.setError('root', { message: errorMessage(err) })
+    },
   })
 
   return (

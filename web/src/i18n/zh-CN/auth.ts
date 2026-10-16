@@ -22,6 +22,7 @@ export const auth = {
   oldPasswordRequired: '请输入旧密码',
   initialPassword: '初始密码',
   initialPasswordRequired: '请输入初始密码',
+  initialPasswordIncorrect: '初始密码不正确',
   newPasswordRequired: '请输入新密码',
   confirmRequired: '请再次输入新密码',
   passwordTooShort: '至少 {min} 位',
