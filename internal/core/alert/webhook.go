@@ -22,7 +22,7 @@ type payload struct {
 	Kind       string            `json:"kind"`                  // 告警类型
 	Target     string            `json:"target"`                // 告警对象
 	Message    string            `json:"message"`               // 中文描述
-	Params     map[string]string `json:"params"`                // 描述参数,与管理后台告警接口的 params 相同;nil 表示只有中文描述
+	Params     map[string]string `json:"params"`                // 描述参数,与管理后台告警接口的 params 相同;没有参数时为空对象
 	Status     string            `json:"status"`                // open / resolved
 	OpenedAt   string            `json:"opened_at"`             // 开启时刻,UTC 文本
 	ResolvedAt string            `json:"resolved_at,omitempty"` // 恢复时刻,UTC 文本;开启投递时为空

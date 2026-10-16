@@ -2022,7 +2022,7 @@ export interface components {
             /** @description 中文描述 */
             message: string;
             /**
-             * @description 描述参数，管理后台按 `kind` 与它显示当前语言的描述。各类型的键：
+             * @description 描述参数，管理后台按 `kind` 与它显示当前语言的描述；没有参数时为空对象。各类型的键：
              *
              *     - `channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail`，含义同 ChannelFailure；渠道尚未探测过时为空对象。
              *     - `replication_failed`：`failed`。
@@ -2031,7 +2031,7 @@ export interface components {
              */
             params: {
                 [key: string]: string;
-            } | null;
+            };
             opened_at: string;
             /** @description 恢复时刻；null 表示仍未恢复 */
             resolved_at: string | null;

@@ -13,7 +13,7 @@ type Alert struct {
 	Kind            string
 	Target          string
 	Message         string
-	Params          sql.NullString
+	Params          string
 	OpenedAt        string
 	ResolvedAt      sql.NullString
 	OpenNotified    int64

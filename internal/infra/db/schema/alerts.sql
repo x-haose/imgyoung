@@ -4,7 +4,7 @@ CREATE TABLE alerts (
     kind TEXT NOT NULL, -- 告警类型:channel_unhealthy / replication_failed / channel_quota_exceeded / drain_failed / backup_failed
     target TEXT NOT NULL DEFAULT '', -- 告警对象(渠道名等);无对象时为空串
     message TEXT NOT NULL, -- 最近一次评估得到的中文描述,Webhook 与不经管理后台的调用方直接展示
-    params TEXT, -- 最近一次评估得到的描述参数,JSON 对象(键与值都是字符串),管理后台按 kind 与它渲染当前语言的描述;NULL 表示该行只有中文 message、没有描述参数
+    params TEXT NOT NULL, -- 最近一次评估得到的描述参数,JSON 对象(键与值都是字符串),管理后台按 kind 与它渲染当前语言的描述;没有参数时为 {}
     opened_at TEXT NOT NULL DEFAULT (datetime('now')), -- 开启时刻,UTC 文本
     resolved_at TEXT, -- 恢复时刻,UTC 文本;NULL 表示仍未恢复
     open_notified INTEGER NOT NULL DEFAULT 0, -- 开启是否已投递 Webhook(0/1);未投递的下一轮重试

@@ -4,7 +4,7 @@ CREATE TABLE `alerts` (
   `kind` text NOT NULL,
   `target` text NOT NULL DEFAULT '',
   `message` text NOT NULL,
-  `params` text NULL,
+  `params` text NOT NULL,
   `opened_at` text NOT NULL DEFAULT (datetime('now')),
   `resolved_at` text NULL,
   `open_notified` integer NOT NULL DEFAULT 0,

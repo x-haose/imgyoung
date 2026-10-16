@@ -54,13 +54,13 @@ export function channelFailureText(f: ChannelFailure): string {
 
 /**
  * 告警的当前语言描述,按告警类型取模板并填入参数;字节数按单位换算。
- * 没有描述参数或类型不在词典里时退回服务端的中文描述。
+ * 类型不在词典里时退回服务端的中文描述。
  */
 export function alertText(a: AlertItem): string {
   const m = messages().server
   const p = a.params
   const template = lookup(m.alerts, a.kind)
-  if (p === null || template === undefined) return a.message
+  if (template === undefined) return a.message
   switch (a.kind) {
     case 'channel_unhealthy':
     case 'drain_failed':
