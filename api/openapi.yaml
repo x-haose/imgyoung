@@ -728,7 +728,7 @@ paths:
       operationId: patchImage
       tags: [Admin · Images]
       summary: 修改有效期或清理豁免
-      description: 至少带一个修改项。`ttl_hours` 图片属主即可修改。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
+      description: 至少带一个修改项。`ttl_hours` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
       security:
         - session: []
       parameters:
@@ -750,6 +750,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: 图片已到期，不能再修改有效期（`image_expired`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalError'
     delete:
@@ -2427,6 +2433,7 @@ components:
         - image_not_found
         - image_patch_invalid
         - cleanup_exempt_admin_only
+        - image_expired
         - batch_ids_invalid
         - candidate_id_invalid
         - candidate_not_found

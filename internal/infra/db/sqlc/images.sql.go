@@ -716,16 +716,23 @@ const updateImageExpiry = `-- name: UpdateImageExpiry :execrows
 UPDATE images
 SET expire_at = ?1, ttl_seconds = ?2
 WHERE id = ?3
+  AND (expire_at IS NULL OR expire_at > CAST(?4 AS TEXT))
 `
 
 type UpdateImageExpiryParams struct {
 	ExpireAt   sql.NullString
 	TtlSeconds sql.NullInt64
 	ID         string
+	Now        string
 }
 
 func (q *Queries) UpdateImageExpiry(ctx context.Context, arg UpdateImageExpiryParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateImageExpiry, arg.ExpireAt, arg.TtlSeconds, arg.ID)
+	result, err := q.db.ExecContext(ctx, updateImageExpiry,
+		arg.ExpireAt,
+		arg.TtlSeconds,
+		arg.ID,
+		arg.Now,
+	)
 	if err != nil {
 		return 0, err
 	}

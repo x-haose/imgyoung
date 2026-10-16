@@ -51,6 +51,7 @@ import {
   type ImagePatch,
   imageQueryOptions,
   imagesQueryKey,
+  isExpired,
   patchImage,
   type ReplicaItem,
   shareURL,
@@ -354,7 +355,9 @@ function MetaList({
             {image.expire_at ? formatTime(image.expire_at) : m.images.permanent}
           </span>
           <ImageBadges image={image} />
-          <TtlEditor image={image} patch={patch} />
+          {!isExpired(image.expire_at) && (
+            <TtlEditor image={image} patch={patch} />
+          )}
         </div>
       </Row>
       <Row label={m.images.cleanupExempt} help={m.images.exemptHelp}>

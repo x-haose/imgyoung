@@ -121,7 +121,8 @@ WHERE id = @id;
 -- name: UpdateImageExpiry :execrows
 UPDATE images
 SET expire_at = @expire_at, ttl_seconds = @ttl_seconds
-WHERE id = @id;
+WHERE id = @id
+  AND (expire_at IS NULL OR expire_at > CAST(@now AS TEXT));
 
 -- name: RenewImagesTTL :execrows
 UPDATE images

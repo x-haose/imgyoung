@@ -38,6 +38,7 @@ export const server = {
     image_patch_invalid:
       '请求体非法：ttl_hours 须为 0（永久）或不超过 {max} 的正整数，且至少包含一项修改',
     cleanup_exempt_admin_only: '清理豁免仅管理员可设置',
+    image_expired: '图片已到期，不能再修改有效期',
     batch_ids_invalid: '请求体非法：ids 需为 1 到 {max} 个图片 ID',
     candidate_id_invalid: '候选 ID 非法',
     candidate_not_found: '候选不存在或已裁决',

@@ -22,7 +22,7 @@ The lifetime is resolved across three levels; the first one that is set wins:
 
 ### Changing an existing image's lifetime
 
-Change it in the image details; both the image's owner and administrators can:
+For an image that has not expired, change it in the image details; both the image's owner and administrators can:
 
 - **Change expiry** → enter a number of days → **Extend**: the image now expires N days from now, and that duration becomes its new lifetime, which later renewals use.
 - **Make permanent**: removes the expiry.
@@ -40,7 +40,7 @@ In effect, the lifetime becomes "expires after this long without a single access
 
 ## Expiry cleanup
 
-As soon as an image expires, its public links return 404 and access no longer renews it. On the **Images** page it shows as **Expired** and can still be deleted by hand. The cleanup sweep reclaims its record and file afterwards.
+As soon as an image expires, its public links return 404. Expiry is final: access no longer renews it, and its expiry can no longer be changed (the API returns 409 `image_expired`). On the **Images** page it shows as **Expired** and can still be deleted by hand. The cleanup sweep reclaims its record and file afterwards.
 
 The cleanup sweep runs once when the process starts and then every `cleanup_sweep_seconds` (60 seconds out of the box). Each round, in order, it:
 

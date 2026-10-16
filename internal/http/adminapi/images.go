@@ -213,7 +213,14 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail, err := h.applyImagePatch(r.Context(), imageID, req)
-	if err != nil {
+	switch {
+	case errors.Is(err, errImageExpired):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ImageExpired)
+		return
+	case errors.Is(err, sql.ErrNoRows):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
+		return
+	case err != nil:
 		h.cfg.Logger.Error("修改图片失败", "id", imageID, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
@@ -229,13 +236,30 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	h.writeImageDetail(w, r, row)
 }
 
+// errImageExpired 图片已到期,有效期不再可改。
+var errImageExpired = errors.New("图片已到期")
+
+// expiryUnchangedReason 有效期 UPDATE 没有命中任何行时,区分图片已被删除与已到期。
+// @param imageID 目标引用短 ID
+// @return 图片不存在时的 sql.ErrNoRows;存在时的 errImageExpired;查询失败时的错误
+func (h *Handlers) expiryUnchangedReason(ctx context.Context, imageID string) error {
+	if _, err := h.cfg.Queries.GetImageOwner(ctx, imageID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return fmt.Errorf("查询图片归属: %w", err)
+	}
+	return errImageExpired
+}
+
 // applyImagePatch 落库 PATCH 的修改项并拼审计说明。
-// @Description: ttl_hours>0 → 到期 = 现在 + 时长并同步 ttl_seconds;=0 → 双列置空(永久)。
+// @Description: ttl_hours>0 → 到期 = 现在 + 时长并同步 ttl_seconds;=0 → 双列置空(永久)。到期是终态:
+// 已到期的图不再改有效期,判断与修改在同一条 UPDATE 里完成。
 // 豁免开关无论方向都摘 pending_cleanup:置豁免即裁决保留,取消豁免交下轮冷图扫描重判。
 // @param imageID 目标引用短 ID
 // @param req 已通过校验的修改项
 // @return 审计 detail(记录改了什么)
-// @return 落库失败时的错误
+// @return 图片已到期时的 errImageExpired;图片已不存在时的 sql.ErrNoRows;落库失败时的错误
 func (h *Handlers) applyImagePatch(ctx context.Context, imageID string, req imagePatchRequest) (string, error) {
 	detail := ""
 	if req.TTLHours != nil {
@@ -245,10 +269,14 @@ func (h *Handlers) applyImagePatch(ctx context.Context, imageID string, req imag
 			expireAt = sql.NullString{String: sqlc.TimeText(time.Now().Add(ttl)), Valid: true}
 			ttlSeconds = sql.NullInt64{Int64: int64(ttl / time.Second), Valid: true}
 		}
-		if _, err := h.cfg.Queries.UpdateImageExpiry(ctx, sqlc.UpdateImageExpiryParams{
-			ExpireAt: expireAt, TtlSeconds: ttlSeconds, ID: imageID,
-		}); err != nil {
+		n, err := h.cfg.Queries.UpdateImageExpiry(ctx, sqlc.UpdateImageExpiryParams{
+			ExpireAt: expireAt, TtlSeconds: ttlSeconds, ID: imageID, Now: sqlc.TimeText(time.Now()),
+		})
+		if err != nil {
 			return "", fmt.Errorf("更新有效期: %w", err)
+		}
+		if n == 0 {
+			return "", h.expiryUnchangedReason(ctx, imageID)
 		}
 		detail = fmt.Sprintf("ttl_hours=%d", *req.TTLHours)
 	}

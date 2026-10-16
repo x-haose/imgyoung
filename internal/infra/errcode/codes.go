@@ -43,6 +43,7 @@ var (
 	ImageNotFound          = define("image_not_found", "图片不存在")
 	ImagePatchInvalid      = define("image_patch_invalid", "请求体非法:ttl_hours 须为 0(永久)或不超过 {max} 的正整数,且至少包含一项修改")
 	CleanupExemptAdminOnly = define("cleanup_exempt_admin_only", "清理豁免仅管理员可设置")
+	ImageExpired           = define("image_expired", "图片已到期,不能再修改有效期")
 	BatchIDsInvalid        = define("batch_ids_invalid", "请求体非法:ids 需为 1 到 {max} 个图片 ID")
 )
 

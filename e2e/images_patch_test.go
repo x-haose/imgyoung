@@ -216,3 +216,33 @@ func TestImageDetailReplicas(t *testing.T) {
 		return len(got) == 2 && got["local"] == "done" && got["mirror"] == "done"
 	})
 }
+
+// TestImagePatchRejectsExpired 到期是终态:已到期、尚未被清理扫描回收的图不能再延长或改永久(409),
+// 访问仍是 404;不涉及有效期的修改照常生效。
+func TestImagePatchRejectsExpired(t *testing.T) {
+	t.Parallel()
+	// 清理扫描间隔拉到 1 小时,测试期间到期的图不会被回收。
+	inst := startInstance(t, map[string]any{"cleanup_sweep_seconds": 3600})
+	id, url := mustUpload(t, inst, pngBytes(t), map[string]string{"ttl": "1"}, nil)
+	waitUntil(t, 10*time.Second, "到期后访问 404", func() bool {
+		resp := fetch(t, inst, url, "")
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusNotFound
+	})
+
+	admin, csrf := adminSession(t, inst)
+	for _, body := range []string{`{"ttl_hours":24}`, `{"ttl_hours":0}`} {
+		if code, _ := patchImage(t, inst, admin, csrf, id, body); code != http.StatusConflict {
+			t.Fatalf("已到期的图修改有效期 %s 状态码 = %d, 期望 409", body, code)
+		}
+	}
+	resp := fetch(t, inst, url, "")
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("修改被拒后访问状态码 = %d, 期望仍为 404", resp.StatusCode)
+	}
+	if code, got := patchImage(t, inst, admin, csrf, id, `{"cleanup_exempt":true}`); code != http.StatusOK ||
+		!got.CleanupExempt {
+		t.Fatalf("已到期的图设置清理豁免: 状态码 %d, cleanup_exempt=%v, 期望 200 且已豁免", code, got.CleanupExempt)
+	}
+}

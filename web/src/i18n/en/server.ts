@@ -37,6 +37,8 @@ export const server = {
       'Invalid request: ttl_hours must be 0 (permanent) or a positive integer up to {max}, and at least one change is required',
     cleanup_exempt_admin_only:
       'Only administrators can set the cleanup exemption',
+    image_expired:
+      'The image has expired, so its lifetime can no longer be changed',
     batch_ids_invalid: 'Invalid request: ids must hold 1 to {max} image IDs',
     candidate_id_invalid: 'Invalid candidate ID',
     candidate_not_found: 'Candidate not found, or already resolved',

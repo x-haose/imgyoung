@@ -321,3 +321,4 @@ Common error codes for console actions are listed below; the complete list is th
 | Deleting a channel | 409 | `channel_sole_replicas` | This channel holds the only ready replica of some images; the message gives the number of images |
 | Editing, test connection, probing, re-authorizing | 409 | `channel_deleting` | The channel is draining; the only action left is **Remove now** |
 | Opening image details | 404 | `image_not_found` | The image does not exist, or a regular user opened someone else's image |
+| Changing an image's expiry | 409 | `image_expired` | The image has expired, so its expiry can no longer be changed |

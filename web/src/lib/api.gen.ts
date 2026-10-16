@@ -402,7 +402,7 @@ export interface paths {
         head?: never;
         /**
          * 修改有效期或清理豁免
-         * @description 至少带一个修改项。`ttl_hours` 图片属主即可修改。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
+         * @description 至少带一个修改项。`ttl_hours` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
          */
         patch: operations["patchImage"];
         trace?: never;
@@ -1127,7 +1127,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -3092,6 +3092,15 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description 图片已到期，不能再修改有效期（`image_expired`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };
