@@ -185,11 +185,15 @@ func encodeParams(params map[string]string) (string, error) {
 // DecodeParams 把告警表 params 列还原为描述参数。
 // @param raw 列值,JSON 对象文本
 // @return 描述参数,恒非 nil
-// @return 列值不是字符串到字符串的 JSON 对象时的错误
+// @return 列值不是字符串到字符串的 JSON 对象时的错误(含 JSON null)
 func DecodeParams(raw string) (map[string]string, error) {
 	params := map[string]string{}
 	if err := json.Unmarshal([]byte(raw), &params); err != nil {
 		return nil, fmt.Errorf("解析告警参数: %w", err)
+	}
+	// json.Unmarshal 遇到 null 会把 map 置为 nil 且不报错。
+	if params == nil {
+		return nil, errors.New("解析告警参数: 列值为 null,应为 JSON 对象")
 	}
 	return params, nil
 }

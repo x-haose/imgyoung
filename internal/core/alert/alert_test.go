@@ -324,3 +324,17 @@ func TestDeliverWebhook(t *testing.T) {
 		t.Fatal("地址为空时不应外发")
 	}
 }
+
+// TestDecodeParams 验证告警参数解码:JSON 对象还原为映射,其余取值(含 null)一律报错。
+func TestDecodeParams(t *testing.T) {
+	for _, raw := range []string{`{}`, `{"channel":"r2","reason":"auth"}`} {
+		if params, err := alert.DecodeParams(raw); err != nil || params == nil {
+			t.Errorf("DecodeParams(%s) = %v, %v; 期望非 nil 映射", raw, params, err)
+		}
+	}
+	for _, raw := range []string{`null`, `[]`, `"x"`, `{"n":1}`, ``} {
+		if _, err := alert.DecodeParams(raw); err == nil {
+			t.Errorf("DecodeParams(%q) 应报错", raw)
+		}
+	}
+}
