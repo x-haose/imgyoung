@@ -193,7 +193,8 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 	if err := imaging.ValidatePolicy(opts.EXIFPolicy); err != nil {
 		return Result{}, err
 	}
-	if imageID, found, err := s.imageByIdempotencyKey(ctx, opts); err != nil {
+	since := idempotencySince(set)
+	if imageID, found, err := s.imageByIdempotencyKey(ctx, opts.UserID, opts.IdempotencyKey, since); err != nil {
 		return Result{}, err
 	} else if found {
 		return Result{ImageID: imageID}, nil
@@ -215,7 +216,7 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 	if err != nil {
 		return Result{}, err
 	}
-	return s.store(ctx, set, opts, user, meta, prep)
+	return s.store(ctx, set, since, opts, user, meta, prep)
 }
 
 // store 把处理好的图写进渠道并落库,随后为其余渠道触发补齐。
@@ -223,14 +224,15 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 // 不会遗留。写够份数前失败、落库失败(含落库时仍在役的同步副本不够、幂等键输给另一请求),都删掉本次已写入的
 // 对象:对象键带本次的短 ID,没落库就没有记录指向它。
 // @param set 本次请求生效的配置快照
+// @param since 幂等键保留期的起点,早于它的键视为已过期
 // @param opts 上传参数
 // @param user 归属用户
 // @param meta 原图信息
 // @param prep 净化后的字节与哈希
 // @return 上传结果
 // @return 写入或落库失败时的错误
-func (s *Service) store(ctx context.Context, set config.Settings, opts Options, user sqlc.User, meta imageMeta,
-	prep prepared) (Result, error) {
+func (s *Service) store(ctx context.Context, set config.Settings, since string, opts Options, user sqlc.User,
+	meta imageMeta, prep prepared) (Result, error) {
 	shortID := id.New()
 	key := id.StorageKey(shortID, prep.sha256)
 	targets, release := s.holdTargets()
@@ -243,7 +245,7 @@ func (s *Service) store(ctx context.Context, set config.Settings, opts Options, 
 	all := s.cfg.Channels.All()
 	blobID, err := s.persist(ctx, persistParams{
 		shortID: shortID, userID: opts.UserID, tokenID: opts.TokenID, fileName: truncateName(opts.FileName),
-		idemKey: opts.IdempotencyKey, doneIDs: doneIDs, channels: all, need: minSuccess(set),
+		idemKey: opts.IdempotencyKey, idemSince: since, doneIDs: doneIDs, channels: all, need: minSuccess(set),
 		sha256: prep.sha256, phash: prep.phash, key: key, mime: meta.mime, size: int64(len(prep.data)),
 		width: int64(meta.width), height: int64(meta.height),
 		ttl: resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()), objectKey: opts.ObjectKey,
@@ -254,7 +256,7 @@ func (s *Service) store(ctx context.Context, set config.Settings, opts Options, 
 			return Result{}, err
 		}
 		// 并发同幂等键竞争:另一请求可能已抢先落库,以先者为准。
-		if imageID, found, _ := s.imageByIdempotencyKey(ctx, opts); found {
+		if imageID, found, _ := s.imageByIdempotencyKey(ctx, opts.UserID, opts.IdempotencyKey, since); found {
 			return Result{ImageID: imageID}, nil
 		}
 		return Result{}, err
@@ -263,18 +265,37 @@ func (s *Service) store(ctx context.Context, set config.Settings, opts Options, 
 	return Result{ImageID: shortID}, nil
 }
 
-// imageByIdempotencyKey 查本用户同幂等键的既有上传;幂等键为空视为未命中。
-// @param ctx 控制超时与取消
-// @param opts 上传参数(取归属用户与幂等键)
+// ExistingUpload 查本用户在保留期内带同一幂等键的既有上传;幂等键为空视为未命中。
+// @Description: 供需要在处理字节之前就判断命中的入口使用(URL 转存据此在抓取远端之前返回第一次的结果)。
+// @param userID 归属用户 id
+// @param key 幂等键
 // @return 既有引用短 ID
 // @return 是否命中
 // @return 查询失败时的错误
-func (s *Service) imageByIdempotencyKey(ctx context.Context, opts Options) (string, bool, error) {
-	if opts.IdempotencyKey == "" {
+func (s *Service) ExistingUpload(ctx context.Context, userID, key string) (string, bool, error) {
+	return s.imageByIdempotencyKey(ctx, userID, key, idempotencySince(s.cfg.Settings()))
+}
+
+// idempotencySince 幂等键保留期的起点:早于它写下的键视为已过期,与清理扫描的回收边界一致。
+// @param set 配置快照
+// @return UTC 时间文本
+func idempotencySince(set config.Settings) string {
+	return sqlc.TimeText(time.Now().Add(-set.IdempotencyKeyTTL()))
+}
+
+// imageByIdempotencyKey 查本用户在保留期内同幂等键的既有上传;幂等键为空视为未命中。
+// @param userID 归属用户 id
+// @param key 幂等键
+// @param since 保留期起点,早于它的键不算命中
+// @return 既有引用短 ID
+// @return 是否命中
+// @return 查询失败时的错误
+func (s *Service) imageByIdempotencyKey(ctx context.Context, userID, key, since string) (string, bool, error) {
+	if key == "" {
 		return "", false, nil
 	}
 	imageID, err := s.cfg.Queries.GetIdempotencyImage(ctx, sqlc.GetIdempotencyImageParams{
-		UserID: opts.UserID, Key: opts.IdempotencyKey,
+		UserID: userID, Key: key, Since: since,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -549,6 +570,7 @@ type persistParams struct {
 	tokenID       int64            // 上传所经 Token 记录 id,0 表示非 Token 途径
 	fileName      string           // 原始文件名
 	idemKey       string           // 幂等键,可为空;按用户隔离
+	idemSince     string           // 幂等键保留期起点;同键的旧记录早于它即已过期,写入前删除
 	doneIDs       []int64          // 已同步写入的渠道 ID(至少含主渠道)
 	channels      []channel.Handle // 落库时的在役渠道,未同步写入的据此记为待补齐
 	need          int              // 落库时仍在役的同步副本至少要有几份,>= 1
@@ -592,17 +614,36 @@ func (s *Service) persist(ctx context.Context, p persistParams) (int64, error) {
 	if err := insertReplicaStates(ctx, q, p, blobID); err != nil {
 		return 0, err
 	}
-	if p.idemKey != "" {
-		if err := q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
-			UserID: p.userID, Key: p.idemKey, ImageID: p.shortID,
-		}); err != nil {
-			return 0, fmt.Errorf("写入幂等键: %w", err)
-		}
+	if err := createIdempotencyKey(ctx, q, p); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("提交事务: %w", err)
 	}
 	return blobID, nil
+}
+
+// createIdempotencyKey 记下本次上传的幂等键;幂等键为空时不记。
+// @Description: 同键的旧记录已过保留期(清理扫描还没删)时先删掉再写入;仍在保留期内的同键记录说明
+// 另一次并发请求已先落库,插入撞主键失败,由调用方按先落库者返回。
+// @param q 事务内查询集
+// @param p 落库字段
+// @return 写入失败时的错误
+func createIdempotencyKey(ctx context.Context, q *sqlc.Queries, p persistParams) error {
+	if p.idemKey == "" {
+		return nil
+	}
+	if err := q.ReleaseExpiredIdempotencyKey(ctx, sqlc.ReleaseExpiredIdempotencyKeyParams{
+		UserID: p.userID, Key: p.idemKey, Since: p.idemSince,
+	}); err != nil {
+		return fmt.Errorf("删除过期的同名幂等键: %w", err)
+	}
+	if err := q.CreateIdempotencyKey(ctx, sqlc.CreateIdempotencyKeyParams{
+		UserID: p.userID, Key: p.idemKey, ImageID: p.shortID,
+	}); err != nil {
+		return fmt.Errorf("写入幂等键: %w", err)
+	}
+	return nil
 }
 
 // insertImage 写入引用记录:推算到期时刻,S3 途径先让旧图让出同名对象键。

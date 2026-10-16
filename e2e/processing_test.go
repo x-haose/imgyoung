@@ -1,7 +1,7 @@
 //go:build e2e
 
-// 按需处理管道(迭代 6)的 e2e 覆盖:缩放/转格式/webp 协商/Vary/ETag-304/
-// EXIF orientation 校正/动图保护/档外参数——现有 e2e_test.go 早于迭代 6,未覆盖这些。
+// 按需处理管道的 e2e 覆盖:缩放/转格式/webp 协商/Vary/ETag-304/
+// EXIF orientation 校正/动图保护/档外参数。
 package e2e
 
 import (

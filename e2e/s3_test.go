@@ -1,6 +1,6 @@
 //go:build e2e
 
-// S3 协议上传(迭代 8)的 e2e 覆盖:用官方 AWS SDK 打真实二进制,
+// S3 兼容接口上传的 e2e 覆盖:用官方 AWS SDK 打真实二进制,
 // 证明 PicGo/awscli 这类内置 S3 客户端确实能把图传进来、贴出的链接确实能访问。
 package e2e
 

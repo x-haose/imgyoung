@@ -54,9 +54,9 @@ func (h *Handlers) HandleSessionUploadURL(w http.ResponseWriter, r *http.Request
 	h.serveUploadURL(w, r, si.Principal.UserID, 0)
 }
 
-// serveUploadURL URL 转存的共享管道:解析请求 → 带 SSRF 约束地抓取 → 交给上传管道。
-// @Description: 抓回的字节走与直传完全相同的编排(格式白名单/像素预算/净化/哈希/配额),
-// 远端声明的 Content-Type 不参与格式判定——判定一律以 magic bytes 为准。
+// serveUploadURL URL 转存的共享管道:解析请求 → 查幂等键 → 带 SSRF 约束地抓取 → 交给上传管道。
+// @Description: 幂等键在抓取之前查,命中即返回第一次的结果,不再访问远端。抓回的字节走与直传完全相同的编排
+// (格式白名单/像素预算/净化/哈希/配额),远端声明的 Content-Type 不参与格式判定——判定一律以 magic bytes 为准。
 // @param userID 归属用户 id
 // @param tokenID 来源 Token 记录 id,0 表示非 Token 途径
 func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID string, tokenID int64) {
@@ -84,6 +84,11 @@ func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 
+	idemKey := r.Header.Get(idempotencyHeader)
+	if h.respondExisting(w, r, set, userID, idemKey) {
+		return
+	}
+
 	data, _, err := h.cfg.Fetch.Fetch(r.Context(), req.URL)
 	if err != nil {
 		h.writeFetchError(w, set, req.URL, err)
@@ -98,11 +103,29 @@ func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID
 		UserID:         userID,
 		TokenID:        tokenID,
 		FileName:       name,
-		IdempotencyKey: r.Header.Get(idempotencyHeader),
+		IdempotencyKey: idemKey,
 		EXIFPolicy:     policy,
 		TTL:            ttl,
 		TTLSet:         ttlSet,
 	})
+}
+
+// respondExisting 幂等键命中时直接返回第一次的结果。
+// @param set 配置快照
+// @param userID 归属用户 id
+// @param key 幂等键,可为空(视为未命中)
+// @return 是否已写出响应:命中,或查询失败已写出错误
+func (h *Handlers) respondExisting(w http.ResponseWriter, r *http.Request, set config.Settings,
+	userID, key string) bool {
+	imageID, found, err := h.cfg.Upload.ExistingUpload(r.Context(), userID, key)
+	if err != nil {
+		h.writeUploadError(w, set, err)
+		return true
+	}
+	if found {
+		writeUploaded(h, w, r, set, imageID)
+	}
+	return found
 }
 
 // rawTTLString 把 JSON 里的 ttl 取值归一成字符串。

@@ -1,6 +1,6 @@
 //go:build e2e
 
-// URL 转存(迭代 8)的 e2e 覆盖:SSRF 闸的拒绝分支与鉴权;成功路径由
+// URL 转存的 e2e 覆盖:SSRF 闸的拒绝分支与鉴权;成功路径由
 // internal/http/router 的集成测试以抓取器替身覆盖(真实抓取器按设计拒绝环回地址)。
 package e2e
 

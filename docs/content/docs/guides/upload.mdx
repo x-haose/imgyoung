@@ -111,7 +111,7 @@ curl -sS -H "Authorization: Bearer imgy_xxxxxxxx" \
 - 键按用户隔离：不同用户用同一个键互不影响，也就无法借幂等键探测或取到别人的图。
 - 超过保留期，或者对应的图片已被删除后，再用这个键会被当作新的上传。
 
-`/api/upload` 和 `/api/upload/url` 都支持幂等键，S3 兼容接口不支持。
+`/api/upload` 和 `/api/upload/url` 都支持幂等键，S3 兼容接口不支持。URL 转存命中时直接返回第一次的结果，不会再去抓取远端。
 
 ## URL 转存
 

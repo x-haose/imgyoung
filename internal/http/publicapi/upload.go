@@ -237,9 +237,16 @@ func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.
 		return
 	}
 	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", opts.FileName, "size", len(data))
+	writeUploaded(h, w, r, set, res.ImageID)
+}
+
+// writeUploaded 写上传成功的响应体:短 ID 与绝对访问地址。
+// @param set 配置快照
+// @param imageID 对外短 ID
+func writeUploaded(h *Handlers, w http.ResponseWriter, r *http.Request, set config.Settings, imageID string) {
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
-		ID:  res.ImageID,
-		URL: imageURL(r, set, res.ImageID),
+		ID:  imageID,
+		URL: imageURL(r, set, imageID),
 	})
 }
 

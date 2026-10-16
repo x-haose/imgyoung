@@ -832,7 +832,7 @@ func TestRestartRecovery(t *testing.T) {
 	_, _ = mustUpload(t, inst2, payload, nil, nil)
 }
 
-// TestBackupSnapshotRestore 验证迭代 3 灾备验收:启动时元数据库自动快照上传到渠道,
+// TestBackupSnapshotRestore 验证灾备:启动时元数据库自动快照上传到渠道,
 // 删掉本地 DB 后用渠道内快照替换重启,既有图的元数据完好、仍可访问。
 func TestBackupSnapshotRestore(t *testing.T) {
 	t.Parallel()
@@ -885,7 +885,7 @@ func TestBackupSnapshotRestore(t *testing.T) {
 	}
 }
 
-// TestTTLExpiryDeletes 验证迭代 4 验收:设短 TTL 的图到点消失、渠道副本随后被清。
+// TestTTLExpiryDeletes 验证有效期:设短 TTL 的图到点消失、渠道副本随后被清。
 func TestTTLExpiryDeletes(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, map[string]any{

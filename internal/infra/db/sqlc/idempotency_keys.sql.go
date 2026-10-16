@@ -51,17 +51,34 @@ func (q *Queries) DeleteIdempotencyKeysByImage(ctx context.Context, imageID stri
 const getIdempotencyImage = `-- name: GetIdempotencyImage :one
 SELECT image_id
 FROM idempotency_keys
-WHERE user_id = ? AND key = ?
+WHERE user_id = ?1 AND key = ?2 AND created_at >= CAST(?3 AS TEXT)
 `
 
 type GetIdempotencyImageParams struct {
 	UserID string
 	Key    string
+	Since  string
 }
 
 func (q *Queries) GetIdempotencyImage(ctx context.Context, arg GetIdempotencyImageParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getIdempotencyImage, arg.UserID, arg.Key)
+	row := q.db.QueryRowContext(ctx, getIdempotencyImage, arg.UserID, arg.Key, arg.Since)
 	var image_id string
 	err := row.Scan(&image_id)
 	return image_id, err
+}
+
+const releaseExpiredIdempotencyKey = `-- name: ReleaseExpiredIdempotencyKey :exec
+DELETE FROM idempotency_keys
+WHERE user_id = ?1 AND key = ?2 AND created_at < CAST(?3 AS TEXT)
+`
+
+type ReleaseExpiredIdempotencyKeyParams struct {
+	UserID string
+	Key    string
+	Since  string
+}
+
+func (q *Queries) ReleaseExpiredIdempotencyKey(ctx context.Context, arg ReleaseExpiredIdempotencyKeyParams) error {
+	_, err := q.db.ExecContext(ctx, releaseExpiredIdempotencyKey, arg.UserID, arg.Key, arg.Since)
+	return err
 }

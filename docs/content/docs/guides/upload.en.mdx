@@ -111,7 +111,7 @@ On a flaky network a client may send the same upload twice. Sending an `Idempote
 - Keys are scoped per user: two users can use the same key without affecting each other, so nobody can use an idempotency key to probe for or retrieve someone else's image.
 - Once the retention period has passed, or the image the key points to has been deleted, the same key is treated as a new upload.
 
-Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3-compatible API does not.
+Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3-compatible API does not. A URL import that hits a key returns the first result right away without fetching the remote address again.
 
 ## Fetching from a URL
 
