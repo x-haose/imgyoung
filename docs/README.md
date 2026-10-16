@@ -27,6 +27,7 @@ pnpm build
 | ----------------------- | ------------------------------------------------------------------------------------------------ |
 | `content/docs/`         | 文档正文。无后缀为中文，`.en.mdx` 为英文；各级 `meta.json` / `meta.en.json` 定义导航顺序         |
 | `lib/source.ts`         | 页面树：手写文档 + 由 `api/openapi.yaml` 生成的接口参考页（每个标签一页，路径取标签的 `x-slug`） |
+| `lib/links.ts`          | 站内链接解析：文件路径换成页面地址，页面或锚点不存在时报错                                       |
 | `lib/i18n.ts`           | 语言配置（默认 `zh`）                                                                            |
 | `lib/layout.shared.tsx` | 顶栏与站点标识                                                                                   |
 | `app/[lang]/(home)/`    | 首页；文案在 `copy.ts`                                                                           |
@@ -37,6 +38,8 @@ pnpm build
 
 - 新增一页：在 `content/docs/<章节>/` 建 `<页>.mdx` 与 `<页>.en.mdx`，写 frontmatter 的 `title` 与 `description`，
   再把文件名加进该章节 `meta.json` 与 `meta.en.json` 的 `pages`。
-- 站内链接写相对文件路径并指向中文文件名（如 `[Docker](./docker.mdx)`），中英两版写同一个 href，会解析到同语言页面。
+- 站内链接写相对文件路径并指向中文文件名（如 `[Docker](./docker.mdx)`），中英两版写同一个路径，会解析到同语言页面。
+  锚点由标题文字生成，两版各写本语言标题的锚点（如 `#主密钥` 与 `#master-key`）。链接指向的页面或锚点不存在时构建失败，
+  `pnpm dev` 下该页直接报错。
 - 仓库里的示例配置用 `<include cwd lang="yaml">../deploy/compose.yaml</include>` 引用，不复制粘贴。
 - 内容以代码为准；接口细节写进 `api/openapi.yaml`，不在正文里复述。

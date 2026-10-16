@@ -6,7 +6,7 @@ import {
   MarkdownCopyButton,
   ViewOptionsPopover,
 } from 'fumadocs-ui/layouts/notebook/page'
-import { createRelativeLink } from 'fumadocs-ui/mdx'
+import defaultMdxComponents from 'fumadocs-ui/mdx'
 import { Card } from 'fumadocs-ui/components/card'
 import type { Metadata } from 'next'
 import type { ComponentProps } from 'react'
@@ -14,6 +14,7 @@ import { notFound } from 'next/navigation'
 
 import { OpenAPIPage } from '@/components/api-page'
 import { getMDXComponents } from '@/components/mdx'
+import { resolveDocLink } from '@/lib/links'
 import { languageAlternates, REPO_URL, SITE_URL } from '@/lib/site'
 import { source } from '@/lib/source'
 
@@ -49,12 +50,14 @@ export default async function Page(props: PageProps<'/[lang]/docs/[[...slug]]'>)
         />
       </div>
       <DocsBody>
-        {/* 正文与卡片里的相对文件链接(./docker.mdx)都解析为同语言页面的 URL */}
+        {/* 正文与卡片里的链接经 resolveDocLink 解析,指向的页面或锚点不存在时构建失败 */}
         <MDX
           components={getMDXComponents({
-            a: createRelativeLink(source, page),
+            a: ({ href, ...props }: ComponentProps<'a'>) => (
+              <defaultMdxComponents.a {...props} href={href && resolveDocLink(href, page)} />
+            ),
             Card: (props: ComponentProps<typeof Card>) => (
-              <Card {...props} href={props.href && source.resolveHref(props.href, page)} />
+              <Card {...props} href={props.href && resolveDocLink(props.href, page)} />
             ),
           })}
         />
