@@ -239,7 +239,7 @@ Editing never triggers replication. After changing the bucket, prefix or endpoin
 With **Delete and purge**, the drain job deletes objects in this order:
 
 1. Image objects, batch by batch according to the replica records, removing each record as it goes. Progress is kept in the metadata database, so an interrupted drain resumes where it stopped.
-2. Everything under `_imgyoung/` (including the metadata snapshots under `_imgyoung/backup/`) and the probe leftovers `.imgyoung-probe-*` in the root.
+2. Everything under `_imgyoung/` (including the metadata snapshots under `_imgyoung/backup/`) and the probe leftovers `.imgyoung-probe-*` in the root. This step lists only `_imgyoung/` and the top level of the root, without walking other subdirectories.
 3. The channel record.
 
 Files other programs wrote are left alone. Also:

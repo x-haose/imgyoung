@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +131,33 @@ func TestRcloneDriverList(t *testing.T) {
 	}
 	if len(backups) != 1 || backups[0].Key != "_imgyoung/backup/c.db" {
 		t.Fatalf("前缀列举结果 = %+v, 期望仅 c.db 且键为完整路径", backups)
+	}
+}
+
+// TestRcloneDriverListShallow 验证只列一层:渠道根只返回根下的对象,子目录只返回该目录这一层,
+// 不存在的目录返回空且无错误。
+func TestRcloneDriverListShallow(t *testing.T) {
+	ctx := t.Context()
+	d := openLocal(t, t.TempDir())
+	for _, key := range []string{"a.bin", "sub/b.bin", "sub/deep/c.bin"} {
+		payload := []byte("x-" + key)
+		if err := d.Put(ctx, key, bytes.NewReader(payload), int64(len(payload))); err != nil {
+			t.Fatalf("写入 %s: %v", key, err)
+		}
+	}
+	cases := map[string][]string{"": {"a.bin"}, "sub": {"sub/b.bin"}, "no/such/dir": nil}
+	for dir, want := range cases {
+		objs, err := d.ListShallow(ctx, dir)
+		if err != nil {
+			t.Fatalf("ListShallow(%q) 返回错误: %v", dir, err)
+		}
+		got := make([]string, 0, len(objs))
+		for _, o := range objs {
+			got = append(got, o.Key)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("ListShallow(%q) = %v, 期望 %v", dir, got, want)
+		}
 	}
 }
 

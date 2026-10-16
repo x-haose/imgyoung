@@ -383,6 +383,22 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 	return out, nil
 }
 
+// ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根);目录不存在视为空。
+func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
+	entries, err := d.f.List(ctx, dir)
+	if errors.Is(err, fs.ErrorDirNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("列举目录 %q: %w", dir, err)
+	}
+	var out []driver.ObjectInfo
+	entries.ForObject(func(o fs.Object) {
+		out = append(out, driver.ObjectInfo{Key: o.Remote(), Size: o.Size(), ModTime: o.ModTime(ctx)})
+	})
+	return out, nil
+}
+
 // object 查找 key 对应的 rclone 对象,并把"不存在"统一映射为 driver.ErrNotFound。
 // @Description: rclone 对缺失对象可能返回 ErrorObjectNotFound 或 ErrorDirNotFound
 // (取决于缺失层级),对调用方统一收敛为本包哨兵。

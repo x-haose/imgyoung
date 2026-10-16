@@ -14,6 +14,7 @@ type Driver interface {
 	Stat(ctx context.Context, key string) (*ObjectInfo, error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, dir string) ([]ObjectInfo, error)
+	ListShallow(ctx context.Context, dir string) ([]ObjectInfo, error)
 }
 ```
 
@@ -24,6 +25,7 @@ type Driver interface {
 | `Stat` | 返回对象信息 | 返回包裹 `ErrNotFound` 的错误 |
 | `Delete` | 删除对象 | 返回包裹 `ErrNotFound` 的错误，由调用方决定是否当作成功 |
 | `List` | 递归列举 `dir` 下的全部对象，`dir` 为空表示整个存储；返回的键是相对存储根的完整路径 | 目录不存在时返回空结果，不报错 |
+| `ListShallow` | 只列举 `dir` 这一层的对象，不进入子目录，`dir` 为空表示存储根；返回的键同样是完整路径 | 目录不存在时返回空结果，不报错 |
 
 所有实现都遵守以下约定：
 
@@ -333,7 +335,7 @@ case err != nil:
 
 1. **对象缺失返回 `ErrNotFound`**：`Open`、`Stat`、`Delete` 找不到对象时，返回能被 `errors.Is(err, driver.ErrNotFound)` 命中的错误。`failover.Open` 靠它区分「对象不存在」与「存储故障」，`failover.Probe` 把 `Stat` 返回的 `ErrNotFound` 视为存储可达。
 2. **`Put` 读满 `size` 个字节**：读不够时返回错误；不要关闭 `r`。失败后调用方可能以同一个键重试，再次 `Put` 应整体覆盖之前留下的内容。
-3. **`List` 递归列举**：`dir` 为空表示全部对象；返回相对根的完整键；目录不存在时返回空结果与 nil。
+3. **`List` 递归列举，`ListShallow` 只列一层**：`dir` 为空表示根；返回相对根的完整键；目录不存在时返回空结果与 nil。
 4. **`ModTime` 填存储记下的写入时刻**：调用方据此判断对象新旧，例如应用的对账只回收写入已超过宽限期的未知对象。
 5. **并发安全、尊重 `ctx`**：用编译期断言确认实现完整：`var _ driver.Driver = (*MemDriver)(nil)`。
 
@@ -441,6 +443,24 @@ func (m *MemDriver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, 
 	for k, o := range m.objects {
 		if strings.HasPrefix(k, prefix) {
 			out = append(out, driver.ObjectInfo{Key: k, Size: int64(len(o.data)), ModTime: o.modTime})
+		}
+	}
+	return out, nil
+}
+
+func (m *MemDriver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
+	all, err := m.List(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	prefix := ""
+	if dir != "" {
+		prefix = strings.TrimSuffix(dir, "/") + "/"
+	}
+	var out []driver.ObjectInfo
+	for _, o := range all {
+		if !strings.Contains(strings.TrimPrefix(o.Key, prefix), "/") {
+			out = append(out, o)
 		}
 	}
 	return out, nil

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -195,22 +194,29 @@ func (w *drainChannelWorker) deleteReplicas(ctx context.Context, channelID int64
 	return len(rows), nil
 }
 
-// purgeSystemObjects 删除本服务写在渠道上的系统对象:系统目录下的全部对象与深探测残留。
-// @Description: 深探测残留在渠道根下,驱动只能递归列举,故列举整个渠道再按键名挑出。
+// purgeSystemObjects 删除本服务写在渠道上的系统对象:系统目录下的全部对象与渠道根下的深探测残留。
+// @Description: 深探测与图片写在同一位置(渠道根),残留也就在根下。系统目录递归列举,渠道根只列举这一层,
+// 都不列举整个渠道:别的程序放在子目录里的对象再多,也不拖长排空。
 // @param d 渠道驱动
 // @param still 确认渠道仍在清理中;每个对象删除前调用
 // @return 删除的对象数
 // @return 渠道已不在清理中时为 errStopped;列举或删除失败时的错误
 func purgeSystemObjects(ctx context.Context, d driver.Driver, still func() error) (int, error) {
-	objs, err := d.List(ctx, "")
+	targets, err := d.List(ctx, systemDir)
 	if err != nil {
-		return 0, fmt.Errorf("列举渠道对象: %w", err)
+		return 0, fmt.Errorf("列举系统目录: %w", err)
+	}
+	top, err := d.ListShallow(ctx, "")
+	if err != nil {
+		return 0, fmt.Errorf("列举渠道根: %w", err)
+	}
+	for _, o := range top {
+		if failover.IsDeepProbeKey(o.Key) {
+			targets = append(targets, o)
+		}
 	}
 	deleted := 0
-	for _, o := range objs {
-		if !strings.HasPrefix(o.Key, systemPrefix) && !failover.IsDeepProbeKey(o.Key) {
-			continue
-		}
+	for _, o := range targets {
 		if err := still(); err != nil {
 			return deleted, err
 		}

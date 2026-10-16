@@ -49,4 +49,9 @@ type Driver interface {
 	// @Description: 返回键为相对渠道根的完整路径;目录不存在视为空。
 	// 供备份保留与对账 GC 使用,属低频操作。
 	List(ctx context.Context, dir string) ([]ObjectInfo, error)
+
+	// ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根)。
+	// @Description: 返回键为相对渠道根的完整路径;目录不存在视为空。列举量不随子目录里的对象数增长,
+	// 适合只关心某一层的场合。
+	ListShallow(ctx context.Context, dir string) ([]ObjectInfo, error)
 }

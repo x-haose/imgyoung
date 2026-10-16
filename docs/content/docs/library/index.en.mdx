@@ -11,7 +11,7 @@ stores, fall back to a working store when reading, or check whether a store is u
 
 | Package | What it provides | Depends on |
 |---|---|---|
-| `store/driver` | The `Driver` interface (`Put` / `Open` / `Stat` / `Delete` / `List`), `ObjectInfo`, and the sentinel `ErrNotFound` | Standard library only |
+| `store/driver` | The `Driver` interface (`Put` / `Open` / `Stat` / `Delete` / `List` / `ListShallow`), `ObjectInfo`, and the sentinel `ErrNotFound` | Standard library only |
 | `store/rclone` | A `Driver` backed by any rclone backend, with an optional crypt layer, OAuth token write-back, password parameter encoding, and export of an rclone configuration file equivalent to the driver | `store/driver` and rclone |
 | `store/failover` | Stateless failover primitives over a list of `Driver`s: write until N copies succeed, read from the first readable one, light and deep health checks | `store/driver` only |
 

@@ -14,6 +14,7 @@ type Driver interface {
 	Stat(ctx context.Context, key string) (*ObjectInfo, error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, dir string) ([]ObjectInfo, error)
+	ListShallow(ctx context.Context, dir string) ([]ObjectInfo, error)
 }
 ```
 
@@ -24,6 +25,7 @@ type Driver interface {
 | `Stat` | Returns the object's metadata | Returns an error wrapping `ErrNotFound` |
 | `Delete` | Deletes the object | Returns an error wrapping `ErrNotFound`; the caller decides whether that counts as success |
 | `List` | Recursively lists every object under `dir`; an empty `dir` means the whole store. Returned keys are full paths relative to the store root | A missing directory yields an empty result, not an error |
+| `ListShallow` | Lists only the objects directly in `dir`, without descending into subdirectories; an empty `dir` means the store root. Returned keys are full paths as well | A missing directory yields an empty result, not an error |
 
 Every implementation follows these rules:
 
@@ -401,8 +403,8 @@ Without rclone, implement `driver.Driver` yourself and it works with `store/fail
    exist" from "store is broken", and `failover.Probe` treats `ErrNotFound` from `Stat` as "store reachable".
 2. **`Put` reads exactly `size` bytes**: return an error if it gets fewer, and do not close `r`. After a failure the
    caller may retry with the same key, and the new `Put` should completely replace whatever was left behind.
-3. **`List` is recursive**: an empty `dir` means all objects; keys are full paths relative to the root; a missing
-   directory returns an empty result and nil.
+3. **`List` is recursive, `ListShallow` lists one level**: an empty `dir` means the root; keys are full paths relative
+   to the root; a missing directory returns an empty result and nil.
 4. **Fill `ModTime` with the write time the store records**: callers use it to judge how old an object is. The
    application's reconciliation, for example, only reclaims unknown objects written longer ago than its grace period.
 5. **Be safe for concurrent use and honor `ctx`**: check that the implementation is complete with a compile-time
@@ -512,6 +514,24 @@ func (m *MemDriver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, 
 	for k, o := range m.objects {
 		if strings.HasPrefix(k, prefix) {
 			out = append(out, driver.ObjectInfo{Key: k, Size: int64(len(o.data)), ModTime: o.modTime})
+		}
+	}
+	return out, nil
+}
+
+func (m *MemDriver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
+	all, err := m.List(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	prefix := ""
+	if dir != "" {
+		prefix = strings.TrimSuffix(dir, "/") + "/"
+	}
+	var out []driver.ObjectInfo
+	for _, o := range all {
+		if !strings.Contains(strings.TrimPrefix(o.Key, prefix), "/") {
+			out = append(out, o)
 		}
 	}
 	return out, nil
