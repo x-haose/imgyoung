@@ -16,7 +16,7 @@ ImgYoung is designed to keep image links working for the long run:
 
 - **Every image is stored more than once.** An upload returns as soon as the primary channel has it; the other channels receive replicas asynchronously. Pending replication survives restarts.
 - **Reads fail over automatically.** By default ImgYoung proxies image responses itself; if one channel cannot serve the bytes, it reads from the next channel that has a replica, and the link stays the same.
-- **The ledger is backed up too.** The metadata database that records which image lives on which channel is snapshotted on a schedule and written to every healthy channel, so losing the host does not take that mapping with it.
+- **The metadata database is backed up too.** The database that records which image lives on which channel is snapshotted on a schedule and written to every healthy channel, so losing the host does not take that mapping with it.
 
 ## Core capabilities
 

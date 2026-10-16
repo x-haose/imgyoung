@@ -1,17 +1,21 @@
 ---
 title: Admin console
-description: What each page of the admin console is for, how administrators and regular users differ, quotas and upload rate limits, the full lifecycle of upload tokens, and sign-in, sessions and interface preferences.
+description: What each page of the admin console is for, how administrators and regular users differ, quotas and upload limits, issuing and managing upload tokens, and sign-in, sessions and interface preferences.
 ---
 
 ## Signing in
 
 The admin console lives at the site root, for example `https://img.example.com/`.
 
-On first start the built-in administrator signs in as `admin` with the factory default password `imgyoung123`. After that sign-in the console goes straight to **Set the admin password**.
-The server enforces this: a session still using the factory password can only change the password, sign out and read the current account; every other console API (including console uploads, issuing tokens and managing channels) returns 403 with the error code `must_change_password` (message `须先修改出厂默认密码`, the factory default password must be changed first), whether the request comes from the console or a script.
-The default password is public, so do this before the instance is reachable from the internet. If you forget the password, see [Password reset](../operations/password-reset.mdx).
+After the first start, sign in as the built-in administrator: username `admin`, factory password `imgyoung123`. The console then takes you straight to **Set the admin password**.
 
-There is no environment variable for setting the initial administrator password, and no bootstrap token provided through an environment variable: a one-off seed like that stops having any effect after its first use, yet stays in the deployment files and leaves people guessing where a value came from. On a headless deployment, sign in once, change the password, and issue a token in the console.
+<Callout type="warn" title="Change the factory password first">
+The factory password is public, so change it before the instance is reachable from the internet. Until you do, this account can only change the password, sign out and read the current account; every other console action (including console uploads, issuing tokens and managing channels) returns 403, whether the request comes from the console or a script.
+</Callout>
+
+The initial password cannot be set through an environment variable, and no token can be provisioned through one either. On a headless deployment, too, sign in to the console, change the password, then issue an upload token.
+
+If you forget the password, see [Password reset](../operations/password-reset.mdx).
 
 ## A tour of the pages
 
@@ -30,78 +34,143 @@ The top bar has page search (⌘K / Ctrl+K opens the command palette), the langu
 
 Administrators see the whole site:
 
-- Stat cards: Images, Storage used (original bytes in total, replicas not double counted), Users, Accesses (with an estimated traffic figure), Pending cleanup, Possible duplicates.
+- **Stat cards**: Images, Storage used (original bytes in total, replicas not double counted), Users, Accesses (with an estimated traffic figure), Pending cleanup, Possible duplicates.
 - **Storage channels**: the health and stored bytes of each channel.
-- **Alerts**: alerts that are still open; each resolves itself once its condition no longer holds. **History** opens the **Alert history** tab in Settings directly. Alert kinds are channel unhealthy, replication failed, channel over quota, channel drain failed and backup failed. Descriptions follow the interface language: channel unhealthy and channel drain failed show the failure reason (written as in the channel list), replication failed shows how many replicas failed, channel over quota shows the usage and the threshold, and backup failed shows the backup error. Alerts recorded before an upgrade carry no description parameters, and neither do alert kinds the page does not recognize; both show the Chinese description stored by the server.
-- **Top images**: the 10 images with the most accesses.
-- When no healthy channel lives off this host's disk, a **Your data only lives on this host** warning appears at the top: image replicas and metadata snapshots exist only on this host, so losing the host loses everything. The condition is that no channel is healthy, not draining and using a driver other than local; it also shows when there is no healthy channel at all. Adding an object storage or cloud drive channel clears it; if you already have one, check on the **Storage channels** page why it is unhealthy.
+- **Alerts**: alerts that are still open. Each resolves itself once its condition no longer holds. **History** opens the **Alert history** tab in Settings.
+- **Top images**: the 10 most accessed images.
+
+There are five alert kinds, and their descriptions follow the interface language:
+
+| Alert | Description shows |
+|---|---|
+| Channel unhealthy | The failure reason, written as in the channel list |
+| Replication failed | How many replicas failed |
+| Channel over quota | The usage and the threshold |
+| Channel drain failed | The failure reason, written as in the channel list |
+| Backup failed | The backup error |
+
+Alert kinds the page does not recognize show the Chinese description stored by the server.
+
+<Callout type="warn" title="Your data only lives on this host">
+This warning appears at the top of the dashboard when no channel is healthy, not draining and using a driver other than local; it also appears when there is no healthy channel at all. Image replicas and metadata snapshots then exist only on this host, so losing the host loses everything. Adding an object storage or cloud drive channel clears it; if you already have one, check on the **Storage channels** page why it is unhealthy.
+</Callout>
 
 Regular users see their own image count, space used and quota.
 
-The **Quick start** card: administrators see three steps (Check storage channels, Issue an upload token, Start uploading) while the site has no images; regular users see two steps (Issue an upload token, Start uploading) while they have not uploaded anything themselves, with the text "You haven't uploaded any images yet. Two steps to get going".
+The **Quick start** card appears while there are no images yet:
+
+- Administrators: while the site has no images, it shows three steps: check storage channels, issue an upload token, start uploading.
+- Regular users: while they have not uploaded anything, it shows "You haven't uploaded any images yet. Two steps to get going" with two steps: issue an upload token, start uploading.
 
 How accesses and the traffic estimate are counted is described in [Accessing images](./access.mdx).
 
 ### Images
 
-A grid of images: administrators see the whole site (**All images**), regular users only their own (**My images**).
+A grid of images. Administrators see the whole site (**All images**); regular users see only their own (**My images**).
 
-- Search by short ID or file name.
+- **Search** by short ID or file name.
 - **Filter** by **Upload token**, **Uploaded** time and **Exempt only**; administrators can also filter by **Owner**.
 - **Select** lets you pick images and **Delete selected**, at most 100 at a time. If some deletions fail, the result shows how many were deleted and how many failed, with the reason for the first failure (for example, the image was already deleted elsewhere).
-- **Upload**: uploads straight from the console, see [Uploading](./upload.mdx#uploading-in-the-admin-console).
+- **Upload** uploads straight from the console; see [Uploading](./upload.mdx#uploading-in-the-admin-console).
 
 Clicking an image opens its details:
 
-- **Share link**: the full link, with **Copy as** URL, Markdown, HTML or BBCode; below it the available resize widths, each copying a link with `?w=`. When a public site address is set, links use its domain.
-- Metadata: format, dimensions, size, owner, source token, references, upload time, last access, accesses, expiry (with **Change expiry**), cleanup exemption and SHA-256.
-- **Replicas**: the replica state of this image on each channel (Pending / Uploading / Ready / Failed) and attempt count; replicas that have failed show **Last error**, written like a channel's failure reason (see [Storage channels](#storage-channels) below).
+- **Share link**: the full link, with **Copy as** URL, Markdown, HTML or BBCode. Below it are the available resize widths; clicking one copies a link with `?w=`. When a public site address is set, links use its domain.
+- **Metadata**: format, dimensions, size, owner, source token, references, upload time, last access, accesses, expiry (with **Change expiry**), cleanup exemption and SHA-256.
+- **Replicas**: the replica state of this image on each channel (Pending / Uploading / Ready / Failed) and the attempt count. Replicas that have failed show **Last error**, written like a channel's failure reason; see [Failure reasons](#failure-reasons) below.
 - **Delete**; administrators also get **Audit log**, which opens the audit entries targeting this image.
 
 Lifetimes and cleanup exemptions are explained in [Lifecycle and deduplication](./lifecycle.mdx).
 
-### Upload tokens
+### Upload tokens [#upload-tokens-page]
 
-Issue and manage the credentials for the data API; see [Upload tokens](#upload-tokens) below.
+Issue and manage upload tokens; see [Upload tokens](#upload-tokens) below.
 
 ### Storage channels
 
-Create, edit, check and delete channels, set their priority, encryption and 302 direct links, and watch each channel's replication progress. Form fields and per-backend configuration are covered in [Storage channels](../channels/index.mdx); a few points matter when working in the console:
+Create, edit, probe and delete channels, and set their priority, encryption and 302 direct links. The **Replicas** column shows how many replicas on each channel are ready, pending and failed. Form fields and per-backend configuration are covered in [Storage channels](../channels/index.mdx); the points below matter when working in the console.
 
-- Cloud drive templates have two fields above the authorization control, **App client ID** and **App client secret**, which are stored encrypted with the channel configuration. One-click authorization requires the client ID first; when pasting a token that was authorized with your own app, fill both in too, because the token can only be refreshed by the app that issued it.
-- When editing a channel, credential-type parameters are masked: besides passwords, secrets and tokens, this includes access key IDs, WebDAV usernames, client IDs and the like, as decided by the server from the parameter attributes each backend declares. Leave them unchanged to keep the stored values. In custom mode every parameter value is shown in a masked input (each can be revealed individually), because the interface cannot tell which custom keys are credentials.
-- If two people edit the same channel at once, or the provider refreshes the token and writes it back to the channel while you are saving, the later save is not stored and returns 409 with the error code `channel_config_changed`, saying the configuration changed while saving; just save again.
-- The tooltips of the **Unhealthy** and **Draining** badges show the most recent failure as "explanation (raw cause)". The explanation follows the interface language, for example "Authentication failed (401): check the username, password or authorization token"; the raw cause is the innermost error in the chain, usually the provider's or network library's own English message, with credentials removed and cut to at most 200 characters. When the failure cannot be classified, only the raw cause is shown. A failed **Probe again** or **Test connection** reports the same text.
-- A channel that fails to load (its configuration cannot be decrypted, the driver cannot be built, building takes longer than 30 seconds and so on) shows as **Unhealthy** in the list, with "Load failed: " in front of the reason. Channels load in parallel, so one unreachable backend does not hold up startup or health checks; a master key that differs from the one the settings were written with is classified as "The channel settings cannot be decrypted". Every health check round retries loading it, and **Probe again** retries loading first as well; it becomes healthy and serves reads and writes again only once it loads and passes the probe.
-- With **Encrypt new channels by default** turned on in Settings, a new channel whose **Server-side encryption** stays at **Inherit the global default** is encrypted, so **Allow 302 direct links** is unavailable; to use direct links, set server-side encryption to **Force off**.
-- If the provider refreshes the authorization token during **Test connection**, the result is followed by "The provider refreshed the authorization token during the test. The form now holds the new token and will save it; the old one may no longer work." and the authorization field shows **Authorized**; just save. When editing, a stored token that is reused and gets refreshed is written straight back to the channel.
-  A failed save does not lose the token either: if the provider refreshed the submitted token while saving, the form shows "Saving failed, but the provider refreshed the authorization token meanwhile. The form now holds the new token; fix the problem and save again, no need to authorize again."; a stored token reused during editing is written straight back to the channel.
-- **Export rclone config** in a channel's row menu (not offered for draining channels) downloads the channel's rclone config file, `imgyoung-channel-<channel ID>.rclone.conf`. With it, a stock rclone can read and write the channel's data without ImgYoung; an encrypted channel also gets a crypt remote, through which reads come back as plaintext.
-  The file contains the channel's credentials and OAuth tokens (plus the decryption passwords for an encrypted channel), so keep it offline and safe like the master key; every download is recorded in the audit log. The explanatory comments at the top of the file are in Chinese or English, following the interface language. The file's contents and usage are covered in [Channel encryption](../channels/encryption.mdx) and [Storage channels](../channels/index.mdx).
+#### Configuration and authorization
 
-When you delete a channel, **Also delete what this service stored on the channel** is ticked by default and the confirm button reads **Delete and purge**: image replicas and metadata snapshots (and any leftover deep-check files) are deleted one by one in the background, the channel shows as **Draining** meanwhile, and it is removed once they are gone.
-Only objects this service has on record are deleted, and the rest of the channel is not scanned: files written by other programs are left alone, and so are orphans left behind by failed uploads that reconciliation has not reclaimed yet; those stay at the provider.
-Untick it and the button becomes **Remove only**: the channel is removed immediately, and the image replicas and metadata snapshots on it are left as they are for you to deal with at the provider if needed.
-Once a channel is draining, the only action left is **Remove now**: editing, test connection, probing and re-authorizing are all refused (409, error code `channel_deleting`).
+- **Cloud drive authorization**: cloud drive templates have two fields above the authorization control, **App client ID** and **App client secret**, stored encrypted with the channel configuration. **One-click authorization** needs the client ID first. With **Paste a token**, fill in both fields too if the token was authorized with your own app, because a token can only be refreshed by the app that issued it.
+- **Masked credentials**: when you edit a channel, credential-type parameters are masked; leave them unchanged to keep the stored values. Besides passwords, secrets and tokens, access key IDs, WebDAV usernames, client IDs and the like count as credentials, as decided by the server from the parameter attributes each backend declares. In custom mode the interface cannot tell which keys are credentials, so every value is shown in a masked input that you can reveal one at a time.
+- **Save conflicts**: if two people edit the same channel at once, or the provider refreshes the token and writes it back to the channel while you are saving, the later save does not take effect and returns 409, saying the configuration changed while saving. Just save again.
+- **Token refresh**: if the provider refreshes the authorization token during **Test connection**, the result says the form now holds the new token and the old one may no longer work, and the authorization field shows **Authorized**; just save. A failed save does not lose the token either: if the provider refreshed the submitted token while saving, the message says the form now holds the new token, so fix the problem and save again without authorizing again. When you edit a channel and a stored token you kept gets refreshed, it is written straight back to the channel.
+- **Encryption and direct links**: with **Encrypt new channels by default** turned on in Settings, a new channel whose **Server-side encryption** stays at **Inherit the global default** is encrypted, and **Allow 302 direct links** is then unavailable. To use direct links, set **Server-side encryption** to **Force off**.
 
-If **Delete and purge** fails to delete objects:
+#### Failure reasons
 
-- Only when the same purge job still fails on its 4th attempt (about 98 seconds after the first failure with the default backoff) is the reason written to the channel and a "Channel drain failed" alert opened; until then the channel just shows **Draining**, so a single network hiccup does not raise an alert. The reason appears in the **Draining** badge's tooltip, prefixed with an explanation of the purge failure. A purge run that merely times out or is interrupted by a shutdown does not count as a failure.
-- Load failures are the exception: a draining channel that cannot be loaded cannot be purged either, so the load failure is shown right away and opens the "Channel drain failed" alert. As soon as the channel loads, the load failure is cleared and the alert resolves; from then on only the purge's own failures (the 4th attempt) can open it again.
-- Retries then continue automatically with backoff and never stop; once a job runs out of attempts, reconciliation queues a new one, and the recorded reason and alert stay until the channel is purged or removed. A channel that was only temporarily unavailable finishes draining on its own once it recovers.
-- If the credentials are revoked or the bucket no longer exists and retrying cannot succeed, use **Remove now** on the channel: it is removed immediately, the running purge stops, and apart from the one object being deleted at that moment, the remaining remote objects (snapshots included) are left as they are. For a channel you already know cannot be purged, choose **Remove only** when deleting it in the first place.
+The tooltips of the **Unhealthy** and **Draining** badges show the most recent failure as "explanation (raw cause)":
+
+- The explanation follows the interface language, for example "Authentication failed (401): check the username, password or authorization token".
+- The raw cause is the innermost error in the chain, usually the provider's or network library's own English message, with credentials removed and cut to at most 200 characters.
+- When the failure cannot be classified, only the raw cause is shown.
+
+A failed **Probe again** or **Test connection** reports the same text.
+
+A channel that fails to load (its configuration cannot be decrypted, the driver cannot be built, building takes longer than 30 seconds and so on) shows as **Unhealthy** in the list, with "Load failed: " in front of the reason. A master key that differs from the one the configuration was written with is classified as "The channel settings cannot be decrypted".
+
+Channels load in parallel, so one unreachable backend does not hold up startup or health checks. Every health check round retries loading, and **Probe again** retries loading first as well. A channel becomes healthy and serves reads and writes again only once it loads and passes the probe.
+
+#### Exporting the rclone config
+
+**Export rclone config** in a channel's row menu downloads the channel's rclone config file, `imgyoung-channel-<channel ID>.rclone.conf`; draining channels do not offer it. With this file, a stock rclone can read and write the channel's data without ImgYoung. An encrypted channel also gets a crypt remote, and reads through it come back as plaintext.
+
+- The explanatory comments at the top of the file are in Chinese or English, following the interface language.
+- Every download is recorded in the audit log.
+- The dialog closes only after a successful download; on failure it stays open so you can retry. Closing it during a download aborts the download.
+
+The file's contents and usage are covered in [Channel encryption](../channels/encryption.mdx) and [Storage channels](../channels/index.mdx).
+
+<Callout type="warn" title="The config file contains credentials">
+The file contains the channel's credentials and OAuth tokens, plus the decryption passwords for an encrypted channel. Keep it offline and safe, like the master key.
+</Callout>
+
+#### Deleting a channel
+
+When you delete a channel, **Also delete what this service stored on the channel** is ticked by default:
+
+| Choice | The channel | Data on the channel |
+|---|---|---|
+| Keep it ticked and click **Delete and purge** | Shows as **Draining** and is removed once its data is gone | Image replicas, metadata snapshots and leftover deep-check files are deleted one by one in the background |
+| Untick it and click **Remove only** | Removed immediately | Image replicas and metadata snapshots are left as they are, for you to deal with at the provider if needed |
+
+If any image has no ready replica on another channel (replicas on draining channels do not count), both kinds of deletion are refused with 409, and the message gives the number of such images. Move or delete those images first, then delete the channel.
+
+**Delete and purge** deletes only objects this service has on record and does not scan the rest of the channel. Files written by other programs are left alone, and so are orphans left by failed uploads that reconciliation has not deleted yet; those stay at the provider.
+
+Once a channel is draining, editing, test connection, probing and re-authorizing are all refused (409), and the only action left is **Remove now**. **Remove now** removes the channel immediately and stops the purge: apart from the one object being deleted at that moment, the remaining remote objects (snapshots included) are left as they are.
+
+#### When purging fails
+
+A failed purge is retried automatically with backoff and never stops. A channel that was only temporarily unavailable finishes draining on its own once it recovers.
+
+- Only when the same purge job still fails on its 4th attempt (about 98 seconds after the first failure with the default backoff) is the reason written to the channel and shown in the **Draining** badge's tooltip, prefixed with an explanation of the purge failure, and a "Channel drain failed" alert opened. Until then the channel just shows **Draining**, so a single network hiccup does not raise an alert. A purge run that merely times out or is interrupted by a shutdown does not count as a failure.
+- A draining channel that cannot be loaded cannot be purged either, so the load failure is shown right away and opens the "Channel drain failed" alert. As soon as the channel loads, that reason is cleared and the alert resolves; from then on only failures of the purge itself can open it again.
+- The reason for a purge failure and its alert stay until the channel is purged or removed.
+
+If the credentials are revoked or the bucket no longer exists, so that retrying cannot succeed, use **Remove now** on the channel. For a channel you already know cannot be purged, choose **Remove only** when deleting it.
 
 ### Users
 
-Lists every account with its image count, usage / quota and default TTL. You can create (**New user**), **Edit**, **Reset password** and **Delete**; see [Roles and permissions](#roles-and-permissions) and [Quotas and upload limits](#quotas-and-upload-limits) below.
+Lists every account with its image count, usage / quota and default TTL. You can create accounts (**New user**), **Edit**, **Reset password** and **Delete**; see [Roles and permissions](#roles-and-permissions) and [Quotas and upload limits](#quotas-and-upload-limits) below.
 
 ### Duplicates and Cleanup
 
-Two review queues: **Duplicates** compares pairs of images with close perceptual hashes side by side so you can merge or dismiss them; **Cleanup** lists cold images nobody has accessed for a long time so you can keep or delete them. See [Lifecycle and deduplication](./lifecycle.mdx).
+Two review queues listing images that need an administrator's decision, one item at a time:
+
+- **Duplicates** compares pairs of images with close perceptual hashes side by side, so you can merge or dismiss them.
+- **Cleanup** lists cold images nobody has accessed for a long time, so you can keep or delete them.
+
+See [Lifecycle and deduplication](./lifecycle.mdx).
 
 ### Audit log
 
-An append-only record of administrative actions, filterable by **Action**, **Actor** (user ID), **Target** (image short ID, channel ID, token ID and so on, exact match) and **Time range**. Creating, editing, exporting and deleting a channel all use the channel ID as the target (creating and editing also record `name=` with the channel name in the details), so searching by ID finds every action on a channel; channel IDs are never reused, so a deleted channel's ID is never given to a new one. The one exception is channels deleted before upgrading to the version where IDs stop being reused: if the deleted one had the highest ID, the first channel created after the upgrade may get that ID; after that, IDs are not reused. Recorded actions:
+An append-only record of administrative actions. You can filter by **Action**, **Actor** (user ID), **Target** (image short ID, channel ID, token ID and so on, exact match) and **Time range**.
+
+Creating, editing, exporting and deleting a channel all use the channel ID as the target, and creating and editing also record `name=` with the channel name in the details, so searching by channel ID finds every action on a channel. Channel IDs are never reused: a deleted channel's ID is never given to a new one.
+
+Recorded actions:
 
 | Object | Actions |
 |---|---|
@@ -113,27 +182,28 @@ An append-only record of administrative actions, filterable by **Action**, **Act
 | Settings | Update settings, Add referer allowlist entry, Remove referer allowlist entry |
 | Data | Export data, Create backup, Restore backup |
 
-Uploads themselves and automatic expiry are not audited. Retention is set by **Audit log retention** (`audit_retention_days`); 0, the default, keeps entries forever.
+Uploads themselves and automatic expiry are not audited. Retention is set by **Audit log retention** (`audit_retention_days`); the default, 0, keeps entries forever.
 
 ### Guide
 
-A built-in quick reference whose curl, PicGo and S3 client examples are filled in with the current site's address. Visible to every user.
+A built-in quick reference, visible to every user. Its curl, PicGo and S3 client examples are already filled in with the current site's address.
 
 ### Settings
 
 Administrators only, with four tabs:
 
-- **Runtime settings**: every runtime setting, grouped into access & links, upload limits, lifecycle, on-demand processing, deduplication, reliability & channels, CDN cache purge, and alerts & audit. Click **Save changes** and they apply immediately without a restart; if any value is invalid, nothing is saved and the message names the setting key and the rule it breaks.
-  The **Bootstrap configuration** card below shows the environment variables read-only (listen address, data directory, trusted proxy networks, networks allowed on `/metrics`), the server version and the built-in login rate limit. The data directory is shown as the absolute path resolved at startup; a relative path is resolved against the working directory at startup. See [Configuration](../configuration.mdx).
-  When a network variable is not set, its default networks are shown; when it is explicitly set to an empty string, **Trusted proxy networks** shows "Empty: forwarded headers are never trusted" and **Networks allowed on /metrics** shows "Empty: open to no one".
+- **Runtime settings**: every runtime setting, grouped into access & links, upload limits, lifecycle, on-demand processing, deduplication, reliability & channels, CDN cache purge, and alerts & audit. Click **Save changes** and they apply immediately without a restart. If any value is invalid, nothing is saved, and the message names the setting key and the rule it breaks. See [Configuration](../configuration.mdx).
 - **Hotlink protection**: the Referer allowlist and the **Allow empty referer** switch; see [Accessing images](./access.mdx#hotlink-protection).
-- **Backups & export**: metadata snapshots are written to every healthy channel on the **Backup interval**, each channel keeping its own most recent copies. The snapshot table lists each snapshot with its size, time and **Stored on** (the channels holding it, in priority order), with **Back up now**, **Download** and **Restore**; **Export JSON** exports all metadata.
-  Every download in the console (Export JSON, snapshot downloads, Export rclone config) first fetches the whole file in the background and only then hands it to the browser to save; on failure or an interrupted transfer the console shows the reason in a notification at the bottom right instead of saving an error response or a partial file. The Export rclone config dialog closes only after a successful download; on failure it stays open so you can retry, and closing it during a download aborts the download.
-  If some channels fail during **Back up now**, the error (code `backup_store_failed`, message like `快照 imgyoung-….db 有 1/2 个渠道未写成(…)`) lists them, and the channels that succeeded keep the snapshot; if every snapshot was written but some channels failed to remove old snapshots, the error code is `backup_prune_failed` and the retention count did not take effect on those channels this round; with no healthy channel the response is 503 with the error code `no_healthy_channel`. **Download** and **Restore** read the snapshot from the healthy channels holding it in priority order, moving on to the next one when a read fails.
-  **Back up now** is run by the backup service: closing the page or a proxy timeout does not abort it, and the console API waits for it to finish before responding and recording the audit entry. Manual backups run in rounds: with no manual backup in progress, a click starts a round; otherwise it joins the next round after the running one, and at most one round waits; clicks in the same round share its result (each click records its own audit entry on success). So the snapshot a click gets is always taken after that click, and retrying repeatedly after a proxy timeout adds at most one extra round instead of queuing several that push older snapshots out of the retention count. When the proxy gives up first (Nginx 504, Cloudflare 524), the console shows "The reverse proxy timed out. If the request reached the server, the backup keeps running there and appears in the snapshot list when it finishes: refresh the list later, and click again only if no new snapshot shows up." A backup is aborted when the service shuts down, and a partly written snapshot is deleted by the storage backend.
-  **Restore** (fetching and staging a snapshot) follows the request that started it: closing the page or a proxy timeout before staging completes aborts the restore and withdraws anything staged, with no shutdown and no database swap, and an Info log entry records `发起恢复的请求已断开,暂存已撤回,不停机` (the request that started the restore disconnected; staging withdrawn, no shutdown). Behind a reverse proxy, the read timeout must be longer than fetching the snapshot from the channel takes; see [Reverse proxy](../operations/reverse-proxy.mdx). An Nginx read timeout (504) closes the connection to the origin, so the restore is aborted and the console shows "The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again." Whether Cloudflare closes the connection to the origin on a timeout (524) is not documented, so the restore may still complete on the origin and restart the service afterwards; the console shows "Cloudflare timed out (524) before the restore returned. If Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own; otherwise it was aborted and nothing changed. For a snapshot that takes longer than 125 seconds to fetch, open the admin console on the origin directly and restore again." A shutdown also aborts staging, and the staged temporary file is removed.
-  Before restoring, the snapshot is checked to be a complete database file; if it is not, the restore is refused with 422 and the error code `snapshot_corrupt` (message `快照 {snapshot} 不是完整的数据库文件(可能写入途中被中断),请换一份快照恢复`). A snapshot counts as incomplete when SQLite reports the file as corrupt or not a database, when the integrity check (`PRAGMA quick_check`) lists problems, or when the database has no migration history (no `schema_revisions` table), such as a 0-byte file (which SQLite treats as a valid empty database, and which migrations would turn into a brand-new instance once swapped in) or some other program's SQLite file. Local failures such as a disk read error or running out of memory return 500 (error code `internal`) with an Error log entry and are not blamed on the snapshot. A snapshot left half-written on a local channel by a killed process or a power loss can still appear in the list; choosing it gives this error, so pick another one. See [Backup and restore](../operations/backup.mdx).
+- **Backups & export**: metadata snapshots are written to every healthy channel on the **Backup interval**, each channel keeping its own most recent copies. The snapshot table lists each snapshot with its size, time and **Stored on** (the channels holding it, in priority order), with **Back up now**, **Download** and **Restore**; **Export JSON** exports all metadata. For usage, working through a reverse proxy and error codes, see [Backup & restore](../operations/backup.mdx).
 - **Alert history**: every alert's open and resolve record. For the alert webhook, see [Monitoring](../operations/monitoring.mdx).
+
+Below **Runtime settings**, the **Bootstrap configuration** card shows the environment variables read-only (listen address, data directory, trusted proxy networks, networks allowed on `/metrics`), along with the server version and the built-in login rate limit:
+
+- The data directory is shown as the absolute path resolved at startup; a relative path is resolved against the working directory at startup.
+- A network variable that is not set shows its default networks.
+- A network variable explicitly set to an empty string shows "Empty: forwarded headers are never trusted" for **Trusted proxy networks** and "Empty: open to no one" for **Networks allowed on /metrics**.
+
+Every download in the console (Export JSON, snapshot downloads, Export rclone config) fetches the whole file first and only then hands it to the browser to save. On failure or an interrupted transfer, a notification at the bottom right gives the reason; an error response or a partial file is never saved.
 
 ## Roles and permissions
 
@@ -149,7 +219,7 @@ Accounts are created only by administrators on the **Users** page; there is no s
 | View, revoke and delete other users' tokens | Yes | No |
 | Storage channels, Users, Duplicates, Cleanup, Audit log, Settings | Yes | No |
 
-Regular users cannot see each other's images or tokens; opening someone else's image details returns 404 with the error code `image_not_found`. Image links themselves are public: anyone with a link can load it.
+Regular users cannot see each other's images or tokens, and opening someone else's image details returns 404. Image links themselves are public: anyone with a link can load it.
 
 There can be several administrators. The built-in administrator (user ID `default`) is protected: it cannot be disabled, demoted or deleted, though it can be renamed. No administrator can delete their own account.
 
@@ -157,37 +227,39 @@ On the **Users** page:
 
 - **New user**: username, initial password (at least 8 characters; usable right away), role, quota and default TTL.
 - **Edit**: change the username, role, quota or default TTL, or tick **Disabled**. Disabling ends all of the user's sessions at once, and their tokens can no longer upload.
-- **Reset password**: sets a new password and ends all of the user's sessions immediately.
-- **Delete**: refused while the user still owns images, so delete those first; the user's tokens and sessions go with the account, and audit entries stay.
+- **Reset password**: set a new password; all of the user's sessions end immediately.
+- **Delete**: refused while the user still owns images, so delete those first. The user's tokens and sessions are deleted with the account; audit entries stay.
 
 ## Quotas and upload limits
 
-- **Quota**: set per user when creating or editing the account, in MB or GB; empty or 0 means unlimited. Every reference counts in full: each image counts the complete size of its physical file, and deduplication merges do not reduce usage. There is only this one way of counting, so nobody can lower their usage by uploading the same images as someone else. An upload that would exceed the quota gets 403.
-  Users see their space used and quota on the dashboard; administrators see the **Usage / quota** column on the **Users** page.
-- **Upload rate limit**: `upload_rate_per_min` under **Settings → Runtime settings**, applied to every user alike; 0 (the default) turns it off. Uploads by the same user through tokens, the console and S3 share one allowance.
-- **Concurrent uploads**: `max_concurrent_uploads`, shared by the whole site, 8 out of the box.
+- **Quota**: set per user when creating or editing the account, in MB or GB; empty or 0 means unlimited. An upload that would exceed the quota gets 403. Users see their space used and quota on the dashboard; administrators see the **Usage / quota** column on the **Users** page.
+  Every reference counts in full: each image counts the complete size of its physical file, and deduplication merges do not reduce usage, so uploading the same images as someone else does not lower anyone's usage.
+- **Upload rate limit**: `upload_rate_per_min` under **Settings → Runtime settings**, applied to every user alike; the default, 0, turns it off. Uploads by the same user through tokens, the console and the S3-compatible API share one allowance.
+- **Upload concurrency limit**: `max_concurrent_uploads`, shared by the whole site, 8 by default.
 
 What happens when a limit is hit, and the status codes, are covered in [Uploading](./upload.mdx#formats-and-limits).
 
-## Upload tokens
+## Upload tokens [#upload-tokens]
 
-Upload tokens are the credentials for the data API (`/api/upload`, `/api/upload/url`) and the S3 protocol. They can only upload: they cannot sign in to the console or call the console API.
+Upload tokens are the credentials for the data API (`/api/upload`, `/api/upload/url`) and the S3-compatible API. They can only upload: they cannot sign in to the console or call the console API. Each token has a matching set of S3 credentials; see **S3 client settings** below. The console itself uses a session from signing in with a password; see [Sessions and security](#sessions-and-security).
 
-There are exactly two kinds of credentials: a password plus session for the console, and upload tokens for the data API and S3 (S3 signatures use the same tokens). Tokens cannot call the console API so that a leaked token can do no more than upload as its user; the console API is additionally protected against CSRF. A token's permission is also limited to uploading: issuing one per client, each revocable on its own, is enough to contain a leak.
+A leaked token can do no more than upload as its user. Issue one token per client, so that a leaked one can be revoked on its own.
 
 ### Issuing
 
-On the **Upload tokens** page, click **Issue token**:
+On the **Upload tokens** page, click **Issue token** and fill in:
 
 - **Purpose**: for example `picgo` or `blog-script`, at most 64 bytes. A user cannot have two active tokens with the same name; if the old token of that name has expired, issuing a new one revokes the expired record automatically.
 - **Expiry**: Never, 7, 30, 90 or 365 days. An expired token stops working exactly as if it were revoked.
 
-After issuing, a dialog shows the token secret (`imgy_` followed by 43 characters) **this one time only**; once closed it can never be shown again. The database keeps only its SHA-256 and a 12-character identifying prefix; a token is a high-entropy random string, so a plain hash is enough and no slow password hash is needed.
-Use it as the request header `Authorization: Bearer <token>`.
+After issuing, a dialog shows the token secret (`imgy_` followed by 43 characters). **It is shown this one time only**; once the dialog is closed it can never be shown again. The database keeps only its SHA-256 and a 12-character identifying prefix.
+
+Send it in the request header `Authorization: Bearer <token>`.
 
 ### List and status
 
 The list shows name, prefix, status (Active / Expired / Revoked), expiry, last used and issue time. **Last used** is written in batches about once a minute.
+
 Every image records the token it was uploaded with, and the **Images** page can filter by **Upload token**.
 
 ### Row actions
@@ -197,14 +269,15 @@ Open **More actions** at the end of a row:
 | Action | Applies to | Effect |
 |---|---|---|
 | **S3 client settings** | Your own active tokens | Shows the S3 access key, secret and endpoint for this token; you can view them as often as you like. See [Upload clients](./clients.mdx) |
-| **Rotate** | Your own active tokens | Atomically issues a new token with the same name and revokes the old one. The new secret is also shown only once; the old token and its S3 credential stop working immediately. A token that never expired still never expires; one with an expiry gets the same duration again, counted from now |
+| **Rotate** | Your own active tokens | Issues a new token with the same name and revokes the old one in a single step. The new secret is also shown only once, and the old token and its S3 credential stop working immediately. A token that never expired still never expires; one with an expiry gets the same duration again, counted from now |
 | **Revoke** | Active tokens | Stops working immediately: clients using it can no longer upload, and its S3 credential stops working too. The record stays |
 | **Delete record** | Revoked or expired tokens | Removes it from the list; audit entries stay. Active tokens cannot be deleted; revoke them first |
 
 ### Administrators viewing other users' tokens
 
 Administrators can use **View by user** to switch to any user's token list and **Revoke** or **Delete record** there.
-**Rotate** and **S3 client settings** are only available for your own tokens: both hand out working credentials, so using them on someone else's token would amount to taking over that user's upload access.
+
+**Rotate** and **S3 client settings** are only available for your own tokens. Both hand out working credentials, so using them on someone else's token would amount to taking over that user's upload access.
 
 ## Sessions and security
 
@@ -213,20 +286,32 @@ Administrators can use **View by user** to switch to any user's token list and *
 | Password storage | argon2id (64 MiB memory, 3 iterations, 1 lane) with a random salt per password. Passwords need at least 8 characters, counted as characters (Unicode code points), so one Chinese character counts as one |
 | Login rate limit | Counted separately per client IP and per username: 5 attempts in a row each, then one more every 12 seconds; beyond that the response is 429. A successful sign-in resets the count. Behind a trusted reverse proxy, the client IP comes from `X-Forwarded-For` |
 | Username enumeration | An unknown username and a wrong password return the same error and take about the same time to check |
-| Sessions | Signing in issues a 256-bit random session ID in the cookie `imgyoung_session`, marked `HttpOnly` and `SameSite=Lax`, plus `Secure` when the client reaches the site over HTTPS. The server stores only its hash, so a leaked database cannot be used to hijack sessions. Sessions last a fixed 30 days and are not extended by use |
-| CSRF | Each session is bound to a CSRF token that every state-changing request must send in the `X-CSRF-Token` header; the console does this automatically |
-| Factory password | While the built-in administrator still uses the factory default password, the server only allows changing the password, signing out and reading the current account; every other console API returns 403 |
+| Sessions | Signing in issues a 256-bit random session ID in the cookie `imgyoung_session`, marked `HttpOnly` and `SameSite=Lax`, plus `Secure` when the client reaches the site over HTTPS. The server stores only a hash of the session ID, so a leaked database cannot be used to hijack sessions. Sessions last a fixed 30 days and are not extended by use |
+| CSRF check | Each session is bound to a CSRF token that every state-changing request must send in the `X-CSRF-Token` header; the console does this automatically |
+| Factory password | While the built-in administrator still uses the factory password, the server only allows changing the password, signing out and reading the current account; every other console API returns 403 |
 | Changing passwords | **Change password** asks for the current password; afterwards every device of that user is signed out and must sign in again |
-| Disabling and resets | Disabling a user or resetting their password ends all of their sessions at once; a disabled user cannot sign in and all of their tokens stop working |
-| Page hardening | Every response carries `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`; console pages also carry a Content Security Policy that allows scripts and API calls only from this site and forbids embedding in other pages |
+| Disabling and password resets | Disabling a user or resetting their password ends all of their sessions at once; a disabled user cannot sign in, and all of their tokens stop working |
+| Page hardening | Every response carries `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`. Console pages also carry a Content Security Policy that allows scripts and API calls only from this site and forbids embedding in other pages |
 
 Both the HTTPS check and the client IP depend on forwarding headers from your reverse proxy, which are trusted only from the networks in `IMGYOUNG_TRUSTED_PROXIES`. See [Reverse proxy](../operations/reverse-proxy.mdx).
 
 ## Language and theme
 
-- Language: the language button in the top bar switches between 简体中文 and English. On a first visit the browser language decides (Chinese browsers get Simplified Chinese, everything else English); after that your choice is remembered for a year.
-- Theme: the theme button in the top bar offers Light, Dark and System. Dark is the default, and the choice is remembered as well.
+- **Language**: the language button in the top bar switches between 简体中文 and English. On a first visit the browser language decides: Chinese browsers get Simplified Chinese, everything else English. After that, your choice is remembered for a year.
+- **Theme**: the theme button in the top bar offers Light, Dark and System. Dark is the default, and the choice is remembered as well.
 
 Both preferences are stored only in the current browser and do not follow your account.
 
-All interface text follows the selected language, including what the server returns: errors, channel and replica failure reasons and alert descriptions. The server sends only error codes, classifications and parameters, and the console renders the text in the current language. Only raw causes reported by providers or network libraries are shown as they are, usually in English.
+All interface text follows the selected language, including what the server returns: errors, channel and replica failure reasons, and alert descriptions. The server sends only error codes, classifications and parameters, and the console renders the text in the current language. Only raw causes reported by providers or network libraries are shown as they are, usually in English.
+
+## Error codes
+
+Console actions return these status and error codes on failure. Upload-related codes are listed in [Uploading](./upload.mdx#status-codes), and backup and restore codes in [Backup & restore](../operations/backup.mdx#error-codes).
+
+| Action | Status | Error code | Meaning |
+|---|---|---|---|
+| Any console action other than changing the password, signing out and reading the current account | 403 | `must_change_password` | The built-in administrator still uses the factory password; change it first |
+| Saving a channel | 409 | `channel_config_changed` | Another edit changed the configuration while saving, or the provider refreshed the authorization token; save again |
+| Deleting a channel | 409 | `channel_sole_replicas` | The channel holds the only replica of some images; the message gives the number of images |
+| Editing, test connection, probing, re-authorizing | 409 | `channel_deleting` | The channel is draining; the only action left is **Remove now** |
+| Opening image details | 404 | `image_not_found` | The image does not exist, or a regular user opened someone else's image |

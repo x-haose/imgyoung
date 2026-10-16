@@ -11,7 +11,7 @@ After **New channel** on the Storage channels page, you first pick a type:
 - **Cloud drives**: WebDAV (later on this page) and the drives that need authorization (see [Cloud drives and OAuth](./cloud-drives.mdx)).
 - **Advanced**: **Custom**, where you enter an rclone backend name and raw parameters.
 
-Templates expose only the fields that matter and preset the rest. Saving merges them into the full backend parameters; editing reverses the merge to refill the form, including fields that were folded into the endpoint (account ID, region).
+Templates show only the fields that matter and preset the rest. Saving combines them into the full backend parameters; editing restores the form from the stored parameters, including the account ID and region that went into the endpoint.
 
 ## Object storage templates
 
@@ -30,7 +30,7 @@ Every object storage template also has an optional **Public URL**, described bel
 | Key | Label | Meaning |
 |---|---|---|
 | `access_key_id`, `secret_access_key` | Access key ID / Secret access key (COS: SecretId / SecretKey; B2: Key ID / Application key) | Credentials |
-| `region` | Region | Region. Lists show the region name followed by its code, such as US East (Ohio) `us-east-2`. AWS, COS and OSS offer a list of common regions; Alibaba values carry the `oss-` prefix (such as `oss-cn-hangzhou`). If your region is missing, use the S3-compatible template with an explicit endpoint. B2 takes free text (such as `us-west-004`) matching the endpoint shown in the B2 console |
+| `region` | Region | AWS, COS and OSS offer a list of common regions, each showing the region name followed by its code in grey, such as US East (Ohio) `us-east-2`. Alibaba values carry the `oss-` prefix, such as `oss-cn-hangzhou`. If your region is missing, use **S3-compatible (generic)** with an explicit endpoint instead. B2 takes free text (such as `us-west-004`) matching the endpoint shown in the B2 console |
 | `account_id` | Account ID | Cloudflare account ID, used to build the R2 endpoint |
 | `endpoint` | Endpoint / S3 API endpoint | Full URL, such as `https://minio.example.com` |
 | `bucket` | Bucket | Bucket name, optionally followed by `/prefix` to confine the channel to a folder: `my-bucket` or `my-bucket/imgyoung`. This value is the channel's storage path. COS bucket names must include the APPID suffix, such as `mybucket-1250000000` |
@@ -40,19 +40,19 @@ Every object storage template also has an optional **Public URL**, described bel
 
 ImgYoung adds `no_check_bucket=true` to every `s3` channel, so rclone neither checks for nor creates the bucket before uploading.
 
-The reason: by default rclone attempts to create the bucket before uploading. Scoped credentials, common with R2 and MinIO, can read and write one bucket but not create buckets; when the bucket already exists that attempt returns 403 and the write fails, while the read-only light check keeps passing. The channel looks healthy yet uploads fail. Buckets are expected to exist already, so the attempt is skipped by default.
+By default rclone tries to create the bucket before uploading. Scoped credentials, common with R2 and MinIO, can read and write a single bucket but cannot create buckets, so that attempt returns 403 even when the bucket exists, and the write fails. The periodic light check is read-only and cannot catch this, so the channel looks healthy while uploads fail. ImgYoung therefore skips the attempt by default and expects the bucket to exist already.
 
 So:
 
 - **Create the bucket in your provider's console first**, then create the channel.
-- If your credentials can create buckets and you want ImgYoung to do it, turn on **Create the bucket automatically** in the create form. ImgYoung then tries to create the bucket once (an existing bucket is fine); if that fails the whole creation is aborted with 400 and error code `channel_bucket_failed` ("Creating the bucket failed (check that the key may create buckets, or create the bucket in the console and turn this option off): " followed by the root cause). The switch only exists at creation, and **Test connection** never creates a bucket.
+- If your credentials can create buckets and you want ImgYoung to do it, turn on **Create the bucket automatically** in the create form. ImgYoung then tries to create the bucket once at creation; an existing bucket is fine. If that fails, the whole creation is aborted with 400 (error code `channel_bucket_failed`). The switch only exists at creation, and **Test connection** never creates a bucket.
 - In custom mode, setting `no_check_bucket=false` explicitly restores rclone's check-and-create-if-missing before uploads.
 
 ## Public URL and 302 direct links
 
-**Public URL** (`public_base_url`) is optional: the URL prefix under which the bucket (or a CDN in front of it) serves objects publicly, such as `https://cdn.example.com`. A channel can only issue 302 direct links once it is set.
+**Public URL** (`public_base_url`) is optional. It is the URL prefix under which the bucket (or a CDN in front of it) serves objects publicly, such as `https://cdn.example.com`. A channel can only issue 302 direct links once it is set.
 
-A direct link is `<public URL>/<object key>`, and the object key is relative to the channel's storage path. If the **Bucket** field includes a prefix, the public URL must point at that prefix too: with `my-bucket/imgyoung` in **Bucket** and a CDN serving the whole bucket, the public URL is `https://cdn.example.com/imgyoung`. A trailing `/` is stripped.
+A direct link is `<public URL>/<object key>`, and the object key is relative to the channel's storage path. If the **Bucket** field includes a prefix, the public URL must point at that prefix too. For example, with `my-bucket/imgyoung` in **Bucket** and a CDN serving the whole bucket, the public URL is `https://cdn.example.com/imgyoung`. A trailing `/` is stripped.
 
 An image is redirected only when all of these hold:
 
@@ -64,20 +64,21 @@ An image is redirected only when all of these hold:
 
 Otherwise the image is proxied. With **Allow 302 direct links** on but no public URL, the form warns "public_base_url is not set, so direct links will not take effect and access falls back to proxying".
 
-The 302 response carries `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect, and switching channels, retiring one or an image expiring takes effect immediately. Objects are written with a `Content-Type` sniffed from their content, so even though object keys have no extension, a browser opening a direct link displays the image.
+The 302 response carries `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect, and switching channels, retiring one or an image expiring takes effect immediately. Objects are written with a `Content-Type` detected from their content, so a browser opening a direct link displays the image even though object keys have no extension.
 
-Public read access on the bucket has to be enabled at the provider; ImgYoung does not check it. Public read also means anyone holding a direct link can fetch the object without going through ImgYoung, so hotlink protection only applies to requests that do. See [Access and links](../guides/access.mdx) for the full picture of access modes.
+Public read access on the bucket has to be enabled at the provider; ImgYoung does not check it. Public read also means anyone holding a direct link can fetch the object without going through ImgYoung, so hotlink protection only applies to requests that do. Access modes are covered in full in [Accessing images](../guides/access.mdx).
 
 ## Custom mode
 
-**Advanced → Custom** takes an rclone backend name and its parameters directly. Use it for backends the templates do not cover — any rclone backend works, such as `sftp`, `ftp`, `azureblob`, or `local` on another disk.
+**Advanced → Custom** takes an rclone backend name and its parameters directly. Use it for backends the templates do not cover. Any rclone backend works, such as `sftp`, `ftp`, `azureblob`, or `local` on another disk.
 
 - **rclone backend**: the backend name, i.e. the `type` value in `rclone.conf`, such as `s3`, `sftp` or `local`.
 - **Backend parameters**: key–value pairs whose keys are the backend's option names, written as in `rclone.conf`; only letters, digits and underscores are allowed. Copying from the output of `rclone config show` works (put the `type` line into **rclone backend**).
-- Two reserved keys are not passed to rclone: `path` is the storage path inside the backend (bucket and prefix, or a folder), and `public_base_url` is the public URL. The `path` of a `local` backend must be absolute (a relative path is rejected with 400 and error code `channel_local_path_relative`); without `path` it uses `<data dir>/blobs`.
-- Parameter values are always shown as masked inputs (each can be revealed): the console cannot tell which custom keys are credentials.
+- Two reserved keys are not passed to rclone: `path` is the storage path inside the backend (bucket and prefix, or a folder), and `public_base_url` is the public URL.
+- The `path` of a `local` backend must be absolute; a relative path is rejected with 400 (error code `channel_local_path_relative`). Without `path` it uses `<data dir>/blobs`.
+- Parameter values are always shown as masked inputs (each can be revealed), because the console cannot tell which custom keys are credentials.
 
-rclone stores password-type options (options rclone flags as passwords, such as `pass` for `sftp`, `ftp` and `webdav`) in an encoded form. ImgYoung handles this: plain values are encoded, and values that already are encoded (for example copied from `rclone.conf`) are kept as they are. In rare cases a plain password happens to look like an encoded value and is passed through unencoded, which shows up as an authentication failure; run `rclone obscure <password>` and enter its output instead.
+rclone stores password-type options (options rclone flags as passwords, such as `pass` for `sftp`, `ftp` and `webdav`) in an encoded form. ImgYoung handles this for you: plain values are encoded, and values that are already encoded (for example copied from `rclone.conf`) are kept as they are. In rare cases a plain password happens to look like an encoded value and is kept unencoded, which shows up as an authentication failure. If that happens, run `rclone obscure <password>` and enter its output instead.
 
 ```text title="Example: an SFTP channel"
 rclone backend       sftp
@@ -89,7 +90,7 @@ Backend parameters   host = files.example.com
 
 ## WebDAV
 
-The generic WebDAV template sits in the **Cloud drives** group of the type picker and covers Nutstore, Nextcloud / ownCloud, Synology, Alist and the like. They all use rclone's `webdav` backend and differ only in the server URL and the server type, so there is one template for all of them.
+The generic WebDAV template sits in the **Cloud drives** group of the type picker and works with Nutstore, Nextcloud / ownCloud, Synology, Alist and the like. They all use rclone's `webdav` backend and differ only in the server URL and the server type, so they share one template.
 
 | Key | Label | Meaning |
 |---|---|---|
@@ -118,9 +119,13 @@ WebDAV channels have no public URL, and the form hides **Allow 302 direct links*
 
 ### Failure reasons
 
-The failure reason from **Test connection**, the reason shown when hovering **Unhealthy** in the Status column, and a replica's sync failure in the image details are all the same kind of conclusion: the underlying error is classified by its text (case-insensitive, first match from the top), and the root cause follows the classification in parentheses. The root cause is the innermost error of the error chain, usually the provider's or network library's own English text, with credentials scrubbed (the values of parameters rclone flags as passwords or sensitive) and at most 200 characters (a longer one is cut to 199 characters followed by "…"). If nothing matches, only the root cause is shown.
+Three places show the same kind of failure reason: the result of **Test connection**, the text shown when hovering **Unhealthy** in the Status column, and a replica's replication failure in the image details.
 
-In the API this conclusion is `{reason, detail}` (a channel's conclusion also carries the stage, see [Channels and failover](./index.mdx)). The classifications, with the text the console shows in English:
+- The underlying error is classified by its text: case-insensitive, taking the first matching row of the table below from the top.
+- The root cause follows the classification in parentheses. It is the innermost error of the error chain, usually the provider's or network library's own English text, with credentials (the values of parameters rclone flags as passwords or sensitive) scrubbed, and at most 200 characters; a longer one is cut to 199 characters followed by "…".
+- If nothing matches, only the root cause is shown.
+
+In the API a failure reason is `{reason, detail}`; a channel's failure reason also carries the failure stage `stage`, see [Channels and failover](./index.mdx#failure-reasons). The classifications, with the text the console shows in English:
 
 | Classification (`reason`) | Console text | Underlying error contains | What to check |
 |---|---|---|---|
@@ -143,9 +148,11 @@ In the API this conclusion is `{reason, detail}` (a channel's conclusion also ca
 | `object_missing` | "Reconciliation found the object missing from the channel" | The daily reconciliation found a replica marked ready missing from the channel | Replicas only: the replica went back to pending and is copied again |
 | `unclassified` | Root cause only | Nothing above matches | Read the root cause |
 
-### Rejections when saving the form
+### Error codes when saving
 
-These errors come back with 400 as soon as you submit, and no channel is created (a duplicate name, a draining channel and a concurrent change get 409). Error responses are `{code, error, params}`: `code` is a stable error code, `error` the server's Chinese message, and `params` fills the placeholders in it; the console shows the message for the code and parameters in its own language.
+These errors come back as soon as you submit, and no channel is created. A duplicate name, a draining channel and a save conflict get 409; everything else gets 400.
+
+Error responses are `{code, error, params}`: `code` is a fixed error code, `error` the server's Chinese message, and `params` the values for the placeholders in it. The console shows the message for the code and parameters in its own language.
 
 | Error code | Console text | Cause |
 |---|---|---|
@@ -161,4 +168,4 @@ These errors come back with 400 as soon as you submit, and no channel is created
 | `channel_deleting` | "The channel is being cleaned up and cannot be changed or probed" | The channel is **Draining** (409) |
 | `channel_config_changed` | "The channel configuration changed while saving (another edit, or the provider refreshed the authorization token). Save again" | Another edit or a token write-back changed the channel configuration while this edit was being saved (409); just save again |
 
-Once a channel exists but shows **Unhealthy**, fix its configuration and use **Probe again** in the row menu: it runs a deep check right away and refreshes the status. The probe and status rules are in [Channels and failover](./index.mdx).
+Once a channel exists but shows **Unhealthy**, fix its configuration and use **Probe again** in the row menu: it runs a deep check right away and refreshes the status. The probe and status rules are in [Channels and failover](./index.mdx#health-checks).

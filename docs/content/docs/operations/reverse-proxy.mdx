@@ -1,24 +1,28 @@
 ---
 title: 反向代理与 HTTPS
-description: 用 Caddy 或 Nginx 前置 ImgYoung，正确配置 IMGYOUNG_TRUSTED_PROXIES、base_url 与上传体积上限。
+description: 用 Caddy 或 Nginx 前置 ImgYoung，正确配置 IMGYOUNG_TRUSTED_PROXIES、base_url、上传体积上限与读超时。
 ---
 
-## 为什么要前置反向代理
+## 为什么需要反向代理
 
-ImgYoung 只监听明文 HTTP，不终结 TLS。对公网提供服务时应在前面放一个反向代理：
+ImgYoung 只提供明文 HTTP，不处理 TLS。对公网提供服务时，请在它前面放一个反向代理：
 
-- 由反代申请证书、提供 HTTPS；
-- 会话 cookie 是否带 `Secure`、未配置 `base_url` 时返回链接的协议，都依据反代传来的 `X-Forwarded-Proto`；
-- 在入口层拦掉 `/metrics`，指标只留给内网抓取；
-- ImgYoung 本身改为只监听回环地址，不直接暴露。
+- 由反向代理申请证书、提供 HTTPS；
+- 会话 cookie 是否带 `Secure`，以及未配置 `base_url` 时返回的链接用哪个协议，都依据反向代理传来的 `X-Forwarded-Proto`；
+- 在入口处拦截 `/metrics`，指标只供内网抓取；
+- ImgYoung 本身只需监听回环地址，不直接暴露在公网上，见[只监听回环地址](#只监听回环地址)。
 
 ## Caddy
 
-Caddy 自动申请并续期证书，默认就会设置 `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`，并原样转发 `Host`。
+Caddy 自动申请并续期证书，默认就会设置 `X-Forwarded-For`、`X-Forwarded-Proto`、`X-Forwarded-Host`，并原样转发 `Host`。
 
 <include cwd lang="text" meta='title="deploy/Caddyfile"'>../deploy/Caddyfile</include>
 
-Caddy 默认不信任任何上游代理，会丢掉客户端自带的 `X-Forwarded-For`，只填上与它直接相连的对端。Caddy 前面还有 CDN 时，这个对端就是 CDN 节点，ImgYoung 拿不到访客地址；要在 Caddyfile 的全局选项里把 CDN 的回源网段设为可信，Caddy 才会保留 CDN 传来的转发头并在末尾追加：
+### Caddy 前面还有 CDN 时
+
+Caddy 默认不信任任何上游代理：它会丢掉客户端带来的 `X-Forwarded-For`，只填入直接连接它的地址。Caddy 前面有 CDN 时，这个地址是 CDN 节点，ImgYoung 就拿不到访客的真实地址。
+
+在 Caddyfile 的全局选项里把 CDN 的回源网段设为可信，Caddy 才会保留 CDN 传来的转发头，并在末尾追加自己看到的地址：
 
 ```text title="Caddyfile 全局选项"
 {
@@ -28,51 +32,66 @@ Caddy 默认不信任任何上游代理，会丢掉客户端自带的 `X-Forward
 }
 ```
 
-Nginx 示例用的 `$proxy_add_x_forwarded_for` 本身就是追加写法，没有这个问题。
+同时，`IMGYOUNG_TRUSTED_PROXIES` 也要加上 CDN 的回源网段，见下文[按部署方式取值](#按部署方式取值)。
+
+Nginx 示例使用的 `$proxy_add_x_forwarded_for` 本身就是追加写法，没有这个问题。
 
 ## Nginx
 
 <include cwd lang="nginx" meta='title="deploy/nginx.conf"'>../deploy/nginx.conf</include>
 
-示例里的几行 `proxy_set_header` 都不能省：
+示例里的每一行 `proxy_set_header` 都不能省：
 
-- `Host $host`：S3 协议面的签名校验包含 `Host` 头，反代改写它会导致 S3 客户端签名不匹配；
-- `X-Forwarded-For`：缺了它，所有请求都会被当成来自 Nginx 本机，见下一节；
-- `X-Forwarded-Proto` 与 `X-Forwarded-Host`：ImgYoung 取它们的第一个值，所以要用覆盖写法（`proxy_set_header`），不能把自己的值追加在客户端传来的值后面。
+- `Host $host`：S3 兼容接口的签名校验包含 `Host` 头，反向代理改写它，S3 客户端就会签名不匹配。
+- `X-Forwarded-For`：缺了它，所有请求都会被当作来自 Nginx 本机，见下一节。
+- `X-Forwarded-Proto` 与 `X-Forwarded-Host`：ImgYoung 只取它们的第一个值，所以要用 `proxy_set_header` 覆盖，不能把自己的值追加在客户端传来的值后面。
 
-## 信任的反代：IMGYOUNG_TRUSTED_PROXIES
+## 信任的反向代理：IMGYOUNG_TRUSTED_PROXIES
 
-ImgYoung 从请求推导三件事：**客户端地址**（登录限速的键、`/metrics` 的放行判定）、**第一跳是否 HTTPS**（会话 cookie 的 `Secure`）、**对外域名**（未配置 `base_url` 时拼返回链接）。只有 TCP 连接的对端地址落在 `IMGYOUNG_TRUSTED_PROXIES` 网段内时，才会采信 `X-Forwarded-*` 头；变量未设置时取默认值 `127.0.0.0/8,::1/128`，只信任同机的反代；设为空串（或只有空白）表示一个代理都不信任，转发头一律忽略，后台「引导配置」卡片上显示为「空：不采信任何转发头」。
+ImgYoung 从每个请求里确定三项信息：
+
+| 信息 | 用途 |
+|---|---|
+| 客户端地址 | 登录限速；`/metrics` 的访问控制 |
+| 是否经 HTTPS 访问 | 会话 cookie 是否带 `Secure` |
+| 对外域名 | 未配置 `base_url` 时，用来拼接返回的链接 |
+
+只有直接连接 ImgYoung 的一方（TCP 连接的对端）在 `IMGYOUNG_TRUSTED_PROXIES` 网段内时，ImgYoung 才采信 `X-Forwarded-*` 头。
+
+- 未设置时，默认值为 `127.0.0.0/8,::1/128`，只信任同一台主机上的反向代理。
+- 设为空串（或只含空白）时，不信任任何代理，转发头一律忽略。后台「引导配置」卡片上会显示「空：不采信任何转发头」。
+
+### 按部署方式取值
+
+| 部署方式 | ImgYoung 看到的连接对端 | `IMGYOUNG_TRUSTED_PROXIES` |
+|---|---|---|
+| 反向代理与 ImgYoung（二进制或 systemd）在同一台主机 | `127.0.0.1` 或 `::1` | 默认值即可 |
+| ImgYoung 在 Docker 里，反向代理在宿主机上 | Docker 网桥的网关地址，不是回环地址 | 网关所在的网段，如 `172.16.0.0/12`；用 `docker network inspect` 查看实际的网关 |
+| 反向代理与 ImgYoung 是同一个 Compose 项目里的两个容器 | 反向代理容器在项目网络里的地址 | 项目网络的网段 |
+| 反向代理在另一台主机上 | 反向代理主机的内网地址 | 该地址或它所在的网段 |
+| 反向代理前面还有 CDN | 反向代理的地址；`X-Forwarded-For` 最右边一跳是 CDN 节点 | 反向代理的网段加上 CDN 的回源网段，客户端地址才会是真实访客。反向代理是 Caddy 时，Caddy 也要把 CDN 的回源网段设为 `trusted_proxies`，见上文 |
+
+<Callout type="warn" title="信任配置错误的后果">
+连接对端不在信任网段内时，所有经反向代理的请求都会被当作来自反向代理本身：全站访客共用一个登录限速额度。如果反向代理的地址恰好在 `IMGYOUNG_METRICS_ALLOW` 内（Docker 网段默认就在），而它又转发了 `/metrics`，任何人都能读到指标。反向代理没有设置 `X-Forwarded-For` 时，后果相同。
+</Callout>
+
+### 转发头的解析规则
 
 对端受信任时：
 
-1. 依次收集全部 `X-Forwarded-For` 头里逗号分隔的地址，无法解析的项跳过。
-2. **自右向左**逐个检查，跳过落在信任网段内的地址，遇到的第一个不在信任网段内的地址就是客户端地址。
-3. 整条链都是信任网段内的地址（内网客户端）时，取最左边那个；头缺失或没有可用地址时，取连接对端。
-4. `X-Forwarded-Proto` 取第一个值，等于 `https`（不区分大小写）即视为 HTTPS 访问。
-5. `X-Forwarded-Host` 取第一个值，用于推导对外域名。
+1. 按顺序收集所有 `X-Forwarded-For` 头里以逗号分隔的地址，跳过无法解析的项。
+2. **从右向左**逐个检查，跳过信任网段内的地址，遇到的第一个不在信任网段内的地址就是客户端地址。
+3. 所有地址都在信任网段内（内网客户端）时，取最左边的一个；没有这个头或没有可用的地址时，取连接对端。
+4. `X-Forwarded-Proto` 取第一个值，等于 `https`（不区分大小写）即视为经 HTTPS 访问。
+5. `X-Forwarded-Host` 取第一个值，作为对外域名。
 
-对端不受信任时，`X-Forwarded-*` 一律忽略：客户端地址就是连接对端，HTTPS 判定看连接本身（ImgYoung 不终结 TLS，所以恒为否）。
+对端不受信任时，`X-Forwarded-*` 一律忽略：客户端地址就是连接对端；ImgYoung 不处理 TLS，所以总是视为没有经 HTTPS 访问。
 
-**为什么伪造无效。**每一级代理都把它看到的对端追加到 `X-Forwarded-For` 末尾，客户端能控制的只有最左边的部分。例如客户端 `203.0.113.7` 自带 `X-Forwarded-For: 1.2.3.4`，经同机 Nginx 后变成 `1.2.3.4, 203.0.113.7`；自右向左第一个非信任地址是 `203.0.113.7`，伪造的 `1.2.3.4` 不起作用。直接连 ImgYoung 的请求，对端不在信任网段内，带什么转发头都不会被采信。
+**伪造的 `X-Forwarded-For` 不起作用**。每一级代理都把自己看到的对端追加到 `X-Forwarded-For` 末尾，客户端能控制的只有最左边的部分。例如，客户端 `203.0.113.7` 自带 `X-Forwarded-For: 1.2.3.4`，经过同一台主机上的 Nginx 后变成 `1.2.3.4, 203.0.113.7`。从右向左第一个不受信任的地址是 `203.0.113.7`，伪造的 `1.2.3.4` 被忽略。直接连接 ImgYoung 的请求，对端不在信任网段内，带什么转发头都不会被采信。
 
-按部署拓扑取值：
+## 只监听回环地址
 
-| 拓扑 | ImgYoung 看到的连接对端 | `IMGYOUNG_TRUSTED_PROXIES` |
-|---|---|---|
-| 反代与 ImgYoung（二进制或 systemd）在同一台主机 | `127.0.0.1` / `::1` | 默认值即可 |
-| ImgYoung 跑在 Docker 里，反代在宿主机上 | Docker 网桥的网关地址，不是回环 | 网关所在网段，如 `172.16.0.0/12`；用 `docker network inspect` 查看实际网关 |
-| 反代与 ImgYoung 是同一 Compose 项目里的两个容器 | 反代容器在项目网络里的地址 | 项目网络的网段 |
-| 反代在另一台主机 | 反代主机的内网地址 | 该地址或其网段 |
-| 反代前面还有 CDN | 反代地址；`X-Forwarded-For` 里最右边一跳是 CDN 节点 | 反代网段加上 CDN 的回源网段，客户端地址才会解析到真实访客。反代是 Caddy 时，Caddy 也要把 CDN 的回源网段设为 `trusted_proxies`，见上文 |
-
-<Callout type="warn" title="信任配错的表现">
-连接对端不在信任网段内时，所有经反代的请求都被当成来自反代自身：全站访客共用一个登录限速额度；如果反代地址恰好在 `IMGYOUNG_METRICS_ALLOW` 内（Docker 网段默认就在），而反代又转发了 `/metrics`，任何人都能读到指标。反代没有设置 `X-Forwarded-For` 时也是同样的后果。
-</Callout>
-
-## 只监听回环
-
-有了反代，就不要让 ImgYoung 的端口直接对外：
+有了反向代理，就不要让 ImgYoung 的端口直接对外：
 
 <Tabs items={['二进制 / systemd', 'Docker', 'Compose']}>
 <Tab value="二进制 / systemd">
@@ -95,7 +114,7 @@ sudo systemctl restart imgyoung
 </Tab>
 <Tab value="Docker">
 
-容器内保持默认监听，只把端口发布到宿主机回环：
+容器内保持默认的监听地址，只把端口发布到宿主机的回环地址：
 
 ```bash title="终端"
 docker run -d --name imgyoung --restart unless-stopped \
@@ -118,33 +137,37 @@ services:
       IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
 ```
 
-反代也在同一 Compose 项目里时，可以去掉 `ports`，让反代直接访问 `imgyoung:8721`。
+反向代理也在同一个 Compose 项目里时，可以去掉 `ports`，让反向代理直接访问 `imgyoung:8721`。
 
 </Tab>
 </Tabs>
 
 ## 什么时候必须设置 base_url
 
-`base_url`（后台「设置 → 运行配置 → 访问与链接 → 对外站点地址」）为空时，ImgYoung 按请求推导对外地址：协议取 HTTPS 判定，域名在对端受信任时取 `X-Forwarded-Host`，否则取 `Host`。以下情况必须显式设置：
+`base_url` 即后台「设置 → 运行配置 → 访问与链接 → 对外站点地址」。它为空时，ImgYoung 根据每个请求推导对外地址：协议按是否经 HTTPS 访问决定；对端受信任时域名取 `X-Forwarded-Host`，否则取 `Host`。
 
-- **对外域名与 ImgYoung 收到的域名不一致**：CDN 用另一个域名回源、反代改写了 `Host` 又没传 `X-Forwarded-Host`、反代不在信任网段内等。此时上传接口返回的 `url`、「S3 客户端配置」弹窗里的端点与链接前缀都会是错的。后台复制的分享链接不经服务端推导：配置了 `base_url` 用它，否则用浏览器地址栏里的站点地址，所以不受这些情况影响。
-- **启用 CDN 缓存清除**：清除任务在后台异步执行，没有请求可推导，只认 `base_url`，见 [CDN](./cdn.mdx)。
-- **网盘渠道一键授权**：授权回调地址必须与开放平台登记的地址逐字一致，只用 `base_url` 拼出，见[网盘渠道](../channels/cloud-drives.mdx)。
+以下情况必须设置：
 
-## 上传体积上限要与反代一致
+- **对外域名与 ImgYoung 收到的域名不同**：例如 CDN 用另一个域名回源、反向代理改写了 `Host` 又没有传 `X-Forwarded-Host`、反向代理不在信任网段内。这时上传接口返回的 `url`，以及「S3 客户端配置」弹窗里的端点与链接前缀都会出错。
+- **启用 CDN 缓存清除**：清除在后台异步进行，没有请求可供推导，只使用 `base_url`。见 [CDN](./cdn.mdx)。
+- **使用网盘渠道的「一键授权」**：授权回调地址必须与开放平台上登记的地址完全一致，只用 `base_url` 拼出。见[网盘渠道](../channels/cloud-drives.mdx)。
 
-ImgYoung 的单图上限（`max_upload_mb`，出厂 50 MB）只约束文件本身，恰好等于上限的文件可以上传；整个请求体的上限是单图上限再加 64 KiB，留给 multipart 边界与 `exif_policy`、`ttl` 等短字段。反代的请求体上限不应小于这个值：
+后台复制的分享链接不受上述情况影响：配置了 `base_url` 时用它，否则用浏览器地址栏里的站点地址。
 
-- Nginx 默认只允许 1 MB，示例里设为 `client_max_body_size 60m;`；
-- Caddy 示例没有限制请求体；如果你用 `request_body` 设置了 `max_size`，不要小于单图上限加 64 KiB。
+## 上传体积上限要与反向代理一致
 
-在后台调大单图上限后，记得同步调大反代的限制，否则大图会在反代处直接被 413 拒掉，请求到不了 ImgYoung。
+后台的「单图上限」（`max_upload_mb`，默认 50 MB）只限制文件本身，大小恰好等于上限的文件可以上传。整个请求体最多可以比单图上限多 64 KiB，留给 multipart 边界与 `exif_policy`、`ttl` 等字段。反向代理的请求体上限不能小于这个值：
+
+- Nginx 默认只允许 1 MB，示例设为 `client_max_body_size 60m;`。
+- Caddy 示例没有限制请求体。如果你用 `request_body` 设置了 `max_size`，不要小于单图上限加 64 KiB。
+
+在后台调大单图上限后，要同步调大反向代理的限制。否则大图会在反向代理处被直接拒绝（413），请求到不了 ImgYoung。
 
 ## 从快照恢复要留够读超时
 
-后台「恢复」快照时，请求要一直等到快照从渠道取回、暂存完成才返回；请求在此之前断开，恢复即中止、不停机，见[备份与恢复](./backup.mdx)。代理的读超时因此要长过取回快照所需的时间。
+在后台「恢复」快照时，请求要等到快照从渠道下载并检查完毕才返回。请求在此之前断开，恢复就会取消，服务不会停止。因此，反向代理的读超时要长于下载快照所需的时间：
 
-- **Nginx**：`proxy_read_timeout` 默认 60 秒。上面的示例已在 `location /` 里设为 `600s`，按快照大小与渠道速度调整。
-- **Cloudflare**：经 Cloudflare 代理时，等待源站响应的时限是 125 秒（超时返回 524），只有 Enterprise 套餐能调大。取回快照超过这个时间时，无法经 Cloudflare 从后台恢复：直接访问源站上的后台再恢复，或者按[灾难恢复](./backup.mdx#主机全损后的灾难恢复)的步骤手动放入快照。
+- **Nginx**：`proxy_read_timeout` 默认 60 秒，上面的示例在 `location /` 里设为 `600s`，可按快照大小与渠道速度调整。超时返回 504 时，恢复已经取消，没有生效。
+- **Cloudflare**：等待源站响应最长 125 秒（超时返回 524），只有 Enterprise 套餐可以调大。超时时无法确定恢复是否完成：如果 Cloudflare 没有断开与源站的连接，恢复会在源站完成，服务随后自动重启。下载快照需要超过 125 秒时，无法经 Cloudflare 在后台恢复：请直接访问源站上的后台恢复，或按[灾难恢复](./backup.mdx#主机全损后的灾难恢复)的步骤手动放入快照。
 
-Nginx 读超时（504）会断开到源站的连接，恢复随之中止，后台提示「反向代理等待超时，恢复已中止，没有生效。快照较大时请调大代理的读超时（如 Nginx 的 proxy_read_timeout），或直接访问后台再恢复。」Cloudflare 超时（524）时是否断开到源站的连接，官方文档没有说明，恢复可能仍在源站完成并随后自动重启，后台提示「Cloudflare 等待超时（524），没能拿到恢复的结果：Cloudflare 没有断开到源站的连接时，恢复会在源站完成后自动重启，否则已中止、没有生效。取回超过 125 秒的快照请直接访问源站后台再恢复。」
+见[备份与恢复](./backup.mdx#经反向代理恢复)。

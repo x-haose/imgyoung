@@ -5,21 +5,19 @@ description: ImgYoung HTTP 接口的认证方式、错误格式与通用约定�
 
 ## 接口文档从哪里来
 
-仓库里的 `api/openapi.yaml`（OpenAPI 3.1）是 ImgYoung 对外 HTTP 接口的唯一依据。本节各分组页由它生成；
-端到端测试用它核对每条 `/api/`、`/healthz` 与 `/i/` 响应的状态码与响应体；管理后台的前端类型也由它生成。
+仓库里的 `api/openapi.yaml`（OpenAPI 3.1）是 ImgYoung 对外 HTTP 接口的唯一依据。本节各分组页由它生成。端到端测试按它核对每条 `/api/`、`/healthz` 与 `/i/` 响应的状态码与响应体。
 
-这份文档编译进了二进制，运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本，可以直接导入 Swagger UI、
-Scalar 或各类代码生成器：
+这份文档编译进了二进制。运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本，可以直接导入 Swagger UI、Scalar 或各类代码生成器：
 
 ```bash title="终端"
 curl -o openapi.yaml https://img.example.com/api/openapi.yaml
 ```
 
-S3 协议面（`/s3/…`）按 AWS S3 规范实现，错误一律是 S3 的 XML 错误体（包括上传限流的 429 `SlowDown` 与未实现操作的 501 `NotImplemented`），不在本参考内；用法见 [上传客户端](../guides/clients.mdx)。
+S3 兼容接口（`/s3/…`）按 AWS S3 规范实现，不在本参考内，用法见[上传客户端](../guides/clients.mdx)。它的错误一律是 S3 的 XML 错误体，包括上传限流时的 429 `SlowDown` 与未实现操作的 501 `NotImplemented`。
 
 ## 认证
 
-认证面只有两个，凭证互不通用：
+认证方式有两种，凭证互不通用：
 
 | | 数据面 | 管理后台 |
 |---|---|---|
@@ -29,10 +27,9 @@ S3 协议面（`/s3/…`）按 AWS S3 规范实现，错误一律是 S3 的 XML 
 | 认证失败 | 401：Token 无效、已过期或已吊销，或所属用户被禁用 | 401：未登录或会话已过期 |
 | 权限不足 | 403：Token 没有上传权限 | 403：CSRF 令牌缺失或不匹配；仍为出厂默认密码；需要管理员权限 |
 
-401 只表示凭证本身有问题。校验 Token 或会话时读数据库失败返回 500（错误码 `internal`），可以稍后重试，不会被当成凭证无效。
+401 只表示凭证本身有问题。校验 Token 或会话时读数据库失败，返回 500（错误码 `internal`），可以稍后重试，不会被当成凭证无效。
 
-上传 Token 形如 `imgy_…`，只授权数据面，管理后台的接口一律不接受它。图片访问入口（`/i/…`、`/o/…`）与 `/healthz`、
-`/api/openapi.yaml` 不需要认证。
+上传 Token 形如 `imgy_…`，只授权数据面，管理后台的接口一律不接受它。图片访问入口（`/i/…`、`/o/…`）、`/healthz` 与 `/api/openapi.yaml` 不需要认证。
 
 ### 会话与 CSRF 令牌
 
@@ -45,13 +42,12 @@ S3 协议面（`/s3/…`）按 AWS S3 规范实现，错误一律是 S3 的 XML 
 </Step>
 <Step>
 
-**调用接口**：每个请求都带上 cookie。`GET`、`HEAD`、`OPTIONS` 只需 cookie；其余方法还要以 `X-CSRF-Token` 头回传
-登录时拿到的 `csrf_token`，缺失或不匹配返回 403，错误码 `csrf_rejected`。
+**调用接口**：每个请求都带上 cookie。`GET`、`HEAD`、`OPTIONS` 只需 cookie；其余方法还要在 `X-CSRF-Token` 头里回传登录时拿到的 `csrf_token`，缺失或不匹配返回 403，错误码 `csrf_rejected`。
 
 </Step>
 <Step>
 
-**恢复登录态**：页面刷新等丢失了 `csrf_token` 时，`GET /api/admin/me` 会返回当前用户与同一个 `csrf_token`。
+**恢复登录态**：页面刷新等原因丢失了 `csrf_token` 时，`GET /api/admin/me` 会返回当前用户与同一个 `csrf_token`。
 
 </Step>
 </Steps>
@@ -72,19 +68,17 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 
 会话的细节：
 
-- cookie 带 `HttpOnly` 与 `SameSite=Lax`；请求经 HTTPS 到达时（直接 TLS，或受信任的反向代理以 `X-Forwarded-Proto` 告知）另带 `Secure`。
+- cookie 带 `HttpOnly` 与 `SameSite=Lax`。请求经 HTTPS 到达时另带 `Secure`，包括直接 TLS，以及受信任的反向代理以 `X-Forwarded-Proto` 告知的 HTTPS。
 - 会话有效期 30 天，从登录时刻算起，不随使用顺延；到期后须重新登录。
 - 修改密码后，该用户的全部会话失效。
 - 登录尝试过于频繁时返回 429。
-- 账号仍是出厂默认密码时，会话只能用三个接口：退出（`POST /api/admin/auth/logout`）、查看自己（`GET /api/admin/me`，
-  其中 `must_change_password` 为 true）与改密（`PUT /api/admin/me/password`）。其余后台接口（包括后台上传、签发 Token）
-  一律返回 403，错误码 `must_change_password`，改密并重新登录后放行。
+- 账号仍是出厂默认密码时，会话只能调用三个接口：退出（`POST /api/admin/auth/logout`）、查看自己（`GET /api/admin/me`，其中 `must_change_password` 为 true）与改密（`PUT /api/admin/me/password`）。其余后台接口（包括后台上传、签发 Token）一律返回 403，错误码 `must_change_password`。改密并重新登录后即可正常使用。
 
-渠道、用户、防盗链、审计、告警、备份、导出、裁决，以及运营配置的全量读取与修改，仅管理员可用，普通用户调用返回 403。
+渠道、用户、防盗链、审计、告警、备份、导出与裁决接口，以及运营配置的完整读取与修改，仅管理员可用，普通用户调用返回 403。
 
 ## 错误格式
 
-除下面的例外，错误响应一律是这样的 JSON 信封（单图上限为出厂值 50 MB 时上传过大的文件）：
+错误响应是统一的 JSON 信封，图片访问入口除外（见下文）。下面是单图上限为出厂值 50 MB 时，上传过大文件得到的响应：
 
 ```json
 {
@@ -96,20 +90,18 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 
 | 字段 | 含义 |
 |---|---|
-| `code` | 错误码，稳定的机器可读标识。同一种失败恒为同一个错误码，文案措辞变化不影响它；程序据它判断失败种类，不要解析 `error` 的文字 |
+| `code` | 错误码，稳定的机器可读标识。同一种失败恒为同一个错误码，不随文案措辞变化；程序据它判断失败种类，不要解析 `error` 的文字 |
 | `error` | 中文文案，参数已经填入，不含内部细节与凭证。不经管理后台的调用方（PicGo、ShareX、curl 等）可以直接展示给用户 |
 | `params` | 文案里占位符的取值，键是占位符名，值都是字符串；没有参数的错误码省略这个字段 |
 
-错误码约有 100 个，完整列表是接口契约里的 `ErrorCode` 枚举：在本节任一接口的错误响应里展开 `Error` 结构即可看到，也可以在 `/api/openapi.yaml` 里查。
-管理后台按 `code` 与 `params` 用当前界面语言渲染文案，所以英文界面不会出现中文报错。
+错误码约有 100 个，完整列表是接口契约里的 `ErrorCode` 枚举。在本节任一接口的错误响应里展开 `Error` 结构即可看到，也可以在 `/api/openapi.yaml` 里查。管理后台按 `code` 与 `params` 用当前界面语言渲染文案，所以英文界面不会出现中文报错。
 
-- 运营配置校验失败时，错误码按失败种类细分（`setting_unknown`、`setting_type`、`setting_positive`、`setting_non_negative`、
-  `setting_too_large`、`setting_range`、`setting_option`、`setting_url`、`setting_site_root`、`setting_empty`），`params.key` 是出错的配置键。
-- 批量删除图片的结果里，`failed` 的每一项是同样的 `code` / `error` / `params`，另带图片 `id`；网盘授权结果
-  （`GET /api/admin/channel-oauth/result`）失败时同样带这三个字段。
+- 运营配置校验失败时，错误码按失败种类细分：`setting_unknown`、`setting_type`、`setting_positive`、`setting_non_negative`、`setting_too_large`、`setting_range`、`setting_option`、`setting_url`、`setting_site_root`、`setting_empty`。`params.key` 是出错的配置键。
+- 批量删除图片的结果里，`failed` 的每一项都是同样的 `code` / `error` / `params`，另带图片 `id`。网盘授权结果（`GET /api/admin/channel-oauth/result`）失败时同样带这三个字段。
 
-**例外是图片访问入口**（`/i/{id}`、`/o/{user_id}/{object_key}` 与后台预览图 `/api/admin/images/{id}/thumb`）：
-除了处理参数非法的 400 仍是 JSON 信封，其余错误响应都是纯文本：
+### 图片访问入口的错误
+
+图片访问入口包括 `/i/{id}`、`/o/{user_id}/{object_key}` 与后台预览图 `/api/admin/images/{id}/thumb`。除了处理参数非法的 400 仍是 JSON 信封，它们的错误响应都是纯文本：
 
 | 状态码 | 含义 |
 |---|---|
@@ -118,10 +110,11 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 | 500 | 查询图片元数据失败（数据库故障），可稍后重试 |
 | 503 | 当前没有健康渠道能读出这张图 |
 
-后台预览图在会话认证之后才进入这条管线，未登录等认证错误仍是 JSON 信封；同理，校验会话时读库失败的 500 是 JSON 信封，查询图片元数据失败的 500 是纯文本，契约里两种都有声明。访问模式为 `redirect` 时，图片访问入口的 302 重定向
-带 `Cache-Control: no-store`：重定向目标随渠道健康与配置变化，不进 CDN 与浏览器缓存。
+后台预览图先校验会话。未登录等认证错误，以及校验会话时读库失败的 500，都是 JSON 信封；之后查询图片元数据失败的 500 是纯文本。
 
-常见状态码：
+访问模式为 `redirect` 时，图片访问入口返回的 302 重定向带 `Cache-Control: no-store`。重定向目标随渠道健康与配置变化，所以不进 CDN 与浏览器缓存。
+
+### 常见状态码
 
 | 状态码 | 含义 |
 |---|---|
@@ -134,24 +127,20 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 | 415 | 不是支持的图片格式（按文件内容判定）|
 | 422 | 分辨率超出像素预算（运营配置 `max_pixels_mp`）；导出 rclone 配置时有参数值写不进配置文件（`channel_unrepresentable`）；要恢复的快照不是完整的数据库文件（`snapshot_corrupt`）|
 | 429 | 上传并发已满、该用户上传过于频繁，或登录尝试过于频繁；有 `Retry-After` 头时按它等待 |
-| 500 | 服务端内部错误，含数据库故障，错误码 `internal`，可稍后重试。每个访问数据库的接口都在契约里声明了 500 |
-| 503 | 上传时没有健康渠道可写或同步副本数不足；访问图片时暂无渠道能读出 |
+| 500 | 服务端内部错误，包括数据库故障，错误码 `internal`，可稍后重试。访问数据库的接口都可能返回 500 |
+| 503 | 上传时没有健康渠道可写，或同步副本数不足；访问图片时暂无渠道能读出 |
 
 每个接口实际可能返回的状态码，以各分组页为准。
 
 ## 通用约定
 
-- **时刻**：除特别说明外，均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`（如 `2026-10-15 08:30:00`），不带时区后缀。
-  例外是构建信息的 `built_at` 与备份快照的 `taken_at`，为 RFC 3339（`taken_at` 精确到毫秒）。
+- **时刻**：除特别说明外，均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`（如 `2026-10-15 08:30:00`），不带时区后缀。例外是构建信息的 `built_at` 与备份快照的 `taken_at`，为 RFC 3339 格式，其中 `taken_at` 精确到毫秒。
 - **列表**：列表接口返回 `{"items": […], "total": N}`，`total` 是过滤后的总条数。
-- **分页**：图片、上传 Token、疑似重复、待清理、审计日志、告警列表支持 `page`（从 1 起，默认 1）与 `page_size`（默认 20，
-  最大 100，超出按 100 处理）。
+- **分页**：图片、上传 Token、疑似重复、待清理、审计日志、告警列表支持 `page` 与 `page_size`。`page` 从 1 起，默认 1；`page_size` 默认 20，最大 100，超出按 100 处理。
 - **时间范围**：图片列表与审计日志支持 `since`（含）与 `until`（不含），格式同上。
-- **ID**：图片为 10 位短 ID 字符串；用户 ID 为字符串（内置管理员为 `default`）；Token、渠道、疑似重复候选等记录为整数；备份快照以文件名标识。
-- **幂等上传**：上传请求可带 `Idempotency-Key` 头，保留期（运营配置 `idempotency_key_ttl_hours`，默认 24 小时）内，
-  同一用户同一键的重试返回同一张图。键按用户隔离。
-- **请求体**：JSON 接口使用 `application/json`；文件上传使用 `multipart/form-data`，文件字段名为 `file`，
-  可选的 `exif_policy` 与 `ttl` 也只认表单字段（不读 URL 查询参数），每个最多 1 KiB。
+- **ID**：图片为 10 位短 ID 字符串；用户 ID 为字符串，内置管理员为 `default`；Token、渠道、疑似重复候选等记录为整数；备份快照以文件名标识。
+- **幂等上传**：上传请求可带 `Idempotency-Key` 头。在保留期内，同一用户用同一个键重试，返回同一张图。保留期由运营配置 `idempotency_key_ttl_hours` 决定，默认 24 小时。键按用户隔离。
+- **请求体**：JSON 接口使用 `application/json`。文件上传使用 `multipart/form-data`，文件字段名为 `file`；可选的 `exif_policy` 与 `ttl` 只从表单字段读取（不读 URL 查询参数），每个最多 1 KiB。
 - **服务地址**：接口与站点同源，路径前缀即上文所列，没有版本号段。
 
 ## 分组

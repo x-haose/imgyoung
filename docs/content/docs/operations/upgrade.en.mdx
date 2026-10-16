@@ -1,23 +1,22 @@
 ---
 title: Upgrading
-description: Upgrade commands for each installation method, the database migrations that run automatically at startup, and what to watch out for when rolling back.
+description: Upgrade commands for each installation method, the database migrations that run automatically at startup, and how to roll back.
 ---
 
 ## Before upgrading
 
 1. Read the [release notes](https://github.com/x-haose/imgyoung/releases) of the target version.
-2. Keep a copy of the metadata database to roll back to: in the admin console, go to **Settings → Backups & export → Metadata snapshots**, click **Back up now**, then **Download** that snapshot and store it off the server. Alternatively, stop the service and copy `<data dir>/imgyoung.db` (only consistent once stopped).
-3. Make sure `master.key` is backed up; see [Configuration](../configuration.mdx#master-key).
-4. Check **Settings → Runtime settings → Access & links → Public site address** in the admin console. Any value other than `http://` or `https://` plus a host name made of letters, digits, dots and hyphens and an optional numeric port is cleared by the upgrade (see [Database migrations](#database-migrations) below) — for example `img.example.com` without a scheme, `https://example.com/img` with a path, an internationalized (non-ASCII) domain name, or an IPv6 literal. If yours is one of these, note it down and enter it again after upgrading; internationalized domain names and IPv6 literals can be entered again as they were.
+2. Keep a copy of the metadata database to roll back to: in the admin console, go to **Settings → Backups & export → Metadata snapshots**, click **Back up now**, then **Download** that snapshot and store it off the server. Alternatively, stop the service and copy `<data dir>/imgyoung.db`; a copy taken while the service is running is incomplete.
+3. Make sure the master key `master.key` is backed up; see [Configuration](../configuration.mdx#master-key).
 
-Check the running version with `imgyoung -version`, or under **Server version** in **Settings → Runtime settings → Bootstrap configuration**.
+To check the running version, run `imgyoung -version`, or look at **Server version** under **Settings → Runtime settings → Bootstrap configuration** in the admin console.
 
 ## Upgrade commands
 
 <Tabs items={['Install script', 'Docker', 'Compose', 'Binary', 'Source']}>
 <Tab value="Install script">
 
-Rerunning the install script upgrades to the latest stable release; add `--version X.Y.Z` for a specific one.
+Rerunning the install script upgrades to the latest stable release; add `--version X.Y.Z` for a specific version.
 
 ```bash title="Terminal"
 # Running as a systemd service (installed with --service): replaces the binary, rewrites the unit and restarts the service
@@ -27,12 +26,14 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
 ```
 
-`--service` overwrites `/etc/systemd/system/imgyoung.service` with `deploy/imgyoung.service` from the release archive; keep your own environment variables in a drop-in created with `systemctl edit`, which is left alone.
+`--service` overwrites `/etc/systemd/system/imgyoung.service` with `deploy/imgyoung.service` from the release archive. Keep your own environment variables in a drop-in created with `systemctl edit`, which is not overwritten.
 
 </Tab>
 <Tab value="Docker">
 
-Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume. If you pass the master key with `-e IMGYOUNG_MASTER_KEY=…`, do not leave it out when recreating the container: once the database holds data that depends on the master key (a master key fingerprint, ciphertext such as channel configurations, or data derived from the key such as upload tokens and encrypted channels), the process refuses to start without the key rather than generate a new one.
+Pull the new image, remove the old container, and create a new one with the **same volume** and your usual options. Removing a container does not remove its named volume.
+
+If you pass the master key with `-e IMGYOUNG_MASTER_KEY=…`, do not leave it out when recreating the container. Once the instance has started for the first time, it refuses to start without its master key rather than generate a new one.
 
 ```bash title="Terminal"
 docker pull ghcr.io/x-haose/imgyoung:latest
@@ -42,7 +43,13 @@ docker run -d --name imgyoung --restart unless-stopped \
   ghcr.io/x-haose/imgyoung:latest
 ```
 
-Image tags: `latest` follows the newest stable release; a major.minor tag such as `1.0` follows the newest patch of that series; a full version such as `1.0.3` never moves. Pre-releases only get the full version tag.
+Image tags:
+
+- `latest`: the newest stable release;
+- a major.minor tag such as `1.0`: the newest patch release of that series;
+- a full version such as `1.0.3`: never moves.
+
+Pre-releases only get the full version tag.
 
 </Tab>
 <Tab value="Compose">
@@ -52,12 +59,12 @@ docker compose pull
 docker compose up -d
 ```
 
-If `compose.yaml` pins a major.minor or full version, change the `image:` tag first to move to another series.
+If the `image:` in `compose.yaml` pins a major.minor tag, change the tag first to move to another series; if it pins a full version, change it for every upgrade.
 
 </Tab>
 <Tab value="Binary">
 
-Download the new archive for your platform from the [releases page](https://github.com/x-haose/imgyoung/releases), verify it against `checksums.txt` from the same release, extract it, replace the old `imgyoung` binary and restart the process. The data directory stays as it is.
+Download the new archive for your platform from the [releases page](https://github.com/x-haose/imgyoung/releases), verify it against `checksums.txt` from the same release, extract it, replace the old `imgyoung` binary and restart the process. Leave the data directory as it is.
 
 ```bash title="Terminal"
 sha256sum -c checksums.txt --ignore-missing
@@ -78,27 +85,23 @@ Replace the running binary with the newly built `./imgyoung` and restart.
 </Tab>
 </Tabs>
 
-When the old process is stopped, ImgYoung first stops accepting new requests and waits up to 6 seconds for in-flight requests (cutting them off after that), then stops the background loops and in-flight replication jobs, waiting up to 2 more seconds, and finally closes the database and exits. Interrupted replication jobs are queued again by reconciliation on the next start. Docker's default 10-second stop timeout and the `stop_grace_period: 15s` (Compose) and `TimeoutStopSec=15s` (systemd) in the `deploy/` examples are all enough.
+When the service is stopped, ImgYoung stops accepting new requests, waits for requests in progress and replication jobs to finish — about 8 seconds at most in total, after which remaining requests are cut off — and then exits. Docker's default 10-second stop timeout and the `stop_grace_period: 15s` (Compose) and `TimeoutStopSec=15s` (systemd) in the `deploy/` examples are all enough. Interrupted replication jobs are queued again after the next start.
 
 ## Database migrations
 
-Migrations are embedded in the binary and run automatically on every start, right after the database is opened:
+Migrations are embedded in the binary and run automatically on every start, right after the database is opened. There is no separate migration command.
 
-- the migration files are first checked against their checksum list, then every migration not yet applied runs in version order; when skipping several versions, all intermediate migrations are applied in turn. Applied versions are recorded in the `schema_revisions` table.
-- the replication subsystem's job queue tables are migrated at startup as well.
-- runtime settings added by a migration are filled in with their factory defaults; existing values are untouched.
-- the `b20_failure_reasons` migration adds a structured category to channel and replica failures: existing failures are recorded as `unclassified`, with the original sentence kept as the root-cause text, until the next check or replication attempt overwrites them.
-- the `b22_settings_constraints` migration brings stored runtime settings within the tightened ranges: a WebP quality of 0 becomes 75 (the encoder already treated 0 as 75), and a public site address `base_url` is kept only if it is an `http` / `https` site root with a host name (starting with a letter or digit, containing only letters, digits, dots and hyphens) and an optional numeric port; anything else is cleared — for example a value without a scheme; with a path, query, fragment or user info; a host name containing spaces or `%`; a non-numeric port; an IPv6 literal or an internationalized domain name. Every value kept passes the settings check at startup. Once cleared, the public address is derived from each request, and CDN cache purging and one-click cloud drive authorization, which depend on it, stop working; enter it again in the admin console after upgrading, in the form `https://img.example.com`.
-- if the database records a migration version this binary does not know (it was migrated by a newer version), startup is refused; see [Rolling back](#rolling-back) below.
-- if a migration fails, the process exits with an error naming the failing migration file. Roll back using your pre-upgrade snapshot (see below).
-
-There is no separate migration command, and none is needed.
+- Every migration not yet applied runs in version order. When you skip several versions, the migrations of every version in between are applied in turn. Applied migrations are recorded in the `schema_revisions` table.
+- The tables used by the job queue are migrated at startup as well.
+- Runtime settings added in a new version start at their default values; existing settings are left as they are.
+- If the database has been migrated by a newer version, startup is refused; see [Rolling back](#rolling-back) below.
+- If a migration fails, the process exits with an error, and the log names the failing migration file. Roll back using your pre-upgrade snapshot, as described below.
 
 ## Rolling back
 
 Downgrades are not supported: migrations only go forward, and some of them drop columns or rebuild tables. An older binary refuses to start on a database migrated by a newer version; the error names the newest migration version in the database and the newest one the binary knows.
 
-Rolling back therefore takes exactly one thing: **the older binary plus your pre-upgrade snapshot**. Without a pre-upgrade snapshot, you have to stay on the new version.
+Rolling back therefore takes exactly one thing: **the older binary together with your pre-upgrade snapshot**. Without a pre-upgrade snapshot, you have to stay on the new version.
 
 <Steps>
 <Step>
@@ -113,14 +116,16 @@ Switch back to the older binary or image tag.
 </Step>
 <Step>
 
-Put your pre-upgrade snapshot (or the database copied while the service was stopped) in place as `<data dir>/imgyoung.db.restore`; do not overwrite `imgyoung.db` with it. At startup it is swapped in, the database migrated by the newer version is kept as `imgyoung.db.pre-restore-<UTC time>`, and the channels' binding times are reset. For Docker the file must be owned by `65532:65532`; use the throwaway-container approach shown in [Backup & restore](./backup.mdx).
+Put the pre-upgrade snapshot (or the database copied while the service was stopped) in the data directory as `imgyoung.db.restore`. Do not overwrite `imgyoung.db` with it: if you do, objects written to the channels after the upgrade are treated as orphans and deleted after 48 hours.
+
+For Docker, the file must be owned by `65532:65532`; use the throwaway-container approach shown in [disaster recovery](./backup.mdx#disaster-recovery-after-losing-the-host).
 
 </Step>
 <Step>
 
-Start the service.
+Start the service. At startup the snapshot is swapped in, and the database migrated by the newer version is renamed to `imgyoung.db.pre-restore-<UTC time>` and kept in the data directory.
 
 </Step>
 </Steps>
 
-Metadata written since the upgrade is lost, with the same effects as restoring a snapshot: images uploaded in the meantime have no record in the metadata, so their objects on the channels are only counted, never deleted, but can no longer be reached through ImgYoung. See [Backup & restore](./backup.mdx).
+A rollback loses the metadata written since the upgrade, with the same effects as restoring a snapshot: images uploaded in the meantime have no record in the metadata and can no longer be reached through ImgYoung, while their objects stay on the channels and are never deleted automatically. See [After a restore](./backup.mdx#after-a-restore).

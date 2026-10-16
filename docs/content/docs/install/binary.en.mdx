@@ -1,11 +1,11 @@
 ---
 title: Release archives
-description: Download the archive for your platform, verify its sha256 and run it directly; suited to Windows and to environments where the install script is inconvenient.
+description: Download the archive for your platform, verify its sha256 and run it directly; suited to Windows and to hosts where the install script is inconvenient.
 ---
 
 ## Picking an archive
 
-Download the archive for your platform from the [releases page](https://github.com/x-haose/imgyoung/releases). The version in file names has no `v` (e.g. `1.0.0`); the tag in download paths does (e.g. `v1.0.0`):
+Download the archive for your platform from the [releases page](https://github.com/x-haose/imgyoung/releases):
 
 | OS | amd64 | arm64 |
 |---|---|---|
@@ -13,7 +13,9 @@ Download the archive for your platform from the [releases page](https://github.c
 | macOS | `imgyoung_<version>_darwin_amd64.tar.gz` (Intel) | `imgyoung_<version>_darwin_arm64.tar.gz` (Apple silicon) |
 | Windows | `imgyoung_<version>_windows_amd64.zip` | `imgyoung_<version>_windows_arm64.zip` |
 
-`checksums.txt` next to them lists the sha256 of every archive. Each archive contains:
+The version in file names has no `v` (e.g. `1.0.0`); the tag in download URLs does (e.g. `v1.0.0`). `checksums.txt` in the same release lists the sha256 of every archive.
+
+Each archive contains:
 
 <Files>
   <File name="imgyoung (imgyoung.exe on Windows)" />
@@ -30,7 +32,7 @@ Download the archive for your platform from the [releases page](https://github.c
   </Folder>
 </Files>
 
-`deploy/` holds sample configurations for Docker Compose, reverse proxies and systemd; `web/licenses/` holds the licenses of third-party code used by the admin console. The binary depends on none of the other files and can be copied on its own.
+The binary depends on none of the other files and can be copied on its own. `deploy/` holds sample configurations for Docker Compose, reverse proxies and systemd; `web/licenses/` holds the licenses of third-party code used by the admin console.
 
 ## Download and verify
 
@@ -62,7 +64,7 @@ grep " $FILE\$" checksums.txt | shasum -a 256 -c -
 tar -xzf "$FILE"
 ```
 
-The binary has no developer signature and is not notarized by Apple. Files downloaded with `curl` carry no quarantine attribute and run as is; if you downloaded the archive in a browser, remove the quarantine attribute after extracting, or macOS will block it:
+The binary has no developer signature and is not notarized by Apple. Files downloaded with `curl` run as is. If you downloaded the archive in a browser, remove the quarantine attribute after extracting, or macOS will block the binary:
 
 ```bash title="Terminal"
 xattr -d com.apple.quarantine imgyoung
@@ -89,7 +91,7 @@ Expand-Archive $File -DestinationPath imgyoung
 </Tab>
 </Tabs>
 
-On success Linux and macOS print `<file name>: OK` and PowerShell reports no error. On a mismatch, do not use the archive; download it again.
+On success, Linux and macOS print `<file name>: OK` and PowerShell reports no error. If the check fails, do not use the archive; download it again.
 
 ## Running it
 
@@ -111,28 +113,38 @@ cd imgyoung
 </Tab>
 </Tabs>
 
-Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away. `Ctrl+C` shuts it down gracefully.
+Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away. Press `Ctrl+C` to stop the server cleanly.
 
-- **Data directory**: by default `data/` under the **current directory at startup**, not the directory of the binary. Start it from somewhere else and you get a fresh, empty instance. A relative path is resolved against the working directory at startup into an absolute one; the "Bootstrap configuration" card at the bottom of "Settings → Runtime settings" shows the directory actually in use. Pin the location with `IMGYOUNG_DATA_DIR`:
+On Windows the firewall may ask on first run whether `imgyoung.exe` may access the network. For local-only use you can decline.
 
-  ```bash
-  IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
-  ```
+### Data directory
 
-  ```powershell
-  $env:IMGYOUNG_DATA_DIR = "D:\imgyoung-data"; .\imgyoung.exe
-  ```
+By default the data directory is `data/` under the **current directory at startup**, not the directory of the binary. Start it from somewhere else and you get a fresh, empty instance.
 
-- **Listening address**: `:8721` by default, i.e. every interface; set `IMGYOUNG_LISTEN=127.0.0.1:8721` when only a local reverse proxy should reach it. Other environment variables are listed in [Configuration](../configuration.mdx).
-- **Version**: `./imgyoung -version`. This is the only command-line flag; everything else is configured through environment variables and the console. Any other argument makes it exit with an error (exit code 2) without starting the server.
+Pin the location with `IMGYOUNG_DATA_DIR`:
 
-On Windows the firewall may ask whether `imgyoung.exe` may access the network on first run; for local-only use you can decline.
+```bash
+IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
+```
+
+```powershell
+$env:IMGYOUNG_DATA_DIR = "D:\imgyoung-data"; .\imgyoung.exe
+```
+
+A relative path is resolved against the working directory at startup. The directory actually in use is shown in the **Bootstrap configuration** card at the bottom of **Settings → Runtime settings**.
+
+### Listening address and command-line flags
+
+- It listens on `:8721` by default, which is every interface. If only a reverse proxy on the same host should reach it, set `IMGYOUNG_LISTEN=127.0.0.1:8721`. Other environment variables are listed in [Configuration](../configuration.mdx).
+- `./imgyoung -version` prints the version and exits. This is the only command-line flag; everything else is configured through environment variables and the console. Any other argument makes it exit with an error (exit code 2) without starting the server.
 
 ## Running under a process supervisor
 
-For long-running use, do not just leave it open in a terminal. A supervisor starts it on boot and restarts it after a crash. Also, "Restore" under "Settings → Backups & export" in the console makes the service exit cleanly and relies on the supervisor to start it again so the snapshot can be swapped in; without one, the restore only completes when you start it by hand. Configure the supervisor to **always restart the process when it exits**, including clean exits.
+For long-running use, do not just leave it open in a terminal. A supervisor starts it on boot and restarts it after a crash.
 
-- **Linux**: use the systemd sample in the archive. The result is the same as `--service` of the [install script](./script.mdx), with data in `/var/lib/imgyoung`; that page also explains each setting:
+**Restore** under **Settings → Backups & export** depends on a supervisor too: the service exits cleanly and the snapshot is swapped in when it starts again. Without a supervisor, the restore only completes once you start it by hand. Configure the supervisor to **always restart the process when it exits**, including clean exits.
+
+- **Linux**: use the systemd sample in the archive. The result is the same as the [install script](./script.mdx) with `--service`, with data in `/var/lib/imgyoung`; that page explains each setting.
 
   ```bash title="Terminal"
   sudo install -m 0755 imgyoung /usr/local/bin/imgyoung
@@ -142,8 +154,26 @@ For long-running use, do not just leave it open in a terminal. A supervisor star
   ```
 
 - **macOS**: write a launchd service, or use [Docker](./docker.mdx) instead.
-- **Windows**: register `imgyoung.exe` as a Windows service with a tool such as WinSW or NSSM, set the working directory or `IMGYOUNG_DATA_DIR`, and configure it to restart on exit.
+- **Windows**: register `imgyoung.exe` as a Windows service with a tool such as WinSW or NSSM. Set the working directory or `IMGYOUNG_DATA_DIR`, and configure it to restart on exit.
 
 ## Upgrading
 
-Download and verify the new archive, stop the service, replace the old binary with the new one, and start it again. Leave the data directory as is; the database schema is migrated automatically when the new version starts. Putting the old binary back is not a downgrade: the older version refuses to start on a database migrated by a newer one, so rolling back takes the older version plus a snapshot taken before the upgrade. Before upgrading, consider clicking "Back up now" under "Settings → Backups & export"; see [Upgrading](../operations/upgrade.mdx) for the rollback steps and more.
+<Steps>
+<Step>
+
+**Back up**: consider clicking **Back up now** under **Settings → Backups & export** first.
+
+</Step>
+<Step>
+
+**Download and verify** the new archive as described above.
+
+</Step>
+<Step>
+
+**Replace and start**: stop the service, replace the old binary with the new one, and start it again. Leave the data directory as is; the database schema is migrated automatically when the new version starts.
+
+</Step>
+</Steps>
+
+Putting the old binary back does not downgrade: the older version refuses to start on a database migrated by a newer one. Rolling back takes the older version plus a snapshot taken before the upgrade; see [Upgrading](../operations/upgrade.mdx) for the steps and more.

@@ -5,7 +5,7 @@ description: 下载对应平台的发布包，校验 sha256 后直接运行；�
 
 ## 选择发布包
 
-到 [发布页](https://github.com/x-haose/imgyoung/releases) 下载对应平台的压缩包。文件名里的版本号不带 `v`（如 `1.0.0`），下载路径里的标签带 `v`（如 `v1.0.0`）：
+到[发布页](https://github.com/x-haose/imgyoung/releases)下载对应平台的压缩包：
 
 | 系统 | amd64 | arm64 |
 |---|---|---|
@@ -13,7 +13,9 @@ description: 下载对应平台的发布包，校验 sha256 后直接运行；�
 | macOS | `imgyoung_<版本号>_darwin_amd64.tar.gz`（Intel）| `imgyoung_<版本号>_darwin_arm64.tar.gz`（Apple 芯片）|
 | Windows | `imgyoung_<版本号>_windows_amd64.zip` | `imgyoung_<版本号>_windows_arm64.zip` |
 
-同目录的 `checksums.txt` 列出每个包的 sha256。包里的内容：
+文件名里的版本号不带 `v`（如 `1.0.0`），下载地址里的标签带 `v`（如 `v1.0.0`）。同一目录下的 `checksums.txt` 列出每个包的 sha256。
+
+包里的内容：
 
 <Files>
   <File name="imgyoung（Windows 为 imgyoung.exe）" />
@@ -30,7 +32,7 @@ description: 下载对应平台的发布包，校验 sha256 后直接运行；�
   </Folder>
 </Files>
 
-`deploy/` 是 Docker Compose、反向代理与 systemd 的示例配置，`web/licenses/` 是管理后台所用第三方代码的许可证。二进制不依赖其他文件，可以单独拷走。
+二进制不依赖包里的其他文件，可以单独拷走。`deploy/` 是 Docker Compose、反向代理与 systemd 的示例配置，`web/licenses/` 是管理后台所用第三方代码的许可证。
 
 ## 下载与校验
 
@@ -62,7 +64,7 @@ grep " $FILE\$" checksums.txt | shasum -a 256 -c -
 tar -xzf "$FILE"
 ```
 
-二进制没有开发者签名，也没有经过 Apple 公证。用 `curl` 下载的文件不带隔离属性，可以直接运行；用浏览器下载的包解压后，先去掉隔离属性，否则系统会拦下：
+二进制没有开发者签名，也没有经过 Apple 公证。用 `curl` 下载的文件可以直接运行。用浏览器下载的包，解压后要先去掉隔离属性，否则系统会阻止它运行：
 
 ```bash title="终端"
 xattr -d com.apple.quarantine imgyoung
@@ -89,7 +91,7 @@ Expand-Archive $File -DestinationPath imgyoung
 </Tab>
 </Tabs>
 
-校验通过时，Linux 与 macOS 输出 `<文件名>: OK`，PowerShell 不报错；不一致就不要使用这个包，重新下载。
+校验通过时，Linux 与 macOS 输出 `<文件名>: OK`，PowerShell 不报错。校验不通过就不要使用这个包，重新下载。
 
 ## 运行
 
@@ -111,28 +113,38 @@ cd imgyoung
 </Tab>
 </Tabs>
 
-浏览器打开 `http://<主机>:8721/`，用 `admin` / `imgyoung123` 登录，首次登录会要求立即改密。`Ctrl+C` 优雅停机。
+浏览器打开 `http://<主机>:8721/`，用 `admin` / `imgyoung123` 登录，首次登录会要求立即修改密码。按 `Ctrl+C` 正常停止服务。
 
-- **数据目录**默认是**启动时当前目录**下的 `data/`，不是二进制所在的目录；换个目录启动就会得到一个全新的空实例。相对路径在启动时按当时的工作目录解析成绝对路径，实际用的目录可在后台「设置 → 运行配置」底部的「引导配置」卡片里确认。用 `IMGYOUNG_DATA_DIR` 固定位置：
+Windows 上首次运行时，防火墙可能询问是否允许 `imgyoung.exe` 访问网络。只在本机使用可以不允许。
 
-  ```bash
-  IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
-  ```
+### 数据目录
 
-  ```powershell
-  $env:IMGYOUNG_DATA_DIR = "D:\imgyoung-data"; .\imgyoung.exe
-  ```
+数据目录默认是**启动时当前目录**下的 `data/`，而不是二进制所在的目录。换一个目录启动，就会得到一个全新的空实例。
 
-- **监听地址**默认 `:8721`，即所有网卡；只给本机反向代理用时设 `IMGYOUNG_LISTEN=127.0.0.1:8721`。其他环境变量见 [配置](../configuration.mdx)。
-- **查看版本**：`./imgyoung -version`。这是唯一的命令行参数，其余配置都走环境变量与后台；带上别的参数会报错退出（退出码 2），不会启动服务。
+用 `IMGYOUNG_DATA_DIR` 固定数据目录的位置：
 
-Windows 上首次运行时，防火墙可能询问是否允许 `imgyoung.exe` 访问网络；只在本机使用可以不放行。
+```bash
+IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
+```
+
+```powershell
+$env:IMGYOUNG_DATA_DIR = "D:\imgyoung-data"; .\imgyoung.exe
+```
+
+相对路径在启动时按当时的工作目录解析成绝对路径。实际使用的目录显示在后台「设置 → 运行配置」底部的「引导配置」卡片里。
+
+### 监听地址与命令行参数
+
+- 默认监听 `:8721`，即所有网卡。只给本机的反向代理使用时，设 `IMGYOUNG_LISTEN=127.0.0.1:8721`。其他环境变量见[配置](../configuration.mdx)。
+- `./imgyoung -version` 打印版本信息后退出。这是唯一的命令行参数，其余配置都通过环境变量与后台设置。带上其他参数时，程序报错退出（退出码 2），不会启动服务。
 
 ## 交给进程管理器托管
 
-长期运行不要只开在一个终端里。进程管理器负责开机启动、崩溃后拉起；另外，后台「设置 → 备份与导出」里的「恢复」会让服务主动正常退出，靠进程管理器重新拉起时换入快照，没有它恢复就要手动启动才能完成。进程管理器要配置成**进程退出后总是重启**，包括正常退出。
+长期运行时，不要只在终端里开着它。进程管理器负责开机启动，并在进程崩溃后重新启动它。
 
-- **Linux**：用包里的 systemd 示例，效果与 [一行安装脚本](./script.mdx) 的 `--service` 相同，数据在 `/var/lib/imgyoung`，各项设置的含义也见那一页：
+后台「设置 → 备份与导出」里的「恢复」也依赖进程管理器：恢复时服务会正常退出，重新启动时才换入快照。没有进程管理器，就要手动启动一次才能完成恢复。所以进程管理器要配置成**进程退出后总是重启**，包括正常退出。
+
+- **Linux**：用包里的 systemd 示例。效果与[一行安装脚本](./script.mdx)的 `--service` 相同，数据在 `/var/lib/imgyoung`，各项设置的说明见那一页。
 
   ```bash title="终端"
   sudo install -m 0755 imgyoung /usr/local/bin/imgyoung
@@ -141,9 +153,27 @@ Windows 上首次运行时，防火墙可能询问是否允许 `imgyoung.exe` �
   sudo systemctl enable --now imgyoung
   ```
 
-- **macOS**：可以写一个 launchd 服务，或者改用 [Docker](./docker.mdx)。
-- **Windows**：用 WinSW、NSSM 等工具把 `imgyoung.exe` 注册为 Windows 服务，设置好工作目录或 `IMGYOUNG_DATA_DIR`，以及退出后重启。
+- **macOS**：写一个 launchd 服务，或者改用 [Docker](./docker.mdx)。
+- **Windows**：用 WinSW、NSSM 等工具把 `imgyoung.exe` 注册为 Windows 服务。设置好工作目录或 `IMGYOUNG_DATA_DIR`，并设置为退出后重启。
 
 ## 升级
 
-下载新版本的包并校验，停止服务，用新的二进制替换旧的，再启动。数据目录不用动，数据库结构在新版本启动时自动迁移。换回旧的二进制不能降级：旧版本遇到被新版本迁移过的数据库会拒绝启动，回滚要用旧版本加升级前的快照。升级前建议先在后台「设置 → 备份与导出」点「立即备份」，回滚步骤与更多注意事项见 [升级](../operations/upgrade.mdx)。
+<Steps>
+<Step>
+
+**备份**：建议先在后台「设置 → 备份与导出」点「立即备份」。
+
+</Step>
+<Step>
+
+**下载并校验**新版本的包，步骤同上文。
+
+</Step>
+<Step>
+
+**替换并启动**：停止服务，用新的二进制替换旧的，再启动。数据目录不用动，数据库结构在新版本启动时自动迁移。
+
+</Step>
+</Steps>
+
+换回旧的二进制不能降级：旧版本会拒绝启动被新版本迁移过的数据库。回滚要用旧版本加上升级前的快照，步骤与更多注意事项见[升级](../operations/upgrade.mdx)。

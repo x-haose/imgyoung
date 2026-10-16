@@ -44,7 +44,7 @@ export default async function HomePage({ params }: PageProps<'/[lang]'>) {
       <Features t={t} />
       <Backends lang={lang} t={t} />
       <Install lang={lang} t={t} />
-      <section aria-label='highlights' className='border-t border-fd-border'>
+      <section className='border-t border-fd-border'>
         <ul className='mx-auto flex w-full max-w-5xl flex-wrap items-center justify-center gap-x-8 gap-y-2 px-6 py-8 text-sm text-fd-muted-foreground'>
           {t.strip.map((item) => (
             <li key={item}>{item}</li>

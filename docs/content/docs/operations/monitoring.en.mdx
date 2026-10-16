@@ -1,42 +1,26 @@
 ---
 title: Monitoring & alerts
-description: /healthz and /metrics, scraping with Prometheus, alert conditions and the webhook payload, and logs.
+description: The /healthz health check, Prometheus metrics on /metrics, alert kinds and the webhook, and the log lines most useful for troubleshooting.
 ---
 
-## /healthz
+## Health check: /healthz
 
-`GET /healthz` returns 200 with the plain-text body `ok` and needs no authentication. It only means the process is running and its HTTP server responds; it does **not** check the database, channels or the job queue. Use it for liveness checks and external uptime probes; for channel health, use metrics and alerts.
+`GET /healthz` returns 200 with the plain-text body `ok` and needs no authentication. It only tells you that the process is running and its HTTP server responds; it does **not** check the database, channels or the job queue.
 
-Requests to `/healthz` and `/metrics` themselves are not counted in the HTTP metrics.
+Use it for liveness checks and external uptime probes; for channel health, look at metrics and alerts.
 
-## /metrics
+## Metrics: /metrics
 
-`GET /metrics` serves metrics in the Prometheus text format on the same port as everything else.
+`GET /metrics` serves metrics in the Prometheus text format, on the same port as every other endpoint. Requests to `/healthz` and `/metrics` themselves are not counted in the HTTP metrics.
 
-**Access control**: only clients whose address is inside `IMGYOUNG_METRICS_ALLOW` (loopback and private ranges when the variable is unset) are allowed; everyone else gets 403. Setting the variable to an empty string (or only whitespace) closes `/metrics` to everyone. The client address is resolved by the rules in [Reverse proxy & HTTPS](./reverse-proxy.mdx). Metrics expose route templates, channel names and usage and should not be public:
+### Access control
 
-- the public entry point (the reverse proxy) must never forward `/metrics`; the Caddy and Nginx examples in `deploy/` answer it with 404;
-- let Prometheus reach ImgYoung's listen address directly over the internal network;
-- get `IMGYOUNG_TRUSTED_PROXIES` right. If it is wrong, every proxied request appears to come from the proxy, and if the proxy's address is in the allowed networks, a proxy that forwards `/metrics` exposes the metrics to everyone.
+Metrics expose routes, channel names and usage, so keep them off the public internet.
 
-### Metrics
-
-All application metrics are prefixed with `imgyoung_`:
-
-| Metric | Type | Labels | Meaning |
-|---|---|---|---|
-| `imgyoung_http_requests_total` | counter | `method`, `route`, `status` | HTTP requests. `route` is the route template (such as `/i/{id}`), not the raw path |
-| `imgyoung_http_request_duration_seconds` | histogram | `method`, `route` | HTTP request latency in seconds |
-| `imgyoung_upload_duration_seconds` | histogram | `outcome` | Upload pipeline duration in seconds. `ok` succeeded; `rejected` invalid input or over quota; `failed` infrastructure failure |
-| `imgyoung_channel_puts_total` | counter | `channel`, `result` | Object writes to channels, both synchronous writes during upload and asynchronous replication; `result` is `ok` / `error` |
-| `imgyoung_channel_storage_bytes` | gauge | `channel` | Logical channel usage in bytes: the sum of image sizes of completed replicas; refreshed every **Usage report interval** |
-| `imgyoung_channels_total` | gauge | | Loaded channels, including unhealthy ones, excluding channels being deleted or that failed to load |
-| `imgyoung_channels_healthy_total` | gauge | | Currently healthy channels |
-| `imgyoung_variant_lookups_total` | counter | `result` | Variant cache lookups; `result` is `hit` / `miss` |
-| `imgyoung_queue_jobs_waiting` | gauge | | Jobs waiting in the job queue (available, scheduled and retryable); queried at scrape time, `NaN` if the query fails |
-| `imgyoung_queue_jobs_running` | gauge | | Jobs currently running; same as above |
-
-The Prometheus Go client's own `go_*` (runtime) and `process_*` (process) metrics are exported as well.
+- Only clients whose address is inside `IMGYOUNG_METRICS_ALLOW` can read them; everyone else gets 403. When the variable is unset, loopback and private addresses are allowed; set it to an empty string (or only whitespace) to close `/metrics` to everyone. How the client address is determined is described in [Reverse proxy & HTTPS](./reverse-proxy.mdx).
+- Do not forward `/metrics` from the public entry point (the reverse proxy). The Caddy and Nginx examples in `deploy/` answer it with 404.
+- Let Prometheus reach ImgYoung's listen address directly over the internal network.
+- Get `IMGYOUNG_TRUSTED_PROXIES` right. If it is wrong, every proxied request appears to come from the proxy itself, and if the proxy's address is in the allowed networks and it forwards `/metrics`, anyone can read the metrics.
 
 ### Prometheus scrape configuration
 
@@ -47,9 +31,28 @@ scrape_configs:
       - targets: ["10.0.0.5:8721"]   # ImgYoung's internal address and port
 ```
 
-If Prometheus is outside the default private ranges, add its address to `IMGYOUNG_METRICS_ALLOW` (together with any default ranges you still need — setting the variable replaces the default list).
+If Prometheus is outside the default private ranges, add its address to `IMGYOUNG_METRICS_ALLOW`. Setting the variable replaces the default list, so include any default ranges you still need; the defaults are listed in [Configuration](../configuration.mdx).
 
-A few useful alerting expressions:
+### Available metrics
+
+All ImgYoung metrics are prefixed with `imgyoung_`:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `imgyoung_http_requests_total` | counter | `method`, `route`, `status` | HTTP requests. `route` is the route template (such as `/i/{id}`), not the raw path |
+| `imgyoung_http_request_duration_seconds` | histogram | `method`, `route` | HTTP request latency in seconds |
+| `imgyoung_upload_duration_seconds` | histogram | `outcome` | Upload duration in seconds. `outcome` is `ok` (succeeded), `rejected` (invalid input or over quota) or `failed` (infrastructure failure) |
+| `imgyoung_channel_puts_total` | counter | `channel`, `result` | Object writes to channels, both synchronous writes during upload and later replication; `result` is `ok` or `error` |
+| `imgyoung_channel_storage_bytes` | gauge | `channel` | Channel usage in bytes: the sum of image sizes of the completed replicas on the channel, refreshed every **Usage report interval** |
+| `imgyoung_channels_total` | gauge | | Loaded channels, including unhealthy ones, excluding draining channels and channels that failed to load |
+| `imgyoung_channels_healthy_total` | gauge | | Healthy channels |
+| `imgyoung_variant_lookups_total` | counter | `result` | Variant cache lookups; `result` is `hit` or `miss` |
+| `imgyoung_queue_jobs_waiting` | gauge | | Jobs waiting in the job queue: available, scheduled and waiting to retry. Queried at scrape time; `NaN` if the query fails |
+| `imgyoung_queue_jobs_running` | gauge | | Jobs currently running in the job queue; queried the same way |
+
+The Prometheus Go client's own `go_*` (runtime) and `process_*` (process) metrics are exported as well.
+
+### Useful alerting expressions
 
 ```text title="PromQL"
 # A channel is unhealthy
@@ -67,34 +70,59 @@ imgyoung_queue_jobs_waiting > 1000
 
 ## Alerts
 
-Alerts come from an evaluation loop that runs once at startup and then every **Health check interval** (`health_check_seconds`, 60 seconds by default). Each round checks which conditions currently hold and reconciles them with the open alerts: new conditions open an alert, conditions that no longer hold resolve theirs automatically. There is at most one open alert per kind and target; while a condition persists, its details are refreshed every round.
+ImgYoung checks a set of alert conditions on a schedule: once at startup, then every **Health check interval** (`health_check_seconds`, 60 seconds by default). An alert opens when its condition holds and resolves automatically once it no longer does.
 
-| Kind | UI label | Target | Condition |
-|---|---|---|---|
-| `channel_unhealthy` | Channel unhealthy | Channel name | The latest health check of an in-service channel failed, or the channel failed to load; details give the failure (category explanation plus the root-cause text) |
-| `replication_failed` | Replication failed | Channel name | The channel has replicas whose replication failed; details give the count. Failed replicas are retried once the channel is healthy again |
-| `channel_quota_exceeded` | Channel over quota | Channel name | A **Channel usage alert threshold** is set and the channel's usage exceeds it |
-| `drain_failed` | Channel drain failed | Channel name | A channel deleted with **Delete and purge** cannot be emptied, in one of two ways: deleting an image replica or a system object this service wrote (metadata snapshots included) fails and the same drain job is still failing on its 4th attempt (with the job queue's default backoff, about 98 seconds after the first failure) — before that the channel only shows as **Draining**, and the job's own timeout or a shutdown interruption does not count as a failure; or the draining channel fails to load, which opens the alert immediately, since a channel that cannot be loaded cannot be drained. Marking a channel as draining clears its earlier failure. Details give the failure. Draining keeps retrying: once the job runs out of attempts, reconciliation queues a new one that counts from its 1st attempt, and the open alert stays as it is until the channel is empty. The channel is then removed and the alert resolves. An alert opened because of a load failure resolves as soon as the channel loads, since the load failure is cleared then; from that point the drain's own failures decide whether it opens again. If the credentials are revoked or the bucket is gone, use **Remove now** on **Storage channels**; the remote objects are left as they are |
-| `backup_failed` | Backup failed | Empty | The most recent metadata backup failed: no healthy channel, the snapshot could not be taken, some channels were not written, or every channel was written but pruning old snapshots failed on some (so the retention count did not take effect). A backup interrupted by shutdown does not count as failed. Details give the reason; when some channels failed it reads like `快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成(r2-main: i/o timeout)`, and the channels that were written keep the snapshot |
+- There is at most one open alert per kind and target at any time.
+- While a condition persists, the alert's details are refreshed on every check.
 
-`backup_failed` reflects the most recent backup in the current process, so after a restart it does not reappear until a backup fails again.
+**Viewing alerts**: the **Alerts** card on the **Dashboard** lists open alerts; **History** leads to **Settings → Alert history**, which lists every alert, resolved ones included. Opening and resolving are also logged (`告警开启`, `告警恢复`).
 
-Besides the Chinese description, every alert carries `params` (string keys and values); the admin console renders the description in the current UI language from the kind and these parameters:
+### Alert kinds
 
-| Kind | `params` |
-|---|---|
-| `channel_unhealthy`, `drain_failed` | `stage`: where it failed — `probe` (health check), `load` (building the driver from the configuration) or `drain` (deleting objects from a channel being deleted); `reason`: the failure category, such as `s3_auth`, `grant_revoked`, `bucket_missing`, `dns`, `timeout` or `config_unreadable`, and `unclassified` when it cannot be categorized — see FailureReason in the [API reference](../api/admin-channels.mdx) for every value; `detail`: the root-cause text, usually the provider's or network library's English error, with credentials removed and cut to at most 200 characters. An empty object `{}` when the channel is unhealthy without ever having been checked |
-| `replication_failed` | `failed`: number of replicas whose replication failed |
-| `channel_quota_exceeded` | `bytes`: the channel's usage; `quota`: the alert threshold; both in bytes |
-| `backup_failed` | `code`: the error code — `no_healthy_channel` (no healthy channel), `backup_snapshot_failed` (the snapshot could not be taken; adds `detail`), `backup_store_failed` (some channels were not written) or `backup_prune_failed` (every channel was written but pruning old snapshots failed on some); the last two add `snapshot`, `failed`, `total` and `detail`, where `total` is the number of channels this round tried to write |
+| Kind | UI label | Target | Opens when | Resolves when |
+|---|---|---|---|---|
+| `channel_unhealthy` | Channel unhealthy | Channel name | The channel's latest health check failed, or the channel failed to load. Details give the failure (category explanation plus the original error). Draining channels do not raise this alert | The channel is healthy again |
+| `replication_failed` | Replication failed | Channel name | The channel has replicas whose replication failed; details give the count. Failed replicas are retried automatically once the channel is healthy again | No failed replicas remain on the channel |
+| `channel_quota_exceeded` | Channel over quota | Channel name | A **Channel usage alert threshold** is set and the channel's usage exceeds it | Usage is back within the threshold, or the threshold is set to 0 |
+| `drain_failed` | Channel drain failed | Channel name | After **Delete and purge**, the objects on the channel cannot be deleted; see [Channel drain failures](#channel-drain-failures) below | The channel is removed. An alert opened because of a load failure resolves as soon as the channel loads |
+| `backup_failed` | Backup failed | Empty | The most recent metadata backup failed; details give the reason. For what counts as a failure, see [Backup & restore](./backup.mdx#automatic-metadata-snapshots) | The next backup succeeds |
 
-Alerts written before upgrading to a version with description parameters have none: `params` is `null` (if the condition still holds, the next evaluation fills them in), and the admin console shows their Chinese `message` as is. Alert kinds the admin console does not know are shown by their `message` as well.
+`backup_failed` reflects only the most recent backup in the current run: after a restart it does not appear again until a backup fails again.
 
-**Where to see them**: the **Alerts** card on the **Dashboard** lists open alerts; **History** leads to **Settings → Alert history**, which pages through every alert including resolved ones. Opening and resolving are also logged (`告警开启`, `告警恢复`).
+### Channel drain failures
+
+When you delete a channel with **Delete and purge**, ImgYoung deletes the image replicas and the system objects it wrote on the channel (metadata snapshots included) in the background. This is called draining; while it runs, the channel shows as **Draining**.
+
+`drain_failed` opens in two cases:
+
+- **Deleting objects fails**: the alert opens when the same drain job is still failing on its 4th attempt, about 98 seconds after the first failure with the default retry intervals. Until then the channel only shows as **Draining**.
+- **The channel fails to load**: the alert opens immediately, since a channel that cannot be loaded cannot be drained. Once the channel loads, this alert resolves; whether it opens again then depends on how the drain itself goes.
+
+Draining keeps retrying automatically, and the alert stays open until the channel is empty. The channel is then removed automatically and the alert resolves.
+
+If the credentials are revoked or the bucket is gone, so the drain can never succeed, use **Remove now** on the channel in **Storage channels**: the channel is removed immediately and the remaining remote objects are left in place.
+
+### Alert parameters
+
+Besides the Chinese description `message`, every alert carries `params`, with string keys and values. The admin console uses the kind and these parameters to show the description in the current UI language; for an alert kind it does not know, it shows the Chinese `message`.
+
+| Alert kind | Key | Meaning |
+|---|---|---|
+| `channel_unhealthy`, `drain_failed` | `stage` | Where it failed: `probe` (health check), `load` (loading the channel) or `drain` (deleting objects from the channel) |
+| | `reason` | Failure category, such as `s3_auth`, `grant_revoked`, `bucket_missing`, `dns`, `timeout` or `config_unreadable`; `unclassified` when it cannot be categorized. See FailureReason in the [API reference](../api/admin-channels.mdx) for every value |
+| | `detail` | The original error, usually the provider's or network library's English error message, with credentials removed and at most 200 characters |
+| `replication_failed` | `failed` | Number of replicas whose replication failed |
+| `channel_quota_exceeded` | `bytes` | Channel usage in bytes |
+| | `quota` | Alert threshold in bytes |
+| `backup_failed` | `code` | Error code: `no_healthy_channel` (no healthy channel), `backup_snapshot_failed` (the snapshot could not be taken), `backup_store_failed` (some channels were not written) or `backup_prune_failed` (every channel was written, but some could not prune old snapshots) |
+| | `detail` | Failure details; absent when `code` is `no_healthy_channel` |
+| | `snapshot`, `failed`, `total` | Only when `code` is `backup_store_failed` or `backup_prune_failed`: the snapshot file name, the number of channels that failed, and the number of channels this backup tried to write |
+
+If a channel is judged unhealthy before it has ever been checked, `params` is an empty object `{}`.
 
 ### Webhook
 
-With an `http` / `https` URL in **Settings → Runtime settings → Alerts & audit → Alert webhook URL**, every alert is POSTed as JSON (`Content-Type: application/json`) once when it **opens** and once when it **resolves**:
+With an `http` or `https` URL in **Settings → Runtime settings → Alerts & audit → Alert webhook URL**, every alert sends one POST request when it **opens** and one when it **resolves**, with a JSON body (`Content-Type: application/json`):
 
 ```json title="Opened"
 {
@@ -129,48 +157,70 @@ With an `http` / `https` URL in **Settings → Runtime settings → Alerts & aud
 
 | Field | Meaning |
 |---|---|
-| `kind` | Alert kind, see the table above |
-| `target` | Alert target (a channel name); empty string for `backup_failed` |
-| `message` | Description from the latest evaluation (in Chinese) |
-| `params` | Description parameters with string keys and values, per kind as listed above; an empty object `{}` when there are none, `null` for older alerts that have no description parameters |
+| `kind` | Alert kind; see [Alert kinds](#alert-kinds) |
+| `target` | Alert target (a channel name); an empty string for `backup_failed` |
+| `message` | Chinese description from the latest check |
+| `params` | Alert parameters; see [Alert parameters](#alert-parameters). An empty object `{}` when there are none |
 | `status` | `open` or `resolved` |
 | `opened_at` | When the alert opened, UTC, formatted `YYYY-MM-DD HH:MM:SS` |
 | `resolved_at` | When it resolved, same format; present only when `status` is `resolved` |
 
 Delivery rules:
 
-- any 2xx response counts as delivered; connection errors, timeouts (10 seconds) and non-2xx responses are retried on the next evaluation round until they succeed;
-- for any one alert, the opening is always delivered before the resolution; if an earlier alert for the same kind and target was not delivered this round, later transitions for that kind and target are held back and delivered in order on the next round, so the receiver never gets a new alert's opening before an old alert's resolution; alerts for other targets are not affected;
-- requests carry no signature or authentication header; if the receiver needs to verify the sender, put a secret in the URL (for example as a query parameter) and use `https`;
-- a transition that happens while no webhook is configured is marked as delivered and is not sent later, even if a webhook is configured afterwards;
-- the payload format is fixed; to post to a chat tool, put a small relay in between that converts the format.
+- Any 2xx response counts as delivered. Connection errors, timeouts (10 seconds) and non-2xx responses are retried on the next check until they succeed.
+- Transitions for the same kind and target are delivered in the order they happened: if an earlier one was not delivered, later ones wait and are delivered in order on the next check. The receiver therefore never gets a new alert's opening before an old alert's resolution. Alerts for other targets are not affected.
+- Requests carry no signature or authentication header. If the receiver needs to verify the sender, put a secret in the URL (for example as a query parameter) and use `https`.
+- A transition that happens while no webhook is configured counts as delivered and is not sent later, even if a webhook is configured afterwards.
+- The body format is fixed. To post to a chat tool, put a relay in between that converts the format.
 
 ## Logs
 
-- Logs go to standard error in Go's `log/slog` text format: each line starts with `time=`, `level=` and `msg=`, followed by `key=value` fields; messages are in Chinese. The level is fixed at INFO and above; there is no setting to change it.
+- Logs go to standard error in Go's `log/slog` text format: each line starts with `time=`, `level=` and `msg=`, followed by `key=value` fields. Messages are in Chinese.
+- The log level is fixed at INFO and above and cannot be changed.
 - To read them: `journalctl -u imgyoung` for systemd, `docker logs imgyoung` for Docker, `docker compose logs imgyoung` for Compose.
-- Credentials stay out of the logs: channel configuration parameters never appear in logs or error messages, the Cloudflare API token exists in plaintext only in memory, and audit entries for configuration changes only record `(已配置)` (set) or `(空)` (empty). Upload tokens and sessions are stored as hashes only. The one password ever logged is the factory password seeded on first start (or after a [password reset](./password-reset.mdx)), which is public anyway.
 
-Log lines worth knowing when troubleshooting:
+Credentials never appear in the logs:
+
+- channel configuration parameters never appear in any log line or error message;
+- the Cloudflare API token exists in plaintext only in memory;
+- audit entries for configuration changes record only `(已配置)` (set) or `(空)` (empty);
+- upload tokens and sessions are stored only as hashes.
+
+The only password that ever appears in the logs is the public factory password `imgyoung123`: the service prints it when it sets the factory password, on first start or on the restart after a [password reset](./password-reset.mdx).
+
+The tables below list the log lines most useful when troubleshooting, grouped by area.
+
+### Startup, runtime and alerts
 
 | Message | Meaning |
 |---|---|
 | `ImgYoung 已启动` | Startup finished; includes version, commit, actual listen address and data directory |
-| `库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把` | The database has no master key fingerprint and no ciphertext to check against, only data derived from the master key such as upload tokens and encrypted channels: the current key is used without recording a fingerprint, and it is checked once the database holds ciphertext |
-| `已生成主密钥文件,请立即备份……` | The data directory holds a brand-new database and no master key, so a new `master.key` was generated. Outside a first deployment this usually means the data directory path is wrong or the volume is not mounted |
-| `启动失败` with `err` containing `主密钥与数据库不符` or `找不到主密钥` | The current master key does not match the fingerprint in the database (when there is no fingerprint yet, the key is checked by whether it can decrypt any one piece of encrypted data in the database, and only failing on all of it is a mismatch), or the database already holds data that depends on the master key (ciphertext, or derived data such as upload tokens' S3 credentials and encrypted channels) while `IMGYOUNG_MASTER_KEY` is unset and `master.key` does not exist. Put the original master key back and start again |
-| `运行失败` | A runtime error after startup, such as the port already in use, an invalid listen address, the HTTP server exiting unexpectedly or the replication subsystem failing to start; `err` gives the cause, and the process then exits with status 1 |
-| `CDN purge 已启用(Cloudflare)` / `CDN purge 未启用……` | Whether CDN cache purging was configured at startup |
-| `渠道装载失败,本渠道跳过,健康检查时重试` | A channel's configuration could not be decrypted, its driver could not be built, or building it took more than 30 seconds (channels load in parallel, so an unreachable backend does not hold up startup; on a timeout `err` reads `构造后端未在时限内完成: context deadline exceeded`, or `构造后端未在时限内完成(同一配置上一次构造仍未结束): context deadline exceeded` when an earlier abandoned build of the same configuration is still running and this attempt fails as a timeout straight away. Both are categorized as `timeout`, and the channel list and alerts show only the innermost text `context deadline exceeded`); the channel shows as unhealthy with the load stage as where it failed (`stage` is `load`), and loading is retried on every health check |
+| `已生成主密钥文件,请立即备份……` | The data directory holds a brand-new database and no master key, so this start generated a new `master.key`. Outside a first deployment, this usually means the data directory path is wrong or the volume is not mounted |
+| `启动失败` with `err` containing `主密钥与数据库不符` | The current master key is not the one this database uses. Put the original key back and start again |
+| `启动失败` with `err` containing `找不到主密钥` | The database already uses a master key, but `IMGYOUNG_MASTER_KEY` is unset and there is no `master.key` in the data directory. Put the original key back and start again |
+| `运行失败` | A runtime error after startup, such as the port already in use, an invalid listen address, the HTTP server exiting unexpectedly or the replication subsystem failing to start. `err` gives the cause, and the process then exits with status 1 |
+| `CDN purge 已启用(Cloudflare)` / `CDN purge 未启用……` | Whether CDN cache purging was enabled at startup |
 | `告警开启` / `告警恢复` | An alert opened or resolved |
+
+### Channels
+
+| Message | Meaning |
+|---|---|
+| `渠道装载失败,本渠道跳过,健康检查时重试` | A channel's configuration could not be decrypted, its driver could not be created, or creating it took more than 30 seconds. The channel shows as unhealthy with loading as the failed stage (`stage` is `load`), and loading is retried on every health check. Channels load in parallel, so an unreachable backend does not slow down startup |
+| The same, with `err` reading `构造后端未在时限内完成: context deadline exceeded` | Loading took more than 30 seconds. If an earlier load of the same configuration is still running, `err` reads `构造后端未在时限内完成(同一配置上一次构造仍未结束): context deadline exceeded` instead. Both are categorized as `timeout`, and the channel list and alerts show only `context deadline exceeded` |
+| `渠道对账完成` | Result of the daily reconciliation GC, with fields `objects`, `bytes`, `foreign`, `orphans_deleted` and `phantoms_requeued`; see [Backup & restore](./backup.mdx#reconciliation-gc) for what they mean |
+| `渠道已清理完毕并删除` | A channel deleted with **Delete and purge** has been emptied and removed. `objects` is the number of image replicas deleted, `system_objects` the number of system objects deleted (metadata snapshots and probe leftovers included) |
+| `渠道已被直接移除,排空停止,剩余远端对象保留` | **Remove now** was chosen while the channel was draining, so the drain stopped: apart from the object being deleted at that moment, the remaining remote objects (snapshots included) are left in place. `objects` is the number of image replicas deleted before it stopped |
+
+### Backup and restore
+
+| Message | Meaning |
+|---|---|
 | `元数据库快照已备份` | A snapshot was written to a channel; one line per channel, with fields `channel`, `key` and `bytes` |
-| `快照写入渠道失败` | A snapshot could not be written to a channel, with fields `channel`, `key` and `err`; the other channels are written as usual |
-| `清理渠道上的旧快照失败` | The snapshot was written to this channel, but pruning snapshots beyond the retention count failed; fields `channel` and `err` |
-| `启动备份未完成` / `定时备份未完成` | This backup round failed; `err` matches the details of the `backup_failed` alert |
-| `渠道对账完成` | Result of the daily reconciliation GC, with fields `objects`, `bytes`, `foreign` (objects with no record whose key is in another format or that predate the channel's binding time; counted, never deleted), `orphans_deleted` and `phantoms_requeued`; see [Backup & restore](./backup.mdx) |
-| `渠道已清理完毕并删除` | A channel deleted with **Delete and purge** has been emptied and its record removed; fields `objects` (image replicas deleted) and `system_objects` (system objects deleted, metadata snapshots and deep check leftovers included) |
-| `渠道已被直接移除,排空停止,剩余远端对象保留` | An administrator chose **Remove now** while the channel was draining; the drain job stops, and apart from the object being deleted at that moment, the remaining remote objects (snapshots included) are left as they are; `objects` is the number of image replicas deleted before it stopped |
-| `收到停机请求,优雅停机后由进程管理器拉起` | A restore from snapshot was triggered in the admin console |
-| `发起恢复的请求已断开,暂存已撤回,不停机` | The request that started a restore went away before staging finished (the page was closed, the reverse proxy's read timeout hit); the restore stopped, and the service neither shuts down nor swaps the database |
+| `快照写入渠道失败` | A snapshot could not be written to a channel; the other channels are written as usual. Fields `channel`, `key` and `err` |
+| `清理渠道上的旧快照失败` | The snapshot was written to this channel, but pruning snapshots beyond the retention count failed. Fields `channel` and `err` |
+| `启动备份未完成` / `定时备份未完成` | This backup failed; `err` matches the details of the `backup_failed` alert |
+| `收到停机请求,优雅停机后由进程管理器拉起` | A restore from snapshot was started in the admin console; the service is about to stop and be restarted by the process manager |
+| `发起恢复的请求已断开,暂存已撤回,不停机` | The restore request was cut off before the snapshot had been downloaded and checked (the page was closed, the reverse proxy's read timeout hit); the restore was cancelled, the service keeps running and nothing changed |
 | `已用暂存快照换入元数据库,原库留存` | The snapshot was swapped in; includes where the previous database was kept |
-| `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收` | Follow-up after swapping in a snapshot; the `channels` field gives the number of channels reset; see [Backup & restore](./backup.mdx) |
+| `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收` | After the snapshot was swapped in, every channel's binding time was reset, so objects written to the channels after the snapshot are not deleted. `channels` is the number of channels reset; see [Backup & restore](./backup.mdx#reconciliation-gc) |

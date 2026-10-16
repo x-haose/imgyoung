@@ -39,7 +39,9 @@ Open `http://<server address>:8721/` in a browser (`http://localhost:8721/` on t
 |---|---|
 | `admin` | `imgyoung123` |
 
-The factory password is public. After the first sign-in you land on the "Set the admin password" page. Until the password is changed no other console page opens, and the server rejects every console API call other than signing out, reading your own account and changing the password (with 403). The new password needs at least 8 characters (counted as characters, not bytes, so each Chinese character counts as one); click "Save and sign in again", then sign in with the new password.
+The factory password is public. The first sign-in takes you straight to the **Set the admin password** page. Until the password is changed, no other console page opens, and the server answers every console API call except signing out, reading your own account and changing the password with 403.
+
+The new password needs at least 8 characters, and each Chinese character counts as one. Click **Save and sign in again**, then sign in with the new password.
 
 </Step>
 <Step>
@@ -51,15 +53,15 @@ Pick one: upload in the console, or issue an upload token and upload with curl.
 <Tabs items={['Console', 'curl']}>
 <Tab value="Console">
 
-1. Open "Images" in the sidebar and click "Upload".
+1. Open **Images** in the sidebar and click **Upload**.
 2. Drag images into the dialog, or press Ctrl / ⌘ + V to paste a screenshot from the clipboard. JPEG, PNG, GIF and WebP are accepted, up to 50 MB per image by default.
-3. When the upload finishes, close the dialog, click the image card to open "Image details", and under "Share link" pick **Markdown** next to "Copy as".
+3. When the upload finishes, close the dialog, click the image card to open **Image details**, and under **Share link** pick **Markdown** next to **Copy as**.
 
 </Tab>
 <Tab value="curl">
 
-1. Open "Upload tokens" in the sidebar, click "Issue token", enter `curl` as the purpose, leave the expiry at "Never", and click "Issue".
-2. Copy the token shown in the dialog; it starts with `imgy_`. It is shown only this once, and the dialog only closes after you tick "I have stored this secret safely".
+1. Open **Upload tokens** in the sidebar, click **Issue token**, enter `curl` as the purpose, leave the expiry at **Never**, and click **Issue**.
+2. Copy the token shown in the dialog; it starts with `imgy_`. It is shown only this once, and the dialog only closes after you tick **I have stored this secret safely**.
 3. Upload:
 
 ```bash title="Terminal"
@@ -95,14 +97,15 @@ Paste it into your blog or notes and the image shows up.
 
 <Callout type="info" title="Where the host name in the link comes from">
   Until the public site address (`base_url`) is configured, links are built from the address of the current request: if you opened the console via `localhost`, the copied link points to `localhost` and will not work on other machines.
-  To share links, open the console through its public domain or IP, or set `base_url` under "Settings → Runtime settings". See [Configuration](./configuration.mdx).
+  To share links, open the console through its public domain or IP, or set `base_url` under **Settings → Runtime settings**. See [Configuration](./configuration.mdx).
 </Callout>
 
 ## Next steps
 
 <Callout type="warn" title="Right now everything sits on one disk">
-  A fresh instance has only the built-in `local` channel, which stores images under `blobs/` in the data volume. Metadata snapshots are written to every healthy channel, so for now this disk holds the only copy. If it fails, the images and the snapshots are lost together, and the "Dashboard" warns "Your data only lives on this host".
-  Open "Storage channels" in the sidebar soon and click "New channel" to add an off-site object storage or cloud drive channel. Existing images are replicated to it automatically, and a snapshot is written there on the next scheduled backup or the next start; for a copy right away, click "Back up now" under "Settings → Backups & export". Once the new channel is healthy, the dashboard warning goes away.
+  A fresh instance has only the built-in `local` channel, which stores images under `blobs/` in the data volume. Metadata snapshots are written to every healthy channel, so for now this disk holds the only copy. If it fails, the images and the snapshots are lost together, and the **Dashboard** warns **Your data only lives on this host**.
+
+  Open **Storage channels** in the sidebar soon and click **New channel** to add an off-site object storage or cloud drive channel. Existing images are replicated to it automatically. A snapshot is written there on the next scheduled backup or the next start; for a copy right away, click **Back up now** under **Settings → Backups & export**. Once the new channel is healthy, the dashboard warning goes away.
 </Callout>
 
 - [Storage channels](./channels/index.mdx): add an off-site channel, set priority and encryption.

@@ -1,24 +1,28 @@
 ---
 title: Reverse proxy & HTTPS
-description: Put Caddy or Nginx in front of ImgYoung and get IMGYOUNG_TRUSTED_PROXIES, base_url and the upload size limit right.
+description: Put Caddy or Nginx in front of ImgYoung and get IMGYOUNG_TRUSTED_PROXIES, base_url, the upload size limit and the read timeout right.
 ---
 
 ## Why a reverse proxy
 
-ImgYoung listens on plain HTTP and does not terminate TLS. When serving the public internet, put a reverse proxy in front of it:
+ImgYoung serves plain HTTP and does not handle TLS. When serving the public internet, put a reverse proxy in front of it:
 
 - the proxy obtains certificates and serves HTTPS;
-- whether the session cookie gets `Secure`, and which scheme returned links use when `base_url` is not set, both come from the proxy's `X-Forwarded-Proto`;
-- the proxy blocks `/metrics` at the edge so metrics stay on the internal network;
-- ImgYoung itself can then listen on loopback only.
+- whether the session cookie gets `Secure`, and which scheme returned links use when `base_url` is not set, both depend on the `X-Forwarded-Proto` the proxy sends;
+- the proxy blocks `/metrics` at the entry point, so metrics are only scraped from the internal network;
+- ImgYoung itself only needs to listen on loopback and is not exposed to the internet directly; see [Listen on loopback only](#listen-on-loopback-only).
 
 ## Caddy
 
-Caddy obtains and renews certificates automatically, sets `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host` by default, and forwards `Host` unchanged.
+Caddy obtains and renews certificates automatically, sets `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` by default, and forwards `Host` unchanged.
 
 <include cwd lang="text" meta='title="deploy/Caddyfile"'>../deploy/Caddyfile</include>
 
-By default Caddy trusts no upstream proxy: it drops any `X-Forwarded-For` the client sent and fills in only the peer it is directly connected to. With a CDN in front of Caddy that peer is a CDN node, so ImgYoung never sees the visitor's address. Declare the CDN's origin-pull ranges as trusted in the Caddyfile's global options; Caddy then keeps the forwarding headers the CDN sends and appends to them:
+### With a CDN in front of Caddy
+
+By default Caddy trusts no upstream proxy: it drops any `X-Forwarded-For` the client sent and fills in only the address directly connected to it. With a CDN in front of Caddy, that address is a CDN node, so ImgYoung never sees the visitor's real address.
+
+Declare the CDN's origin-pull ranges as trusted in the Caddyfile's global options. Caddy then keeps the forwarding headers the CDN sends and appends the address it sees:
 
 ```text title="Caddyfile global options"
 {
@@ -28,6 +32,8 @@ By default Caddy trusts no upstream proxy: it drops any `X-Forwarded-For` the cl
 }
 ```
 
+Add the CDN's origin-pull ranges to `IMGYOUNG_TRUSTED_PROXIES` as well; see [Values by deployment](#values-by-deployment) below.
+
 The Nginx example's `$proxy_add_x_forwarded_for` already appends, so it does not have this problem.
 
 ## Nginx
@@ -36,39 +42,52 @@ The Nginx example's `$proxy_add_x_forwarded_for` already appends, so it does not
 
 None of the `proxy_set_header` lines in the example are optional:
 
-- `Host $host`: S3 signature verification covers the `Host` header, so a proxy that rewrites it breaks S3 clients with signature mismatches;
-- `X-Forwarded-For`: without it every request looks like it came from Nginx itself; see the next section;
-- `X-Forwarded-Proto` and `X-Forwarded-Host`: ImgYoung reads their first value, so overwrite them with `proxy_set_header` instead of appending your value after whatever the client sent.
+- `Host $host`: signature verification on the S3-compatible API covers the `Host` header, so a proxy that rewrites it causes signature mismatches for S3 clients.
+- `X-Forwarded-For`: without it, every request looks like it came from Nginx itself; see the next section.
+- `X-Forwarded-Proto` and `X-Forwarded-Host`: ImgYoung reads only their first value, so overwrite them with `proxy_set_header` instead of appending your value after whatever the client sent.
 
 ## Trusted proxies: IMGYOUNG_TRUSTED_PROXIES
 
-ImgYoung derives three things from each request: the **client address** (the login rate limit key and the `/metrics` allow check), **whether the first hop was HTTPS** (the session cookie's `Secure` flag), and the **public host** (for returned links when `base_url` is not set). `X-Forwarded-*` headers are honored only when the TCP peer address is inside `IMGYOUNG_TRUSTED_PROXIES`; when the variable is unset, the default `127.0.0.0/8,::1/128` trusts a proxy on the same host only. Setting it to an empty string (or only whitespace) trusts no proxy at all, so forwarding headers are always ignored; the **Bootstrap configuration** card in the admin console then shows **Empty: forwarded headers are never trusted**.
+ImgYoung determines three things from each request:
+
+| What | Used for |
+|---|---|
+| Client address | Login rate limiting; access control for `/metrics` |
+| Whether it arrived over HTTPS | Whether the session cookie gets `Secure` |
+| Public host | Building returned links when `base_url` is not set |
+
+ImgYoung honors `X-Forwarded-*` headers only when whatever connects to it directly (the TCP peer) is inside `IMGYOUNG_TRUSTED_PROXIES`.
+
+- When the variable is unset, the default `127.0.0.0/8,::1/128` trusts only a proxy on the same host.
+- Setting it to an empty string (or only whitespace) trusts no proxy at all, so forwarding headers are always ignored. The **Bootstrap configuration** card in the admin console then shows **Empty: forwarded headers are never trusted**.
+
+### Values by deployment
+
+| Deployment | Peer address ImgYoung sees | `IMGYOUNG_TRUSTED_PROXIES` |
+|---|---|---|
+| Proxy and ImgYoung (binary or systemd) on the same host | `127.0.0.1` or `::1` | The default |
+| ImgYoung in Docker, proxy on the host | The Docker bridge gateway, not loopback | The gateway's network, e.g. `172.16.0.0/12`; check the actual gateway with `docker network inspect` |
+| Proxy and ImgYoung as two containers in one Compose project | The proxy container's address on the project network | The project network's subnet |
+| Proxy on another host | The proxy host's internal address | That address or its network |
+| A CDN in front of the proxy | The proxy's address; the rightmost `X-Forwarded-For` hop is a CDN node | The proxy's network plus the CDN's origin-pull ranges, so the client address resolves to the real visitor. If the proxy is Caddy, Caddy must also trust the CDN's origin-pull ranges via `trusted_proxies`; see above |
+
+<Callout type="warn" title="What a wrong trust setting does">
+If the peer is outside the trusted networks, every proxied request appears to come from the proxy itself, so all visitors share one login rate limit. If the proxy's address also happens to be in `IMGYOUNG_METRICS_ALLOW` (Docker networks are by default) and the proxy forwards `/metrics`, anyone can read the metrics. A proxy that does not set `X-Forwarded-For` has the same effect.
+</Callout>
+
+### How forwarding headers are resolved
 
 When the peer is trusted:
 
 1. All addresses from every `X-Forwarded-For` header are collected in order, split on commas; entries that do not parse are skipped.
-2. They are checked **from right to left**, skipping addresses inside trusted networks. The first address outside them is the client.
-3. If every hop is inside a trusted network (an internal client), the leftmost one is used; if the header is missing or has no usable address, the peer address is used.
-4. The first value of `X-Forwarded-Proto` decides HTTPS: `https` (case-insensitive) means secure.
+2. They are checked **from right to left**, skipping addresses inside trusted networks. The first address outside them is the client address.
+3. If every address is inside a trusted network (an internal client), the leftmost one is used; if the header is missing or has no usable address, the peer address is used.
+4. The first value of `X-Forwarded-Proto` decides HTTPS: `https` (case-insensitive) means the request arrived over HTTPS.
 5. The first value of `X-Forwarded-Host` is used as the public host.
 
-When the peer is not trusted, all `X-Forwarded-*` headers are ignored: the client is the TCP peer, and HTTPS is judged from the connection itself (always false, since ImgYoung does not terminate TLS).
+When the peer is not trusted, all `X-Forwarded-*` headers are ignored: the client address is the peer, and since ImgYoung does not handle TLS, the request never counts as HTTPS.
 
-**Why spoofing does not work.** Each proxy appends the peer it saw to the end of `X-Forwarded-For`; a client can only control the leftmost part. A client at `203.0.113.7` sending `X-Forwarded-For: 1.2.3.4` arrives through a local Nginx as `1.2.3.4, 203.0.113.7`; scanning from the right, the first untrusted address is `203.0.113.7`, and the forged `1.2.3.4` is ignored. A request that connects to ImgYoung directly has an untrusted peer, so none of its forwarding headers are believed.
-
-Values by topology:
-
-| Topology | Peer address ImgYoung sees | `IMGYOUNG_TRUSTED_PROXIES` |
-|---|---|---|
-| Proxy and ImgYoung (binary or systemd) on the same host | `127.0.0.1` / `::1` | The default |
-| ImgYoung in Docker, proxy on the host | The Docker bridge gateway, not loopback | The gateway's network, e.g. `172.16.0.0/12`; check the actual gateway with `docker network inspect` |
-| Proxy and ImgYoung as two containers in one Compose project | The proxy container's address on the project network | The project network's subnet |
-| Proxy on another host | The proxy host's internal address | That address or its network |
-| A CDN in front of the proxy | The proxy; the rightmost `X-Forwarded-For` hop is a CDN node | The proxy's network plus the CDN's origin-pull ranges, so the client resolves to the real visitor. If the proxy is Caddy, Caddy must also trust the CDN's origin-pull ranges via `trusted_proxies`; see above |
-
-<Callout type="warn" title="What a wrong trust setting looks like">
-If the peer is outside the trusted networks, every proxied request appears to come from the proxy itself: all visitors share one login rate limit, and if the proxy's address happens to be in `IMGYOUNG_METRICS_ALLOW` (Docker networks are by default) and the proxy forwards `/metrics`, anyone can read the metrics. A proxy that does not set `X-Forwarded-For` has the same effect.
-</Callout>
+**A forged `X-Forwarded-For` has no effect.** Each proxy appends the peer it saw to the end of `X-Forwarded-For`, so a client can only control the leftmost part. For example, a client at `203.0.113.7` sending `X-Forwarded-For: 1.2.3.4` arrives through Nginx on the same host as `1.2.3.4, 203.0.113.7`. Scanning from the right, the first untrusted address is `203.0.113.7`, and the forged `1.2.3.4` is ignored. A request that connects to ImgYoung directly has an untrusted peer, so none of its forwarding headers are believed.
 
 ## Listen on loopback only
 
@@ -95,7 +114,7 @@ sudo systemctl restart imgyoung
 </Tab>
 <Tab value="Docker">
 
-Keep the default listen address inside the container and publish the port on host loopback only:
+Keep the default listen address inside the container and publish the port on the host's loopback address only:
 
 ```bash title="Terminal"
 docker run -d --name imgyoung --restart unless-stopped \
@@ -118,33 +137,37 @@ services:
       IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
 ```
 
-If the proxy runs in the same Compose project, drop `ports` entirely and let the proxy reach `imgyoung:8721`.
+If the proxy runs in the same Compose project, you can drop `ports` and let the proxy reach `imgyoung:8721` directly.
 
 </Tab>
 </Tabs>
 
 ## When base_url is required
 
-With `base_url` (**Settings → Runtime settings → Access & links → Public site address**) empty, ImgYoung derives the public address from each request: the scheme from the HTTPS check, the host from `X-Forwarded-Host` when the peer is trusted, otherwise from `Host`. Set it explicitly when:
+`base_url` is **Settings → Runtime settings → Access & links → Public site address** in the admin console. When it is empty, ImgYoung derives the public address from each request: the scheme from whether the request arrived over HTTPS, and the host from `X-Forwarded-Host` when the peer is trusted, otherwise from `Host`.
 
-- **the public domain differs from what reaches ImgYoung**: a CDN pulls from a different hostname, the proxy rewrites `Host` without sending `X-Forwarded-Host`, the proxy is not trusted, and so on. Otherwise the `url` returned by uploads and the endpoint and link prefix in the **S3 client settings** dialog are all wrong. Share links copied in the admin console are not derived by the server: they use `base_url` when it is set and otherwise the site address in the browser's address bar, so these situations do not affect them.
-- **CDN cache purging is enabled**: purge jobs run in the background with no request to derive from, so they use `base_url` only; see [CDN](./cdn.mdx).
-- **one-click cloud drive authorization is used**: the callback URL must match what is registered with the provider character for character and is built from `base_url` only; see [Cloud drives](../channels/cloud-drives.mdx).
+You must set it when:
+
+- **the public domain differs from what reaches ImgYoung**: for example a CDN pulls from a different hostname, the proxy rewrites `Host` without sending `X-Forwarded-Host`, or the proxy is not trusted. Otherwise the `url` returned by uploads and the endpoint and link prefix in the **S3 client settings** dialog are all wrong.
+- **CDN cache purging is enabled**: purging runs in the background with no request to derive from, so it uses `base_url` only. See [CDN](./cdn.mdx).
+- **one-click authorization for cloud drive channels is used**: the callback URL must match what is registered with the provider exactly, and it is built from `base_url` only. See [Cloud drives](../channels/cloud-drives.mdx).
+
+Share links copied in the admin console are not affected by any of this: they use `base_url` when it is set, and otherwise the site address in the browser's address bar.
 
 ## Keep the upload size limit in step with the proxy
 
-ImgYoung's max image size (`max_upload_mb`, 50 MB out of the box) applies to the file itself, so a file exactly at the limit is accepted; the whole request body may be up to the max image size plus 64 KiB, which leaves room for multipart boundaries and short fields such as `exif_policy` and `ttl`. The proxy's body limit should be at least that:
+The **Max image size** setting (`max_upload_mb`, 50 MB by default) applies to the file itself, so a file exactly at the limit is accepted. The whole request body may be up to 64 KiB larger than the max image size, which leaves room for multipart boundaries and fields such as `exif_policy` and `ttl`. The proxy's body limit must be at least that:
 
 - Nginx allows only 1 MB by default; the example sets `client_max_body_size 60m;`.
-- The Caddy example sets no body limit; if you add `request_body` with `max_size`, keep it at or above the max image size plus 64 KiB.
+- The Caddy example sets no body limit. If you set `max_size` with `request_body`, keep it at or above the max image size plus 64 KiB.
 
-When you raise the max image size in the admin console, raise the proxy limit too, or large images are rejected with 413 by the proxy before they ever reach ImgYoung.
+When you raise the max image size in the admin console, raise the proxy's limit too. Otherwise large images are rejected by the proxy (413) and never reach ImgYoung.
 
 ## Leave enough read timeout for snapshot restores
 
-When you **Restore** a snapshot in the admin console, the request waits until the snapshot has been fetched from the channel and staged; if the request goes away before that, the restore stops and the service does not shut down; see [Backup & restore](./backup.mdx). The proxy's read timeout must therefore exceed the time it takes to fetch the snapshot.
+When you **Restore** a snapshot in the admin console, the request returns only after the snapshot has been downloaded from the channel and checked. If the request is cut off before then, the restore is cancelled and the service keeps running. The proxy's read timeout must therefore be longer than it takes to download the snapshot:
 
-- **Nginx**: `proxy_read_timeout` defaults to 60 seconds. The example above sets it to `600s` inside `location /`; adjust it to your snapshot size and channel speed.
-- **Cloudflare**: when proxied through Cloudflare, the wait for the origin's response is limited to 125 seconds (a timeout returns 524), and only Enterprise plans can raise it. If fetching the snapshot takes longer, you cannot restore through Cloudflare from the admin console: open the admin console on the origin directly and restore there, or put the snapshot in place by hand following [Disaster recovery](./backup.mdx#disaster-recovery-after-losing-the-host).
+- **Nginx**: `proxy_read_timeout` defaults to 60 seconds. The example above sets it to `600s` inside `location /`; adjust it to your snapshot size and channel speed. On a timeout (504), the restore has been cancelled and nothing changed.
+- **Cloudflare**: the wait for the origin's response is limited to 125 seconds (a timeout returns 524), and only Enterprise plans can raise it. On a timeout it is unknown whether the restore completed: if Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own. If downloading the snapshot takes longer than 125 seconds, you cannot restore through Cloudflare from the admin console: open the admin console on the origin directly and restore there, or put the snapshot in place by hand following [disaster recovery](./backup.mdx#disaster-recovery-after-losing-the-host).
 
-An Nginx read timeout (504) closes the connection to the origin, so the restore is aborted and the admin console shows **The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again.** Whether Cloudflare closes the connection to the origin on a timeout (524) is not documented, so the restore may still complete on the origin and restart the service afterwards; the admin console shows **Cloudflare timed out (524) before the restore returned. If Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own; otherwise it was aborted and nothing changed. For a snapshot that takes longer than 125 seconds to fetch, open the admin console on the origin directly and restore again.**
+See [Backup & restore](./backup.mdx#restoring-behind-a-reverse-proxy).

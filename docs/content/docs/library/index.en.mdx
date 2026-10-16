@@ -3,9 +3,9 @@ title: Using it as a Go library
 description: ImgYoung's storage layer ships as three public packages you can go get — a driver interface, an rclone implementation, and multi-store failover primitives.
 ---
 
-ImgYoung's multi-store reads and writes, channel encryption, and failover are exposed as public Go packages, and the
-application itself reaches storage through these same packages. If your own Go project needs to write one object to
-several stores, fall back automatically when reading, or check whether a store is usable, you can reuse them directly.
+ImgYoung's multi-store reads and writes, channel encryption, and failover ship as three public Go packages, and the
+application itself reaches storage through the same packages. If your Go project needs to write one object to several
+stores, fall back to a working store when reading, or check whether a store is usable, you can reuse them directly.
 
 ## The three packages
 
@@ -20,9 +20,9 @@ store/failover ──→ store/driver ←── store/rclone ──→ github.co
 ```
 
 - `store/driver` imports neither rclone nor any concrete backend. You can implement `Driver` yourself and never touch rclone.
-- `store/rclone` is an optional implementation: rclone is compiled in only if you import it. It registers every
-  rclone backend, so `Backend` accepts any backend name rclone supports.
-- `store/failover` works purely against the `driver.Driver` interface and treats rclone drivers and your own drivers the same way.
+- `store/rclone` is an optional implementation; rclone is compiled in only if you import it. It registers every rclone
+  backend, so `Backend` accepts any backend name rclone supports.
+- `store/failover` works only against the `driver.Driver` interface, so it accepts rclone drivers and your own drivers alike.
 
 None of the three packages depend on the application's `internal/` code; a lint rule (depguard) enforces that boundary.
 
@@ -36,57 +36,60 @@ go get github.com/x-haose/imgyoung/store/failover@latest
 go get github.com/x-haose/imgyoung/store/rclone@latest
 ```
 
-The module's `go.mod` declares Go 1.26.9; your toolchain must be at least that version.
+The module's `go.mod` declares Go 1.26.9, so your toolchain must be at least that version.
 
-## One module, only the packages you use get compiled
+## Only the packages you import are compiled
 
-`store/` lives in the same module as the application, `github.com/x-haose/imgyoung`; it is not split into a separate
-module, because a separate module would need `replace` directives to tie the two together during development in the repository. Go compiles only imported packages: if you import just `store/driver` and `store/failover`, neither rclone nor
-any application code ends up in your binary.
+`store/` lives in the same module as the application, `github.com/x-haose/imgyoung`. Go compiles only imported
+packages: if you import just `store/driver` and `store/failover`, neither rclone nor any application code ends up in
+your binary.
 
-The size difference is substantial. A minimal program that prints one line, built on darwin/arm64 (not stripped):
+The difference in binary size is large. A minimal program that prints one line, built on darwin/arm64 (not stripped):
 
 | Imported package | Binary size |
 |---|---|
 | `store/failover` (pulls in `store/driver`) | about 2.7 MB |
 | `store/rclone` | about 100 MB |
 
-The second one is large because `store/rclone` imports rclone's `backend/all`, which registers every backend at once.
+`store/rclone` is large because it imports rclone's `backend/all`, which registers every backend at once.
 
 <Callout type="info" title="Dependency versions can be raised">
 Once you import any `store` package, this module joins your dependency graph, and the module versions listed in its
 `go.mod` take part in Go's minimal version selection (MVS). If your project also depends on one of those modules (the
-AWS SDK, `golang.org/x/...`, and so on), its version may be raised to at least what this module requires. This only
-affects version selection; what gets compiled, and how large the binary is, still depends only on the packages you import.
+AWS SDK, `golang.org/x/...`, and so on), its version may be raised to at least what this module requires. Only version
+selection is affected: what gets compiled, and how large the binary is, still depends only on the packages you import.
 </Callout>
 
 ## Compatibility promise
 
-Exported identifiers in all three packages stay backward compatible within major version v1: types, functions,
-methods, fields, and sentinel errors will not be removed or change signature.
+This module follows semantic versioning. Versions before v1.0.0 may include incompatible changes, so read the release
+notes before upgrading. From v1.0.0 on, exported identifiers in all three packages stay backward compatible within a
+major version: types, functions, methods, fields, and sentinel errors will not be removed or change signature.
 
-- Error message text is written in Chinese; do not depend on its content. Classify errors with `errors.Is` against the
-  exported sentinels (`driver.ErrNotFound`, `failover.ErrUnavailable`, and so on).
+- Error messages are in Chinese and their text is not covered by the promise, so do not depend on it. Classify errors
+  with `errors.Is` against the exported sentinels, such as `driver.ErrNotFound` and `failover.ErrUnavailable`.
 - Backend parameter names and behavior in `store/rclone` come from rclone itself and follow the rclone version pinned in
   this module's `go.mod`.
 - Packages under `internal/` cannot be imported from outside the module (a Go rule) and are not covered.
 
-## What the library does not include
+## What you build yourself
 
 `store` only performs one operation against an ordered list of drivers. It keeps no state and runs nothing in the
-background. The following pieces are implemented in the application, layered on top of the same primitives; if your
-project needs them, you build them yourself:
+background. The application builds the following on top of the same primitives; if your project needs them, you build
+them yourself:
 
-| Capability | Description | Where the application implements it |
-|---|---|---|
-| Replica state persistence | Which drivers hold a copy of which object. `failover.Write` only returns the outcome of each attempt; recording it is up to you | `blob_channels` table |
-| Asynchronous replication | Return once N copies are written and fill in the remaining drivers in the background. See [Failover · Building your own replication](./failover.mdx#replication) | `internal/core/replication` |
-| Reconciliation | Periodically `List` each store, compare against your records in both directions, delete orphans, and re-copy missing replicas | `internal/core/replication` |
-| Scheduling | Health check intervals, retries with backoff, a task queue | `cmd/imgyoung`, the River task queue |
-| Driver instance management | Rebuild a driver and `Close` the old one when its configuration changes; keep health state and switching policy | `internal/core/channel` |
-| Cloud drive authorization | The library only writes back refreshed tokens; obtain the initial token with `rclone authorize` | `internal/core/channel` |
+| Capability | Description |
+|---|---|
+| Replica state persistence | Which drivers hold a copy of which object. `failover.Write` only returns the outcome of each attempt; recording it is up to you |
+| Asynchronous replication | Return once N copies are written and fill in the remaining drivers in the background. See [Failover · Building your own replication](./failover.mdx#replication) |
+| Reconciliation | Periodically `List` each store, compare against your records in both directions, delete orphans, and re-copy missing replicas |
+| Scheduling | Health check intervals, retries with backoff, a task queue |
+| Driver instance management | Rebuild a driver and `Close` the old one when its configuration changes; keep health state and decide the switching policy |
+| Cloud drive authorization | The library only writes back refreshed tokens; obtain the initial token with `rclone authorize` |
 
-For how the application puts these pieces together, see [Architecture](../architecture.mdx).
+The application's implementations live in `internal/core/replication` (replication and reconciliation) and
+`internal/core/channel` (driver management, health checks, and cloud drive authorization), and can serve as a
+reference. For how these pieces fit together, see [Architecture](../architecture.mdx).
 
 ## Next steps
 

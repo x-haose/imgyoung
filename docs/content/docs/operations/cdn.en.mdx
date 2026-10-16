@@ -1,84 +1,103 @@
 ---
 title: CDN
-description: Putting a CDN in front of ImgYoung — cache headers, WebP negotiation and Vary, cache keys for on-demand processing, Cloudflare cache purging, and how redirect mode and hotlink protection behave behind a CDN.
+description: Putting a CDN in front of ImgYoung — the recommended setup, cache headers, WebP negotiation and cache keys, Cloudflare cache purging, and how redirect mode and hotlink protection behave behind a CDN.
 ---
 
 ## Recommended setup: proxy mode plus a CDN
 
-Let the CDN pull from ImgYoung (through your [reverse proxy](./reverse-proxy.mdx)) and keep the access mode at `proxy`:
+Let the CDN pull from ImgYoung (through your [reverse proxy](./reverse-proxy.mdx)) and keep the access mode at `proxy`. This way:
 
-- ImgYoung reads image bytes from the channels and fails over between them on each origin pull, so the CDN sees one stable origin;
-- on-demand processing (`?w=`, `?format=`) and WebP negotiation keep working, and the CDN caches the results;
-- the public domain is the CDN's, so set `base_url` in the admin console (**Settings → Runtime settings → Access & links → Public site address**), and add the CDN's origin-pull ranges to `IMGYOUNG_TRUSTED_PROXIES` so login rate limiting counts real visitors; with the Caddy example shipped with the docs, also give Caddy the CDN's origin-pull ranges as `trusted_proxies`; see [Reverse proxy & HTTPS](./reverse-proxy.mdx).
+- ImgYoung reads images from the channels, and if a channel fails, origin pulls move to another channel right away, so the CDN always sees one stable origin;
+- on-demand processing (`?w=`, `?format=`) and WebP negotiation keep working, and the CDN caches the results.
 
-Cache only the image routes `/i/*` and `/o/*`; mark `/api/*` and `/s3/*` as not cacheable. The admin console's `index.html` is served with `no-cache`, and files under `/assets/` have content hashes in their names and a one-year cache lifetime, so the CDN's default rules are fine for them.
+Then configure the following:
+
+1. **Public site address**: the public domain is the CDN's, so enter it under **Settings → Runtime settings → Access & links → Public site address** (`base_url`) in the admin console.
+2. **Trusted proxies**: add the CDN's origin-pull ranges to `IMGYOUNG_TRUSTED_PROXIES` so login rate limiting counts real visitors. With the Caddy example shipped with the docs, also add these ranges to Caddy's `trusted_proxies`. See [Reverse proxy & HTTPS](./reverse-proxy.mdx).
+3. **What to cache**: cache only the image routes `/i/*` and `/o/*`, and mark `/api/*` and `/s3/*` as not cacheable. The CDN's default rules are fine for the admin console: `index.html` is served with `no-cache`, and files under `/assets/` have content hashes in their names and a one-year cache lifetime.
+4. **Cache key**: cache separately per `Accept`, and keep only `w` and `format` in the query string; see [WebP negotiation and Vary](#webp-negotiation-and-vary) and [Processing parameters and cache keys](#processing-parameters-and-cache-keys) below.
 
 ## Cache headers
 
-Responses from the image routes:
+The image routes send these headers:
 
 | Response | `Cache-Control` | `ETag` | `Vary` |
 |---|---|---|---|
-| Original under `/i/<short ID>` | `public, max-age=31536000, immutable` | `"<sha256>"` | `Accept` when a JPEG / PNG / WebP is requested without `format` (or with `format=auto`) |
-| Variant under `/i/<short ID>` (resized or converted) | same | `"<sha256>-<width>-<format>"`, width `0` when not resized | `Accept` when the target format was negotiated |
-| Original or variant under a `/o/` alias | `public, no-cache` | same as above | same as above |
-| Original served as a fallback after processing failed | `no-store` | none | none |
-| `If-None-Match` matches | 304 with the matching `Cache-Control`, `ETag` and `Vary` | | |
-| 302 (`redirect` mode) | `no-store` | none | none |
-| Invalid parameters (400), hotlink rejection (403), not found or expired (404), metadata lookup failure (500, retryable) | none | none | none |
+| Original under `/i/<short ID>` | `public, max-age=31536000, immutable` | `"<sha256>"` | `Accept` when a JPEG, PNG or WebP is requested without `format` (or with `format=auto`) |
+| Variant under `/i/<short ID>` (resized or converted) | Same as above | `"<sha256>-<width>-<format>"`, with width `0` when not resized | `Accept` when the target format was negotiated |
+| Original or variant under `/o/` | `public, no-cache` | Same as above | Same as above |
+| Original served instead when processing failed | `no-store` | None | None |
+| `If-None-Match` matches (304) | Same as the matching 200 response | Same | Same |
+| 302 (`redirect` mode) | `no-store` | None | None |
+| Invalid parameters (400), hotlink rejection (403), not found or expired (404), metadata lookup failure (500, retryable), no channel can read the image (503) | None | None | None |
 
-Originals also carry `Last-Modified` (the upload time). The content behind `/i/<short ID>` does not change, which is why it gets a one-year immutable lifetime. The one exception is merging similar images: the short ID of the image that is not kept is pointed at the kept image, so its content changes. A merge does not trigger cache purging, so CDNs and browsers keep serving the old content for as long as it stays cached (up to a year) — the two images are near-duplicates anyway. If you need it consistent right away, purge that URL on the CDN by hand.
+Originals also carry `Last-Modified`, set to the upload time.
 
-`/o/<user ID>/<object key>` is an alias chosen by an S3 client, and uploading again with the same object key points it at the new image. Its responses may therefore be cached but must be revalidated with the ETag before each use: an unchanged image gets 304, a re-pointed alias gets the new image, a deleted one gets 404. Behind a CDN, `/i/` links cache better.
+The content behind `/i/<short ID>` never changes, which is why it is cached for a year. The one exception is when an administrator merges two images under **Duplicates**: from then on, the short ID of the merged-away image returns the image that was kept. A merge does not trigger cache purging, so CDNs and browsers keep returning the pre-merge image for as long as it stays cached (up to a year). If you need the change to show right away, purge that URL on the CDN by hand. See [Lifecycle and deduplication](../guides/lifecycle.mdx#deduplication).
+
+`/o/<user ID>/<object key>` is the address S3 clients use, under an object key of their choosing. Uploading again with the same object key points it at the new image, so its responses may be cached but must be revalidated with the ETag before each use: an unchanged image gets 304, a re-pointed key gets the new image, and a deleted image gets 404. When sharing through a CDN, `/i/` links cache better.
 
 ## WebP negotiation and Vary
 
-When a JPEG / PNG image is requested without a `format` parameter (or with `format=auto`), and the `Accept` header contains `image/webp` and `webp` is among the target formats, the response is a WebP variant; otherwise it is the original format. In other words, **the same URL returns different formats depending on `Accept`**, and both responses (304s included) carry `Vary: Accept`.
+When a JPEG or PNG image is requested without a `format` parameter (or with `format=auto`):
 
-The CDN must cache separately per `Accept` (by honoring `Vary: Accept` or adding `Accept` to the cache key); otherwise a cached WebP may be sent to clients that cannot display it. Cloudflare lets you configure `Vary` handling in Cache Rules; for other CDNs, check their documentation. If your CDN cannot do this, remove `webp` under **On-demand processing → Target formats** in the admin console: negotiation stops, at the cost of `?format=webp` no longer being accepted.
+- if the `Accept` header contains `image/webp` and `webp` is among the target formats, the response is a WebP variant;
+- otherwise it is the original format.
+
+In other words, **the same URL returns different formats depending on `Accept`**. These responses (304s included) all carry `Vary: Accept`.
+
+The CDN must cache separately per `Accept`, either by honoring `Vary: Accept` or by adding `Accept` to the cache key. Otherwise a cached WebP may be sent to clients that cannot display it. Cloudflare lets you configure `Vary` handling in Cache Rules; for other CDNs, check their documentation.
+
+If your CDN cannot do this, remove `webp` under **Settings → Runtime settings → On-demand processing → Target formats** in the admin console. Negotiation then stops, but `?format=webp` also gets 400.
 
 ## Processing parameters and cache keys
 
-- `w` must be one of the width tiers and `format` one of the target formats or `auto`; anything else gets 400. This check comes first and does not depend on the original's format: an original that is never processed, such as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones. Widths are accepted only in canonical form (no leading zeros or sign; `?w=0400` gets 400) and `w` and `format` may each appear at most once (`?w=400&w=1` gets 400), so each width tier and each target format has exactly one spelling, and the allowlist bounds how many variants an image can have.
-- ImgYoung ignores any other query parameter, but the CDN's default cache key includes it: appending a random parameter bypasses the cache and hits the origin. Restrict the cache key's query string to `w` and `format`.
-- Always write the parameters in the order `?w=…&format=…`. Cache purging only clears URLs in that order (see below); a different order is a different cache entry as far as the CDN is concerned.
+- **Validation**: `w` must be one of the **Width tiers** and `format` one of the **Target formats** or `auto`; anything else gets 400. This check comes first and does not depend on the original's format: an original that is never processed, such as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones.
+- **One spelling each**: widths are accepted only in canonical form, without leading zeros or a sign (`?w=0400` gets 400), and `w` and `format` may each appear at most once (`?w=400&w=1` gets 400). Each width tier and each target format has exactly one spelling, so an image can only have a limited number of variants.
+- **Other query parameters**: ImgYoung ignores them, but the CDN's default cache key includes them, so appending any parameter bypasses the cache and hits the origin. Restrict the cache key's query string to `w` and `format`.
+- **Parameter order**: always write `?w=…&format=…`. Cache purging only clears URLs in that order (see below); a URL with a different order is a separate cache entry on the CDN.
 
 ## Cloudflare cache purging
 
-After an image is deleted, CDN edges keep serving its `/i/` links under the one-year cache lifetime. With Cloudflare cache purging configured, ImgYoung clears the edge cache when an image is deleted.
+After an image is deleted, CDN edges keep serving its `/i/` links for the rest of the one-year cache lifetime. With Cloudflare cache purging configured, ImgYoung clears these entries when it deletes an image.
 
-Configure three settings under **Settings → Runtime settings**:
+Fill in three settings under **Settings → Runtime settings** in the admin console:
 
-| Setting | Where | Notes |
+| Setting | Group | Notes |
 |---|---|---|
-| Cloudflare Zone ID | **CDN cache purge** group | ID of the zone your site is in |
-| Cloudflare API token | **CDN cache purge** group | Needs the Cache Purge permission for that zone; stored encrypted with the master key and never shown again |
-| Public site address (`base_url`) | **Access & links** group | Used to build the public URLs to purge; must match the domain on the CDN |
+| Cloudflare Zone ID | **CDN cache purge** | ID of the zone your site is in |
+| Cloudflare API token | **CDN cache purge** | Needs the Cache Purge permission for that zone. Stored encrypted with the master key and never shown again after saving |
+| Public site address (`base_url`) | **Access & links** | Used to build the public URLs to purge; must match the domain on the CDN |
 
-With all three set, the group shows **Purge enabled**; if any is missing, nothing is purged. The process also logs the purge state when it starts. Changes apply on save without a restart.
+With all three filled in, the group title shows **Purge enabled**; if any is missing, nothing is purged. Changes apply as soon as you save, without a restart. The service also logs whether purging is enabled when it starts.
 
-**When it fires**: the moment an image reference is deleted, whatever the source — deletion in the admin console (single or batch), `DeleteObject` on the S3 endpoint, or expiry of its lifetime. Purging does not wait for the delete grace period or for the channel objects to be removed. Images re-pointed by a deduplication merge are not purged.
+Purging works as follows:
 
-**What gets purged**: `<base_url>/i/<short ID>`, plus for every variant that was actually generated for the image either `?w=<width>` and `?w=<width>&format=<format>` (resized variants) or `?format=<format>` (format-only variants).
+| Aspect | Details |
+|---|---|
+| When | As soon as an image record is deleted, whether by deletion in the admin console (single or batch), `DeleteObject` on the S3-compatible API, or expiry. Purging does not wait for the delete grace period or for the channel objects to be removed |
+| Which URLs | `<base_url>/i/<short ID>`, plus the URL of every variant actually generated for the image: `?w=<width>` and `?w=<width>&format=<format>` for resized variants, `?format=<format>` for format-only variants |
+| How | A background job calls Cloudflare's purge-by-URL endpoint `POST /zones/<Zone ID>/purge_cache` asynchronously, with at most 100 URLs per call. Failures are retried automatically with backoff and never affect the deletion itself |
+| Not purged | `format=auto` URLs and URLs with other query parameters or a different parameter order; these only go away when the CDN cache expires. Merging duplicates does not trigger purging. `/o/` links are revalidated with the origin every time, so they need no purging |
 
-**How**: as an asynchronous background job calling Cloudflare's purge-by-URL endpoint `POST /zones/<Zone ID>/purge_cache`, at most 100 URLs per call. Failures are retried with backoff by the job queue and never block the deletion itself.
+## Redirect mode (302 direct links) and CDNs
 
-**Not covered**: `format=auto` forms and URLs with other query parameters or a different parameter order; these only go away when the CDN's own cache expires. `/o/` alias links need no purging, since they are revalidated with the origin every time.
+In `redirect` access mode, a request for an original gets a 302 to a channel that allows direct links, is not encrypted and has a public address configured. The image then comes from the channel (or its own domain or CDN) and does not pass through the CDN in front of ImgYoung. Without such a channel, the request is served as in `proxy` mode.
 
-## Redirect mode and CDNs
+- Every 302 carries `Cache-Control: no-store`, so neither the CDN nor browsers cache the redirect itself. Every request comes back to ImgYoung, and channel switches, deletions and expiry take effect immediately.
+- Requests that need a variant (resizing, converting to another format, or WebP from negotiation) are processed and returned by ImgYoung, not redirected. Requests that resolve to the original still get the 302 — a GIF original, for example, or a target that is the original format without resizing (a JPEG with `?format=jpeg`).
+- Browsers usually send `image/webp`, so their JPEG and PNG requests are negotiated into WebP variants and are not redirected. To make browsers' requests for originals redirect as well, remove `webp` from the **Target formats**.
 
-In `redirect` access mode, a request for an original gets a 302 to a channel that allows direct links, is not encrypted and has a public address configured. The bytes then come from the channel (or its own domain or CDN) and do not pass through the CDN in front of ImgYoung. Without such a channel ImgYoung falls back to proxying.
+If you already have a CDN in front of ImgYoung, use `proxy` mode: the CDN already carries the traffic. `redirect` suits these cases:
 
-- Every 302 carries `Cache-Control: no-store`, so neither the CDN nor browsers cache the redirect itself: every request comes back to ImgYoung, and channel switches, deletions and expiry take effect immediately.
-- Requests that actually produce a variant (resizing, converting to another format, or WebP from negotiation) are processed and served by ImgYoung, not redirected. Requests that resolve to the original still get the 302 — a GIF original, say, or a target that is the original format without resizing (a JPEG with `?format=jpeg`). To make browsers' original-image requests redirect as well, remove `webp` from the target formats.
-
-If you already have a CDN in front of ImgYoung, use `proxy` mode: the CDN already carries the traffic. `redirect` is meant for servers without a CDN and with little upstream bandwidth, or for channels that come with their own public CDN domain (such as a custom domain bound to an object storage bucket).
+- a server with no CDN in front and little upstream bandwidth;
+- channels that come with their own public CDN domain, such as a custom domain bound to an object storage bucket.
 
 ## Hotlink protection behind a CDN
 
 ImgYoung's Referer allowlist only applies to requests that reach the origin:
 
-- requests served from the CDN cache never reach ImgYoung and are not checked; the default cache key does not include the Referer, so once an allowlisted site has caused an image to be cached, any site can load it from the CDN;
-- ImgYoung's 403 carries no `Cache-Control`; if the CDN caches that 403, allowlisted visitors are rejected too.
+- Requests served from the CDN cache never reach ImgYoung, so the allowlist does not apply to them. The default cache key does not include the Referer, so once an allowlisted site has caused an image to be cached, any site can load it from the CDN.
+- The 403 that ImgYoung returns when it rejects a request carries no `Cache-Control`. If the CDN caches that 403, allowlisted visitors are rejected too.
 
-Behind a CDN, enforce hotlink protection on the CDN (a rule that blocks by Referer) and leave ImgYoung's allowlist empty or use it only as an extra layer. In `redirect` mode the channel's direct links are exposed, so hotlink protection does not hold there either.
+Behind a CDN, therefore, enforce hotlink protection on the CDN with a rule that blocks by Referer, and leave ImgYoung's allowlist empty or use it only as an extra layer. In `redirect` mode the channels' direct links are exposed, so the allowlist does not help there either.

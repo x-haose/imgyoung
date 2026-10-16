@@ -27,33 +27,36 @@ less install.sh
 sudo sh install.sh --service
 ```
 
-The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`; `--service` also needs `systemctl`.
+The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`. With `--service` it also needs `systemctl`.
 
 ## Options and environment variables
 
 | Option | Default | Description |
 |---|---|---|
-| `--version X.Y.Z` | Latest stable release | Install a specific version, in the form `1.2.3` or `1.2.3-rc.1`; the `v` prefix is optional |
-| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary; created if missing, must be writable. With `--service` it must be an absolute path outside `/home`, `/root` and `/run/user` |
-| `--service` | Not installed | Linux only, needs root: also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung` |
+| `--version X.Y.Z` | Latest stable release | Install a specific version |
+| `--dir DIR` | `/usr/local/bin` for root, `~/.local/bin` for other users | Where to install the binary |
+| `--service` | No service | Also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung`. Linux only, needs root |
+
+- `--version` takes the form `1.2.3` or `1.2.3-rc.1`; the `v` prefix is optional.
+- `--dir` is created if missing and must be writable. With `--service` it must be an absolute path outside `/home`, `/root` and `/run/user`; "The systemd service" below explains why.
 
 | Environment variable | Default | Description |
 |---|---|---|
-| `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | The releases address. Set it to use a mirror or internal distribution; the layout must match GitHub Releases (see "Mirrors and internal distribution" below) |
+| `IMGYOUNG_RELEASES` | `https://github.com/x-haose/imgyoung/releases` | The releases address. Set it to use a mirror or internal distribution; see "Mirrors and internal distribution" below |
 
-An unknown option or a malformed version (for example `--version 1.0`, which reports `版本号 1.0 无效,应形如 1.0.0`, i.e. "version 1.0 is invalid, expected something like 1.0.0") makes the script exit with an error right away, before it changes anything.
+An unknown option or a malformed version makes the script exit with an error right away, before it changes anything. The messages are listed under [Error messages](#error-messages) at the end of this page.
 
 ## What the script does
 
-1. **Checks prerequisites.** Confirms `curl`, `tar` and `install` exist; with `--service` it also checks for Linux, root, `systemctl`, and that any `--dir` given is an absolute path outside the home directories. If anything is missing it exits before downloading and leaves the system untouched.
-2. **Detects the platform.** `uname -s` must be Linux or Darwin, `uname -m` must be x86_64 / amd64 or aarch64 / arm64; anything else is an error (on Windows, use a [release archive](./binary.mdx)).
-3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect and takes the last path segment of the final URL as the tag, which is checked against the same format as `--version`. GitHub's latest release never points at a pre-release.
+1. **Checks prerequisites.** Confirms that `curl`, `tar` and `install` exist. With `--service` it also checks for Linux, root and `systemctl`, and that any `--dir` given is an absolute path outside the home directories. If anything is missing, it exits before downloading and leaves the system untouched.
+2. **Detects the platform.** `uname -s` must be `Linux` or `Darwin`, and `uname -m` must be `x86_64`, `amd64`, `aarch64` or `arm64`; anything else is an error. On Windows, use a [release archive](./binary.mdx).
+3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect, and takes the last path segment of the final URL as the version, checked against the same format as `--version`. GitHub's latest release never points at a pre-release.
 4. **Downloads and verifies.** Downloads `imgyoung_<version>_<os>_<arch>.tar.gz` and that release's `checksums.txt` into a temporary directory and checks the sha256. On a mismatch it aborts without installing anything. The temporary directory is removed when the script exits.
 5. **Installs the binary.** Installs `imgyoung` into the target directory with mode 0755 and prints its version.
-6. **Installs the service** (`--service` only). Writes the archive's `deploy/imgyoung.service` to `/etc/systemd/system/imgyoung.service` with `ExecStart` pointing at the actual install path, saying so if the content differs from the existing file, then runs `systemctl daemon-reload` and enables it. If the service is already running it is restarted onto the new version; otherwise it is started.
-7. **Prints next steps.** Warns if the target directory is not on `PATH`, and prints the sign-in address and factory account.
+6. **Installs the service** (`--service` only). Writes the archive's `deploy/imgyoung.service` to `/etc/systemd/system/imgyoung.service`, with `ExecStart` pointing at the actual install path, and says so if the content differs from the existing file. Then it runs `systemctl daemon-reload` and enables the service. A running service is restarted onto the new version; otherwise the service is started.
+7. **Prints next steps.** Warns if the target directory is not on `PATH`, and prints the sign-in address and the factory account.
 
-Without `--service` the script only installs the binary and does not start it. Run `imgyoung` yourself; data goes to `data/` under the current directory (or `IMGYOUNG_DATA_DIR`). For long-running use, put it under a process supervisor; see [Installation](./index.mdx) for why.
+Without `--service` the script only installs the binary and does not start it. Run `imgyoung` yourself; data goes to `data/` under the current directory, or to `IMGYOUNG_DATA_DIR`. For long-running use, put it under a process supervisor; [Installation](./index.mdx) explains why.
 
 ## The systemd service
 
@@ -61,14 +64,24 @@ Without `--service` the script only installs the binary and does not start it. R
 
 <include cwd lang="ini" meta='title="deploy/imgyoung.service"'>../deploy/imgyoung.service</include>
 
-The settings that matter:
+The main settings:
 
-- **Data directory.** `IMGYOUNG_DATA_DIR=%S/imgyoung` resolves to `/var/lib/imgyoung`, which `StateDirectory=imgyoung` makes systemd create and hand to the service user. With `DynamicUser` the real directory is `/var/lib/private/imgyoung` and `/var/lib/imgyoung` is a symlink to it. It holds `imgyoung.db`, `master.key`, the local channel's `blobs/` and the variant cache `variants/`.
-- **DynamicUser=yes.** systemd allocates a transient system user on every start, so no user has to be created in advance. Together with sandboxing such as `ProtectSystem=strict` and `ProtectHome=yes`, the process can write only its own data directory: if you point the local channel somewhere else, open that directory with `ReadWritePaths=`; and the binary must not live under `/home` or `/root`, or the service cannot start; the script rejects such a `--dir`.
-- **Restart=always.** Restoring a snapshot in the console makes the service exit cleanly; systemd starts it again 3 seconds later and the snapshot is swapped in before the database is opened. `Restart=on-failure` does not restart a clean exit, so the restore would only complete once someone starts the service by hand.
-- **TimeoutStopSec=15s.** On stop, the service first stops accepting new requests and waits up to 6 seconds for in-flight ones (forcibly closing what remains), then cancels background loops and in-flight replication jobs and waits up to 2 seconds, then closes the database and exits. That is about 8 seconds in total; 15 leaves headroom. Cancelled replication jobs are re-queued by reconciliation on the next start.
-- **UMask=0077.** New files, `master.key` included, are readable and writable only by the service user.
-- **RCLONE_CONFIG=** (empty). ImgYoung hands channel parameters to rclone directly and never reads an rclone config file.
+| Setting | Effect |
+|---|---|
+| `IMGYOUNG_DATA_DIR=%S/imgyoung`, `StateDirectory=imgyoung` | The data directory is `/var/lib/imgyoung`, created by systemd and handed to the service user |
+| `DynamicUser=yes` | systemd allocates a transient system user on every start, so no user has to be created in advance |
+| `Restart=always` | The process is started again 3 seconds after it exits, including clean exits |
+| `TimeoutStopSec=15s` | Stopping the service waits at most 15 seconds |
+| `UMask=0077` | New files, `master.key` included, are readable and writable only by the service user |
+| `RCLONE_CONFIG=` (empty) | ImgYoung hands channel parameters to rclone directly and never reads an rclone config file |
+| `ProtectSystem=strict`, `ProtectHome=yes` and others | The process can write only its own data directory and cannot see home directories |
+
+Things to keep in mind:
+
+- **Where the data actually lives.** With `DynamicUser`, the real directory is `/var/lib/private/imgyoung`, and `/var/lib/imgyoung` is a symlink to it. It holds `imgyoung.db`, `master.key`, the local channel's `blobs/` and the variant cache `variants/`.
+- **Sandbox limits.** If you point the local channel outside the data directory, open that directory with `ReadWritePaths=`. The binary must not live under `/home` or `/root`, or the service cannot start, which is why the script rejects such a `--dir`.
+- **Why `Restart=always`.** Restoring a snapshot in the console makes the service exit cleanly, and the snapshot is swapped in when systemd starts it again. `Restart=on-failure` does not restart a clean exit, so the restore would only complete once someone starts the service by hand.
+- **Stop time.** On stop, the service stops accepting new requests and waits for in-flight ones, then stops background work and closes the database. This takes about 8 seconds at most, so 15 seconds leaves headroom. Replication jobs (background jobs that copy images to the other channels) interrupted by the stop are queued again after the next start.
 
 Everyday commands:
 
@@ -80,7 +93,7 @@ sudo systemctl restart imgyoung  # apply changed environment variables
 
 ### Changing the service configuration
 
-Re-running the script with `--service` overwrites `/etc/systemd/system/imgyoung.service` with the version from the release archive, and says so when the content changes. Keep local changes out of that file and put them in a drop-in instead:
+Running the script again with `--service` overwrites `/etc/systemd/system/imgyoung.service` with the version from the release archive, and says so when the content changes. Keep local changes out of that file and put them in a drop-in instead:
 
 ```bash title="Terminal"
 sudo systemctl edit imgyoung
@@ -99,12 +112,12 @@ Save, then run `sudo systemctl restart imgyoung`. The available environment vari
 
 Run the same command you installed with:
 
-- Installed with `--service`: the binary is replaced, the unit file is rewritten and the service is restarted onto the new version. You must pass `--service` again; otherwise only the file on disk changes and the running process stays on the old version.
-- Installed without `--service`: only the binary is replaced; restart the process yourself.
+- **Installed with `--service`**: the script replaces the binary, rewrites the unit file and restarts the service onto the new version. You must pass `--service` again; otherwise only the file on disk changes and the running process stays on the old version.
+- **Installed without `--service`**: the script only replaces the binary; restart the process yourself.
 
-Use `--version` to stay on a particular version. The database schema is migrated automatically when the new version starts.
+The database schema is migrated automatically when the new version starts. To stay on a particular version, pass `--version`.
 
-`--version` can also install an older version, but that is not a downgrade: an older version refuses to start on a database migrated by a newer one, and the error names the latest migration in the database and in the binary. Rolling back takes the older version plus a snapshot taken before the upgrade; see [Upgrading](../operations/upgrade.mdx) for the steps and what to prepare beforehand.
+`--version` can also install an older version, but that does not downgrade: the older version refuses to start on a database migrated by a newer one, and the error names the latest migration in the database and in the binary. Rolling back takes the older version plus a snapshot taken before the upgrade; see [Upgrading](../operations/upgrade.mdx) for the steps and what to prepare beforehand.
 
 ## Uninstalling
 
@@ -124,7 +137,7 @@ The data directory is left in place. Delete it only once you are sure you no lon
 sudo rm -rf /var/lib/private/imgyoung /var/lib/imgyoung
 ```
 
-If only the binary was installed, delete it (`~/.local/bin/imgyoung` or `/usr/local/bin/imgyoung` by default), then delete whichever data directory you ran it with, if you no longer need it.
+If only the binary was installed, delete it (`~/.local/bin/imgyoung` or `/usr/local/bin/imgyoung` by default), then delete the data directory you ran it with if you no longer need it.
 
 ## Mirrors and internal distribution
 
@@ -135,7 +148,7 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
   | sudo IMGYOUNG_RELEASES=https://mirror.example.com/imgyoung/releases sh -s -- --service
 ```
 
-`install.sh` itself must be reachable there too. The mirror must use the same layout as GitHub Releases:
+`install.sh` itself must be downloadable from there too. The mirror must use the same layout as GitHub Releases:
 
 ```text
 <IMGYOUNG_RELEASES>/latest                                   redirects to .../tag/vX.Y.Z
@@ -143,4 +156,17 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 <IMGYOUNG_RELEASES>/download/vX.Y.Z/checksums.txt
 ```
 
-`/latest` is only used without `--version`: the script follows the redirect and treats the last segment of the final URL as the version, which must look like `v1.2.3` or `v1.2.3-rc.1`; otherwise it reports `无法从 <final URL> 解析出版本号;可用 --version 指定` (the version could not be parsed from that URL; pass `--version`). If the mirror cannot redirect like that, always pass `--version` when installing and upgrading.
+`/latest` is only used without `--version`: the script follows the redirect and treats the last segment of the final URL as the version, which must look like `v1.2.3` or `v1.2.3-rc.1`. If the mirror cannot redirect like that, always pass `--version` when installing and upgrading.
+
+## Error messages
+
+On an error the script prints one line starting with `错误:` ("error:") and exits. The ones below all happen before anything is installed, so the system is left untouched:
+
+| Message | Meaning |
+|---|---|
+| `错误:未知选项 <option>` | Unknown option |
+| `错误:版本号 1.0 无效,应形如 1.0.0` | The `--version` value is malformed ("version 1.0 is invalid, expected something like 1.0.0") |
+| `错误:无法从 <final URL> 解析出版本号;可用 --version 指定` | No `--version` was given, and `<releases>/latest` did not redirect to a URL ending in `vX.Y.Z` ("could not parse a version from the URL; pass --version") |
+| `错误:<file> 的 sha256 不符(期望 …,实际 …),已中止` | The download does not match `checksums.txt` ("sha256 mismatch, aborted") |
+| `错误:--service 的二进制不能装在 <dir>:服务启用了 ProtectHome,进程看不到家目录` | `--service` was given with a `--dir` under a home directory ("the service uses ProtectHome and cannot see home directories") |
+| `错误:<dir> 不可写;用 sudo 执行,或用 --dir 指定一个可写目录` | The install directory is not writable ("run with sudo, or pass a writable --dir") |

@@ -50,8 +50,6 @@ cd web && pnpm dev  # front-end hot reload; /api and image paths are proxied to 
 
 Pushing a `vX.Y.Z` tag triggers the release workflow: goreleaser builds amd64 and arm64 binaries for linux / darwin / windows and a multi-arch GHCR image, and generates release notes grouped by commit type. Validate the configuration locally with `goreleaser check`.
 
-The GHCR image package is private after its first push (new packages under a personal account default to private and do not inherit the repository's visibility), so anonymous `docker pull` is denied. After the first release, open the package's Package settings → Danger Zone → Change visibility and set it to Public; this can only be done on the web, and only once.
-
 ## Security issues
 
 Please do not open a public issue for a security vulnerability; report it privately through a Security Advisory on the repository's Security page.

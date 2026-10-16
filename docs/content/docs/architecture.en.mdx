@@ -1,24 +1,24 @@
 ---
 title: Architecture
-description: Single-instance design, layers and dependency direction, the data model, upload and access data flows, the outbox fence, periodic tasks, and why rclone is integrated in-process.
+description: Single-instance design, layers and dependency direction, the data model, upload and access data flows, the outbox pattern, periodic tasks, technology choices, and why rclone is integrated in-process.
 ---
 
 ## Single-instance design
 
-ImgYoung is deliberately designed as a single instance: one process, one data directory.
+ImgYoung is designed to run as a single instance: one process, one data directory.
 
-- **The metadata database is one SQLite file** (`imgyoung.db` in the data directory, in WAL mode). Writes queue on a
-  single connection and reads use a pool; the driver is the pure-Go `modernc.org/sqlite`.
-- **The task queue lives in the same database**: asynchronous work runs on River, whose job tables sit in the same
-  SQLite file as the business tables, so no separate queue service is needed.
-- **All other state is local**: the upload concurrency gate, per-user upload rate limits, login rate limiting, and access
+- **Metadata database**: one SQLite file, `imgyoung.db` in the data directory, in WAL mode. Writes queue on a single
+  connection and reads use a pool. The driver is the pure-Go `modernc.org/sqlite`.
+- **Task queue**: asynchronous work runs on River. River's job tables live in the same SQLite file as ImgYoung's own
+  tables, so no separate queue service is needed.
+- **In-process state**: the upload concurrency limit, per-user upload rate limits, login rate limiting, and access
   activity aggregation live in process memory, and the variant cache lives on local disk. There is no Redis.
 - **One static binary**: everything is built with `CGO_ENABLED=0`, and the admin console's frontend assets and the
   OpenAPI document are compiled into the binary.
 
-As a result, ImgYoung does not support several processes sharing one data directory, nor horizontal scaling. The path
-to high availability is replacing the database with PostgreSQL (River supports PostgreSQL itself, so the task queue
-moves along with it) and moving the in-process shared state out at that point; the current code only implements SQLite.
+As a result, several processes cannot share one data directory, and ImgYoung does not scale horizontally. Only SQLite
+is implemented; running several instances would require switching to PostgreSQL (which River also supports) and moving
+the in-process state above out of the process.
 
 ## Layers and dependency direction [#layers]
 
@@ -33,100 +33,103 @@ http ──→ core ──→ infra
 | store | `store/` | The public storage engine: the `driver` interface, the `rclone` implementation, and the `failover` primitives. See [Using it as a Go library](./library/index.mdx) |
 | infra | `internal/infra/` | Infrastructure and outbound adapters: `config` (bootstrap and runtime settings), `db` (schema, queries, migrations, sqlc-generated code), `secret` (master key and encryption), `errcode` (error codes and their Chinese message catalog), `id` (short IDs), `imaging` (image processing), `cdn`, `urlfetch` (fetching for URL imports), `observability` (metrics), `version` |
 | core | `internal/core/` | Business core: `channel` (channels and health checks), `replication` (replication, reconciliation, draining, CDN purge), `upload`, `variants` (on-demand processing), `dedup`, `lifecycle`, `reliability` (backup and restore), `auth`, `audit`, `referer`, `usage`, `alert` |
-| http | `internal/http/` | Inbound HTTP: `publicapi` (uploads and image access), `s3api` (the S3 protocol surface), `adminapi` (admin console), `middleware`, `httpx`, `router` |
+| http | `internal/http/` | Inbound HTTP: `publicapi` (uploads and image access), `s3api` (the S3-compatible API), `adminapi` (admin console), `middleware`, `httpx`, `router` |
 | Composition root | `cmd/imgyoung/` | `build.go` constructs the object graph by hand in the order infrastructure → services → HTTP, `serve.go` orchestrates startup and shutdown with oklog/run, and `loops.go` holds the periodic loops |
 
-`store` and `infra` are two parallel leaves: `store` depends on no `internal/` package, and `infra` depends on neither
-core, store, nor http; `core` depends on both. The dependency direction is enforced by golangci-lint's depguard rules,
-and nothing merges while CI is red:
+`store` and `infra` are two independent leaf packages: `store` depends on no `internal/` package, `infra` depends on
+none of core, store, or http, and `core` depends on both. The dependency direction is enforced in CI by golangci-lint's
+depguard rules:
 
 | Rule | Must not import | Why |
 |---|---|---|
 | `store/**` | Any package under `internal/` | store is a public, reusable storage engine and cannot depend on application code |
-| `internal/infra/**` | `internal/core`, `store`, `internal/http` | infra is the infrastructure leaf |
+| `internal/infra/**` | `internal/core`, `store`, `internal/http` | infra sits at the bottom of the dependency graph |
 | `internal/core/**` | `internal/http` | The business core knows nothing about transport and can be tested without HTTP |
 | `internal/http/**` | `store` | Channel selection and failover belong to core; the transport layer only uses the results core gives it |
 
 Two more conventions:
 
 - **Interfaces are defined by their consumers**: each package declares small interfaces with only the methods it uses
-  (such as `upload.ChannelSelector` and `publicapi.BlobChannels`), satisfied implicitly by concrete types.
-  `store/driver.Driver` is the only first-class abstraction.
-- **Identity is passed explicitly**: middleware resolves the authenticated principal into the request context, and the
-  handler takes it out and passes it to core as an argument; core never reads identity from the context, and per-user
+  (such as `upload.ChannelSelector` and `publicapi.BlobChannels`), satisfied implicitly by concrete types. Only
+  `store/driver.Driver` is defined up front by its provider.
+- **Identity is passed explicitly**: middleware puts the authenticated principal into the request context, and the
+  handler takes it out and passes it to core as an argument. Core never reads identity from the context, and per-user
   isolation is enforced in core.
 
 HTTP handlers and River workers are thin adapters that translate an external trigger into a service call. Periodic
-tasks are `Run(ctx, wait)` loops owned by each service and orchestrated by the composition root; there is no separate scheduler layer.
+tasks are `Run(ctx, wait)` loops owned by each service and started and stopped by the composition root; there is no
+separate scheduler layer.
 
 ## Data model [#data-model]
 
-At the heart of the data model is the **separation of physical images from upload references**:
+The data model has two layers: physical images (blobs) and upload references (images).
 
 ```text
 images (references) ──→ blobs (physical images) ──→ blob_channels (replicas per channel) ──→ channels
         N : 1                      1 : N                                 N : 1
 ```
 
-- **`blobs`** are the bytes actually stored. Every upload creates a new blob; after background deduplication merges
+- **`blobs`** are the bytes actually stored. Every upload creates a new blob; once background deduplication merges
   byte-identical blobs, one blob can be referenced by several images. A blob records the `sha256` of the sanitized
   bytes, the perceptual hash `phash`, the object key inside channels `storage_key` (of the form
-  `{short_id}_{first 8 hex chars of sha256}`), MIME type, size, dimensions, the reference count `ref_count`, and the deletion markers.
+  `<short ID>_<first 8 hex digits of SHA-256>`), MIME type, size, dimensions, the reference count `ref_count`, and the
+  deletion markers.
 - **`images`** are the references created by uploads; the public 10-character short ID is the primary key. Owner,
-  source token, S3 object key alias, expiry time and access activity, the cold-image label, and cleanup exemption all
+  source token, S3 object key alias, expiry time, access activity, the cold-image label, and cleanup exemption all
   live on the reference, not on the blob.
-- **`blob_channels`** records a blob's replica on a channel and doubles as the state of its replication task:
-  `pending → uploading → done / failed`, plus the attempt count and the classification and root cause of the latest failure.
+- **`blob_channels`** holds one row per blob per channel and doubles as the replication state:
+  `pending → uploading → done / failed`, plus the attempt count and the classification and original error of the latest failure.
 
-Keeping the two layers apart puts each concern in its place: merging duplicates just repoints references at the
-surviving blob; TTL, cold images, and quotas are computed per reference; replicas, replication, and physical deletion work per blob.
+With the two layers apart, merging duplicates only repoints references at the surviving blob; TTL, cold images, and
+quotas are computed per reference; replicas, replication, and physical deletion work per blob.
 
-**Reference counting**: every change to `ref_count` is an atomic `UPDATE … SET ref_count = ref_count ± 1`. Deleting a
-reference and decrementing the count happen in the same transaction. A blob whose count reaches zero is marked for
-deletion with a physical deletion time based on the runtime setting `delete_grace_minutes`. When that time comes, the
-cleanup task first removes its variant cache, then deletes the business rows in one transaction while re-checking the
-deletion condition (if the blob was referenced again in the meantime, the deletion is abandoned), and finally queues an
-object deletion job for every channel holding a replica.
+### Reference counting and physical deletion
 
-The remaining tables:
+Every change to `ref_count` is an atomic `UPDATE … SET ref_count = ref_count ± 1`, and deleting a reference and
+decrementing the count happen in the same transaction. A blob whose count reaches zero is marked for deletion, with a
+physical deletion time based on the runtime setting `delete_grace_minutes`. When that time comes, the cleanup task:
+
+1. removes the blob's variant cache;
+2. deletes its database rows in one transaction, re-checking the deletion condition and abandoning the deletion if the
+   blob was referenced again in the meantime;
+3. queues an object deletion job for every channel holding a replica.
+
+### Other tables
 
 | Table | Contents |
 |---|---|
-| `channels` | Channels: an auto-increment primary key that is never reused after deletion (`AUTOINCREMENT`; replication, deletion and drain jobs refer to channels by key only; the one exception is the channel with the highest id among those deleted before migration `b21`, whose id the first channel created after the upgrade may receive), rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag and latest failure conclusion (stage, classification, and root cause; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the being-cleaned-up flag; the creation time `created_at` (which, together with the channel ID, feeds key derivation for encrypted channels and never changes) and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)) |
+| `channels` | Channels: rclone backend name, parameter JSON encrypted with the master key (AES-GCM), priority, health flag, latest failure conclusion (stage, classification, and original error; see [Error codes and failure conclusions](#errors)), whether encrypted, whether direct links are allowed, the draining flag, the creation time `created_at`, and the binding time `bound_at` (see [reconciliation GC](#reconcile-gc)). The primary key auto-increments and is never reused after deletion (`AUTOINCREMENT`); replication, deletion, and drain jobs find channels by key only. `created_at`, together with the channel ID, feeds key derivation for encrypted channels and never changes |
 | `variants` | Index of the variant cache: one row per blob and processing parameter set; the bytes live on local disk and are evicted LRU by last access |
 | `settings` | Runtime settings in a single-row wide table; each column's DEFAULT is the factory value. See [Configuration](./configuration.mdx) |
-| `users`, `tokens`, `sessions` | Users and quotas, upload tokens (hashes only), admin sessions (only a hash of the session id plus its bound CSRF token) |
+| `users`, `tokens`, `sessions` | Users and quotas; upload tokens (hashes only); admin sessions (only a hash of the session id plus its bound CSRF token) |
 | `idempotency_keys` | Upload idempotency keys, scoped per user |
-| `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
-| `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records (kind, target, Chinese description, and description parameters) |
-| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. When there is no fingerprint yet (a database written by an older version, or restored from an older snapshot), it looks for data that depends on the master key: ciphertext (channel configurations, the CDN token) or derived data (upload tokens' S3 credentials, encrypted channels' crypt keys). If either exists, no new key is generated and a missing key refuses to start; with ciphertext present, decrypting any one piece counts as a match and failing on all of it refuses to start; with only derived data there is nothing to check against, so the given key is used without recording a fingerprint (the log reads `库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把`), and the next start after the database holds ciphertext checks it and records it. Only a key that passed the check gets its fingerprint recorded. See [Master key](./configuration.mdx#master-key) |
+| `dedup_candidates` | Near-duplicate candidate pairs waiting for an admin's decision |
+| `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist; the audit log of admin actions; alert records (kind, target, Chinese description, and description parameters) |
+| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key; the key cannot be recovered from it. A fresh instance records it on first start, and every start checks the master key against it; a missing or mismatched key refuses to start. See [Master key](./configuration.mdx#master-key) |
 
 The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
-table and every column. Versioned migrations are generated from it by Atlas, embedded in the binary, and applied in
-order at startup; applied versions are recorded in the `schema_revisions` table, so upgrading across several versions
-also applies every migration in between.
+table and every column. Atlas generates versioned migrations from it; they are embedded in the binary and applied in
+order at startup. Applied versions are recorded in the `schema_revisions` table, so upgrading across several versions
+applies every migration in between.
 
-Migrations cannot be downgraded: if the database records a migration version this binary does not know (meaning a newer
-binary has already migrated it), the process refuses to start, and the error names the latest migration version in the
-database and the latest one this binary knows. The only way back is "old binary + a snapshot taken before the
+Migrations cannot be downgraded. If the database records a migration version this binary does not know (meaning a
+newer binary has already migrated it), the process refuses to start, and the error names the latest migration version
+in the database and the latest one this binary knows. The only way back is "old binary + a snapshot taken before the
 upgrade"; see [Upgrading](./operations/upgrade.mdx).
 
 ## Upload data flow
 
-Data plane uploads, admin console uploads, URL imports, and S3 PutObject differ only in where the bytes come from;
-once the bytes are in hand they all go through the same pipeline. The upload path does not deduplicate: every upload
-creates a new blob and deduplication happens in the background, which keeps the upload path a straight line with no branches.
+Data plane uploads (`/api/upload`), admin console uploads, URL imports, and S3 PutObject differ only in where the bytes
+come from; once the bytes are in hand they all go through the same pipeline. The upload path does not deduplicate:
+every upload creates a new blob and deduplication happens in the background, so the upload path has no branches.
 
 <Steps>
 <Step>
 
-**Entry and guards**: authenticate (upload token, session, or S3 signature) and pass two gates: the per-user upload
-rate limit (`upload_rate_per_min`) and the global upload concurrency gate (`max_concurrent_uploads`, which returns 429
-immediately when full). The image bytes are then read fully into memory; no upload of any size is written to a
-temporary file. The per-image limit `max_upload_mb` applies to the image itself: a file exactly at the limit is
-accepted, and anything larger returns 413. A multipart request body is additionally capped at "per-image limit + 64 KiB",
-and only three parts are read — `file`, `exif_policy`, and `ttl`. `exif_policy` and `ttl` are taken only from form
-fields (never from URL query parameters), at most 1 KiB each, or the request gets a 400.
+**Authentication and rate limits**: the request is authenticated (upload token, session, or S3 signature), then checked
+against the per-user upload rate limit (`upload_rate_per_min`) and the global upload concurrency limit
+(`max_concurrent_uploads`, which returns 429 immediately when full). The image bytes are then read fully into memory;
+no upload of any size is written to a temporary file. Request size limits are listed at the end of this section.
 
 </Step>
 <Step>
@@ -137,9 +140,9 @@ fields (never from URL query parameters), at most 1 KiB each, or the request get
 <Step>
 
 **Format and pixel budget**: the real format is decided by the magic bytes at the start of the file, and only JPEG,
-PNG, GIF, and WebP are accepted. Only the image header is read to get the dimensions, and they are cross-checked
-against the sniffed format; if width × height exceeds `max_pixels_mp` the upload is rejected without a full decode.
-Decoded memory depends on resolution, not on file size, so this gate has to come before decoding.
+PNG, GIF, and WebP are accepted. Only the image header is read to get the dimensions, which are cross-checked against
+the sniffed format; if width × height exceeds `max_pixels_mp` (the pixel budget), the upload is rejected without a full
+decode. Decoded memory depends on resolution, not on file size, so this check has to come before decoding.
 
 </Step>
 <Step>
@@ -149,10 +152,10 @@ Decoded memory depends on resolution, not on file size, so this gate has to come
 </Step>
 <Step>
 
-**Sanitizing**: with the EXIF policy `strip`, metadata is removed (JPEG, PNG, WebP; GIF has no standard metadata segment and passes through unchanged).
-For JPEG, a minimal Exif segment holding only the orientation is added back, so photos that rely on the orientation
-tag to display upright do not end up rotated; GPS, camera model, timestamps, and every other field are still removed,
-and nothing is added back when the orientation is the default.
+**Sanitizing**: with the EXIF policy `strip`, metadata is removed (JPEG, PNG, WebP; GIF has no standard metadata
+segment and passes through unchanged). For JPEG, a minimal Exif segment holding only the orientation is added back, so
+photos that rely on the orientation tag to display upright do not end up rotated; GPS, camera model, timestamps, and
+every other field are still removed. Nothing is added back when the orientation is the default.
 
 </Step>
 <Step>
@@ -163,19 +166,19 @@ stored. Sanitizing happens before hashing, so `sha256` always matches the bytes 
 </Step>
 <Step>
 
-**Writing to channels**: the object key is `{short_id}_{first 8 hex chars of sha256}`; embedding the short ID is the
-last resort for rebuilding from storage if the metadata database is lost entirely. The candidates are the healthy channels whose
-write lease could be taken (see [outbox fencing](#outbox)); `failover.Write` writes to them in priority order until `min_success` copies succeed, with a 10-minute timeout per write, moving on to
-the next channel on failure.
+**Writing to channels**: the object key is `<short ID>_<first 8 hex digits of SHA-256>`; if the metadata database is lost
+entirely, the short ID in the key is the last resort for tracing objects back from storage. The candidates are the
+healthy channels whose [write lease](#write-lease) could be taken. `failover.Write` writes to them in priority order
+until `min_success` copies succeed, with a 10-minute timeout per write, moving on to the next channel on failure.
 
 </Step>
 <Step>
 
-**Recording**: one transaction writes the blob, the reference, a replica row for every active channel (`done` for the
-ones written, `pending` for the rest), and the idempotency key; only then are the write leases released. A channel
-marked as draining during the write still gets its replica row (so the drain deletes the object) but does not count as
-a valid replica; if fewer than `min_success` synchronous replicas are still on active channels at that moment, the
-upload fails (503).
+**Recording**: one transaction writes the blob, the reference, a replica row for every active (not draining) channel,
+and the idempotency key; replicas that were written are `done` and the rest `pending`. Only then are the write leases
+released. A channel marked as draining during the write still gets its replica row, so the drain deletes the object,
+but it does not count as a valid replica. If fewer than `min_success` synchronous replicas are on active channels at
+that moment, the upload fails with 503.
 
 </Step>
 <Step>
@@ -186,40 +189,53 @@ fails, it is only logged; reconciliation picks it up.
 </Step>
 </Steps>
 
-The whole upload happens in memory without temporary files. Peak memory is roughly "concurrency × max(per-image size
-limit, decoded memory at the pixel budget)", so lowering these settings adapts ImgYoung to small machines. Whenever an
-upload is not recorded — it fails before enough copies are written, recording fails (including the shortfall above), or it
-loses an idempotency-key race to another request — the objects it wrote to channels are deleted; the object key carries
-this upload's short ID, so no other upload's objects are touched. Objects left behind because deletion failed or the
-process stopped midway are reclaimed by reconciliation GC as orphans on active channels (after the 48-hour grace
-period); on a channel marked as draining during the upload they stay with the provider, since reconciliation does not
-scan draining channels and the drain only deletes objects it has records for.
+Request size limits:
+
+- The per-image limit `max_upload_mb` applies to the image itself. A file exactly at the limit is accepted; anything
+  larger returns 413.
+- A multipart request body as a whole is capped at "per-image limit + 64 KiB".
+- Only three multipart parts are read: `file`, `exif_policy`, and `ttl`. `exif_policy` and `ttl` are taken only from
+  form fields, never from URL query parameters, and each is limited to 1 KiB; anything longer returns 400.
+
+The whole upload happens in memory. Peak memory is roughly "concurrency × max(per-image size limit, decoded memory at
+the pixel budget)", so lowering these settings adapts ImgYoung to small machines.
+
+If an upload is not recorded, the objects it already wrote to channels are deleted. That covers failing before enough
+copies are written, a failed recording step (including too few synchronous replicas), and losing an idempotency-key
+race to another request. The object key carries this upload's short ID, so no other upload's objects are touched.
+Objects left behind because the deletion failed or the process stopped midway end up as follows:
+
+- on active channels, reconciliation GC reclaims them as orphans after 48 hours;
+- on a channel marked as draining during the upload, they stay with the provider: reconciliation does not scan
+  draining channels, and the drain only deletes objects it has records for.
 
 ## Access data flow
 
-`GET` / `HEAD /i/{id}` (and the S3 object key alias `/o/{user_id}/{key}`; the admin console preview
-`/api/admin/images/{id}/thumb` uses the same pipeline but is never counted as an access):
+`GET` / `HEAD /i/{id}` and the S3 object key alias `/o/{user_id}/{key}` are handled in the order below. The admin
+console preview `/api/admin/images/{id}/thumb` uses the same pipeline but skips hotlink protection and is never counted
+as an access.
 
-1. Hotlink protection middleware allows the request or returns 403 based on the Referer allowlist (admin console previews skip this step).
-2. The reference is looked up; if it cannot be found, 404 is returned. A reference past its expiry time is treated as
-   missing right away, without waiting for the cleanup task to reclaim it, and an access never renews it.
-3. Processing parameters are validated: a `w` outside the width presets or an explicit `format` outside the allowed
-   formats returns 400. This check does not depend on the original's format: an original that is never processed, such
-   as a GIF, also gets 400 for out-of-tier parameters, and the original for valid ones.
-4. Access is counted: only GET requests on the public endpoints add to the in-memory activity, flushed to the database
-   in batches every `activity_flush_seconds`; HEAD requests, requests with invalid parameters, and admin console previews are not counted.
-5. On-demand processing kicks in when the image needs resizing or converting: a `w` parameter, an explicit `format`, or
-   no format with a browser that accepts WebP, WebP allowed by the settings, and an original that is not WebP already.
-   GIFs are always served as originals. A variant cache hit is returned directly; on a miss the image is processed
-   within the `process_workers` concurrency limit and cached, with concurrent requests for the same parameters merged
-   into one processing run. When processing is busy or fails, the original is served instead, with `Cache-Control: no-store`.
-   A HEAD request fetches or generates the variant the same way; it just returns no body.
-6. Otherwise the original is served. Candidate channels are those that are healthy, not being cleaned up, and hold a
-   `done` replica of the image, in priority order. In `redirect` access mode, if a candidate allows direct links, is not
+1. **Hotlink protection**: middleware allows the request or returns 403 based on the Referer allowlist.
+2. **Reference lookup**: a missing reference returns 404. A reference past its expiry time is treated as missing right
+   away, without waiting for the cleanup task, and an access never renews it.
+3. **Parameter validation**: a `w` outside the width presets, or an explicit `format` outside the allowed formats,
+   returns 400. This check does not depend on the original's format: an original that is never processed, such as a
+   GIF, also gets 400 for out-of-preset parameters, and the original for valid ones.
+4. **Access counting**: only GET requests on the public endpoints add to the in-memory activity, which is flushed to
+   the database in batches every `activity_flush_seconds`. HEAD requests, requests with invalid parameters, and admin
+   console previews are not counted.
+5. **On-demand processing**: the image is resized or converted when the request has a `w`, an explicit `format`, or no
+   format while the browser accepts WebP, WebP is among the allowed formats, and the original is not WebP already. GIFs
+   are always served as originals. A variant cache hit is returned directly; on a miss the image is processed within
+   the `process_workers` concurrency limit and cached, with concurrent requests for the same parameters merged into
+   one processing run. When processing is busy or fails, the original is served instead, with
+   `Cache-Control: no-store`. A HEAD request fetches or generates the variant the same way; it just returns no body.
+6. **Serving the original**: the candidate channels are those that are healthy, not draining, and hold a `done`
+   replica of the image, in priority order. In `redirect` access mode, if a candidate allows direct links, is not
    encrypted, and has a public URL configured, the response is a 302 to that channel, sent with
-   `Cache-Control: no-store` (the target changes with channel health and configuration, so it must not be cached). A
-   HEAD request gets the response headers only and no channel object is read; otherwise `failover.Open` proxies the
-   read, switching to the next channel as soon as one cannot be read.
+   `Cache-Control: no-store` because the target changes with channel health and configuration. A HEAD request gets the
+   response headers only, and no channel object is read. Otherwise `failover.Open` proxies the read, switching to the
+   next channel as soon as one cannot be read.
 
 Caching depends on the endpoint:
 
@@ -228,160 +244,183 @@ Caching depends on the endpoint:
 | `/i/{id}` | `public, max-age=31536000, immutable` | Content behind a short ID never changes; the URL is the version |
 | `/o/{user_id}/{key}` | `public, no-cache` | Re-uploading the same key repoints the alias at a new image; caches may store the response but must revalidate with the ETag before each use, getting 304 when unchanged |
 
-On both endpoints originals and variants carry a strong ETag (the content hash for originals, the hash plus processing
-parameters for variants), and a request whose `If-None-Match` matches it gets a 304. The 304 carries the `ETag`,
-`Cache-Control`, and `Vary` the 200 response would have, so caches can keep using their stored copy. Responses whose
-format was negotiated via `Accept` carry `Vary: Accept`; a fallback original is `no-store` and never answered with a 304.
-If a database lookup fails, the response is a plain-text 500 that can be retried.
+On both endpoints, originals and variants carry a strong ETag: the content hash for originals, the hash plus
+processing parameters for variants. A request whose `If-None-Match` matches it gets a 304, which carries the `ETag`,
+`Cache-Control`, and `Vary` the 200 response would have, so caches keep using their stored copy. Responses whose format
+was negotiated via `Accept` carry `Vary: Accept`. An original served because processing was busy or failed is
+`no-store` and never answered with a 304. If a database lookup fails, the response is a plain-text 500 that can be retried.
 
-## The outbox fence: business tables are the single source of truth [#outbox]
+## The outbox pattern: `blob_channels` is the source of truth [#outbox]
 
-Asynchronous replication runs on River, but River jobs are only **idempotent triggers**. The single source of truth for
-replica state is the business table `blob_channels`:
+Asynchronous replication runs on River, but River jobs are only idempotent triggers. Replica state lives in the
+`blob_channels` table, so even if River's job tables are lost or corrupted, the queue can be rebuilt completely from it.
 
-- A replication job means "make sure blob X has a replica on channel Y". The worker reads the business table first: if
-  the replica is already `done` it returns; before copying it sets `uploading`; on failure it goes back to `pending` and
-  River retries; if the last attempt still fails it becomes `failed`; on success it becomes `done`.
-- Jobs are deduplicated by (blob, channel), counting only unfinished jobs, so the same replica never appears in the queue twice.
-- **Reconciliation** runs at startup and every 10 minutes after that: it queues drain jobs for channels being cleaned
-  up, seeds missing replica rows for every channel, resets `failed` replicas on healthy channels to `pending`, and then
-  pages through every `pending` / `uploading` replica with a primary-key cursor and queues it again; replicas turning
-  `done` during the scan cannot shift later pages and cause rows to be skipped.
+- **Replication jobs** mean "make sure blob X has a replica on channel Y". The worker reads `blob_channels` first: if
+  the replica is already `done` it returns; before copying it sets `uploading`; on failure it goes back to `pending`
+  and River retries; if the last attempt still fails it becomes `failed`; on success it becomes `done`.
+- **Queue deduplication**: jobs are deduplicated by (blob, channel), counting only unfinished jobs, so the same replica
+  never appears in the queue twice.
+- **Reconciliation** runs at startup and every 10 minutes after that. It queues drain jobs for draining channels, adds
+  missing replica rows for every channel, sets `failed` replicas on healthy channels back to `pending`, and then pages
+  through every `pending` / `uploading` replica with a primary-key cursor and queues it again. Replicas turning `done`
+  during the scan cannot make later pages skip rows.
+- **New channels**: when a channel is created, a `pending` replica row is written for every existing blob, and the same
+  replication and reconciliation machinery copies them, with no separate backfill logic.
+- **Killed processes**: a job that was running when the process was killed stays in the running state. River
+  reschedules it once it has been stuck there longer than both 16 minutes and the job's own timeout. A drain job
+  (`drain_channel`) has a 1-hour timeout and is rescheduled after about an hour; every other job after 16 minutes.
 
-So even if River's job tables are lost or corrupted, the queue can be rebuilt completely from the business table; a job
-that was running when the process was killed stays in the running state, and River reschedules it once it has been stuck
-there for longer than both 16 minutes and the job's own timeout: a drain job (`drain_channel`) has a 1-hour timeout and
-is rescheduled after about an hour, every other job after 16 minutes. When a channel is created, `pending` replica rows are seeded for every existing blob, and the same
-machinery brings them in line, with no separate backfill logic.
+### Write lease [#write-lease]
 
-**Write lease**: uploads, replication, metadata snapshots and deep checks (including a connection test against an existing
-channel) write objects and record them under the channel's write lease. Once a channel is marked as draining, new writes
-are refused immediately rather than queued behind the drain; the drain job waits for the writes
-already in progress to finish before it lists objects and records. So a draining channel never ends up with an object
-this service wrote that the drain cannot see.
+Uploads, replication, metadata snapshots, and deep checks (including a connection test against an existing channel)
+write objects and their records under the channel's write lease. Once a channel is marked as draining, new writes are
+refused immediately rather than queued behind the drain. The drain job waits for the writes already in progress to
+finish before it lists objects and records, which guarantees that it sees every object this service wrote to the channel.
 
-The other asynchronous jobs follow the same principle: deleting objects from a channel (`delete_object`), draining a
-channel being cleaned up (`drain_channel`: it first waits for writes in progress on the channel to finish, then deletes the replica objects row
-by row, so its progress is simply the remaining replica rows; then deletes the system objects under `_imgyoung/` on that
-channel, metadata snapshots included, along with deep check leftovers, leaving objects written by other programs alone;
-and finally deletes the channel record. Before deleting each object it checks the channel table to make sure the channel
-is still draining, so if an administrator chooses **Remove now** midway it stops, and apart from the object being deleted at
-that moment the remaining remote objects are left as they are), and purging CDN caches
-(`cdn_purge`). All of them are idempotent and retried by River with backoff: orphans left by an object deletion that
-finally fails are reclaimed by reconciliation GC; only when the same drain job still fails on its 4th attempt (about
-98 seconds after the first failure with River's default backoff) does it write the failure conclusion into the channel
-and raise a `drain_failed` alert — before that the channel just shows as being cleaned up, so a single network blip does
-not trigger an open/resolve pair of alerts (a draining channel that fails to load records the conclusion and raises the
-alert immediately, since a channel that cannot be loaded cannot be drained). It keeps retrying with backoff; once its attempts run out, reconciliation
-queues a new job that counts from attempt 1 again, while the recorded conclusion and alert stay until the channel is
-cleaned out, so it never stops (the job's own timeout or a shutdown cancellation does not count as a failure); the way out is **Remove now** on the channel in the admin console (remote objects are kept). When a CDN purge finally
-fails, the edge cache expires once the CDN's own cache lifetime runs out.
+### Other asynchronous jobs
+
+| Job | What it does | When it finally fails |
+|---|---|---|
+| `delete_object` | Deletes one object from a channel | Reconciliation GC reclaims the leftover object as an orphan |
+| `drain_channel` | Drains a channel being removed; see below | See below |
+| `cdn_purge` | Purges CDN caches | The edge cache expires once the CDN's own cache lifetime runs out |
+
+All of these jobs are idempotent and retried by River with backoff.
+
+A drain job runs in this order:
+
+1. wait for writes in progress on the channel to finish;
+2. delete the replica objects row by row, so its progress is simply the number of remaining replica rows;
+3. delete the system objects under `_imgyoung/` on that channel (metadata snapshots included) and deep check
+   leftovers, leaving objects written by other programs alone;
+4. delete the channel record.
+
+Before deleting each object, it checks the channel table to make sure the channel is still draining. If an
+administrator chooses **Remove now** midway, the drain stops, and apart from the object being deleted at that moment,
+the remaining remote objects are left as they are.
+
+When a drain fails:
+
+- Only when the same drain job still fails on its 4th attempt (about 98 seconds after the first failure with River's
+  default backoff) does it write the failure conclusion into the channel and raise a `drain_failed` alert. Before that
+  the channel just shows as **Draining**, so a single network blip does not produce an open/resolve pair of alerts.
+- A draining channel that fails to load records the conclusion and raises the alert immediately, since a channel that
+  cannot be loaded cannot be drained.
+- The job keeps retrying with backoff. Once its attempts run out, reconciliation queues a new job that counts from
+  attempt 1 again, while the recorded conclusion and alert stay until the channel is cleaned out. The job's own timeout
+  or a shutdown cancellation does not count as a failure.
+- Retries never stop. To end a drain, choose **Remove now** on the channel in the admin console; the remote objects are kept.
 
 ## Error codes and failure conclusions [#errors]
 
 The failure information the server hands to callers consists only of stable identifiers and parameters; the
-human-readable text lives in the admin console's dictionaries:
+human-readable text lives in the admin console's dictionaries.
 
-- **API errors**: the envelope is `{code, error, params}`. Error codes are registered in one place,
-  `internal/infra/errcode`, each with a Chinese message template, and `error` is that template with `params` filled in;
-  an end-to-end test checks that the registered codes and the contract's `ErrorCode` enum match one to one. See the
+- **API errors**: the response body is `{code, error, params}`. Error codes are registered in one place,
+  `internal/infra/errcode`, each with a Chinese message template, and `error` is that template with `params` filled in.
+  An end-to-end test checks that the registered codes and the contract's `ErrorCode` enum match one to one. See the
   [API reference](./api/index.mdx).
-- **Failure conclusions for channels and replicas**: a channel's `failure` is `{stage, reason, detail}` and a replica's
-  is `{reason, detail}`; both are null when the latest attempt succeeded or nothing has failed yet.
-  - `stage` is where it failed: `probe` (health check), `load` (building the driver from the configuration), or
-    `drain` (deleting objects from a channel being cleaned up).
-  - `reason` is the classification from the contract's `FailureReason` enum, determined from the text of the whole
-    error chain; it is `unclassified` when nothing matches.
-  - `detail` is the root cause verbatim: the innermost error in the chain, usually the provider's or network
-    library's English message, with credentials scrubbed and at most 200 characters (cut to 199 plus "…" when longer).
-
-  Check results are only written to active channels; a draining channel's conclusion comes only from drain failures and
-  load failures, and marking a channel as draining clears its earlier conclusion, so the two never overwrite each other.
-- **Alerts**: `message` is a Chinese description, accompanied by `params` (string keys and values); webhook payloads carry the same.
-  Alerts written before upgrading to a version with description parameters have none: `params` is `null`, and the UI
-  shows the `message` as is. Webhook deliveries keep order per kind and target: if an earlier one was not delivered, later
+- **Failure conclusions for channels and replicas**: a channel's `failure` is `{stage, reason, detail}` and a
+  replica's is `{reason, detail}`; both are null when the latest attempt succeeded or nothing has failed yet. The fields
+  are described in the table below.
+- **Alerts**: `message` is a Chinese description, accompanied by `params` (string keys and values); webhook payloads
+  carry the same. Webhook deliveries keep order per kind and target: if an earlier one was not delivered, later
   transitions for the same kind and target wait for the next round and go out in order.
 
-API errors, failure conclusions and alerts carry only error codes and parameters, and the server does not render text in the requester's language, the same approach as for channel template text: it only
-sends structure, and the text for each language is kept in the front-end dictionaries (`web/src/i18n/*/server.ts`),
-whose keys TypeScript type checking keeps in one-to-one correspondence with the contract's `ErrorCode`,
-`FailureReason`, and other enums, so a missing entry fails the build. The Chinese `error` and alert `message` remain
-for callers that bypass the admin console and for webhook receivers to show as they are. The exceptions are the two
-things a browser opens directly, without the front end rendering them: the cloud drive authorization callback page picks
-Chinese or English from `Accept-Language`, and the header comments of an exported rclone config file follow the `lang`
-query parameter, falling back to `Accept-Language`.
+| Field | Meaning |
+|---|---|
+| `stage` | Where it failed: `probe` (health check), `load` (building the driver from the configuration), or `drain` (deleting objects from a draining channel) |
+| `reason` | The classification from the contract's `FailureReason` enum, determined from the text of the whole error chain; `unclassified` when nothing matches |
+| `detail` | The original error: the innermost error in the chain, usually the provider's or network library's English message. Credentials are scrubbed, and it is at most 200 characters (cut to 199 plus "…" when longer) |
+
+Check results are only written to active channels. A draining channel's conclusion comes only from drain failures and
+load failures, and marking a channel as draining clears its earlier conclusion, so the two never overwrite each other.
+
+The server does not render text in the requester's language: API errors, failure conclusions, and alerts carry only
+error codes and parameters, and channel templates likewise send only structure. The text for each language lives in
+the front-end dictionaries (`web/src/i18n/*/server.ts`), whose keys TypeScript type checking keeps in one-to-one
+correspondence with the contract's `ErrorCode`, `FailureReason`, and other enums, so a missing entry fails the build.
+The Chinese `error` and alert `message` are there for callers that bypass the admin console and for webhook receivers
+to show as they are.
+
+Two things are opened directly by a browser without the front end rendering them, so the server picks the language:
+
+- the cloud drive authorization callback page, which picks Chinese or English from `Accept-Language`;
+- the header comments of an exported rclone config file, which follow the `lang` query parameter and fall back to `Accept-Language`.
 
 ## Periodic tasks
 
-Periodic tasks are loops owned by each service and started and stopped by the composition root. For intervals that come
-from runtime settings, a change in the admin console reschedules the current wait immediately instead of waiting for the old interval to finish.
+Periodic tasks are loops owned by each service and started and stopped by the composition root. For intervals that
+come from runtime settings, a change in the admin console reschedules the current wait immediately instead of waiting
+for the old interval to finish.
 
 | Task | Interval | What it does |
 |---|---|---|
-| Health check | `health_check_seconds` (default 60 seconds) | Retry loading channels that previously failed to load (in parallel, at most 30 seconds to build each driver; an unreachable backend is recorded as a load failure when time runs out), then light checks on all channels in parallel; an unhealthy channel whose light check passes recovers only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
+| Health check | `health_check_seconds` (default 60 seconds) | First retries loading channels that previously failed to load: in parallel, at most 30 seconds to build each driver, and an unreachable backend is recorded as a load failure when time runs out. Then runs light checks on all channels in parallel; an unhealthy channel whose light check passes is marked healthy again only after a deep check confirms it. See [Multi-store failover](./library/failover.mdx) |
 | Alert evaluation | Same as the health check | Unhealthy channels, failed replication, channel usage over the threshold, failed drains, failed backups; can be pushed to a webhook |
 | Lifecycle cleanup | `cleanup_sweep_seconds` (default 60 seconds) | Reclaim expired references → physically delete blobs past their grace period → label cold images → reclaim expired idempotency keys → reclaim audit entries past retention |
 | Activity flush | `activity_flush_seconds` (default 60 seconds) | Write public access times and counts to the database in batches; variants' last-access times are flushed on the same interval |
 | Deduplication | `dedup_scan_seconds` (default 300 seconds) | Merge exact duplicates (same SHA-256) automatically, then scan for pHash near-duplicates and queue them for manual decisions |
 | Usage report | `usage_report_seconds` (default 300 seconds) | Compute storage usage per channel and update metrics |
-| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take one consistent snapshot with `VACUUM INTO` and write it to `_imgyoung/backup/` on every channel that is healthy and not being cleaned up, each channel keeping its own `backup_keep` copies; if any channel is not written, or every channel is written but pruning old snapshots fails on some, the round counts as failed (`backup_failed` alert) and the channels that were written keep the snapshot; a backup interrupted by shutdown does not count as failed. At startup, a backup runs right away if any healthy channel lacks a snapshot within the backup interval. See [Backup and restore](./operations/backup.mdx) |
+| Metadata database backup | `backup_interval_hours` (default 24 hours) | Take one consistent snapshot with `VACUUM INTO` and write it to `_imgyoung/backup/` on every channel that is healthy and not draining, each channel keeping its own `backup_keep` copies. If any channel is not written, or every channel is written but pruning old snapshots fails on some, the round counts as failed (`backup_failed` alert), and the channels that were written keep the snapshot; a round interrupted by shutdown does not count as failed. At startup, a backup runs right away if any healthy channel lacks a snapshot within the backup interval. See [Backup and restore](./operations/backup.mdx) |
 | Auth maintenance | 1 minute / 1 hour (fixed) | Write back token last-used times in batches / reclaim expired sessions |
-| Replication reconciliation | 10 minutes (fixed) | See the previous section |
-| Reconciliation GC | 24 hours (fixed) | List every healthy channel (channels being cleaned up are not scanned) and compare with the replica records in the database in both directions: reclaim orphan objects, and reset phantom replicas to `pending` to be replicated again. Criteria below |
+| Replication reconciliation | 10 minutes (fixed) | See [the outbox pattern](#outbox) |
+| Reconciliation GC | 24 hours (fixed) | List every healthy channel (draining channels are not scanned) and compare with the replica records in both directions: reclaim orphans, and set missing replicas back to `pending` to be replicated again. Rules below |
 
-### Reconciliation GC criteria [#reconcile-gc]
+### Reconciliation GC rules [#reconcile-gc]
 
-What reconciliation GC handles (the system directory `_imgyoung/` and the light check key are excluded from the comparison):
+Reconciliation GC compares the objects in a channel with the replica records in the database. The system directory
+`_imgyoung/` and the light check key are excluded from the comparison.
 
-- **Orphans**: an object is reclaimed only if all of these hold — its key has this service's object key format
-  `{short_id}_{first 8 hex chars of sha256}`; the database has no replica record of it on that channel in any state;
-  its modification time is not earlier than the channel's binding time; and it was written more than 48 hours ago
-  (the grace period covers uploads already written to the channel but not yet recorded). The modification time is when the
-  object was written to the provider; S3-style backends take the time recorded by the server straight from the listing,
-  without reading each object's metadata. Every other object without a record —
-  files written by other programs, objects in an old bucket attached by a new instance during disaster recovery
-  before the metadata is restored, or objects written to the channel before a snapshot restore that the restored
-  database has no record of — is only counted, never reclaimed, and appears as `foreign` in the reconciliation log.
-- **Deep check leftovers**: `.imgyoung-probe-` temporary objects left when a deep check fails to delete them are
-  deleted once written more than 48 hours ago, regardless of the channel's binding time (leftovers from a connection
-  test predate it), and are not counted in the reconciliation's object and byte totals.
-- **Phantoms**: replicas recorded as `done` but missing from the channel are reset to `pending` and queued for replication again.
+| Situation | How it is identified | Action |
+|---|---|---|
+| **Orphans** | The key has this service's object key format `<short ID>_<first 8 hex digits of SHA-256>`; the database has no replica record of it on that channel in any state; its modification time is not earlier than the channel's binding time | Deleted once written more than 48 hours ago. The grace period covers uploads already written to the channel but not yet recorded |
+| **Foreign objects** | No record in the database, but the key is not in this service's format or the modification time is earlier than the binding time: for example files written by other programs, objects already in an old bucket that a new instance attaches during disaster recovery, or objects written after the snapshot of a later restore | Counted, never deleted; they appear as `foreign` in the reconciliation log |
+| **Probe leftovers** | `.imgyoung-probe-` temporary objects left when a deep check fails to delete them | Deleted once written more than 48 hours ago, regardless of the binding time (leftovers from a connection test predate it); not counted in the reconciliation's object and byte totals |
+| **Missing replicas** | Replicas recorded as `done` but missing from the channel | Set back to `pending` and queued for replication again |
+
+The modification time is when the object was written to the provider. S3-style backends take the time recorded by the
+server straight from the listing, without reading each object's metadata.
 
 The **binding time** (`channels.bound_at`) marks when the channel record started to correspond to its current storage
-location; this service only writes objects there after that moment:
+location; this service only writes objects there after that moment.
 
-- A new channel's binding time equals its creation time. When a new instance attaches an old bucket, every object
-  already in it is older and is only counted, never reclaimed.
-- Editing a channel in the admin console resets it to the time of the edit if the backend name or any configuration
-  parameter changes; typing the same password again counts as a change (rclone encodes passwords with a random IV).
-  Changing only the name, priority, or direct-link switch does not reset it, and neither does a token refresh write-back.
-- After a restore from a snapshot, every channel is reset to the time of the first start after the restore: before
-  swapping the snapshot in, a marker file `imgyoung.db.restored` is written to the data directory; after migrations and
-  before the master key is loaded, the marker triggers the reset and is deleted on success, with the log line
-  `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收`. Objects uploaded after the snapshot,
-  which the restored database has no record of, are therefore never deleted as orphans. The marker is written when the
-  staged file `<data dir>/imgyoung.db.restore` is swapped in, and a restore from the admin console stages exactly that
-  file; a manual restore must also put the snapshot there and then start, not overwrite `imgyoung.db` directly,
-  otherwise no marker is written and the binding times are not reset.
+| Situation | Binding time |
+|---|---|
+| A channel is created | Its creation time. When a new instance attaches an old bucket, every object already in it is older, so it is only counted and never deleted |
+| The channel is edited in the admin console and the backend name or any configuration parameter changes | The time of the edit. Re-entering the same password counts as a change, because rclone encodes passwords with a random IV |
+| Only the name, priority, or direct-link setting changes; a token refresh is written back | Unchanged |
+| A snapshot is restored | Every channel is set to the time of the first start after the restore |
+
+During a restore, when the staged file `<data dir>/imgyoung.db.restore` is swapped in, the service writes a marker file
+`imgyoung.db.restored` to the data directory. At startup, after migrations and before the master key is loaded, the
+marker triggers the reset and is deleted on success, with the log line
+`换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收`. Objects uploaded after the snapshot,
+which the restored database has no record of, are therefore never deleted as orphans. A restore from the admin console
+stages that file automatically; a manual restore must also put the snapshot there and then start, rather than
+overwrite `imgyoung.db` directly, or no marker is written and the binding times are not reset. See
+[Backup and restore](./operations/backup.mdx).
 
 `created_at` does not change along with the binding time: together with the channel ID it feeds key derivation for encrypted channels.
 
 <Callout type="warn" title="Two instances must not share a channel path">
-Reconciliation only trusts this database's replica records: objects another instance writes to the same path have the
+Reconciliation only trusts this database's replica records. Objects another instance writes to the same path have the
 right key format but no record here, so once past the grace period they are deleted as orphans.
 </Callout>
 
 ### Shutdown
 
-Shutdown (on SIGINT / SIGTERM, or a restart requested after restoring a backup snapshot in the admin console) happens
-in order: new requests stop being accepted first, and in-flight requests get at most 6 seconds before the remaining
-connections are closed; then the background loops and in-flight replication jobs are cancelled and the replication
-subsystem gets at most 2 seconds, while each loop writes out data still held in memory before it exits; a backup in progress
-(scheduled or manual) and the snapshot fetch of a restore are stopped too — the storage backend deletes a half-written
-snapshot and the temporary staging file is removed; finally the channel drivers and the database are closed. The two stages total 8 seconds, within Docker's default 10-second kill
-timeout, and the sample configurations under `deploy/` leave extra headroom (`stop_grace_period: 15s` in compose,
-`TimeoutStopSec=15s` for systemd). Cancelled replication jobs keep their state in the business table and are queued
-again by reconciliation on the next start.
+On SIGINT / SIGTERM, or a restart requested after restoring a snapshot in the admin console, the service shuts down in this order:
+
+1. stop accepting new requests and wait for in-flight requests, closing the remaining connections on timeout;
+2. cancel the background loops and in-flight replication jobs; each loop writes out data still held in memory before it exits;
+3. stop a backup in progress (scheduled or manual) and the snapshot fetch of a restore: the storage backend deletes a
+   half-written snapshot and the temporary staging file is removed;
+4. close the channel drivers and the database.
+
+Shutdown takes at most about 8 seconds, within Docker's default 10-second kill timeout. The sample configurations under
+`deploy/` leave extra headroom: `stop_grace_period: 15s` in compose and `TimeoutStopSec=15s` for systemd. Cancelled
+replication jobs keep their state in `blob_channels` and are queued again by reconciliation on the next start.
 
 ## Technology choices [#tech-stack]
 
@@ -392,28 +431,28 @@ deploy apart from the storage channels. Exact dependency versions are whatever t
 
 - **Go**: compiles to a single static binary with a small Docker image; I/O orchestration such as multi-channel writes,
   asynchronous replication, health checks, and the task queue is straightforward with goroutines; the ecosystem for
-  object storage, HTTP, and metrics is mature, and simple syntax and fast builds keep the bar for contributors low. The
+  object storage, HTTP, and metrics is mature; and simple syntax and fast builds keep the bar for contributors low. The
   deciding factor is that rclone itself is written in Go, and only Go can call its backends directly in-process; see
   [Why rclone is integrated in-process](#rclone).
-- **`CGO_ENABLED=0` throughout**: without a C toolchain or system libraries, the release archives can be cross-compiled
-  for Linux, macOS, and Windows on two architectures each, and shipped in a distroless image holding nothing but the
-  binary. Every dependency below is pure Go or works without cgo. All builds use `-tags nodynamic`: by default the WebP
-  library tries to load the system libwebp at runtime, and only with that path switched off is the Linux binary free of
-  the dynamic linker.
+- **`CGO_ENABLED=0` throughout**: with no C toolchain or system libraries involved, the release archives can be
+  cross-compiled for Linux, macOS, and Windows on two architectures each, and shipped in a distroless image holding
+  nothing but the binary. Every dependency below is pure Go or works without cgo. All builds use `-tags nodynamic`: by
+  default the WebP library tries to load the system libwebp at runtime, and only with that path switched off is the
+  Linux binary free of the dynamic linker.
 
 ### Dependencies
 
 | Area | Choice | Why |
 |---|---|---|
-| HTTP routing | chi | Handlers are plain standard-library `http.Handler`s with no private concepts; uploads (streaming request reads) and image proxying (streaming response writes) both work directly with `io.Reader` / `io.Writer`, so a thin router fits best |
+| HTTP routing | chi | Handlers are plain standard-library `http.Handler`s with no private concepts; uploads (streaming request reads) and image proxying (streaming response writes) both work directly with `io.Reader` / `io.Writer`, which suits a thin router |
 | SQLite driver | `modernc.org/sqlite` | A pure-Go implementation; no cgo |
-| Database access | sqlc | Queries are written in SQL and compiled into type-safe Go code. No ORM: an image host's queries are all simple, exact lookups, so an ORM's abstraction buys nothing |
-| Migrations | Atlas | The declarative schema is the single source of truth; during development Atlas diffs it into versioned migrations, and at runtime its pure-Go executor applies them on startup, so deployments need no migration tool |
-| Task queue | River | A persistent task queue with retries, backoff, and concurrency control built in; on its SQLite driver the job tables share a database with the business tables, so there is no extra service. Jobs are only idempotent triggers and state lives in the business tables; see [the outbox fence](#outbox) |
+| Database access | sqlc | Queries are written in SQL and compiled into type-safe Go code. No ORM: an image host's queries are all simple, exact lookups that gain nothing from an ORM's abstraction |
+| Migrations | Atlas | The declarative schema is the source of truth; during development Atlas diffs it into versioned migrations, and at runtime its pure-Go executor applies them on startup, so deployments need no migration tool |
+| Task queue | River | A persistent task queue with retries, backoff, and concurrency control built in; on its SQLite driver the job tables share a database with ImgYoung's tables, so there is no extra service. Jobs are only idempotent triggers and state lives in `blob_channels`; see [the outbox pattern](#outbox) |
 | Periodic tasks | A `Run(ctx, wait)` loop owned by each service | Periodic tasks only need "run every so often", with the interval taken from runtime settings and rescheduled the moment it changes; no cron library |
 | Wiring | Assembled by hand in `cmd/imgyoung/build.go` | The set of components is fixed and their dependencies are static, so calling constructors in order is enough: searchable, navigable, with no reflection or runtime container. No DI framework |
 | Lifecycle | oklog/run | HTTP, River, and each background loop are actors; when any of them exits, the whole group shuts down in order. Harder to get wrong than hand-rolled `WaitGroup`s and channels |
-| Architecture guard | depguard (built into golangci-lint) | The direction of dependencies between layers is a lint rule enforced by CI, not a matter of discipline; see [Layers and dependency direction](#layers) |
+| Architecture guard | depguard (built into golangci-lint) | The direction of dependencies between layers is a lint rule enforced in CI; see [Layers and dependency direction](#layers) |
 | Perceptual hash | goimagehash | Pure Go; takes the decoded `image.Image`, so it plugs straight into the upload's decode step |
 | Image codecs | Standard library, `golang.org/x/image`, gen2brain/webp | None needs cgo; gen2brain/webp encodes WebP by running libwebp in a pure-Go WebAssembly runtime |
 | Cryptography | Standard-library AES-256-GCM and HKDF; argon2id from `golang.org/x/crypto` | Encrypting channel configuration and credentials, deriving channel keys and S3 secrets, and hashing login passwords respectively. Encryption of channel data itself is left to rclone crypt |
@@ -421,80 +460,84 @@ deploy apart from the storage channels. Exact dependency versions are whatever t
 | Logging and metrics | `log/slog`, Prometheus client_golang | The de facto standards in their areas |
 | Short IDs | jaevor/go-nanoid | Public short IDs come from a mature implementation; internal primary keys are SQLite auto-increment rowids and never exposed |
 
-The project is released under the MIT license: the same as rclone, with the lowest barrier for contributors, and a
-self-hosted tool has no realistic concern about cloud vendors reselling it as a hosted service.
+The project is released under the MIT license, the same as rclone.
 
-### What is deliberately left out
+### What is left out
 
-- **Redis**: it has no place in a single instance. What needs atomicity, such as idempotency keys and reference counts,
+- **Redis**: a single instance has no use for it. What needs atomicity, such as idempotency keys and reference counts,
   relies on SQLite constraints and atomic updates; rate limits are in-process token buckets; the variant cache lives on
-  local disk. In a single instance the in-process versions are strictly better than Redis: no network round trips, no
-  serialization, no extra service to run. It only becomes worth reconsidering when moving to multiple instances.
+  local disk. The in-process versions have no network round trips or serialization, and leave one less service to run.
 - **Configuration files and configuration libraries**: environment variables only get the process started; all other
-  runtime settings live in the database's `settings` table and are edited in the admin console, so "where does this
-  value come from" always has exactly one answer. See [Configuration](./configuration.mdx).
+  runtime settings live in the database's `settings` table and are edited in the admin console, so every value has
+  exactly one source. See [Configuration](./configuration.mdx).
 - **ORMs, DI frameworks, cron libraries**: see the table above for why.
 
 ### SQLite and versioned migrations
 
 SQLite is a single file with no external dependencies, and a consistent snapshot is just one more file, which suits
-self-hosting best and fits the single-instance design. Versioned migrations have been there from day one: a
-long-running self-hosted instance goes through many version upgrades, and without versioned migrations the schema would
-quickly get out of hand. Migrations only go forward; see [Data model](#data-model).
+self-hosting and fits the single-instance design. Every schema change ships as a versioned migration: a long-running
+self-hosted instance goes through many upgrades, and applying migrations in version order keeps its schema consistent.
+Migrations only go forward; see [Data model](#data-model).
 
-### Two upgrade seams
+### Components expected to be replaced
 
-Only two choices are expected to be replaced; everything else is fixed. Go's thin libraries all follow the shape of the
-standard library, so replacing one would be mechanical work, and reserving flexibility for it would buy nothing.
+The image processing engine and the database are the two components expected to be replaced. The other dependencies
+keep no provision for replacement: Go's thin libraries follow the shape of the standard library, so replacing one would
+be mechanical work.
 
 - **Image processing engine**: the single entry point for on-demand processing is `Processor.Process(src, params)` in
-  `internal/infra/imaging`. The current implementation is pure Go: the standard library decodes JPEG / PNG / GIF,
+  `internal/infra/imaging`. The processor is pure Go: the standard library decodes JPEG / PNG / GIF,
   gen2brain/webp encodes WebP, output is limited to WebP, JPEG, and PNG, and GIFs are stored and served as-is without
-  processing. AVIF and HEIF are not included: they see little use, and their encoders (libaom and the like) are heavy.
+  processing. AVIF and HEIF are not supported: they see little use, and their encoders (libaom and the like) are heavy.
   More formats or faster processing (an implementation based on libvips, for example) would mean replacing this processor.
-- **Database**: currently SQLite. The schema is defined in declarative SQL, migrations are generated by Atlas, and query
-  code is generated by sqlc; moving to PostgreSQL means regenerating the query code and migrations for that dialect and
+- **Database**: the schema is defined in declarative SQL, migrations are generated by Atlas, and query code is
+  generated by sqlc. Moving to PostgreSQL means regenerating the query code and migrations for that dialect and
   switching River to its PostgreSQL driver.
 
-Each seam currently has a single implementation, and no interface type has been defined for either in advance.
+Each has a single implementation, and neither has an interface type defined in advance.
 
 ## Why rclone is integrated in-process [#rclone]
 
-The storage layer follows one rule: rclone only stores bytes in some backend, retrieves, inspects, lists, and deletes
-them. Primary/backup switching, replication, reference counting, deduplication, TTL, and health decisions are all
-ImgYoung's own code, separated from rclone by the `store/driver.Driver` interface.
+The storage layer splits the work this way: rclone only stores bytes in some backend, and retrieves, inspects, lists,
+and deletes them. Primary/backup switching, replication, reference counting, deduplication, TTL, and health decisions
+are all ImgYoung's own code, separated from rclone by the `store/driver.Driver` interface.
 
 The integration imports rclone's `fs` and backend packages directly and builds an `fs.Fs` in-process from a parameter
-map, instead of calling the rclone command line, librclone's RPC interface, or an rclone config file:
+map, instead of calling the rclone command line or librclone's RPC interface, or reading an rclone config file. This gives:
 
 - **Streaming, no temporary files**: uploads write in-memory bytes straight through `fs.Fs.Put`, and reads stream the
   object straight into the HTTP response.
-- **Configuration stays in ImgYoung's own database**: channel parameters are stored in the `channels` table encrypted
-  with the master key and decrypted into a map for the backend at runtime. The parameters contain credentials, so they
-  are never logged and never carried in error chains.
-- **One token refresher**: rclone refreshes OAuth tokens itself and hands them to the application through the
-  parameter write-back hook, which encrypts and stores them immediately. Before storing, it checks only that the parameter being
-  written back still holds, in the database, the value this driver last confirmed: if that parameter was edited in the
-  meantime, the write-back is dropped, so an old driver's write-back never overwrites a token the edit just saved; an edit
-  that changed only other parameters (priority, path and so on) does not stop the write-back from being merged into the
-  edited configuration. If storing the write-back fails, the driver keeps using the new token it holds and the next
-  write-back stores it; the driver is not rebuilt. The application runs no refresh loop of its own.
-- **One handle for everything**: reads, writes, checks, listing, and deletion all go through the same `fs.Fs`, with
-  one set of error mappings (missing objects always become `driver.ErrNotFound`).
+- **Configuration in ImgYoung's own database**: channel parameters are stored in the `channels` table encrypted with
+  the master key and decrypted into a parameter map for the backend at runtime. The parameters contain credentials, so
+  they are never logged and never carried in error chains.
+- **A single OAuth token refresher**: rclone refreshes OAuth tokens itself and hands them to ImgYoung through the
+  parameter write-back hook, and ImgYoung encrypts and stores them immediately; there is no refresh loop of its own.
+  Write-backs follow these rules:
+  - Before storing, it checks only the parameter being written back: it is stored only if the database still holds
+    the value this driver last confirmed.
+  - If that parameter was edited in the meantime, the write-back is dropped, so an old driver never overwrites a token
+    the edit just saved. An edit that changed only other parameters (priority, path, and so on) does not stop the
+    write-back from being merged into the edited configuration.
+  - If storing the write-back fails, the driver keeps using the new token it holds and the next write-back stores it;
+    the driver is not rebuilt.
+- **One handle for everything**: reads, writes, checks, listing, and deletion all go through the same `fs.Fs`, with one
+  set of error mappings; a missing object always becomes `driver.ErrNotFound`.
 - **Channel encryption with no extra code**: encrypted channels stack rclone's crypt layer on top of the backend, and
-  the upload and access paths stay unchanged; crypt is a public format, so with the password the data can be decrypted
-  by standard rclone on its own. See [Channel encryption](./channels/encryption.mdx).
-- **Configuration exportable as-is**: the admin console can export an rclone configuration file for every channel, with
-  exactly the parameters the driver hands to the backend, plus a crypt remote for encrypted channels. It is generated by
-  `ConfigFile` in `store/rclone`, which shares its parameter handling with driver construction, so standard rclone can
+  the upload and access paths stay unchanged. crypt is a public format, so with the password the data can be decrypted
+  by stock rclone on its own. See [Channel encryption](./channels/encryption.mdx).
+- **Configuration exportable as-is**: the admin console can export an rclone config file for every channel, with
+  exactly the parameters the driver hands to the backend, plus a crypt remote for encrypted channels. It is generated
+  by `ConfigFile` in `store/rclone`, which shares its parameter handling with driver construction, so stock rclone can
   read and write the channel's data without ImgYoung. See [Driver interface and rclone implementation](./library/driver.mdx#config-file).
-- **Tests need no cloud account**: rclone's `local` and `memory` backends let the whole storage path run as integration tests on one machine.
+- **Tests need no cloud account**: rclone's `local` and `memory` backends let the whole storage path run as
+  integration tests on one machine.
 
 Registering every rclone backend (`backend/all`) means any storage rclone supports can be used as a channel directly,
 and rclone upgrades bring new backends with them; the cost is a binary on the order of 100 MB. This relies on rclone's
-internal APIs, which make no stability promise, so `go.mod` pins the rclone version and upgrades are done by hand with the full test suite.
+internal APIs, which make no stability promise, so `go.mod` pins the rclone version and upgrades are done by hand with
+the full test suite.
 
-The `Driver` interface does not assume rclone exists, which is also the way out if rclone's internal APIs change:
-swap in another `Driver` implementation and the business code stays the same. Splitting the interface and the rclone
-implementation into separate packages also lets Go projects outside the application reuse this storage engine on its
-own; see [Using it as a Go library](./library/index.mdx).
+The `Driver` interface does not depend on rclone: if rclone's internal APIs change, another `Driver` implementation can
+be swapped in and the business code stays the same. Splitting the interface and the rclone implementation into separate
+packages also lets Go projects outside the application reuse this storage engine on its own; see
+[Using it as a Go library](./library/index.mdx).

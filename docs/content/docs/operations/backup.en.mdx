@@ -1,118 +1,128 @@
 ---
 title: Backup & restore
-description: Automatic metadata snapshots, restoring from a snapshot, disaster recovery after losing the host, the metadata export, and reconciliation GC.
+description: What to back up, automatic metadata snapshots, restoring from a snapshot, and disaster recovery after losing the host.
 ---
 
 ## What to back up
 
-Objects in channels are named by content hash; which image belongs to which short link, user and token lives only in the metadata database. Lose the metadata database and the images in your channels can no longer be matched up. Lose the master key and the instance refuses to start, and channel credentials and encrypted channel data can no longer be decrypted.
+Images are stored in your channels under their content hash; which short link points to which image, and which user owns it, is recorded in the metadata database. As a result:
+
+- if you lose the metadata database, the images in your channels can no longer be matched to their links;
+- if you lose the master key, the instance cannot start, and channel credentials and encrypted channel data can no longer be decrypted.
 
 | What | Where | How |
 |---|---|---|
-| Master key | `<data dir>/master.key`, or the `IMGYOUNG_MASTER_KEY` variable | Copy it offline right after the first start and keep it apart from the snapshots; see [Configuration](../configuration.mdx#master-key) |
-| Metadata database | `<data dir>/imgyoung.db` | Automatic snapshots (written to every healthy channel), plus a downloaded copy kept somewhere else |
-| Images | Your channels | Configure several channels so replication keeps more than one copy of each image; the built-in local channel stores its data in `<data dir>/blobs/` |
-| rclone config of encrypted channels | **Export rclone config** on the **Storage channels** page | Export one per encrypted channel and keep it offline like the master key; see [Channel encryption](../channels/encryption.mdx) |
-| Deployment configuration | Environment variables, systemd drop-ins, `compose.yaml`, proxy configuration | Your own configuration management |
+| Master key | `<data dir>/master.key`, or the `IMGYOUNG_MASTER_KEY` variable | Copy it offline right after the first start and keep it apart from the snapshots. See [Configuration](../configuration.mdx#master-key) |
+| Metadata database | `<data dir>/imgyoung.db` | Automatic snapshots are written to every healthy channel; also download a copy regularly and keep it elsewhere |
+| Images | Your channels | Configure two or more channels so each image has several replicas. The built-in local channel stores its data in `<data dir>/blobs/` |
+| rclone config of encrypted channels | **Export rclone config** on the **Storage channels** page | Export one per encrypted channel and keep it offline like the master key. See [Channel encryption](../channels/encryption.mdx) |
+| Deployment configuration | Environment variables, systemd drop-ins, `compose.yaml`, reverse proxy configuration | Your own configuration management |
 
-`<data dir>/variants/` is the variant cache; it is regenerated on demand and needs no backup. Do not copy `imgyoung.db` while the service is running: the database runs in WAL mode and recent writes may still be in `imgyoung.db-wal`. For a consistent copy, download a snapshot from the admin console, or stop the service first.
+`<data dir>/variants/` caches resized and converted images; it is regenerated on demand and needs no backup.
+
+Do not copy `imgyoung.db` while the service is running: recent writes may still be in `imgyoung.db-wal`, so the copy would be incomplete. For a complete copy, download a snapshot from the admin console, or stop the service first.
 
 ## Automatic metadata snapshots
 
-- **How**: each round, SQLite's `VACUUM INTO` writes one consistent snapshot to `<data dir>/backup-snapshot.tmp` (needs free space of roughly the database size), which is deleted once it has been written to the channels.
-- **Where**: the same snapshot is written to **every** healthy channel that is not being deleted, under the object key `_imgyoung/backup/imgyoung-<UTC time>.db` (e.g. `imgyoung-20261015-083000.123.db`) in the channel's path; on the built-in local channel that is `<data dir>/blobs/_imgyoung/backup/`.
-- **Encryption**: snapshots written to an encrypted channel are encrypted along with everything else on it.
-- **When**: every **Backup interval** (`backup_interval_hours`, 24 hours by default), counted from process start; changing the interval restarts the countdown from the moment of the change. Scheduled backups and **Back up now** run one at a time; if both happen at once, one waits for the other.
-- **At startup**: if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately; otherwise it is skipped. The first start after adding a channel therefore fills it in, and frequent restarts do not push the rotated history out with same-day snapshots.
-- **Retention**: after a successful write, each channel keeps only its own newest **Backups to keep** (`backup_keep`, 7 by default) snapshots; older ones are deleted.
-- **Failure**: a channel that fails does not stop the others from being written, but if any channel was not written the round counts as failed and opens a `backup_failed` alert; the channels that were written keep the snapshot. No healthy channel, failing to take the snapshot, or writing every channel but failing to prune old snapshots on some (so the retention count did not take effect) also counts as failure. A backup interrupted by shutdown does not count as failed. The alert resolves after the next success; see [Monitoring & alerts](./monitoring.mdx).
-- **When a channel is deleted**: **Delete and purge** deletes the snapshots on the channel too; **Remove only** leaves every remote object, snapshots included, where it is. Snapshots, like uploads, replication and deep checks, are written under the channel's write lease: once the channel is marked as draining, new writes are refused, so a backup round skips the channel and does not count it among the round's channels; the drain job waits for writes already in progress to finish before it lists what to delete, so no snapshot is left behind on the remote. The drain checks the channel table before deleting each object to make sure the channel is still draining, so if an administrator chooses **Remove now** midway the drain stops: apart from the object being deleted at that moment, the remaining remote objects (snapshots included) are left as they are.
+ImgYoung takes snapshots of the metadata database on a schedule and writes the same snapshot to every healthy channel.
+
+- **Schedule**: one snapshot every **Backup interval** (`backup_interval_hours`, 24 hours by default), counted from service start; changing the interval restarts the countdown. At startup, if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately.
+- **Location**: `_imgyoung/backup/` under the channel's path, with names like `imgyoung-20261015-083000.123.db` (UTC). On the built-in local channel that is `<data dir>/blobs/_imgyoung/backup/`. Snapshots on encrypted channels are encrypted too.
+- **Retention**: each channel keeps only its newest **Backups to keep** (`backup_keep`, 7 by default) snapshots; older ones are deleted automatically.
+- **Disk space**: the snapshot is first written to a temporary file `backup-snapshot.tmp` in the data directory, which needs free space of roughly the database size.
+- **Failure**: if the snapshot cannot be taken, there is no healthy channel, a channel was not written, or a channel could not prune old snapshots down to the retention count, the backup counts as failed and opens a `backup_failed` alert, which resolves after the next success. Channels that were written keep the snapshot. See [Monitoring & alerts](./monitoring.mdx).
+
+When you delete a channel, **Delete and purge** deletes the snapshots on it as well; **Remove only** leaves them in place.
 
 <Callout type="warn" title="Your data only lives on this host">
-If no healthy channel lives off this host's disk (only the built-in local channel, or every other channel is unhealthy), image replicas and snapshots exist only on this host and are lost with it; the dashboard then shows **Your data only lives on this host**. Add an object storage or cloud drive channel and snapshots are written to it as well — no priority changes needed.
+If there is no healthy channel besides the built-in local channel, images and snapshots exist only on this host's disk and are lost if the host fails. The dashboard then shows **Your data only lives on this host**. Once you add an object storage or cloud drive channel, snapshots are written there as well.
 </Callout>
 
 <Callout type="warn" title="Snapshots on encrypted channels">
-A snapshot written to an encrypted channel is ciphertext, and the crypt password and salt that decrypt it are derived from the master key together with the channel's ID and creation time recorded in the metadata database. Once the metadata database is gone, fetch the snapshot from any unencrypted channel that holds one. If only encrypted channels hold snapshots, you need the config file downloaded beforehand with **Export rclone config** and kept offline; see [Channel encryption](../channels/encryption.mdx).
+The keys that decrypt a snapshot on an encrypted channel are derived from the master key together with the channel details recorded in the metadata database. Once the metadata database is lost, the only way to read those snapshots is with the config file saved beforehand through **Export rclone config**. So keep snapshots on at least one unencrypted channel, or export the rclone config of every encrypted channel and keep it offline. See [Channel encryption](../channels/encryption.mdx).
 </Callout>
 
 ## Managing snapshots in the admin console
 
-**Settings → Backups & export → Metadata snapshots** lists the union of the snapshots on all healthy channels, newest first; **Stored on** lists the channels holding each snapshot, in priority order.
+**Settings → Backups & export → Metadata snapshots** lists the snapshots on all healthy channels, newest first; **Stored on** shows which channels hold each snapshot. Snapshots on unhealthy or draining channels are not listed.
 
-- **Back up now**: take a snapshot immediately and write it to every healthy channel, pruning each channel beyond the retention count. The backup is run by the backup service and does not stop if the request goes away — a proxy timeout or a closed page does not leave it half done. It is stopped when the service shuts down: the storage backend deletes the half-written snapshot (nothing partial is left on the local channel), and the service waits for it to end before exiting. The request returns, and the audit entry is written, only once the backup has finished. **Back up now** runs in rounds: with no manual backup in progress it starts one; while one is running, the request joins the round after it, and at most one round is queued. Every request therefore gets a snapshot taken after that click, and retrying after a proxy timeout adds at most one more round rather than lining up several that push older snapshots out by the retention count. Each request writes its own audit entry. When the proxy gives up first (Nginx 504, Cloudflare 524), the admin console shows **The reverse proxy timed out. If the request reached the server, the backup keeps running there and appears in the snapshot list when it finishes: refresh the list later, and click again only if no new snapshot shows up.** On failure:
-  - some channels were not written: 500 with error code `backup_store_failed`; the message names the failed channels with their root-cause text, like `快照 imgyoung-20261016-083000.123.db 有 1/3 个渠道未写成(r2-main: i/o timeout)`, and the parameters are `snapshot`, `failed`, `total` and `detail`. The channels that were written keep the snapshot;
-  - every channel was written but pruning old snapshots failed on some: 500 with error code `backup_prune_failed`, message like `快照 imgyoung-20261016-083000.123.db 已写入,但有 1/3 个渠道清理旧快照失败,保留份数没能生效(r2-main: …)`, with the same parameters as above;
-  - the snapshot could not be taken: 500 with error code `backup_snapshot_failed`, message like `生成数据库快照失败: …`;
-  - no healthy channel: 503 with error code `no_healthy_channel`.
-- **Download**: reads the snapshot from the healthy channels holding it in priority order, moving on to the next one if a read fails. The admin console fetches the whole file first and only then hands it to the browser to save; a failure or an interrupted transfer shows the reason in the UI instead of saving a partial file. The downloaded file is an SQLite database file.
-- **Restore**: reads the same way; see the next section.
+- **Back up now**: take a snapshot right away, write it to every healthy channel, and prune old snapshots down to the retention count. Clicking again while a backup is running schedules one more backup after the current one — just one, however many times you click — so every click gets a snapshot taken after it.
+- **Download**: download the snapshot file, which is itself an SQLite database. It is read from the channels holding it in priority order, moving on to the next channel if a read fails, and is saved only once fetched completely.
+- **Restore**: replace the current metadata database with this snapshot; see the next section.
 
-Snapshots on unhealthy channels or channels being deleted are not listed and are not used for downloads or restores. If listing any healthy channel fails, the whole list fails (500, error code `internal`). With no healthy channel every action returns 503 with error code `no_healthy_channel` and the message `没有健康的渠道可用`. If no healthy channel has the requested snapshot, downloads and restores return 404 with error code `snapshot_not_found`; if some channels fail to read it and none succeeds, they return 500 with error code `internal`.
+Backups run on the server, so closing the page or a reverse proxy timeout does not interrupt them. If the reverse proxy times out first (Nginx returns 504, Cloudflare returns 524), the backup still completes on the server: refresh the list later, and click again only if no new snapshot appears.
+
+For status and error codes, see [Error codes](#error-codes) at the end of this page.
 
 ## Restoring from a snapshot
 
-A live SQLite file cannot be replaced safely, so a restore happens in two steps: stage the snapshot, then swap it in on the next start, before the database is opened.
+A restore takes all metadata back to the time of the snapshot.
 
 <Steps>
 <Step>
 
-**Stage and shut down**: click **Restore** on a snapshot row and confirm with **Restore and restart**. The service downloads the snapshot to `<data dir>/imgyoung.db.restore` (via a temporary file renamed once it checks out), writes a `backup.restore` audit entry, responds with 202 (the body carries the snapshot name `snapshot` and the staged path `staged`), and shuts down gracefully: it stops accepting new requests, waits up to 6 seconds for in-flight requests, then stops the background loops and replication jobs, waiting up to 2 more seconds.
+**Start the restore**: click **Restore** on the snapshot's row and confirm with **Restore and restart**. The service downloads the snapshot to `imgyoung.db.restore` in the data directory, checks that it is complete, and then stops.
 
 </Step>
 <Step>
 
-**Restart via the process manager**: the process exits normally and needs a process manager to start it again — `--restart unless-stopped` for Docker, `restart: unless-stopped` for Compose, `Restart=always` for systemd (the examples in `deploy/` are set up this way). A binary started by hand in a terminal simply exits, and the staged file is swapped in the next time you start it.
+**Restart**: a process manager starts the service again: `--restart unless-stopped` for Docker, `restart: unless-stopped` for Compose, `Restart=always` for systemd; the examples in `deploy/` are already set up this way. A binary run directly in a terminal simply exits, and the restore completes the next time you start it.
 
 </Step>
 <Step>
 
-**Swap in**: at startup, before the database is opened, a restore marker `imgyoung.db.restored` is written to the data directory, the current `imgyoung.db` and its `-wal` and `-shm` files are renamed to `imgyoung.db.pre-restore-<UTC time>`, and the staged file is renamed to `imgyoung.db`. Database migrations then run as usual, so a snapshot from an older version is brought up to date.
+**Swap in the snapshot**: at startup the service replaces the current database with the snapshot and upgrades it to the current schema. The previous database is renamed to `imgyoung.db.pre-restore-<UTC time>` and kept in the data directory; delete it by hand once you are satisfied with the restore.
 
 </Step>
 <Step>
 
-**Reset binding times**: after the migrations and before the master key is loaded, the marker causes every channel's binding time (see [Reconciliation GC](#reconciliation-gc)) to be reset to the current time; the marker is then deleted and the log reads `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收`, with the number of channels in the `channels` field. If this step fails, the marker stays and the next start does it again.
-
-</Step>
-<Step>
-
-**Sign in again**: the admin console reloads once the service is back. Sessions and passwords are as they were at snapshot time, so use the password you had then.
+**Sign in again**: the admin console reloads once the service is back. Accounts and passwords are back to snapshot time too, so sign in with the password you had then.
 
 </Step>
 </Steps>
 
-A restore follows the request that started it: if the request goes away before staging finishes (the page is closed, the reverse proxy times out), the restore stops; if staging finishes after the request has gone, the staged file is withdrawn. Either way the service neither shuts down nor swaps the database, and logs `发起恢复的请求已断开,暂存已撤回,不停机`. A shutdown stops staging as well and removes the temporary file. Behind a reverse proxy, the proxy's read timeout must therefore exceed the time it takes to fetch the snapshot from the channel: Nginx's `proxy_read_timeout` defaults to 60 seconds (the `deploy/nginx.conf` example sets it to 600 seconds); Cloudflare's is fixed at 125 seconds and only Enterprise plans can raise it, so a slower snapshot has to be restored by opening the admin console on the origin directly, or put in place by hand following the disaster recovery steps below. See [Reverse proxy & HTTPS](./reverse-proxy.mdx). An Nginx read timeout (504) closes the connection to the origin, so the restore is aborted and the admin console shows **The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again.** Whether Cloudflare closes the connection to the origin on a timeout (524) is not documented, so the restore may still complete on the origin and restart the service afterwards; the admin console shows **Cloudflare timed out (524) before the restore returned. If Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own; otherwise it was aborted and nothing changed. For a snapshot that takes longer than 125 seconds to fetch, open the admin console on the origin directly and restore again.**
+If the snapshot is incomplete or is not an ImgYoung metadata database, the restore is refused and the service keeps running; pick another snapshot. If the service was killed (for example `kill -9` or a power loss), a half-written snapshot may be left on the local channel; it shows up in the list but cannot be used to restore.
 
-Before the fetched snapshot is renamed into the staged file, it is checked to be a complete SQLite database with a migration history (opened read-only, `PRAGMA quick_check`, then a check for the `schema_revisions` table). When SQLite reports the file as corrupt or not a database, the check lists problems, or there is no migration history, the snapshot counts as incomplete and the restore is refused — a 0-byte file is a valid empty database to SQLite and would be migrated into a brand-new instance once swapped in, and any other SQLite file is not a metadata database, so both are refused here — with 422, error code `snapshot_corrupt`, and a message like `快照 imgyoung-20261016-083000.123.db 不是完整的数据库文件(可能写入途中被中断),请换一份快照恢复`; the temporary file is deleted and the service keeps running, so pick another snapshot. A local fault such as a disk read error or running out of memory is not blamed on the snapshot: it returns 500 with error code `internal` and logs an Error. A snapshot half-written when the process was killed (`kill -9`, power loss) can remain on the local channel and show up in the list; restoring from it is refused at this step.
+### After a restore
 
-The kept `imgyoung.db.pre-restore-*` files are never deleted automatically; remove them once you are satisfied with the restore.
+Changes made after the snapshot are lost, and the objects in your channels no longer match the metadata:
 
-A restore takes the metadata back to snapshot time, so anything that happened afterwards no longer matches the objects in your channels:
+- **Images uploaded after the snapshot** are not in the metadata and can no longer be reached through ImgYoung. Their objects stay on the channels and are never deleted automatically.
+- **Images deleted after the snapshot** reappear in the metadata, but their objects are gone, so they fail to load and raise **Replication failed** alerts. Delete them in the admin console.
+- **Everything else** — channels, users and tokens created after the snapshot, changed runtime settings and hotlink rules — goes back to snapshot time.
 
-- **images uploaded after the snapshot** are unknown to the metadata. Their objects predate the reset binding times, so reconciliation GC only counts them (`foreign`) and never deletes them; they stay on the channels but can no longer be reached through ImgYoung;
-- **images deleted after the snapshot** are back in the metadata, but their objects are gone; they fail to load and show up as **Replication failed** alerts, so delete them in the admin console;
-- **everything else** — channels, users and tokens created, runtime settings and hotlink rules changed — goes back to snapshot time.
+### Restoring behind a reverse proxy
+
+The restore request waits until the snapshot has been downloaded and checked. If the request is cut off before then (the page is closed, the reverse proxy times out), the restore is cancelled: the service keeps running and nothing changes. The reverse proxy's read timeout must therefore be longer than it takes to download the snapshot from the channel:
+
+- **Nginx**: `proxy_read_timeout` defaults to 60 seconds; the `deploy/nginx.conf` example sets it to 600 seconds. On a timeout (504) the restore has been cancelled and nothing changed.
+- **Cloudflare**: the read timeout is fixed at 125 seconds and only Enterprise plans can change it. On a timeout (524) it is unknown whether the restore completed: if Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own. For snapshots that take longer than 125 seconds to download, open the admin console on the origin directly, or put the snapshot in place by hand as described in [disaster recovery](#disaster-recovery-after-losing-the-host) below.
+
+See [Reverse proxy & HTTPS](./reverse-proxy.mdx).
 
 ## Disaster recovery after losing the host
 
-Prerequisites: a backup of the `master.key` of the instance the snapshot came from, and a snapshot file from one of these:
+Before you start, you need:
 
-- a snapshot you downloaded;
-- any **unencrypted** channel: use the provider's console or rclone to download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path;
-- an encrypted channel: read it through the crypt remote of the rclone config file you exported beforehand; see [Channel encryption](../channels/encryption.mdx).
+- the original instance's master key: a backup of `master.key`, or the value of `IMGYOUNG_MASTER_KEY`;
+- a snapshot file, from one of:
+  - a snapshot you downloaded;
+  - any **unencrypted** channel: download the newest `imgyoung-*.db` under `_imgyoung/backup/` in the channel's path with the provider's console or rclone;
+  - an encrypted channel: read it with the rclone config you exported beforehand; see [Channel encryption](../channels/encryption.mdx).
 
 <Steps>
 <Step>
 
-**Install the same or a newer version on the new machine**; see [Installation](../install/index.mdx). It does not matter if it has already started once: the fresh instance's database is renamed and kept when the snapshot is swapped in. The `master.key` it generated on first start, however, must be replaced with the original in the next step. The metadata database records a fingerprint of the master key; once the snapshot is swapped in, a missing master key or one that does not match the snapshot makes the process refuse to start rather than generate a new key. A snapshot left by an older version has no fingerprint. As long as the database holds data that depends on the master key — ciphertext such as channel configurations and the CDN token, or data derived from the key such as the S3 credentials of upload tokens and the crypt keys of encrypted channels — no new key is generated either, and a missing key refuses to start. With ciphertext present, decrypting any one piece counts as a match, and failing to decrypt all of it refuses to start; with only derived data there is nothing to check against, so the key you put in place is used but no fingerprint is recorded, and the log reads `库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把`; ciphertext written from then on (creating or editing a channel, entering a CDN token) is encrypted with this key, so the next start checks against it, passes and records the fingerprint. A wrong key is therefore locked in only at the first start after ciphertext is written, so make sure the key is right when restoring such an older database: an S3 client of an upload token failing signature checks is the sign — switch back to the original key before any ciphertext is written.
+**Install**: install the same or a newer version on the new machine; see [Installation](../install/index.mdx). It does not matter if it has already started once, but the `master.key` it generated on first start must be replaced with the original in the next step.
 
 </Step>
 <Step>
 
-**Stop the service and put the master key and the snapshot in place**: put the original `master.key` in the data directory and the snapshot file as `imgyoung.db.restore`.
+**Stop the service and put the master key and snapshot in place**: put the original master key in the data directory as `master.key`, and the snapshot file in the data directory as `imgyoung.db.restore`.
 
-The snapshot must go in as `imgyoung.db.restore`; do not overwrite `imgyoung.db` with it. Only a swap through the staged file writes the restore marker that resets the channels' binding times. If you overwrite the database directly, objects written to the channels after the snapshot look like this database's own orphans to reconciliation GC and are deleted once past the grace period. A snapshot you put in place by hand does not go through the integrity check that restores from the admin console get; you can check it first with `sqlite3 imgyoung-20261015-083000.123.db 'PRAGMA quick_check;'` and make sure it prints `ok`, then with `sqlite3 imgyoung-20261015-083000.123.db '.tables'` and make sure `schema_revisions` is listed.
+Do not overwrite `imgyoung.db` with the snapshot. A snapshot put in place as `imgyoung.db.restore` is handled as a restore, which keeps the objects written to the channels after the snapshot; if you overwrite the database directly, those objects are treated as orphans and deleted after 48 hours.
+
+A snapshot put in place by hand skips the integrity check that restores from the admin console get, so you may want to check it yourself: `sqlite3 imgyoung-20261015-083000.123.db 'PRAGMA quick_check;'` should print `ok`, and the output of `sqlite3 imgyoung-20261015-083000.123.db '.tables'` should include `schema_revisions`.
 
 <Tabs items={['Binary', 'Docker', 'Compose', 'systemd']}>
 <Tab value="Binary">
@@ -176,62 +186,82 @@ If you provide the master key through `IMGYOUNG_MASTER_KEY`, set the variable in
 </Step>
 <Step>
 
-**Start and check**: for the binary, start `imgyoung` now. The log lines `已用暂存快照换入元数据库,原库留存` and then `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收` confirm the swap. Sign in with the credentials from snapshot time and check on **Storage channels** that the channels are healthy again.
+**Start and check**: for the binary, start `imgyoung` now. The log line `已用暂存快照换入元数据库,原库留存` confirms that the snapshot has been swapped in. Sign in with the credentials from snapshot time and check on **Storage channels** that the channels are healthy again.
 
-If startup fails saying the master key does not match the database, or that no master key can be found, the key you put in place is not the one from the snapshot's instance, or there is none. The snapshot has already been swapped in at that point; put the right master key in place and start again — there is no need to stage the snapshot again.
+If startup fails saying the master key does not match the database, or that no master key can be found, the key you put in place is not the original instance's key, or there is none. The snapshot has already been swapped in at that point: put the right master key in place and start again; there is no need to put the snapshot in place again.
 
 </Step>
 </Steps>
 
-Images that existed only on the local channel are gone with the old host. Images with replicas on other channels load as usual, and the missing local replicas are detected by reconciliation GC and copied back from the other channels.
+After recovery, images that existed only on the local channel are gone with the old host. Images with replicas on other channels load as usual, and the replicas missing from the local channel are copied back from the other channels during the daily reconciliation.
 
-If a snapshot is on an unencrypted channel, you can also skip fetching the file by hand: start a fresh instance, add the channel holding the snapshots in the admin console with its original parameters, and restore from **Metadata snapshots**; the list covers every healthy channel, so no priority changes are needed. The fresh instance must use the original master key from its very first start (put `master.key` in place or set `IMGYOUNG_MASTER_KEY` beforehand); otherwise, when it restarts after the restore, the key does not match the snapshot and the process refuses to start. If it has already started with a generated key, stop it, put the original `master.key` in place, delete the fresh `imgyoung.db` (and its `-wal` and `-shm`) from the data directory, start it again, and only then add the channel. A newly added channel is bound at the moment it is added, and every object already in the bucket predates that, so reconciliation GC only counts those objects and never deletes them; nothing is lost while you wait.
+### Without fetching the snapshot file
 
-<Callout type="warn" title="Restore soon after adding the old channel">
-Between adding the channel and restoring, do not click **Back up now** and do not restart the fresh instance: the fresh instance's empty database would be written to every healthy channel, the old one included, and by the retention count push out the oldest of the snapshots there. The restart caused by **Restore** is fine: that start swaps the snapshot in first, so what gets backed up afterwards is the restored database.
+If a snapshot is on an unencrypted channel, the new instance can read it from the channel directly:
+
+1. Start a fresh instance with the original master key: put `master.key` in place or set `IMGYOUNG_MASTER_KEY` before the first start. Otherwise, when the service restarts after the restore, the key does not match the snapshot and the service refuses to start. If it has already started with a generated key, stop it, put the original `master.key` in place, delete `imgyoung.db` (along with `imgyoung.db-wal` and `imgyoung.db-shm`) from the data directory, and start it again.
+2. In the admin console, add the channel holding the snapshots with its original parameters. Objects already in the channel are not deleted.
+3. Pick a snapshot under **Metadata snapshots** and restore it.
+
+<Callout type="warn" title="Restore soon after adding the channel">
+Between adding the channel and restoring, do not click **Back up now** and do not restart the instance. Otherwise the fresh instance's empty database is written to the newly added channel as a snapshot and, by the retention count, pushes out the oldest snapshot there.
 </Callout>
 
 ## Metadata export
 
-**Settings → Backups & export → Data export → Export JSON** downloads `imgyoung-export.json` (each export writes a `data.export` audit entry; like snapshot downloads, it is saved only once fetched completely). Contents:
+**Settings → Backups & export → Data export → Export JSON** downloads `imgyoung-export.json`; each export writes an audit entry, and the file is saved only once fetched completely. Contents:
 
 | Field | Contents |
 |---|---|
 | `users` | Users: ID, username, role, quota, default lifetime, disabled flag, usage and image count; no password hashes |
-| `channels` | Channels: ID, name, driver, priority, health, latest failure `failure`, encrypted flag, direct-link flag, creation time, replica counts; no configuration parameters or credentials |
+| `channels` | Channels: ID, name, driver, priority, health, latest failure `failure`, encrypted flag, direct-link flag, creation time, replica counts by state; no configuration parameters or credentials |
 | `tokens` | Tokens: name, owner, plaintext prefix, scopes, revocation and issue times; no hashes |
 | `images` | Every image reference: short ID, stored image, owner and token, original file name, object key alias, lifetime, access statistics, cleanup flags |
 | `blobs` | Every stored image: SHA-256, perceptual hash, object key in the channels, MIME type, size, dimensions, reference count, deletion state |
-| `blob_channels` | Which channel holds each replica, its state and attempt count, and the category `last_error_reason` and root-cause text `last_error` of its latest failure |
+| `blob_channels` | Which channel holds each replica, its state and attempt count, and the category `last_error_reason` and original error `last_error` of its latest failure |
 
-The export is readable and self-contained: even without running ImgYoung you can use it to match the objects in your channels back to images. It is not a restore format; restores use snapshots. Runtime settings, hotlink rules, audit logs and alerts are not included.
+The export is readable JSON: even if you stop using ImgYoung, it lets you match the objects in your channels back to the original images. It cannot be used to restore an instance; restores use snapshots. Runtime settings, hotlink rules, audit logs and alerts are not included.
 
 ## Reconciliation GC
 
-Every 24 hours (the first run 24 hours after process start; channels being deleted are not scanned), the replication subsystem reconciles each healthy channel in both directions. System objects under the `_imgyoung/` prefix (including snapshots) are left alone. "Modified" below means when the object was written to the provider, as recorded by the storage service.
+Every 24 hours (first 24 hours after service start), each healthy channel is reconciled: the objects in the channel are compared with the records in the metadata database.
 
-Orphan detection is bounded by the channel's **binding time**: the moment the channel record started pointing at its current storage location. ImgYoung only writes objects to that location after it.
+| Situation | Action |
+|---|---|
+| **Orphans**: objects ImgYoung wrote that have no replica record at all in the metadata database | Deleted once written more than 48 hours ago, so pay-per-use channels do not bill you for them |
+| **Foreign objects**: objects ImgYoung did not write | Counted, never deleted |
+| **Missing replicas**: replicas the metadata database records as completed but that are missing from the channel | Reset to pending and copied again from another channel |
+| **Probe leftovers**: temporary `.imgyoung-probe-*` objects left by health checks | Deleted once written more than 48 hours ago |
+
+An object counts as written by ImgYoung only if both hold: its key has the format `<short ID>_<first 8 hex digits of SHA-256>`, and it was written no earlier than the channel's **binding time**. The binding time is when the channel started using its current storage location, and it changes as follows:
 
 | Situation | Binding time |
 |---|---|
 | A channel is created | Its creation time |
-| The channel is edited in the admin console and the backend or any configuration parameter changes | Reset to the time of the edit; re-entering the same password counts as a change (rclone encodes passwords with a random IV, so the encoded value differs every time) |
-| Only the name, priority or direct-link setting changes; a token refreshed by the provider is written back | Unchanged |
-| A snapshot is restored (swapped in through `imgyoung.db.restore`) | Every channel is reset to the time of the start that swapped it in |
+| The channel's backend or any configuration parameter is changed (re-entering the same password included) | The time of the change |
+| Only the name, priority or direct-link setting changes; the provider refreshes a token | Unchanged |
+| A snapshot is restored | The time of the start after the restore |
 
-- **Orphans** are deleted, so pay-per-use channels do not bill you for ownerless objects. An object is an orphan only if all of the following hold:
-  - its key has ImgYoung's object key format `<short ID>_<first 8 hex digits of SHA-256>`;
-  - the metadata database has no replica record of it on that channel, in any state;
-  - it was last modified no earlier than the channel's binding time;
-  - it was last modified more than 48 hours ago; the grace period covers the normal window between writing to a channel and recording it in the database.
-- **Deep check leftovers**: the deep health check writes a temporary `.imgyoung-probe-*` object and deletes it right away; one is left behind only when that deletion fails. They are deleted once written more than 48 hours ago, regardless of the channel's binding time (leftovers from a connection test predate it), and are not counted in the object count or usage.
-- **Foreign objects** have no record in the database but either a key in another format or a modification time before the binding time — files written to the same path by other programs, the objects already in an old bucket attached by a fresh instance during disaster recovery, or objects written after a snapshot that was later restored. They are counted, never deleted.
-- **Phantoms**: replicas the metadata database records as completed but that are missing from the channel. They are reset to pending and queued to be copied from another channel.
+So files written to the same path by other programs, objects already in a bucket before it was added as a channel, and images uploaded after the snapshot of a later restore are only counted and never deleted. System objects under `_imgyoung/` in the channel (snapshots included) are not reconciled, and draining channels are not reconciled either.
 
-Each channel's reconciliation logs a `渠道对账完成` line with the fields `objects` (object count), `bytes`, `foreign` (foreign objects), `orphans_deleted` (deep check leftovers included) and `phantoms_requeued`.
+Each channel's reconciliation logs a `渠道对账完成` line with the fields `objects` (object count), `bytes`, `foreign` (foreign objects), `orphans_deleted` (orphans deleted, probe leftovers included) and `phantoms_requeued` (missing replicas queued for replication).
 
 <Callout type="error" title="Two instances must not share a channel path">
-If two ImgYoung instances use the same storage path, objects the other instance writes after this one bound the path are orphans as far as this database is concerned, and are deleted once past the grace period. Give each instance its own bucket or path.
+If two ImgYoung instances use the same storage path, objects written by the other instance are orphans to this one and are deleted after 48 hours. Give each instance its own bucket or path.
 </Callout>
 
-Separately, replica reconciliation runs every 10 minutes (without listing channel objects): failed replicas on channels that are healthy again are reset to pending, and unfinished replicas are queued again.
+In addition, replica states are checked every 10 minutes (without listing channel objects): once a channel is healthy again, its failed replicas are replicated again, and unfinished replicas are queued again.
+
+## Error codes
+
+Backup and restore actions in the admin console return these status and error codes on failure.
+
+| Action | Status | Error code | Meaning |
+|---|---|---|---|
+| Back up now | 500 | `backup_store_failed` | Some channels were not written; the message names them with the cause. Channels that were written keep the snapshot |
+| Back up now | 500 | `backup_prune_failed` | The snapshot was written to every channel, but some channels could not prune old snapshots |
+| Back up now | 500 | `backup_snapshot_failed` | The snapshot could not be taken |
+| Restore | 422 | `snapshot_corrupt` | The snapshot is incomplete or is not an ImgYoung metadata database; the service keeps running, so pick another snapshot |
+| Download, restore | 404 | `snapshot_not_found` | No healthy channel has this snapshot |
+| Any | 503 | `no_healthy_channel` | There is no healthy channel |
+| List, download, restore | 500 | `internal` | List: listing a healthy channel failed. Download and restore: every channel holding the snapshot failed to read it, or a local disk or memory error occurred |

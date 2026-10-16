@@ -1,14 +1,14 @@
 ---
 title: Upload clients
-description: Connect PicGo, PicList, ShareX, Typora, the aws CLI, rclone and other clients to ImgYoung, either as a custom web uploader or over the S3 protocol.
+description: Connect PicGo, PicList, ShareX, Typora, the aws CLI, rclone and other clients to ImgYoung, either as a custom web uploader or through the S3-compatible API.
 ---
 
 ## Two ways to connect
 
-| | Custom web uploader | S3 protocol |
+| | Custom web uploader | S3-compatible API |
 |---|---|---|
 | Client needs to | Send a multipart POST and read the link from a JSON response | Upload to S3-compatible storage (SigV4 signing, path-style addressing) |
-| Typical clients | PicGo with the web-uploader plugin, PicList "advanced custom" uploader, ShareX custom uploader | PicList's built-in AWS S3, PicGo with the s3 plugin, aws CLI, rclone, S3 SDKs |
+| Typical clients | PicGo with the web-uploader plugin, PicList's "advanced custom" uploader, ShareX custom uploader | PicList's built-in AWS S3, PicGo with the s3 plugin, aws CLI, rclone, S3 SDKs |
 | Credential | The upload token itself | Access key and secret derived from an upload token |
 | Returned link | The server returns `/i/<short ID>` | The client builds `/o/<user id>/<object key>` from the key |
 | Lifetime | Can be set per upload | Defaults only |
@@ -16,20 +16,23 @@ description: Connect PicGo, PicList, ShareX, Typora, the aws CLI, rclone and oth
 | Idempotency key | Supported | Not supported |
 | Uploading the same name again | Always a new image | Same object key overwrites, S3 style |
 
-Both end up in the same upload pipeline with the same format, size, quota and rate limit rules; see [Uploading](./upload.mdx).
-Credentials always come from the **Upload tokens** page of the console. Issue one named token per client, so a leaked client can be cut off by revoking just its token.
+Both end up in the same upload pipeline, with the same format, size, quota and rate limit rules; see [Uploading](./upload.mdx).
+
+Credentials are issued on the **Upload tokens** page of the console. Issue one named token per client, so a leaked client can be cut off by revoking just its token.
 
 ## Custom web uploader
 
-The client POSTs the image as a multipart form to `/api/upload` with the file in the `file` field and an `Authorization: Bearer <token>` header, then takes the link from the `url` field of the JSON response.
-`url` is absolute. If your public domain behind a reverse proxy or CDN differs from the host the server sees, set **Public site address** under **Settings → Runtime settings** first; otherwise the returned link points at the address inside the proxy.
+The client sends each upload like this:
 
-A failed upload returns the error envelope `{code, error, params}`, for example `{"code":"upload_quota_exceeded","error":"存储配额已满"}`; see [Uploading](./upload.mdx#error-responses).
-`error` is the Chinese reason with its parameters filled in, so any client that can read the response body can show it directly, such as `ErrorMessage` in the ShareX config below; your own scripts should branch on `code` rather than match the text.
+- POST the image as a multipart form to `/api/upload`, with the file in the `file` field;
+- send the header `Authorization: Bearer <token>`;
+- take the image link from the `url` field of the JSON response.
+
+`url` is absolute. If visitors reach the server through a reverse proxy or CDN under a different domain from the one the server receives, set **Public site address** under **Settings → Runtime settings** first; otherwise the returned link points at the address inside the proxy.
 
 ### PicGo: the web-uploader plugin
 
-PicGo has no generic HTTP uploader of its own. Search for and install the `web-uploader` plugin (npm package `picgo-plugin-web-uploader`) in the plugin settings; a new uploader called "自定义Web图床" appears:
+PicGo has no generic HTTP uploader of its own. Search for and install the `web-uploader` plugin (npm package `picgo-plugin-web-uploader`) in the plugin settings; a new uploader called "自定义Web图床" appears. Fill it in as follows:
 
 | Plugin field | Config key | Value |
 |---|---|---|
@@ -43,7 +46,14 @@ Write the values in `customBody` as strings.
 
 ### PicList: advanced custom uploader
 
-Fill in PicList's built-in "advanced custom" uploader with the same information: endpoint `https://img.example.com/api/upload`, method POST, file field name `file`, header `Authorization: Bearer imgy_xxxxxxxx`, and `url` as the JSON path of the link in the response.
+Fill in PicList's built-in "advanced custom" uploader with the same information:
+
+- Endpoint: `https://img.example.com/api/upload`
+- Method: POST
+- File field name: `file`
+- Header: `Authorization: Bearer imgy_xxxxxxxx`
+- JSON path of the link in the response: `url`
+
 To set a lifetime or EXIF policy, add `ttl` and `exif_policy` as extra form fields.
 
 ### ShareX: custom uploader
@@ -67,12 +77,22 @@ Save the following as `imgyoung.sxcu`, import it in ShareX's custom uploader set
 }
 ```
 
-`URL` takes the image link from the response; `ErrorMessage` takes `error` from the error envelope, so when an upload fails ShareX shows the Chinese reason, such as `文件超过大小上限(50 MB)`.
+`URL` takes the image link from the response. `ErrorMessage` takes `error` from the error envelope, so when an upload fails, ShareX shows the Chinese reason, such as `文件超过大小上限(50 MB)`.
 
-## S3 protocol
+### When an upload fails
 
-ImgYoung implements a subset of the S3 protocol under `/s3`, and the credential is your upload token: revoke the token and this route stops working too.
-The protocol lives under the `/s3` prefix because S3 bucket paths are single segments at the site root, and mounting them at the root would take over the admin console's top-level routes.
+A failed upload returns the error envelope `{code, error, params}`, for example `{"code":"upload_quota_exceeded","error":"存储配额已满"}`.
+
+- `error` is the Chinese reason with its parameters filled in. Any client that can read the response body can show it directly, such as `ErrorMessage` in the ShareX config above.
+- Your own scripts should branch on `code` rather than match the text.
+
+Error codes and the envelope are described in detail in [Uploading](./upload.mdx#error-responses).
+
+## S3-compatible API
+
+ImgYoung implements a subset of the S3 protocol under `/s3`: uploading, reading metadata, downloading and deleting single objects. The credentials are derived from an upload token, so revoking the token disables its S3 credentials too.
+
+Listing objects, multipart upload and similar operations are not supported, so client commands that rely on them (such as `aws s3 sync` or `rclone sync`) do not work; see [Supported operations](#supported-operations).
 
 ### Getting the S3 settings
 
@@ -84,90 +104,16 @@ On the **Upload tokens** page of the console, open **More actions** at the end o
 | Secret access key | 64 hex characters | Derived from the master key for this token and never stored; you can come back and view it any time |
 | Bucket | `images` | There are no buckets; any bucket name is accepted, and the bucket name is not part of the object key |
 | Region | `us-east-1` | Regions are not distinguished; any value is accepted |
-| Custom endpoint | `https://img.example.com/s3` | The trailing `/s3` is the protocol prefix and must stay |
+| Custom endpoint | `https://img.example.com/s3` | The trailing `/s3` is the API prefix and must stay |
 | Custom domain | `https://img.example.com/o/<user id>` | Used to build image links; contains your user id |
 
-The endpoint and domain are built from the **Public site address**, or from the address you opened the console with if that setting is empty.
-
+- The endpoint and domain are built from the **Public site address**, or from the address you opened the console with if that setting is empty.
 - **Path-style addressing is required** (requests look like `/s3/<bucket>/<object key>`). A self-hosted server has no bucket subdomains, so turn on any "path style" or "ForcePathStyle" switch your client has.
 - You can only view the S3 settings of your own tokens; administrators cannot view other users' either.
 - Rotating a token changes both the access key and the secret, so update the client with the new values. Changing the master key invalidates every S3 secret.
-- If the token is revoked or expired, or its owner is disabled, signature verification always fails.
+- Once the token is revoked or expired, or its owner is disabled, signature verification always fails.
 
-### Supported operations
-
-| Operation | Request | Behavior |
-|---|---|---|
-| PutObject | `PUT /s3/<bucket>/<object key>` | Runs the upload pipeline. The `ETag` response header is the SHA-256 of the uploaded body, and `x-amz-meta-image-id` carries the image's short ID |
-| HeadBucket | `HEAD /s3/<bucket>` | 200 whenever the credential is valid |
-| HeadObject | `HEAD /s3/<bucket>/<object key>` | The object's metadata headers. It confirms, in priority order, that some channel can return the object's metadata (metadata only, the content is not read); if none can, it returns 503 like GetObject |
-| GetObject | `GET /s3/<bucket>/<object key>` | The stored original; no on-demand processing, not counted as an access, not subject to hotlink protection; same cache headers as `/o/` aliases |
-| DeleteObject | `DELETE /s3/<bucket>/<object key>` | Deletes the image the key currently points to; returns 204 even if the object does not exist |
-
-Every other operation returns 501 with the S3 error code `NotImplemented` (message `不支持的 S3 操作`, unsupported S3 operation): listing buckets and objects (`ListBuckets`, `ListObjects`), bucket creation, multipart upload, batch delete, copying objects (`CopyObject`, that is any request with an `x-amz-copy-source` header), and any request with a subresource query parameter (such as `?acl`, `?tagging`, `?uploads` or `?partNumber=…&uploadId=…`; every query parameter except `x-id` counts as a subresource).
-S3 clients do not retry 501 automatically, so they report the error straight away instead of retrying. This check runs after signature verification, so a request with a bad signature gets the signature error first.
-
-Two other unsupported uses are rejected during signature verification and get 400: a presigned URL (signature in the query string) has no `Authorization` header and gets `AuthorizationHeaderMalformed`; a SigV2 signature gets `InvalidRequest`.
-ACL headers sent by a client do not cause an error and have no effect.
-
-Signing and request bodies:
-
-- Only `AWS4-HMAC-SHA256` signatures in the `Authorization` header are accepted, and requests whose timestamp is more than 15 minutes off the server clock are rejected.
-- `UNSIGNED-PAYLOAD` is supported, and so are the `aws-chunked` streaming bodies that aws CLI v2 and others use by default. When a payload hash is declared, the server checks it against the actual body.
-
-Values used for an upload:
-
-- The object key is the whole path after the bucket name (URL-decoded), at most 1024 bytes, with no control characters and no leading `/`; it is unique within one user.
-- The file name is the last segment of the object key; the lifetime is the per-user default, then the global default.
-- No EXIF processing is done and the global EXIF default does not apply: the stored bytes are exactly the uploaded bytes, so the ETag returned by PUT matches the one GetObject returns later.
-
-Errors come back as S3-style XML, and clients act on the `Code`:
-
-| Situation | Status | Code |
-|---|---|---|
-| Signature mismatch, unknown access key, token no longer valid | 403 | `SignatureDoesNotMatch` |
-| Request time more than 15 minutes off | 403 | `RequestTimeTooSkewed` |
-| `Authorization` header missing or unparsable | 400 | `AuthorizationHeaderMalformed` |
-| Signature is not `AWS4-HMAC-SHA256` | 400 | `InvalidRequest` |
-| Over the per-image size limit | 400 | `EntityTooLarge` |
-| Not a supported image, or over the pixel budget | 400 | `InvalidRequest` |
-| Storage quota full | 403 | `QuotaExceeded` |
-| Object key too long / with invalid characters / missing | 400 | `KeyTooLongError` / `InvalidArgument` / `InvalidRequest` |
-| Object does not exist, or the image it points to has expired | 404 | `NoSuchKey` |
-| No healthy channel to write to during upload, or fewer synchronous copies than the minimum succeeded | 503 | `ServiceUnavailable` |
-| Object temporarily unreadable (GET / HEAD) | 503 | `ServiceUnavailable` |
-| Upload concurrency gate full, or the user is uploading too fast | 429 | `SlowDown` |
-| Unsupported operation | 501 | `NotImplemented` |
-| Any other server error | 500 | `InternalError` |
-
-The 429 message is `上传并发已满,请稍后重试` (concurrency gate full) or `上传过于频繁,请稍后重试` (uploading too fast), with a `Retry-After` header (1 second when the gate is full, 60 seconds for the rate limit); S3 clients treat `SlowDown` as retryable and back off before retrying. Every error on the S3 surface uses this XML format; none returns the JSON error envelope.
-
-### Object key aliases
-
-An image uploaded over S3 has, besides its short ID, an address based on its object key:
-
-```text
-https://img.example.com/o/<user id>/<object key>
-```
-
-- The user id is the immutable account identifier, not the username: `default` for the built-in administrator, and a random 10-character string for every other account. You can find it in the ID column of the **Users** page or in the **Custom domain** field of the S3 settings dialog. Object keys are only unique within a user, which is why the link needs it. It is the immutable ID rather than the username because usernames can change: after a rename, someone else could take the old name, and links shared earlier would then point at their images.
-- `/o/` and `/i/<short ID>` are two entrances to the same image, with identical on-demand processing, format negotiation, hotlink protection and access counting; only caching differs, see below and [Accessing images](./access.mdx#caching).
-- The short ID is in the `x-amz-meta-image-id` header of the PutObject response, and the image also shows up on the **Images** page.
-
-### Overwriting a key
-
-A second PutObject to the same object key overwrites it, S3 style:
-
-- The object key now points to the newly uploaded image, and the `/o/` link shows the new image.
-- The old image is not deleted, since its short ID may already have been shared: the short ID link keeps working, and it keeps using storage and quota; delete it on the **Images** page if you no longer need it.
-- DeleteObject only deletes the image the key currently points to.
-
-Because object keys can be overwritten, responses for `/o/` links (and S3 GetObject) carry `Cache-Control: public, no-cache` with a strong `ETag`: browsers and CDNs may cache them but must check with this server, sending the `ETag`, before each use, and get a 304 when nothing changed.
-After an overwrite, the next check returns the new image. The short link `/i/<short ID>` always points to the same image and is still cached as immutable for a year.
-
-## Client configuration examples
-
-Replace `imgy_AbCdEfG`, `<secret>` and `<user id>` below with the values from the **S3 client settings** dialog.
+In the client examples below, replace `imgy_AbCdEfG`, `<secret>` and `<user id>` with the values from the dialog.
 
 ### PicList: built-in AWS S3
 
@@ -183,12 +129,11 @@ PicList ships an "AWS S3" uploader. Fill it in by config key (the labels in the 
 | `endpoint` | `https://img.example.com/s3` |
 | `pathStyleAccess` | On |
 | `urlPrefix` | `https://img.example.com/o/<user id>` |
-| `disableBucketPrefixToURL` | On. Otherwise, with path-style addressing PicList inserts the bucket name into the link and produces an address that does not work |
+| `disableBucketPrefixToURL` | On. Otherwise, with path-style addressing, PicList inserts the bucket name into the link and produces an address that does not work |
 
 ### PicGo: the s3 plugin
 
-PicGo has no built-in S3 uploader. Install the `s3` plugin (npm package `picgo-plugin-s3`) in the plugin settings, and an "Amazon S3" uploader appears.
-For links, this plugin recommends its output URL template (`outputURLPattern`), in which `{path}` is the full object key after upload:
+PicGo has no built-in S3 uploader. Install the `s3` plugin (npm package `picgo-plugin-s3`) in the plugin settings, and an "Amazon S3" uploader appears. For links, this plugin recommends its output URL template (`outputURLPattern`), in which `{path}` is the full object key after upload:
 
 | Config key | Value |
 |---|---|
@@ -200,11 +145,95 @@ For links, this plugin recommends its output URL template (`outputURLPattern`), 
 | `pathStyleAccess` | On (labelled ForcePathStyle in the UI) |
 | `outputURLPattern` | `https://img.example.com/o/<user id>/{path}` |
 
-Using a content hash such as `{md5}` in the object key means re-uploading the same image yields the same key, and different images never overwrite each other.
+Use a content hash such as `{md5}` in the object key: re-uploading the same image then yields the same key, and different images never overwrite each other.
 
-### Typora
+### aws CLI
 
-Typora does not upload to S3 or a custom endpoint by itself; it hands images to PicGo. In Typora's preferences under Image, set the upload service to `PicGo (app)` or `PicGo-Core (command line)`.
+```ini title="~/.aws/credentials"
+[imgyoung]
+aws_access_key_id = imgy_AbCdEfG
+aws_secret_access_key = <secret>
+```
+
+```ini title="~/.aws/config"
+[profile imgyoung]
+region = us-east-1
+s3 =
+  addressing_style = path
+  multipart_threshold = 64MB
+```
+
+```bash title="Terminal"
+# Upload
+aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
+  s3 cp ./photo.png s3://images/blog/2026/photo.png
+
+# Read metadata and delete
+aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
+  s3api head-object --bucket images --key blog/2026/photo.png
+aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
+  s3 rm s3://images/blog/2026/photo.png
+```
+
+The resulting link is `https://img.example.com/o/<user id>/blog/2026/photo.png`.
+
+- `aws s3 cp` switches to multipart upload for files above `multipart_threshold` (8 MB by default), and multipart upload is not supported. Raise it above the per-image size limit, or use `aws s3api put-object` for a single-request upload.
+- `aws s3 ls` and `aws s3 sync` rely on listing objects and do not work.
+
+### rclone
+
+```bash title="Terminal"
+rclone config create imgyoung s3 \
+  provider=Other \
+  access_key_id=imgy_AbCdEfG \
+  secret_access_key=<secret> \
+  endpoint=https://img.example.com/s3 \
+  region=us-east-1 \
+  force_path_style=true \
+  no_check_bucket=true
+
+rclone copyto ./photo.png imgyoung:images/blog/2026/photo.png
+```
+
+- `no_check_bucket=true` makes rclone skip its bucket check before uploading; the server does not support creating buckets.
+- Stick to commands that act on a single object, such as `copyto` and `deletefile`. `ls`, `sync` and directory-level `copy` rely on listing objects and do not work.
+
+### Other S3 SDKs
+
+Any S3 SDK works with the same settings:
+
+- endpoint `https://img.example.com/s3`;
+- path-style addressing on;
+- any region, such as `us-east-1`;
+- only PutObject, HeadObject, GetObject and DeleteObject;
+- no automatic switch to multipart upload.
+
+### Object key aliases [#object-key-aliases]
+
+An image uploaded over S3 can be reached by its object key as well as by its short link `/i/<short ID>`:
+
+```text
+https://img.example.com/o/<user id>/<object key>
+```
+
+- The user id is the immutable account identifier, not the username: `default` for the built-in administrator, and a random 10-character string created with every other account. You can find it in the ID column of the **Users** page or in the **Custom domain** field of the S3 settings dialog.
+- Object keys are only unique within a user, which is why the link includes the user id. It uses the id rather than the username because usernames can change: after a rename, someone else could take the old name, and links shared earlier would then point at their images.
+- `/o/` and `/i/` are two entrances to the same image, with identical on-demand processing, format negotiation, hotlink protection and access counting; only caching differs, see below.
+- The short ID is in the `x-amz-meta-image-id` header of the PutObject response, and the image also shows up on the **Images** page.
+
+### Overwriting a key
+
+A second PutObject to the same object key overwrites it, S3 style:
+
+- The object key now points to the newly uploaded image, and the `/o/` link shows the new image.
+- The old image is not deleted. Its short ID may already have been shared, so the short link keeps working, and the image keeps using storage and quota. Delete it on the **Images** page if you no longer need it.
+- DeleteObject only deletes the image the key currently points to.
+
+Because object keys can be overwritten, responses for `/o/` links and S3 GetObject carry `Cache-Control: public, no-cache` with a strong `ETag`. Browsers and CDNs may cache them but must check with this server, sending the `ETag`, before each use, and get a 304 when nothing has changed; after an overwrite, the next check returns the new image. The short link `/i/<short ID>` always points to the same image and is cached as immutable for a year. See [Accessing images](./access.mdx#caching).
+
+## Typora
+
+Typora does not upload to S3 or a custom endpoint by itself; it hands images to PicGo. In Typora's preferences under Image, set the upload service to `PicGo (app)` or `PicGo-Core (command line)`:
 
 - With `PicGo (app)`, Typora calls the running PicGo app, so configure PicGo with either of the methods above.
 - With `PicGo-Core (command line)`, PicGo-Core reads `~/.picgo/config.json`. Install the plugin with `picgo install s3` (or `picgo install web-uploader`), then write the config:
@@ -258,57 +287,69 @@ Typora does not upload to S3 or a custom endpoint by itself; it hands images to 
 </Tab>
 </Tabs>
 
-### aws CLI
+## S3-compatible API reference
 
-```ini title="~/.aws/credentials"
-[imgyoung]
-aws_access_key_id = imgy_AbCdEfG
-aws_secret_access_key = <secret>
-```
+### Supported operations
 
-```ini title="~/.aws/config"
-[profile imgyoung]
-region = us-east-1
-s3 =
-  addressing_style = path
-  multipart_threshold = 64MB
-```
+| Operation | Request | Behavior |
+|---|---|---|
+| PutObject | `PUT /s3/<bucket>/<object key>` | Runs the upload pipeline. The `ETag` response header is the SHA-256 of the uploaded body, and `x-amz-meta-image-id` carries the image's short ID |
+| HeadBucket | `HEAD /s3/<bucket>` | 200 whenever the credential is valid |
+| HeadObject | `HEAD /s3/<bucket>/<object key>` | The object's metadata headers. It confirms, in priority order, that some channel can return the object's metadata (metadata only, the content is not read); if none can, it returns 503 like GetObject |
+| GetObject | `GET /s3/<bucket>/<object key>` | The stored original; no on-demand processing, not counted as an access, not subject to hotlink protection; same cache headers as `/o/` aliases |
+| DeleteObject | `DELETE /s3/<bucket>/<object key>` | Deletes the image the key currently points to; returns 204 even if the object does not exist |
 
-```bash title="Terminal"
-# Upload
-aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
-  s3 cp ./photo.png s3://images/blog/2026/photo.png
+Every other operation returns 501 with the S3 error code `NotImplemented` (message `不支持的 S3 操作`, unsupported S3 operation). This includes:
 
-# Read metadata and delete
-aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
-  s3api head-object --bucket images --key blog/2026/photo.png
-aws --profile imgyoung --endpoint-url https://img.example.com/s3 \
-  s3 rm s3://images/blog/2026/photo.png
-```
+- listing buckets and objects (`ListBuckets`, `ListObjects`);
+- creating buckets;
+- multipart upload;
+- batch delete;
+- copying objects (`CopyObject`, that is any request with an `x-amz-copy-source` header);
+- any request with a subresource query parameter, such as `?acl`, `?tagging`, `?uploads` or `?partNumber=…&uploadId=…`. Every query parameter except `x-id` counts as a subresource.
 
-- `aws s3 cp` switches to multipart upload for files above `multipart_threshold` (8 MB by default), and multipart upload is not supported. Raise it above the per-image size limit, or use `aws s3api put-object` for a single-request upload.
-- `aws s3 ls` and `aws s3 sync` rely on listing objects and do not work.
+S3 clients do not retry 501 automatically, so they report the error straight away. This check runs after signature verification, so a request with a bad signature gets the signature error first.
 
-The resulting link is `https://img.example.com/o/<user id>/blog/2026/photo.png`.
+Two other unsupported uses are rejected during signature verification with 400:
 
-### rclone
+- a presigned URL (signature in the query string) has no `Authorization` header and gets `AuthorizationHeaderMalformed`;
+- a SigV2 signature gets `InvalidRequest`.
 
-```bash title="Terminal"
-rclone config create imgyoung s3 \
-  provider=Other \
-  access_key_id=imgy_AbCdEfG \
-  secret_access_key=<secret> \
-  endpoint=https://img.example.com/s3 \
-  region=us-east-1 \
-  force_path_style=true \
-  no_check_bucket=true
+ACL headers sent by a client do not cause an error and have no effect.
 
-rclone copyto ./photo.png imgyoung:images/blog/2026/photo.png
-```
+### Signing and request bodies
 
-- `no_check_bucket=true` makes rclone skip its bucket check before uploading; the server does not support creating buckets.
-- Stick to commands that act on a single object, such as `copyto` and `deletefile`. `ls`, `sync` and directory-level `copy` rely on listing objects and do not work.
+- Only `AWS4-HMAC-SHA256` signatures in the `Authorization` header are accepted.
+- Requests whose timestamp is more than 15 minutes off the server clock are rejected.
+- `UNSIGNED-PAYLOAD` is supported, and so are the `aws-chunked` streaming bodies that aws CLI v2 and others use by default.
+- When a request declares a payload hash, the server checks it against the actual body.
 
-### Other S3 SDKs
+### Values used for an upload
 
-Any S3 SDK works with the same settings: endpoint `https://img.example.com/s3`, path-style addressing on, any region (such as `us-east-1`), only PutObject / HeadObject / GetObject / DeleteObject, and no automatic switch to multipart upload.
+- The object key is the whole path after the bucket name (URL-decoded), at most 1024 bytes, with no control characters and no leading `/`. It is unique within one user.
+- The file name is the last segment of the object key.
+- The lifetime is the user's default, or the global default if the user has none.
+- No EXIF processing is done, and the global EXIF default does not apply. The stored bytes are exactly the uploaded bytes, so the ETag returned by PUT matches the one GetObject returns later.
+
+### Error codes
+
+Errors come back as S3-style XML, and clients act on the `Code`. Every error from the S3-compatible API uses this XML format; none returns the JSON error envelope.
+
+| Situation | Status | Code |
+|---|---|---|
+| Signature mismatch, unknown access key, token no longer valid | 403 | `SignatureDoesNotMatch` |
+| Request time more than 15 minutes off | 403 | `RequestTimeTooSkewed` |
+| `Authorization` header missing or unparsable | 400 | `AuthorizationHeaderMalformed` |
+| Signature is not `AWS4-HMAC-SHA256` | 400 | `InvalidRequest` |
+| Over the per-image size limit | 400 | `EntityTooLarge` |
+| Not a supported image, or over the pixel budget | 400 | `InvalidRequest` |
+| Storage quota full | 403 | `QuotaExceeded` |
+| Object key too long / with invalid characters / missing | 400 | `KeyTooLongError` / `InvalidArgument` / `InvalidRequest` |
+| Object does not exist, or the image it points to has expired | 404 | `NoSuchKey` |
+| No healthy channel to write to during upload, or fewer synchronous copies than the minimum succeeded | 503 | `ServiceUnavailable` |
+| Object temporarily unreadable (GET / HEAD) | 503 | `ServiceUnavailable` |
+| Upload concurrency limit reached, or the user is uploading too fast | 429 | `SlowDown` |
+| Unsupported operation | 501 | `NotImplemented` |
+| Any other server error | 500 | `InternalError` |
+
+A 429 carries a `Retry-After` header. When the upload concurrency limit is reached, the message is `上传并发已满,请稍后重试` and `Retry-After` is 1 second; when the user is uploading too fast, the message is `上传过于频繁,请稍后重试` and `Retry-After` is 60 seconds. S3 clients treat `SlowDown` as retryable and back off before retrying.

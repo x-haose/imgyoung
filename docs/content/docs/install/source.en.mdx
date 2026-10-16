@@ -24,21 +24,29 @@ task build
 ./imgyoung
 ```
 
-`task build` first builds the front end (`pnpm install --frozen-lockfile` and `pnpm build` in `web/`, output in `web/dist`), then compiles `imgyoung` into the repository root. `task run` builds and then runs it.
+`task build` first builds the front end by running `pnpm install --frozen-lockfile` and `pnpm build` in `web/`, with the output in `web/dist`. It then compiles `imgyoung` into the repository root. `task run` builds and then runs it.
 
 Open `http://localhost:8721/` and sign in with `admin` / `imgyoung123`. Data goes to `data/` under the current directory, just like with a [release archive](./binary.mdx), and supervising and upgrading work the same way.
 
-The version shown by `./imgyoung -version` is derived from Git by the Go toolchain: the tag when the checkout sits on one, a pseudo-version otherwise, with a dirty marker when the working tree has uncommitted changes. The build time is written in only by the release pipeline and the `Dockerfile`; binaries from `task build` leave it empty.
+The version shown by `./imgyoung -version` is derived from Git by the Go toolchain:
+
+- the tag, when the checkout sits on one;
+- a pseudo-version otherwise;
+- with a dirty marker when the working tree has uncommitted changes.
+
+Only the release pipeline and the `Dockerfile` write the build time; binaries built with `task build` have none.
 
 ## Build flags
 
-The Taskfile sets two environment variables at the top level, and build tasks such as `task build` and `task run` run under them (only the race detector in `task test` turns cgo on, on Linux / Windows):
+The Taskfile sets two environment variables at the top level, and build tasks such as `task build` and `task run` run under them:
 
 ```yaml title="Taskfile.yml (excerpt)"
 env:
   CGO_ENABLED: '0'
   GOFLAGS: -tags=nodynamic
 ```
+
+The one exception is `task test`: the race detector needs cgo on Linux and Windows, so cgo is turned on for tests there.
 
 Without Task, the equivalent manual steps are:
 
@@ -47,21 +55,25 @@ Without Task, the equivalent manual steps are:
 CGO_ENABLED=0 go build -trimpath -tags nodynamic -o imgyoung ./cmd/imgyoung
 ```
 
-- **`CGO_ENABLED=0`**: pure Go throughout. The SQLite driver and image codecs are pure Go or WASM, so no C toolchain is needed; Linux binaries do not depend on libc, cross-compile directly (e.g. with `GOOS=linux GOARCH=arm64`), and run in minimal images without libc such as distroless/static.
-- **`-tags nodynamic`**: by default the WebP codec library tries to load the system's libwebp shared library at runtime, which makes the Linux binary depend on the system's dynamic linker, so it cannot even start in minimal images such as distroless/static. With this tag it uses only its bundled WASM implementation; the result is a truly static binary whose behavior does not depend on whether the host has libwebp installed.
+What each flag does:
+
+- **`CGO_ENABLED=0`**: pure Go throughout. The SQLite driver and image codecs are pure Go or WASM, so no C toolchain is needed. Linux binaries do not depend on libc, cross-compile directly (e.g. with `GOOS=linux GOARCH=arm64`), and run in minimal images without libc such as distroless/static.
+- **`-tags nodynamic`**: by default the WebP codec library tries to load the system's libwebp shared library at runtime. That makes the Linux binary depend on the system's dynamic linker, so it cannot start in minimal images such as distroless/static. With this tag it uses only its bundled WASM implementation; the result is a truly static binary whose behavior does not depend on whether the host has libwebp installed.
 - **`-trimpath`**: strips local source paths from the binary.
 
 The release pipeline (`.goreleaser.yaml`) and the image build (`Dockerfile`) use the same flags.
 
 ## Build the front end first
 
-The admin console's front end is compiled into the binary with `go:embed`, but the build output is not committed; `web/dist` in the repository holds only a placeholder file. If you skip the front end and run `go build` directly, compilation still succeeds and the API works, but there is no console: `/` returns 404, and the startup log contains a warning:
+The admin console's front end is compiled into the binary with `go:embed`, but the build output is not committed; `web/dist` in the repository holds only a placeholder file.
+
+If you skip the front end and run `go build` directly, compilation still succeeds and the API works, but there is no console: `/` returns 404, and the startup log contains a warning:
 
 ```text
 level=WARN msg="前端产物缺少 index.html,后台页面不可用(API 不受影响)"
 ```
 
-(The message says the front-end build is missing index.html, so the console is unavailable while the API is unaffected.) When you see it, run `task web` (or the two `pnpm` steps above) and compile again. This is also why ImgYoung does not offer `go install` as an installation method.
+The message says the front-end build is missing `index.html`, so the console is unavailable while the API is unaffected. When you see it, run `task web` (or the two `pnpm` steps above) and compile again. This is also why ImgYoung does not offer `go install` as an installation method.
 
 ## Building an image with Docker
 

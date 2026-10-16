@@ -6,8 +6,8 @@ description: Authentication, error format, and shared conventions of the ImgYoun
 ## Where the API document comes from
 
 `api/openapi.yaml` in the repository (OpenAPI 3.1) is the single source of truth for ImgYoung's HTTP API. The group
-pages in this section are generated from it; the end-to-end tests check the status code and body of every `/api/`,
-`/healthz`, and `/i/` response against it; and the admin console's frontend types are generated from it too.
+pages in this section are generated from it, and the end-to-end tests check the status code and body of every
+`/api/`, `/healthz`, and `/i/` response against it.
 
 The summaries and descriptions in that document are written in Chinese, so the generated group pages are in Chinese as well.
 
@@ -18,22 +18,24 @@ The document is compiled into the binary, and a running instance serves a copy m
 curl -o openapi.yaml https://img.example.com/api/openapi.yaml
 ```
 
-The S3 protocol surface (`/s3/…`) follows the AWS S3 specification, returns S3 XML error bodies for every error (including 429 `SlowDown` from upload throttling and 501 `NotImplemented` for unsupported operations), and is not part of this
-reference; see [Upload clients](../guides/clients.mdx) for how to use it.
+The S3-compatible API (`/s3/…`) follows the AWS S3 specification and is not part of this reference; see
+[Upload clients](../guides/clients.mdx) for how to use it. All of its errors are S3 XML error bodies, including 429
+`SlowDown` from upload throttling and 501 `NotImplemented` for unsupported operations.
 
 ## Authentication
 
-There are exactly two authentication surfaces, and their credentials are not interchangeable:
+There are two authentication methods, and their credentials are not interchangeable:
 
 | | Data plane | Admin console |
 |---|---|---|
 | Paths | `POST /api/upload`, `POST /api/upload/url` | `/api/admin/…` |
 | Credential | An upload token in the `Authorization: Bearer <token>` header | The session cookie `imgyoung_session`; state-changing requests also send an `X-CSRF-Token` header |
-| How to obtain | Issue one on the admin console's "Upload tokens" page; the plaintext is shown only once | `POST /api/admin/auth/login` |
+| How to obtain | Issue one on the admin console's **Upload tokens** page; the plaintext is shown only once | `POST /api/admin/auth/login` |
 | Not authenticated | 401: the token is invalid, expired, or revoked, or its owner is disabled | 401: not logged in, or the session expired |
 | Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; still on the factory default password; administrator required |
 
-A 401 only ever means a credential problem. If reading the database fails while checking a token or session, the response is 500 (error code `internal`) and can be retried later; it is never reported as an invalid credential.
+A 401 only ever means a credential problem. If reading the database fails while checking a token or session, the
+response is 500 (error code `internal`) and can be retried later; it is never reported as an invalid credential.
 
 Upload tokens look like `imgy_…`. They only authorize the data plane; no admin console endpoint accepts them. The image
 access endpoints (`/i/…`, `/o/…`), `/healthz`, and `/api/openapi.yaml` need no authentication.
@@ -77,15 +79,15 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 
 Session details:
 
-- The cookie is `HttpOnly` and `SameSite=Lax`; it is also `Secure` when the request arrives over HTTPS (TLS terminated by
-  the server itself, or reported via `X-Forwarded-Proto` by a trusted reverse proxy).
+- The cookie is `HttpOnly` and `SameSite=Lax`. It is also `Secure` when the request arrives over HTTPS, whether TLS is
+  terminated by the server itself or a trusted reverse proxy reports HTTPS via `X-Forwarded-Proto`.
 - A session lasts 30 days from login and is not extended by use; after that you must log in again.
 - Changing a user's password invalidates all of that user's sessions.
 - Too many login attempts return 429.
 - While an account still has the factory default password, its session can use only three endpoints: log out
   (`POST /api/admin/auth/logout`), view itself (`GET /api/admin/me`, where `must_change_password` is true), and change
   the password (`PUT /api/admin/me/password`). Every other admin endpoint, including admin console uploads and issuing
-  tokens, returns 403 with the error code `must_change_password` until the password is
+  tokens, returns 403 with the error code `must_change_password`. Everything works normally once the password is
   changed and you log in again.
 
 Channels, users, hotlink protection, audit log, alerts, backups, export, and moderation endpoints, as well as reading
@@ -93,8 +95,8 @@ the full runtime settings and changing them, are for administrators only; a regu
 
 ## Error format
 
-Apart from the exception below, every error response is a JSON envelope like this one (a file too large for the
-default per-image limit of 50 MB):
+Error responses use a single JSON envelope, except on the image access endpoints (see below). This is the response to
+a file too large for the default per-image limit of 50 MB:
 
 ```json
 {
@@ -115,15 +117,17 @@ schema in any endpoint's error responses in this reference to see it, or look it
 console renders the message in the current interface language from `code` and `params`, so the English interface never
 shows Chinese error messages.
 
-- When a runtime setting fails validation, the code tells which kind of failure it is (`setting_unknown`,
+- When a runtime setting fails validation, the code tells which kind of failure it is: `setting_unknown`,
   `setting_type`, `setting_positive`, `setting_non_negative`, `setting_too_large`, `setting_range`, `setting_option`,
-  `setting_url`, `setting_site_root`, `setting_empty`), and `params.key` is the offending setting key.
+  `setting_url`, `setting_site_root`, or `setting_empty`. `params.key` is the offending setting key.
 - In the result of a batch image deletion, each item in `failed` has the same `code` / `error` / `params` plus the
-  image `id`; a failed cloud drive authorization result (`GET /api/admin/channel-oauth/result`) carries the same three fields.
+  image `id`. A failed cloud drive authorization result (`GET /api/admin/channel-oauth/result`) carries the same three fields.
 
-**The exception is the image access endpoints** (`/i/{id}`, `/o/{user_id}/{object_key}`, and the admin console
-preview `/api/admin/images/{id}/thumb`): apart from 400 for invalid processing parameters, which is still a JSON
-envelope, their error responses are plain text:
+### Errors from the image access endpoints
+
+The image access endpoints are `/i/{id}`, `/o/{user_id}/{object_key}`, and the admin console preview
+`/api/admin/images/{id}/thumb`. Apart from 400 for invalid processing parameters, which is still a JSON envelope,
+their error responses are plain text:
 
 | Status | Meaning |
 |---|---|
@@ -132,12 +136,14 @@ envelope, their error responses are plain text:
 | 500 | Looking up the image metadata failed (database error); retry later |
 | 503 | No healthy channel can currently read the image |
 
-The admin console preview enters this pipeline only after session authentication, so authentication errors such as
-not being logged in are still JSON envelopes; likewise, a 500 from a database failure while checking the session is a JSON envelope, while a 500 from looking up the image metadata is plain text, and the contract declares both. In `redirect` access mode, the 302 redirect from an image access
-endpoint carries `Cache-Control: no-store`: the redirect target changes with channel health and configuration, so it
-stays out of CDN and browser caches.
+The admin console preview checks the session first. Authentication errors such as not being logged in, and a 500 from
+a database failure while checking the session, are JSON envelopes; a 500 from looking up the image metadata afterwards
+is plain text.
 
-Common status codes:
+In `redirect` access mode, the 302 redirect from an image access endpoint carries `Cache-Control: no-store`. The
+redirect target changes with channel health and configuration, so it stays out of CDN and browser caches.
+
+### Common status codes
 
 | Status | Meaning |
 |---|---|
@@ -150,7 +156,7 @@ Common status codes:
 | 415 | Not a supported image format (judged by file content) |
 | 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file (`snapshot_corrupt`) |
 | 429 | Upload concurrency is full, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
-| 500 | Internal server error, including database faults; error code `internal`, retry later. Every endpoint that touches the database declares 500 in the contract |
+| 500 | Internal server error, including database faults; error code `internal`, retry later. Any endpoint that touches the database can return 500 |
 | 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |
 
 The group pages list the status codes each endpoint can actually return.
@@ -159,18 +165,19 @@ The group pages list the status codes each endpoint can actually return.
 
 - **Timestamps**: unless stated otherwise, UTC text in the form `YYYY-MM-DD HH:MM:SS` (for example
   `2026-10-15 08:30:00`), with no time zone suffix. The exceptions are `built_at` in build info and `taken_at` on
-  backup snapshots, which are RFC 3339 (`taken_at` with millisecond precision).
+  backup snapshots, which are RFC 3339, with `taken_at` at millisecond precision.
 - **Lists**: list endpoints return `{"items": […], "total": N}`, where `total` counts all items after filtering.
-- **Pagination**: the image, upload token, duplicate, cleanup, audit log, and alert lists accept `page` (from 1,
-  default 1) and `page_size` (default 20, maximum 100; larger values are treated as 100).
+- **Pagination**: the image, upload token, duplicate, cleanup, audit log, and alert lists accept `page` and
+  `page_size`. `page` starts at 1 and defaults to 1; `page_size` defaults to 20, with a maximum of 100 (larger values
+  are treated as 100).
 - **Time ranges**: the image list and the audit log accept `since` (inclusive) and `until` (exclusive), in the same format.
-- **IDs**: images use a 10-character short ID string; user IDs are strings (the built-in administrator is `default`);
-  tokens, channels, duplicate candidates, and similar records use integers; backup snapshots are identified by file name.
-- **Idempotent uploads**: uploads may send an `Idempotency-Key` header. Within the retention period (runtime setting
-  `idempotency_key_ttl_hours`, default 24 hours), retries with the same key by the same user return the same image.
-  Keys are scoped per user.
-- **Request bodies**: JSON endpoints use `application/json`; file uploads use `multipart/form-data` with the file in
-  the `file` field, and the optional `exif_policy` and `ttl` are read only from form fields (never from URL query
+- **IDs**: images use a 10-character short ID string; user IDs are strings, and the built-in administrator is
+  `default`; tokens, channels, duplicate candidates, and similar records use integers; backup snapshots are identified by file name.
+- **Idempotent uploads**: uploads may send an `Idempotency-Key` header. Within the retention period, retries with the
+  same key by the same user return the same image. The retention period is the runtime setting
+  `idempotency_key_ttl_hours`, 24 hours by default. Keys are scoped per user.
+- **Request bodies**: JSON endpoints use `application/json`. File uploads use `multipart/form-data` with the file in
+  the `file` field; the optional `exif_policy` and `ttl` are read only from form fields (never from URL query
   parameters), at most 1 KiB each.
 - **Base URL**: the API shares the site's origin, with the path prefixes shown above and no version segment.
 

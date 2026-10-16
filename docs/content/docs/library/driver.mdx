@@ -25,12 +25,12 @@ type Driver interface {
 | `Delete` | 删除对象 | 返回包裹 `ErrNotFound` 的错误，由调用方决定是否当作成功 |
 | `List` | 递归列举 `dir` 下的全部对象，`dir` 为空表示整个存储；返回的键是相对存储根的完整路径 | 目录不存在时返回空结果，不报错 |
 
-对全部实现都成立的约定：
+所有实现都遵守以下约定：
 
 - **并发安全**：同一个驱动实例可以被多个 goroutine 同时使用。
 - **尊重 `ctx`**：每个方法都受 `ctx` 的取消与超时约束。
 - **用 `errors.Is` 判断缺失**：实现会给 `ErrNotFound` 包上对象键等上下文，不要用 `==` 比较。
-- **键用 `/` 分隔**，形如 `photos/2026/a.png`，相对于驱动的根路径。
+- **键用 `/` 分隔**：形如 `photos/2026/a.png`，相对于驱动的根路径。
 
 `ObjectInfo` 是 `Stat` 与 `List` 的返回结构：
 
@@ -38,16 +38,15 @@ type Driver interface {
   type={{
     Key: { type: 'string', description: '对象键，相对存储根的路径' },
     Size: { type: 'int64', description: '对象大小，字节' },
-    ModTime: { type: 'time.Time', description: '对象的修改时间，应用的对账据此判断宽限期。rclone 驱动在后端支持时取服务端记下的写入时刻，S3 类后端列举时因此不必为每个对象单独发 HEAD 请求' },
+    ModTime: { type: 'time.Time', description: '对象的修改时间，应用的对账据此判断宽限期。rclone 驱动在后端支持时取服务端记下的写入时刻，所以列举 S3 类后端时不必为每个对象单独发 HEAD 请求' },
   }}
 />
 
 ## rclone 实现
 
-`store/rclone` 用 rclone 的后端实现 `Driver`。它直接在进程内构造 rclone 的 `fs.Fs`：参数以映射传给后端，
-不读写 rclone 配置文件，不拼连接字符串，也不启动 rclone 子进程。
+`store/rclone` 用 rclone 的后端实现 `Driver`。它在进程内直接构造 rclone 的 `fs.Fs`，参数以映射传给后端，不读写 rclone 配置文件，不拼连接字符串，也不启动 rclone 子进程。
 
-### 打开驱动
+### 打开与关闭驱动
 
 ```go
 d, err := rclone.Open(ctx, rclone.Options{
@@ -98,38 +97,42 @@ defer func() { _ = d.Close(ctx) }()
   }}
 />
 
-`Open` 返回的错误不携带参数映射，参数里的凭证不会经错误消息泄露到日志。
+`Open` 返回的错误不带参数映射，参数里的凭证不会经错误消息进入日志。
 
-`ctx` 只管构造过程。构造期间它被取消或到期，`Open` 返回包裹 `context.Cause(ctx)` 的错误，已建好的驱动随即关闭；
-到期时 `errors.Is(err, context.DeadlineExceeded)` 成立，文本如 `构造后端未在时限内完成: context deadline exceeded`。
-理会 `ctx` 的后端随即返回；构造时不理会 `ctx` 的后端（如 `ftp`）要等它按自身的超时结束，`Open` 才返回。
-需要硬时限时，用带这个时限的 `ctx` 在单独的 goroutine 里调用 `Open`，到点放弃等待；那次 `Open` 结束时照样返回错误，并自行关闭建好的驱动。
-构造完成后，`ctx` 的取消与截止时刻不再影响驱动：
-rclone 后端会留存构造时的上下文，之后的请求（如 OAuth 令牌刷新）沿用它，因此传入属于一次请求或一次任务的 `ctx` 也安全；上下文里的值照常传给后端。
+`ctx` 只约束构造过程：
+
+- **构造期间取消或到期**：`Open` 返回包裹 `context.Cause(ctx)` 的错误，并关闭已经建好的驱动。到期时 `errors.Is(err, context.DeadlineExceeded)` 成立，错误文本形如 `构造后端未在时限内完成: context deadline exceeded`。
+- **不理会 `ctx` 的后端**：理会 `ctx` 的后端会随即返回。构造时不理会 `ctx` 的后端（如 `ftp`），要等它按自身的超时结束，`Open` 才返回。需要硬时限时，用带这个时限的 `ctx` 在单独的 goroutine 里调用 `Open`，到点不再等待。那次 `Open` 结束时照样返回错误，并关闭它建好的驱动。
+- **构造完成之后**：`ctx` 的取消与截止时刻不再影响驱动。rclone 后端会保留构造时的上下文，之后的请求（如 OAuth 令牌刷新）沿用它，所以传入属于一次请求或一次任务的 `ctx` 也是安全的。上下文里的值照常传给后端。
+
+驱动用完必须调用 `Close(ctx)`，之后不能再使用该驱动：
+
+- 后端提供了关闭钩子（rclone 的 `Shutdowner`）时，`Close` 关闭后端的后台任务与连接池。
+- 加密驱动会把内层后端从 rclone 的 fs 缓存中移除，由缓存负责关闭内层。
+- `Close` 是 `*rclone.Driver` 的方法，不在 `Driver` 接口里。以 `driver.Driver` 接口传递驱动时，要另外保留具体类型的指针，用于关闭。
 
 ### 写入
 
-`Put` 流式写入，驱动本身不缓存整个对象。它先读出数据开头的最多 512 字节，用 `net/http.DetectContentType`（WHATWG 内容嗅探算法）
-判定 Content-Type，随对象一并交给后端，再接着写完其余字节。对象键不必带扩展名：S3 等对象存储里的对象带上真实类型（如 `image/png`），
-而不是 `application/octet-stream`，浏览器直接打开存储的公开链接时能正常显示，不会变成下载。
+`Put` 流式写入，驱动不缓存整个对象。它先读出数据开头最多 512 字节，用 `net/http.DetectContentType`（WHATWG 内容嗅探算法）判定 Content-Type，随对象一起交给后端，再写完其余字节。
+
+因此对象键不必带扩展名。S3 等对象存储里的对象会带上真实类型（如 `image/png`），而不是 `application/octet-stream`，浏览器直接打开存储的公开链接时能正常显示，不会变成下载。
 
 - 加密驱动不把类型交给存储：rclone 的 crypt 层有意不暴露明文的类型，存储里的对象是密文。
 - 不记录 Content-Type 的后端（如 `local`）忽略这一信息。
 
-写入随 `ctx` 中止，拷贝时不看 `ctx` 的后端（如 `local`）也一样：`ctx` 结束后，`Put` 下一次从 `r` 读取即得到 `context.Cause(ctx)`，
-后端随之中止写入并删掉写了一半的对象。`r` 的单次 `Read` 阻塞时，要等这次读取返回才会停下。
+`ctx` 结束时写入中止，拷贝时不看 `ctx` 的后端（如 `local`）也一样：`ctx` 结束后，`Put` 下一次从 `r` 读取即得到 `context.Cause(ctx)`，后端随之中止写入，并删掉写了一半的对象。如果 `r` 的某次 `Read` 阻塞，要等这次读取返回才会停下。
 
 ### s3 默认跳过桶检查
 
-`Backend` 为 `s3` 且 `Params` 里没有 `no_check_bucket` 时，驱动自动补上 `no_check_bucket=true`；显式给出的值不会被覆盖。
+`Backend` 为 `s3` 且 `Params` 里没有 `no_check_bucket` 时，驱动自动设置 `no_check_bucket=true`。显式给出的值不会被覆盖。
 
-原因：R2、MinIO 等 S3 兼容存储常用只授权到桶内的凭证，没有建桶权限。rclone 默认在上传前尝试建桶，
-桶已存在而凭证无权建桶时返回 403，写入失败；而只读的健康探测（见 [多存储容灾](./failover.mdx)）照常通过，
-表现为「探测健康却写不进」。跳过桶检查的代价是**桶必须事先存在**。
+这样做的代价是**桶必须事先存在**。需要由程序建桶时，用下一节的 `EnsureBucket`。
+
+跳过桶检查的原因：R2、MinIO 等 S3 兼容存储常用只授权到桶内的凭证，没有建桶权限。rclone 默认在上传前尝试建桶，桶已存在而凭证无权建桶时返回 403，写入失败。只读的健康探测（见[多存储容灾](./failover.mdx)）却照常通过，结果是探测显示健康，却写不进去。
 
 ### EnsureBucket
 
-需要由程序建桶时，用 `(*rclone.Driver).EnsureBucket`：它对根路径执行一次建目录，对 s3 即创建 `Path` 所在的桶，桶已存在不报错。
+`(*rclone.Driver).EnsureBucket` 对根路径执行一次建目录。对 s3，就是创建 `Path` 所在的桶；桶已存在不报错。
 
 ```go
 b, err := rclone.Open(ctx, rclone.Options{
@@ -152,16 +155,15 @@ if err := b.EnsureBucket(ctx); err != nil {
 }
 ```
 
-`EnsureBucket` 不在 `Driver` 接口里，因为它只对对象存储有意义。应用的做法是：建桶时临时打开一个 `no_check_bucket=false`
-的驱动调用它，日常读写仍用默认配置的驱动。
+`EnsureBucket` 不在 `Driver` 接口里，因为它只对对象存储有意义。应用的做法是：建桶时临时打开一个 `no_check_bucket=false` 的驱动调用它，日常读写仍用默认配置的驱动。
 
 ### 密码类参数的编码
 
-rclone 要求一部分参数以 `rclone obscure` 的编码形式提供，例如 webdav、sftp、ftp 的 `pass`。哪些参数属于这一类，
-由后端自己的选项元数据标明。驱动把 `Params` 原样交给后端，所以这些值必须**事先编码**：漏编码的明文会被后端当作编码值解出乱码，
-表现为凭证正确却认证失败。不是所有密钥都属于这一类，例如 s3 的 `secret_access_key` 就以原文传入。
+rclone 要求一部分参数以 `rclone obscure` 编码后的形式提供，例如 webdav、sftp、ftp 的 `pass`。哪些参数属于这一类，由后端自己的选项元数据标明。
 
-包里提供两个函数完成编码。两者都按后端元数据挑出密码类参数、原地修改传入的映射、跳过空值，后端名不认识时返回错误：
+驱动把 `Params` 原样交给后端，所以这些值必须**事先编码**。漏编码的明文会被后端当作编码值解码，得到乱码，表现为凭证正确却认证失败。不是所有密钥都要编码，例如 s3 的 `secret_access_key` 直接传原文。
+
+包里有两个编码函数。两者都按后端元数据找出密码类参数，原地修改传入的映射，跳过空值；后端名不认识时返回错误。
 
 | | `ObscureSecrets` | `ObscurePlainSecrets` |
 |---|---|---|
@@ -169,8 +171,8 @@ rclone 要求一部分参数以 `rclone obscure` 的编码形式提供，例如 
 | 适用场景 | 值确定是明文，例如来自表单输入 | 来源不确定，可能是明文，也可能是从 rclone.conf 复制来的编码值 |
 | 误判后果 | 已编码的值被再编码一次，认证失败 | 恰好形似编码产物的明文被原样放过，认证失败 |
 
-`ObscurePlainSecrets` 判断「已编码」的规则与 rclone 相同：能被 rclone 解码的值即视为已编码，与不带 `--obscure` / `--no-obscure`
-执行 `rclone config create` 时的行为一致。遇到它误判的明文，先用 `rclone obscure` 编码再传入即可。
+`ObscurePlainSecrets` 判断「已编码」的规则与 rclone 相同：rclone 能解码的值就视为已编码，与执行 `rclone config create` 时不带 `--obscure` / `--no-obscure` 的行为一致。它把某个明文误判为已编码时，先用 `rclone obscure` 编码再传入即可。
+
 应用在后台模板表单里用 `ObscureSecrets`（值确定是明文），在自定义参数里用 `ObscurePlainSecrets`（两种形式都接受）。
 
 ```go
@@ -186,26 +188,24 @@ if err := rclone.ObscureSecrets("webdav", params); err != nil {
 d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Path: "images"})
 ```
 
-另一个辅助函数 `SensitiveParams(backend)` 返回后端声明为密码或敏感信息的参数名（选项元数据里的 `IsPassword` 或 `Sensitive`），
-按名排序、无重复，口径与 `rclone config redacted` 相同：除密码、密钥与令牌外，访问密钥 ID、账号名这类身份信息也在其中。
-回显配置时掩码哪些值、从错误信息里抹除哪些值，可以据此决定；应用的编辑回读与错误抹除用的就是它。
+另一个辅助函数 `SensitiveParams(backend)` 返回后端声明为密码或敏感信息的参数名（选项元数据里的 `IsPassword` 或 `Sensitive`），按名排序、无重复。判定范围与 `rclone config redacted` 相同：除密码、密钥与令牌外，还包括访问密钥 ID、账号名这类身份信息。
+
+回显配置时要掩码哪些值、错误信息里要抹除哪些值，可以据此决定。应用在渠道编辑表单回显配置时掩码凭证、在错误信息里抹除凭证，用的都是它。
 
 ### OAuth 令牌写回与 OnChange
 
-Google Drive、OneDrive、Dropbox 等网盘后端用 OAuth 授权。库不包含授权流程：在本机执行 `rclone authorize "drive"`
-（后端名按实际替换）取得 JSON 令牌，放进 `Params["token"]`。授权用的是自建应用时，把 `client_id` 与 `client_secret` 一并放进
-`Params`：令牌续期必须用签发它的同一个应用。
+Google Drive、OneDrive、Dropbox 等网盘后端用 OAuth 授权。库不包含授权流程，按下面的步骤准备参数：
 
-`Open` 只构造后端，不执行 `rclone config` 在授权之后的配置步骤。有的后端还要这些步骤写下的参数，例如 OneDrive 需要 `drive_id`
-与 `drive_type`：先在本机用 `rclone config` 配好，再从 rclone.conf 把它们抄进 `Params`。
+1. 在本机执行 `rclone authorize "drive"`（后端名按实际替换），把得到的 JSON 令牌放进 `Params["token"]`。
+2. 授权用的是自建应用时，把 `client_id` 与 `client_secret` 也放进 `Params`。令牌续期必须用签发它的同一个应用。
+3. 有的后端还要用到 `rclone config` 在授权之后写下的参数，例如 OneDrive 的 `drive_id` 与 `drive_type`。`Open` 只构造后端，不执行这些配置步骤：先在本机用 `rclone config` 配好，再从 rclone.conf 把这些参数抄进 `Params`。
 
-令牌临近过期时，rclone 自己刷新，并把新值写回参数。驱动收到写回后先更新内存中的参数，再调用 `OnChange(key, value)`。
+令牌临近过期时，rclone 会自己刷新，并把新值写回参数。驱动收到写回后，先更新内存中的参数，再调用 `OnChange(key, value)`。
 
-- `OnChange` 为 nil 时，新值只活在内存里，进程重启后又从旧令牌开始。对刷新时会轮换刷新令牌的服务商，旧令牌此时已经作废，
-  重启后授权随之失效。用网盘后端时应当提供 `OnChange` 并把值持久化。
-- 回调可能在任意 goroutine 中调用，也可能在 `Open` 返回之前就被调用（构造期写回）；它同步执行在 rclone 的调用路径上，应尽快返回，并自行保证并发安全。
-- 回调没有返回值，持久化失败只能由你自己记录。
-- 不要再另起一个刷新令牌的循环。两个刷新者会让对方的刷新令牌失效。定期调用一次只读操作（例如 [`failover.Probe`](./failover.mdx)）就足以让 rclone 按时刷新。
+- **持久化新值**：用网盘后端时应当提供 `OnChange` 并把值存下来。`OnChange` 为 nil 时，新值只在内存里，进程重启后又从旧令牌开始。有的服务商刷新时会轮换刷新令牌，旧令牌这时已经作废，重启后授权就失效了。
+- **调用时机**：回调可能在任意 goroutine 中调用，也可能在 `Open` 返回之前就被调用（构造期间的写回）。它在 rclone 的调用路径上同步执行，应尽快返回，并自行保证并发安全。
+- **失败处理**：回调没有返回值，持久化失败只能由你自己记录。
+- **不要另起刷新循环**：两个刷新者会让对方的刷新令牌失效。定期调用一次只读操作（例如 [`failover.Probe`](./failover.mdx)），就足以让 rclone 按时刷新。
 
 ```go
 d, err := rclone.Open(ctx, rclone.Options{
@@ -222,8 +222,7 @@ d, err := rclone.Open(ctx, rclone.Options{
 
 ### crypt 加密层
 
-`Crypt` 不为 nil 时，驱动在后端之上叠加 rclone 的 crypt 层：对象内容流式加密，文件名按 rclone 的 `standard` 方式加密。
-经驱动的读写自动加解密，`List` 返回的是解密后的键；存储服务商只能看到密文与加密后的文件名。
+`Crypt` 不为 nil 时，驱动在后端之上叠加 rclone 的 crypt 层：对象内容流式加密，文件名按 rclone 的 `standard` 方式加密。经驱动读写时自动加解密，`List` 返回的是解密后的键。存储服务商只能看到密文与加密后的文件名。
 
 <TypeTable
   type={{
@@ -232,14 +231,13 @@ d, err := rclone.Open(ctx, rclone.Options{
   }}
 />
 
-实现上，`Open` 先构造内层后端，以随机名（形如 `imgyoung-0123abcd`）登记进 rclone 的进程级 fs 缓存，再构造以该名为 `remote` 的 crypt 层。
+`Open` 先构造内层后端，以随机名（形如 `imgyoung-0123abcd`）登记进 rclone 的进程级 fs 缓存，再构造以该名为 `remote` 的 crypt 层。
 
 <Callout type="warn" title="丢失密码等于丢失数据">
 Password 与 Salt 是解密的唯一依据，丢失后存储里的对象无法还原。
 </Callout>
 
-crypt 是 rclone 的公开格式，不依赖本库也能用标准 rclone 解密：用下一节的 `ConfigFile` 生成配置文件即可。
-应用的渠道存储加密也基于这一层，密码由主密钥派生，见 [渠道存储加密](../channels/encryption.mdx)。
+crypt 是 rclone 的公开格式，不用本库也能用标准 rclone 解密：用下一节的 `ConfigFile` 生成配置文件即可。应用的渠道存储加密也基于这一层，密码由主密钥派生，见[渠道存储加密](../channels/encryption.mdx)。
 
 ### 导出为 rclone 配置文件 [#config-file]
 
@@ -247,15 +245,7 @@ crypt 是 rclone 的公开格式，不依赖本库也能用标准 rclone 解密�
 func ConfigFile(opts Options, remote, cryptRemote string) (string, error)
 ```
 
-`ConfigFile` 生成一份 rclone 配置文件（rclone.conf）的文本，与 `Open(opts)` 构造的驱动等价，标准 rclone 凭它就能读写同一份数据：
-
-- 后端段名为 `remote`，参数就是驱动实际交给后端的那一份，包括本包补上的默认值（如 s3 的 `no_check_bucket = true`）；
-  空值省略，因为驱动与 rclone 都把空值当作未设置。密码类参数按 `Options` 的约定本就是 rclone 编码形式，原样写出。
-- `opts.Crypt` 不为 nil 时，另写一段名为 `cryptRemote` 的 crypt 远端：`remote` 指向 `<remote>:<opts.Path>`，
-  `password` 与 `password2` 是编码后的 `Password` 与 `Salt`，`filename_encryption = standard`，与驱动的 crypt 层一致。
-  经它读写的是明文。
-- 不加密时，后端段本身不含路径，使用时写成 `<remote>:<opts.Path>`。`OnChange` 不参与。
-- 等价性由实现保证：`ConfigFile` 与 `Open` 共用同一套默认值补齐与 crypt 参数生成，不会各算各的。
+`ConfigFile` 生成一份 rclone 配置文件（rclone.conf）的文本，与 `Open(opts)` 构造的驱动等价，标准 rclone 凭它就能读写同一份数据。
 
 ```go
 text, err := rclone.ConfigFile(rclone.Options{
@@ -271,7 +261,7 @@ text, err := rclone.ConfigFile(rclone.Options{
 }, "mystore", "mystore-crypt")
 ```
 
-得到的文本形如（编码带随机 IV，每次生成的 `password` 与 `password2` 都不同，都能解出同一个值）：
+得到的文本形如下面这样。编码带随机 IV，每次生成的 `password` 与 `password2` 都不同，但都能解出同一个值：
 
 ```ini title="rclone.conf"
 [mystore]
@@ -294,12 +284,22 @@ remote = mystore:my-bucket/images
 rclone --config rclone.conf ls mystore-crypt:
 ```
 
-文本用 rclone 自己读写配置文件的同一个 INI 库序列化，写完再按 rclone 的读法回读核对；有参数无法原样写进文件时，
-返回能被 `errors.Is(err, rclone.ErrUnrepresentable)` 判断的错误，不会产出与驱动不等价的文件。错误只指出段名与参数名，不带参数值（值可能是凭证）：
+文件的内容：
+
+- **后端段**：段名为 `remote`，参数就是驱动实际交给后端的那一份，包括本包补上的默认值（如 s3 的 `no_check_bucket = true`）。空值省略，因为驱动与 rclone 都把空值当作未设置。密码类参数按 `Options` 的约定本就是 rclone 编码形式，原样写出。
+- **crypt 段**：`opts.Crypt` 不为 nil 时，另写一段名为 `cryptRemote` 的 crypt 远端。它的 `remote` 指向 `<remote>:<opts.Path>`，`password` 与 `password2` 是编码后的 `Password` 与 `Salt`，`filename_encryption = standard`，与驱动的 crypt 层一致。经它读写的是明文。
+- **不加密时**：后端段本身不含路径，使用时写成 `<remote>:<opts.Path>`。
+- `OnChange` 不参与。`ConfigFile` 与 `Open` 共用同一套默认值补齐与 crypt 参数生成，所以两者始终等价。
+
+<Callout type="warn" title="文件里是可用的凭证">
+配置文件含后端凭证与授权令牌；rclone 的编码可以还原，不是加密。加密渠道的文件还含解密密码。按主密钥的标准离线保存。
+</Callout>
+
+文本用 rclone 读写配置文件所用的同一个 INI 库序列化，写完再按 rclone 的读法回读核对。有参数无法原样写进文件时，`ConfigFile` 返回能被 `errors.Is(err, rclone.ErrUnrepresentable)` 判断的错误，不会产出与驱动不等价的文件。错误只指出段名与参数名，不带参数值，因为值可能是凭证：
 
 | 情形 | 返回的错误 | 错误文本 |
 |---|---|---|
-| 某个参数值含换行（`\n` 或 `\r`），单独写进文件就无法解析（如以 `"""` 开头），或读回的值与原值不同（如首尾空白、`%(name)s` 形式的引用）| `*rclone.UnrepresentableError`，字段 `Remote` 为段名、`Key` 为参数名 | `参数值无法写进 rclone 配置文件: 远端 "<段名>" 的参数 "<参数名>"` |
+| 某个参数值含换行（`\n` 或 `\r`）、单独写进文件就无法解析（如以 `"""` 开头），或读回的值与原值不同（如首尾空白、`%(name)s` 形式的引用）| `*rclone.UnrepresentableError`，字段 `Remote` 为段名、`Key` 为参数名 | `参数值无法写进 rclone 配置文件: 远端 "<段名>" 的参数 "<参数名>"` |
 | 每个参数值单独写都能原样读回，合在一起的文本却按 rclone 的读法无法解析 | 包裹 `ErrUnrepresentable` 的错误 | `参数值无法写进 rclone 配置文件: 生成的文本按 rclone 的读法无法解析` |
 
 要知道是哪个参数，用 `errors.As` 取出 `*rclone.UnrepresentableError`：
@@ -319,38 +319,25 @@ case err != nil:
 
 其他错误：后端名不认识、段名不合 rclone 的命名规则（只允许字母、数字、`_`、`-`、`.`、`+`、`@` 与空格）、密码编码失败。
 
-<Callout type="warn" title="文件里是可用的凭证">
-配置文件含后端凭证与授权令牌；rclone 的编码可以还原，不是加密。加密渠道的文件还含解密密码。按主密钥的标准离线保存。
-</Callout>
-
-### Close
-
-驱动用完必须调用 `Close(ctx)`：后端提供了关闭钩子（rclone 的 `Shutdowner`）时，它关闭后端的后台任务与连接池；
-加密驱动还会把内层后端从 rclone 的 fs 缓存中移除，移除时由缓存负责关闭内层。`Close` 之后不能再使用该驱动。
-
-`Close` 是 `*rclone.Driver` 的方法，不在 `Driver` 接口里。以 `driver.Driver` 接口传递驱动时，要另外保留具体类型的指针用于关闭。
-
 ### 完整示例
 
-下面是仓库里的 `store/rclone/example_test.go`，随 `go test ./store/rclone` 执行，输出与各自的 `Output` 注释一致：
-`ExampleSensitiveParams` 查询 webdav 后端的敏感参数；`Example` 用 rclone 的 `memory` 后端走一遍写入、查询、读回、删除。
+下面是仓库里的 `store/rclone/example_test.go`，随 `go test ./store/rclone` 执行，输出与各自的 `Output` 注释一致。`ExampleSensitiveParams` 查询 webdav 后端的敏感参数；`Example` 用 rclone 的 `memory` 后端走一遍写入、查询、读回、删除。
 
 <include cwd lang="go" meta='title="store/rclone/example_test.go"'>../store/rclone/example_test.go</include>
 
-`memory` 与 `local` 后端很适合写集成测试：前者数据只在进程内存里，后者配合 `t.TempDir()` 使用，都不需要任何云账号。
+`memory` 与 `local` 后端很适合写集成测试：前者的数据只在进程内存里，后者配合 `t.TempDir()` 使用，都不需要任何云账号。
 
 ## 自带驱动
 
-不用 rclone 时，自己实现 `driver.Driver` 即可与 `store/failover` 配合。要点：
+不用 rclone 时，自己实现 `driver.Driver`，就能与 `store/failover` 配合使用。实现时注意：
 
-1. **对象缺失返回 `ErrNotFound`**：`Open`、`Stat`、`Delete` 找不到对象时，返回能被 `errors.Is(err, driver.ErrNotFound)` 命中的错误。
-   `failover.Open` 靠它区分「对象不存在」与「存储故障」，`failover.Probe` 把 `Stat` 返回的 `ErrNotFound` 视为存储可达。
-2. **`Put` 读满 `size` 个字节**，读不够时返回错误；不要关闭 `r`。失败后调用方可能以同一个键重试，再次 `Put` 应整体覆盖之前留下的内容。
+1. **对象缺失返回 `ErrNotFound`**：`Open`、`Stat`、`Delete` 找不到对象时，返回能被 `errors.Is(err, driver.ErrNotFound)` 命中的错误。`failover.Open` 靠它区分「对象不存在」与「存储故障」，`failover.Probe` 把 `Stat` 返回的 `ErrNotFound` 视为存储可达。
+2. **`Put` 读满 `size` 个字节**：读不够时返回错误；不要关闭 `r`。失败后调用方可能以同一个键重试，再次 `Put` 应整体覆盖之前留下的内容。
 3. **`List` 递归列举**：`dir` 为空表示全部对象；返回相对根的完整键；目录不存在时返回空结果与 nil。
-4. **`ModTime` 填存储记下的写入时刻**：调用方会据此判断对象新旧，例如应用的对账只回收写入已超过宽限期的未知对象。
-5. **并发安全、尊重 `ctx`**。用编译期断言确认实现完整：`var _ driver.Driver = (*MemDriver)(nil)`。
+4. **`ModTime` 填存储记下的写入时刻**：调用方据此判断对象新旧，例如应用的对账只回收写入已超过宽限期的未知对象。
+5. **并发安全、尊重 `ctx`**：用编译期断言确认实现完整：`var _ driver.Driver = (*MemDriver)(nil)`。
 
-下面是一个把对象存在进程内存里的实现，可直接用于测试：
+下面是一个把对象存在进程内存里的实现，可以直接用于测试：
 
 ```go
 package memstore

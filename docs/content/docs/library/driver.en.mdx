@@ -25,12 +25,12 @@ type Driver interface {
 | `Delete` | Deletes the object | Returns an error wrapping `ErrNotFound`; the caller decides whether that counts as success |
 | `List` | Recursively lists every object under `dir`; an empty `dir` means the whole store. Returned keys are full paths relative to the store root | A missing directory yields an empty result, not an error |
 
-Rules every implementation follows:
+Every implementation follows these rules:
 
 - **Safe for concurrent use**: one driver instance may be used from many goroutines at once.
 - **Honors `ctx`**: every method respects cancellation and deadlines on `ctx`.
 - **Detect missing objects with `errors.Is`**: implementations wrap `ErrNotFound` with context such as the key, so never compare with `==`.
-- **Keys use `/` as the separator**, like `photos/2026/a.png`, relative to the driver's root path.
+- **Keys use `/` as the separator**: like `photos/2026/a.png`, relative to the driver's root path.
 
 `ObjectInfo` is what `Stat` and `List` return:
 
@@ -44,10 +44,10 @@ Rules every implementation follows:
 
 ## The rclone implementation
 
-`store/rclone` implements `Driver` on top of rclone backends. It builds rclone's `fs.Fs` directly in-process: parameters
-are passed to the backend as a map, with no rclone config file, no connection string, and no rclone subprocess.
+`store/rclone` implements `Driver` on top of rclone backends. It builds rclone's `fs.Fs` directly in-process and
+passes parameters to the backend as a map: no rclone config file, no connection string, and no rclone subprocess.
 
-### Opening a driver
+### Opening and closing a driver
 
 ```go
 d, err := rclone.Open(ctx, rclone.Options{
@@ -100,46 +100,58 @@ Fields of `rclone.Options`:
 
 Errors returned by `Open` never carry the parameter map, so credentials in it cannot leak into logs through error messages.
 
-`ctx` only governs construction. If it is cancelled or hits its deadline during construction, `Open` returns an error
-wrapping `context.Cause(ctx)` and closes any driver it already built. On a deadline,
-`errors.Is(err, context.DeadlineExceeded)` holds and the text looks like
-`构造后端未在时限内完成: context deadline exceeded`. Backends that honor `ctx` return promptly; for backends that
-ignore `ctx` while constructing (such as `ftp`), `Open` returns only once the backend's own timeouts end the
-construction. If you need a hard time limit, call `Open` with that deadline in a separate goroutine and stop waiting
-when the time is up; when that `Open` finishes, it still returns the error and closes any driver it built.
-Once construction is done, the cancellation and deadline of `ctx` no longer affect the driver: rclone backends keep the
-context they were constructed with and use it for later requests (such as OAuth token refreshes), so passing a `ctx`
-that belongs to a single request or job is safe; values in the context still reach the backend.
+`ctx` only governs construction:
+
+- **Cancelled or expired during construction**: `Open` returns an error wrapping `context.Cause(ctx)` and closes any
+  driver it already built. On a deadline, `errors.Is(err, context.DeadlineExceeded)` holds and the text looks like
+  `构造后端未在时限内完成: context deadline exceeded`.
+- **Backends that ignore `ctx`**: backends that honor `ctx` return promptly. For backends that ignore it while
+  constructing (such as `ftp`), `Open` returns only once the backend's own timeouts end the construction. If you need
+  a hard time limit, call `Open` with that deadline in a separate goroutine and stop waiting when the time is up. When
+  that `Open` finishes, it still returns the error and closes any driver it built.
+- **After construction**: the cancellation and deadline of `ctx` no longer affect the driver. rclone backends keep the
+  context they were constructed with and use it for later requests (such as OAuth token refreshes), so passing a `ctx`
+  that belongs to a single request or job is safe. Values in the context still reach the backend.
+
+Always call `Close(ctx)` when you are done with a driver, and do not use it afterwards:
+
+- If the backend provides a shutdown hook (rclone's `Shutdowner`), `Close` stops the backend's background tasks and connection pools.
+- An encrypted driver removes the inner backend from rclone's fs cache, and the cache closes the inner backend as it is removed.
+- `Close` is a method on `*rclone.Driver`, not part of the `Driver` interface. If you pass drivers around as
+  `driver.Driver`, keep the concrete pointer as well so you can close it.
 
 ### Writing
 
-`Put` streams the data; the driver itself never buffers the whole object. It first reads up to 512 bytes from the start of the
-data, determines the Content-Type with `net/http.DetectContentType` (the WHATWG content sniffing algorithm), hands it to
-the backend along with the object, and then writes the remaining bytes. Object keys need no file extension: objects in
-S3 and other object stores get their real type (such as `image/png`) instead of `application/octet-stream`, so opening
-the store's public link directly in a browser displays the image instead of downloading it.
+`Put` streams the data; the driver never buffers the whole object. It first reads up to 512 bytes from the start of
+the data, determines the Content-Type with `net/http.DetectContentType` (the WHATWG content sniffing algorithm), hands
+it to the backend along with the object, and then writes the remaining bytes.
+
+As a result, object keys need no file extension. Objects in S3 and other object stores get their real type (such as
+`image/png`) instead of `application/octet-stream`, so opening the store's public link directly in a browser displays
+the image instead of downloading it.
 
 - Encrypted drivers do not pass the type on to the store: rclone's crypt layer deliberately hides the plaintext type, and the stored object is ciphertext.
 - Backends that do not record a Content-Type (such as `local`) ignore it.
 
-Writing stops when `ctx` ends, even on backends that ignore `ctx` while copying (such as `local`): after `ctx` ends, the
-next read `Put` makes from `r` returns `context.Cause(ctx)`, so the backend aborts the write and deletes the partial
-object. If a single `Read` on `r` blocks, writing stops only once that read returns.
+Writing stops when `ctx` ends, even on backends that ignore `ctx` while copying (such as `local`): after `ctx` ends,
+the next read `Put` makes from `r` returns `context.Cause(ctx)`, so the backend aborts the write and deletes the
+partial object. If a single `Read` on `r` blocks, writing stops only once that read returns.
 
 ### s3 skips the bucket check by default
 
-When `Backend` is `s3` and `Params` has no `no_check_bucket`, the driver adds `no_check_bucket=true`. An explicit value is never overridden.
+When `Backend` is `s3` and `Params` has no `no_check_bucket`, the driver sets `no_check_bucket=true`. An explicit value is never overridden.
 
-The reason: S3-compatible stores such as R2 and MinIO are often accessed with credentials scoped to a bucket, without
-permission to create buckets. By default rclone tries to create the bucket before uploading; when the bucket exists but
-the credentials may not create it, the request fails with 403 and the write fails, while a read-only health check (see
-[Multi-store failover](./failover.mdx)) still passes. The store looks healthy but rejects writes. The cost of skipping
-the check is that **the bucket must already exist**.
+The cost is that **the bucket must already exist**. If your program needs to create the bucket, use `EnsureBucket`, described in the next section.
+
+The reason for skipping the check: S3-compatible stores such as R2 and MinIO are often accessed with credentials
+scoped to a bucket, without permission to create buckets. By default rclone tries to create the bucket before
+uploading; when the bucket exists but the credentials may not create it, the request fails with 403 and the write
+fails. A read-only health check (see [Multi-store failover](./failover.mdx)) still passes, so the store looks healthy
+but rejects writes.
 
 ### EnsureBucket
 
-When your program needs to create the bucket, use `(*rclone.Driver).EnsureBucket`. It makes the root directory, which
-for s3 creates the bucket named in `Path`; an existing bucket is not an error.
+`(*rclone.Driver).EnsureBucket` makes the root directory. For s3, that creates the bucket named in `Path`; an existing bucket is not an error.
 
 ```go
 b, err := rclone.Open(ctx, rclone.Options{
@@ -169,13 +181,14 @@ settings for everyday reads and writes.
 ### Encoding password parameters
 
 rclone expects some parameters in the encoded form produced by `rclone obscure`, for example `pass` for webdav, sftp,
-and ftp. Which parameters these are is declared by each backend's option metadata. The driver hands `Params` to the
-backend unchanged, so these values must be **encoded beforehand**: a plaintext value left unencoded is decoded by the
-backend into garbage, and authentication fails even though the credential is correct. Not every secret is in this
-category; s3's `secret_access_key`, for instance, is passed as-is.
+and ftp. Each backend's option metadata declares which parameters these are.
 
-The package provides two functions for the encoding. Both pick the password parameters from the backend's metadata,
-modify the map in place, skip empty values, and return an error for an unknown backend name:
+The driver hands `Params` to the backend unchanged, so these values must be **encoded beforehand**. A plaintext value
+left unencoded is decoded by the backend into garbage, and authentication fails even though the credential is correct.
+Not every secret needs encoding; s3's `secret_access_key`, for instance, is passed as-is.
+
+The package provides two encoding functions. Both pick the password parameters from the backend's metadata, modify
+the map in place, and skip empty values; an unknown backend name returns an error.
 
 | | `ObscureSecrets` | `ObscurePlainSecrets` |
 |---|---|---|
@@ -184,9 +197,11 @@ modify the map in place, skip empty values, and return an error for an unknown b
 | When it guesses wrong | An already-encoded value gets encoded twice; authentication fails | A plaintext value that happens to look encoded passes through unchanged; authentication fails |
 
 `ObscurePlainSecrets` decides "already encoded" the same way rclone does: a value rclone can decode counts as encoded,
-matching `rclone config create` run without `--obscure` / `--no-obscure`. If it misjudges a plaintext value, encode it
-with `rclone obscure` first and pass the result. The application uses `ObscureSecrets` for its console template forms
-(the values are known to be plaintext) and `ObscurePlainSecrets` for custom parameters (both forms are accepted).
+matching `rclone config create` run without `--obscure` / `--no-obscure`. If it mistakes a plaintext value for an
+encoded one, encode it with `rclone obscure` first and pass the result.
+
+The application uses `ObscureSecrets` for its console template forms (the values are known to be plaintext) and
+`ObscurePlainSecrets` for custom parameters (both forms are accepted).
 
 ```go
 params := map[string]string{
@@ -202,33 +217,38 @@ d, err := rclone.Open(ctx, rclone.Options{Backend: "webdav", Params: params, Pat
 ```
 
 A related helper, `SensitiveParams(backend)`, returns the names of the parameters a backend declares as passwords or
-sensitive (`IsPassword` or `Sensitive` in its option metadata), sorted and without duplicates, by the same rule as
-`rclone config redacted`: besides passwords, keys and tokens, identity information such as access key IDs and account
-names is included. Use it to decide which values to mask when echoing a configuration and which to scrub from error
-messages; the application's edit read-back and error scrubbing rely on it.
+sensitive (`IsPassword` or `Sensitive` in its option metadata), sorted and without duplicates. It follows the same
+rule as `rclone config redacted`: besides passwords, keys and tokens, identity information such as access key IDs and
+account names is included.
+
+Use it to decide which values to mask when echoing a configuration and which to scrub from error messages. The
+application uses it to mask credentials when the channel edit form reads a configuration back, and to scrub them from
+error messages.
 
 ### OAuth token write-back and OnChange
 
-Cloud drive backends such as Google Drive, OneDrive, and Dropbox use OAuth. The library has no authorization flow: run
-`rclone authorize "drive"` on your machine (substituting the backend name), and put the resulting JSON token in
-`Params["token"]`. If you authorized with your own app, put its `client_id` and `client_secret` in `Params` as well:
-a token can only be renewed by the app that issued it.
+Cloud drive backends such as Google Drive, OneDrive, and Dropbox use OAuth. The library has no authorization flow, so
+prepare the parameters as follows:
 
-`Open` only constructs the backend; it does not run the configuration steps `rclone config` performs after
-authorization. Some backends need parameters written by those steps — OneDrive, for example, needs `drive_id` and
-`drive_type`. Configure the remote once with `rclone config` on your machine, then copy those values from rclone.conf into `Params`.
+1. Run `rclone authorize "drive"` on your machine (substituting the backend name), and put the resulting JSON token in `Params["token"]`.
+2. If you authorized with your own app, put its `client_id` and `client_secret` in `Params` as well. A token can only
+   be renewed by the app that issued it.
+3. Some backends also need parameters that `rclone config` writes after authorization, such as `drive_id` and
+   `drive_type` for OneDrive. `Open` only constructs the backend and does not run those configuration steps: configure
+   the remote once with `rclone config` on your machine, then copy those values from rclone.conf into `Params`.
 
 When the token is about to expire, rclone refreshes it itself and writes the new value back as a parameter. On a
 write-back, the driver first updates its in-memory parameters and then calls `OnChange(key, value)`.
 
-- With a nil `OnChange`, the new value lives only in memory, and after a restart the process starts again from the old
-  token. For providers that rotate the refresh token on every refresh, the old token is already void by then, so
-  authorization breaks after the restart. With cloud drive backends, always supply `OnChange` and persist the value.
-- The callback may run on any goroutine, including before `Open` returns (write-backs during construction). It runs
-  synchronously on rclone's call path, so return quickly and make it safe for concurrent use.
-- The callback has no return value; if persisting fails, logging it is up to you.
-- Do not run a separate token refresh loop. Two refreshers invalidate each other's refresh tokens. Calling a read-only
-  operation periodically (for example [`failover.Probe`](./failover.mdx)) is enough to keep rclone refreshing on time.
+- **Persist the new value**: with cloud drive backends, always supply `OnChange` and store the value. With a nil
+  `OnChange`, the new value lives only in memory, and after a restart the process starts again from the old token.
+  Some providers rotate the refresh token on every refresh; the old token is then already void, so authorization
+  breaks after the restart.
+- **When it runs**: the callback may run on any goroutine, including before `Open` returns (write-backs during
+  construction). It runs synchronously on rclone's call path, so return quickly and make it safe for concurrent use.
+- **Failures**: the callback has no return value; if persisting fails, logging it is up to you.
+- **No separate refresh loop**: two refreshers invalidate each other's refresh tokens. Calling a read-only operation
+  periodically (for example [`failover.Probe`](./failover.mdx)) is enough to keep rclone refreshing on time.
 
 ```go
 d, err := rclone.Open(ctx, rclone.Options{
@@ -247,7 +267,7 @@ d, err := rclone.Open(ctx, rclone.Options{
 
 When `Crypt` is non-nil, the driver stacks rclone's crypt layer on top of the backend: object content is encrypted as
 it streams, and file names are encrypted with rclone's `standard` mode. Reads and writes through the driver encrypt and
-decrypt transparently, and `List` returns decrypted keys; the storage provider only ever sees ciphertext and encrypted names.
+decrypt transparently, and `List` returns decrypted keys. The storage provider only ever sees ciphertext and encrypted names.
 
 <TypeTable
   type={{
@@ -256,8 +276,8 @@ decrypt transparently, and `List` returns decrypted keys; the storage provider o
   }}
 />
 
-Under the hood, `Open` first builds the inner backend, registers it in rclone's process-wide fs cache under a random
-name (like `imgyoung-0123abcd`), and then builds the crypt layer with that name as its `remote`.
+`Open` first builds the inner backend, registers it in rclone's process-wide fs cache under a random name (like
+`imgyoung-0123abcd`), and then builds the crypt layer with that name as its `remote`.
 
 <Callout type="warn" title="Losing the password means losing the data">
 Password and Salt are the only way to decrypt. Without them, the objects in the store cannot be recovered.
@@ -274,18 +294,7 @@ func ConfigFile(opts Options, remote, cryptRemote string) (string, error)
 ```
 
 `ConfigFile` produces the text of an rclone configuration file (rclone.conf) equivalent to the driver `Open(opts)`
-builds, so standard rclone can read and write the same data with it:
-
-- The backend section is named `remote`, and its parameters are exactly what the driver hands to the backend,
-  including the defaults this package adds (such as s3's `no_check_bucket = true`). Empty values are omitted, because
-  both the driver and rclone treat an empty value as unset. Password parameters are already in rclone's encoded form
-  by the `Options` convention and are written as they are.
-- When `opts.Crypt` is non-nil, a second crypt section named `cryptRemote` is written: its `remote` points to
-  `<remote>:<opts.Path>`, `password` and `password2` are the encoded `Password` and `Salt`, and
-  `filename_encryption = standard`, matching the driver's crypt layer. Reads and writes through it are plaintext.
-- Without encryption, the backend section carries no path; use it as `<remote>:<opts.Path>`. `OnChange` plays no part.
-- Equivalence is guaranteed by construction: `ConfigFile` and `Open` share the same default filling and crypt
-  parameter generation, so they never compute things separately.
+builds, so standard rclone can read and write the same data with it.
 
 ```go
 text, err := rclone.ConfigFile(rclone.Options{
@@ -301,8 +310,8 @@ text, err := rclone.ConfigFile(rclone.Options{
 }, "mystore", "mystore-crypt")
 ```
 
-The resulting text looks like this (encoding uses a random IV, so `password` and `password2` differ on every call,
-yet always decode to the same values):
+The resulting text looks like this. Encoding uses a random IV, so `password` and `password2` differ on every call, yet
+always decode to the same values:
 
 ```ini title="rclone.conf"
 [mystore]
@@ -325,11 +334,28 @@ remote = mystore:my-bucket/images
 rclone --config rclone.conf ls mystore-crypt:
 ```
 
+What the file contains:
+
+- **Backend section**: named `remote`, with exactly the parameters the driver hands to the backend, including the
+  defaults this package adds (such as s3's `no_check_bucket = true`). Empty values are omitted, because both the
+  driver and rclone treat an empty value as unset. Password parameters are already in rclone's encoded form by the
+  `Options` convention and are written as they are.
+- **Crypt section**: when `opts.Crypt` is non-nil, a second crypt remote named `cryptRemote` is written. Its `remote`
+  points to `<remote>:<opts.Path>`, `password` and `password2` are the encoded `Password` and `Salt`, and
+  `filename_encryption = standard`, matching the driver's crypt layer. Reads and writes through it are plaintext.
+- **Without encryption**: the backend section carries no path; use it as `<remote>:<opts.Path>`.
+- `OnChange` plays no part. `ConfigFile` and `Open` share the same default filling and crypt parameter generation, so the two always stay equivalent.
+
+<Callout type="warn" title="The file holds working credentials">
+The configuration file contains backend credentials and authorization tokens; rclone's encoding is reversible, not
+encryption. For encrypted channels it also contains the decryption password. Keep it offline, to the same standard as the master key.
+</Callout>
+
 The text is serialized with the same INI library rclone uses for its configuration files, then read back the way
-rclone reads it and checked. If a parameter cannot be written into the file as it is, the function returns an error
+rclone reads it and checked. If a parameter cannot be written into the file as it is, `ConfigFile` returns an error
 that matches `errors.Is(err, rclone.ErrUnrepresentable)` instead of producing a file that is not equivalent to the
-driver. The error names only the section and the parameter, never the value, which may be a credential (the text
-itself is in Chinese):
+driver. The error names only the section and the parameter, never the value, because the value may be a credential
+(the error text itself is in Chinese):
 
 | Situation | Error returned | Error text |
 |---|---|---|
@@ -354,24 +380,10 @@ case err != nil:
 Other errors: an unknown backend name, a section name that breaks rclone's naming rules (only letters, digits, `_`,
 `-`, `.`, `+`, `@` and spaces), or a failure to encode a password.
 
-<Callout type="warn" title="The file holds working credentials">
-The configuration file contains backend credentials and authorization tokens; rclone's encoding is reversible, not
-encryption. For encrypted channels it also contains the decryption password. Keep it offline, to the same standard as the master key.
-</Callout>
-
-### Close
-
-Always call `Close(ctx)` when you are done with a driver. If the backend provides a shutdown hook (rclone's
-`Shutdowner`), it stops the backend's background tasks and connection pools. An encrypted driver also removes the inner
-backend from rclone's fs cache, and the cache closes the inner backend as it is removed. Do not use a driver after `Close`.
-
-`Close` is a method on `*rclone.Driver`, not part of the `Driver` interface. If you pass drivers around as
-`driver.Driver`, keep the concrete pointer as well so you can close it.
-
 ### Complete example
 
 This is `store/rclone/example_test.go` from the repository. It runs with `go test ./store/rclone`, and each example
-prints exactly what its `Output` comment lists (the comments in the source are in Chinese): `ExampleSensitiveParams`
+prints exactly what its `Output` comment lists (the comments in the source are in Chinese). `ExampleSensitiveParams`
 queries the sensitive parameters of the webdav backend, and `Example` walks through write, stat, read back, and delete
 on rclone's `memory` backend.
 
@@ -382,18 +394,18 @@ the second pairs with `t.TempDir()`, and neither needs a cloud account.
 
 ## Writing your own driver
 
-Without rclone, implement `driver.Driver` yourself and it works with `store/failover` as is. Key points:
+Without rclone, implement `driver.Driver` yourself and it works with `store/failover` as is. Keep these points in mind:
 
 1. **Return `ErrNotFound` for missing objects**: when `Open`, `Stat`, or `Delete` cannot find the object, return an
    error that `errors.Is(err, driver.ErrNotFound)` matches. `failover.Open` relies on it to tell "object does not
    exist" from "store is broken", and `failover.Probe` treats `ErrNotFound` from `Stat` as "store reachable".
-2. **`Put` reads exactly `size` bytes** and returns an error if it gets fewer; do not close `r`. After a failure the
+2. **`Put` reads exactly `size` bytes**: return an error if it gets fewer, and do not close `r`. After a failure the
    caller may retry with the same key, and the new `Put` should completely replace whatever was left behind.
 3. **`List` is recursive**: an empty `dir` means all objects; keys are full paths relative to the root; a missing
    directory returns an empty result and nil.
-4. **Fill `ModTime` with the write time the store records**: callers use it to judge how old an object is. The application's
-   reconciliation, for example, only reclaims unknown objects written longer ago than its grace period.
-5. **Be safe for concurrent use and honor `ctx`.** Check that the implementation is complete with a compile-time
+4. **Fill `ModTime` with the write time the store records**: callers use it to judge how old an object is. The
+   application's reconciliation, for example, only reclaims unknown objects written longer ago than its grace period.
+5. **Be safe for concurrent use and honor `ctx`**: check that the implementation is complete with a compile-time
    assertion: `var _ driver.Driver = (*MemDriver)(nil)`.
 
 Here is an implementation that keeps objects in process memory, ready to use in tests:

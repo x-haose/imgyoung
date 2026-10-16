@@ -43,7 +43,7 @@ export const COPY: Record<Language, HomeCopy> = {
       '自部署图床：一张图同时存进多个存储渠道，主渠道故障时上传与访问自动切换；渠道商只见密文，元数据库自动备份到渠道。单二进制，Docker 一行起。',
     eyebrow: '开源 · MIT · 自部署',
     headline: '一张图，存进多个渠道',
-    lede: '上传先写进优先级最高的健康渠道即返回，其余渠道在后台补齐副本；某个渠道挂了，访问立刻切到下一个有副本的渠道。渠道可以加密到只剩密文，元数据库按时快照到渠道里——机器全毁，图和账本都还在。',
+    lede: '上传先写进优先级最高的健康渠道即返回，其余渠道在后台补齐副本；某个渠道挂了，访问立刻切到下一个有副本的渠道。渠道可以加密到只剩密文，元数据库按时快照到渠道里。本机损坏后，图片与元数据都能从其他渠道找回。',
     start: '快速开始',
     install: '安装方式',
     demo: {
@@ -58,7 +58,7 @@ export const COPY: Record<Language, HomeCopy> = {
       failedCaption:
         '主渠道不可用：访问即时切到下一个有副本的渠道，新上传顺延写进备份渠道；主渠道恢复后，缺的副本由后台补齐。',
     },
-    featuresTitle: '稳定性是第一卖点',
+    featuresTitle: '稳定性第一',
     features: [
       {
         title: '多渠道主备容灾',
@@ -70,7 +70,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: '元数据库自动备份',
-        body: '定时快照写到每个健康渠道，各渠道各自保留最近 N 份；后台可浏览快照并一键恢复。',
+        body: '定时快照写到每个健康渠道，各渠道各自保留最近 N 份；后台可浏览快照并从中恢复。',
       },
       {
         title: '生命周期',
@@ -86,7 +86,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: '按需处理',
-        body: '？w= 按预设宽度缩放，按浏览器能力返回 WebP，结果缓存在本地磁盘；原图 URL 不变，可放心交给 CDN 长期缓存。',
+        body: '?w= 按预设宽度缩放，按浏览器能力返回 WebP，结果缓存在本地磁盘；原图 URL 不变，适合交给 CDN 长期缓存。',
       },
       {
         title: '多用户与权限',
@@ -135,7 +135,7 @@ export const COPY: Record<Language, HomeCopy> = {
       'Self-hosted image hosting that stores every image in several storage channels and fails over automatically when one goes down. Channels can see only ciphertext, and the metadata database backs itself up to them. One binary, one Docker command.',
     eyebrow: 'Open source · MIT · Self-hosted',
     headline: 'One image, many channels',
-    lede: 'An upload returns as soon as the highest-priority healthy channel has it; the other channels receive replicas in the background. When a channel goes down, reads switch to the next one that holds a replica. Channels can be encrypted down to ciphertext, and the metadata database snapshots itself into them — lose the server, keep the images and the ledger.',
+    lede: 'An upload returns as soon as the highest-priority healthy channel has it; the other channels receive replicas in the background. When a channel goes down, reads switch to the next one that holds a replica. Channels can be encrypted down to ciphertext, and the metadata database snapshots itself into them. If the server is lost, the images and the metadata can be recovered from the other channels.',
     start: 'Quick start',
     install: 'Install',
     demo: {
@@ -163,7 +163,7 @@ export const COPY: Record<Language, HomeCopy> = {
       },
       {
         title: 'Automatic metadata backups',
-        body: 'Scheduled snapshots are written to every healthy channel, each keeping its own latest N. Browse them in the admin console and restore with one click.',
+        body: 'Scheduled snapshots are written to every healthy channel, each keeping its own latest N. Browse and restore them in the admin console.',
       },
       {
         title: 'Lifecycle',

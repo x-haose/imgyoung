@@ -9,7 +9,7 @@ import (
 )
 
 // SensitiveParams 返回后端声明为密码或敏感信息的参数名,按名排序、无重复。
-// @Description: 判定依据是后端选项元数据的 IsPassword 与 Sensitive,与 rclone config redacted 的口径一致:
+// @Description: 判定依据是后端选项元数据的 IsPassword 与 Sensitive,判定范围与 rclone config redacted 相同:
 // 除密码、密钥与 OAuth 令牌外,访问密钥 ID、账号名这类身份信息也在其中。不是后端选项的键不在返回值里。
 // 调用方据此决定回显时掩码哪些值、从错误文案里抹除哪些值。
 // @param backend rclone 后端名

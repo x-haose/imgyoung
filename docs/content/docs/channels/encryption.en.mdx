@@ -1,13 +1,13 @@
 ---
 title: Channel encryption
-description: Store only ciphertext at your provider with rclone crypt — what it protects against, how to turn it on, why it is fixed at creation, where the keys come from, and how to decrypt a channel with stock rclone without ImgYoung.
+description: Store only ciphertext at your provider with rclone crypt — what it protects against, how to turn it on, why it cannot be changed after creation, where the keys come from, and how to decrypt a channel with stock rclone without ImgYoung.
 ---
 
 ## What it protects against
 
 Channel encryption is aimed at the **storage provider**. Free or third-party storage may scan or review what you store, sometimes closing accounts over false positives. With encryption on, both object contents and object names on the channel are ciphertext.
 
-It does **not** protect against the server itself. ImgYoung holds the master key, and format checks, metadata stripping, hashing, deduplication and on-demand processing all run on plaintext before encryption, so none of them are affected; anyone with the server and the master key can read everything.
+It does **not** protect against the server itself. ImgYoung holds the master key, and format checks, metadata stripping, hashing, deduplication and on-demand processing all run on plaintext before encryption, so none of them are affected. Anyone with the server and the master key can read everything.
 
 The provider can still see the number of objects, their sizes (the plaintext size can be worked out from the ciphertext size to within 16 bytes), modification times and access patterns.
 
@@ -36,7 +36,7 @@ Encrypted channels carry an **Encrypted** badge in the list; the edit form only 
 
 ## Fixed at creation
 
-The encryption attribute is set at creation and cannot change afterwards. The API rejects changes with 409 and error code `channel_encrypted_immutable` ("Encryption cannot change after creation (changing it would mix ciphertext and plaintext beyond recovery). Create a new channel and migrate the data instead").
+Encryption is decided at creation and cannot change afterwards. The API rejects changes with 409 (error code `channel_encrypted_immutable`).
 
 The reason: after flipping the switch, one channel would hold objects written under the old setting next to objects written under the new one, and the old objects could not be read back under the new setting.
 
@@ -60,7 +60,7 @@ Ciphertext cannot be handed to a browser, so encryption and **Allow 302 direct l
 
 - In the new-channel form, choosing **Force on** disables **Allow 302 direct links**; with direct links on, **Force on** cannot be selected.
 - The same applies when you choose **Inherit the global default** while the global default is on.
-- The API rejects a request asking for both with 400 and error code `channel_encrypted_direct_link` ("Invalid channel settings: encrypted channels cannot use direct links (ciphertext cannot be served directly)").
+- The API rejects a request asking for both with 400 (error code `channel_encrypted_direct_link`).
 - With `access_mode = redirect`, images on encrypted channels are always proxied.
 
 ## Where the keys come from
@@ -76,29 +76,29 @@ Each encrypted channel's password and salt are derived from the **master key** a
 | Given to rclone | The lower-case hex string of the 32-byte result (64 characters), as crypt's `password` and `password2` respectively |
 
 - The **channel ID** and **created at** come from the `id` and `created_at` columns of the `channels` table in the metadata database. `created_at` is UTC text written by SQLite, such as `2026-10-15 08:00:00`, and is used verbatim.
-- The channel ID and the creation time are both fixed when the channel is created and never change. Channel IDs are never reused: a channel created after deleting another gets a new ID and therefore derives a different password and salt. The exception is channels deleted before upgrading to the version where IDs stop being reused: if the deleted one had the highest ID, the first channel created after the upgrade may get that ID, but its creation time differs, so it still derives a different password and salt.
+- The channel ID and the creation time are both fixed when the channel is created and never change. Channel IDs are never reused, so a channel created after deleting another gets a new ID and derives a different password and salt.
 - Keys of different channels are independent; leaking one channel's keys does not expose the others.
 
-The **master key** comes from the environment variable `IMGYOUNG_MASTER_KEY` (64 hex characters) or, when that is unset or empty, from `<data dir>/master.key`. It encrypts the channel configurations and the CDN token (ciphertext), and derives the keys of encrypted channels and the S3 credentials of upload tokens (derived data). It is not part of the data export or of metadata snapshots.
+The **master key** comes from the environment variable `IMGYOUNG_MASTER_KEY` (64 hex characters) or, when that is unset or empty, from `<data dir>/master.key`. It encrypts the channel configurations and the Cloudflare API token, and derives the keys of encrypted channels and the S3 credentials of upload tokens. It is not part of the data export or of metadata snapshots.
 
-The metadata database records a fingerprint derived from the master key (the key cannot be recovered from it), and once it is recorded every start checks the master key against it. When a master key is generated and when the fingerprint is recorded:
+The metadata database records a fingerprint of the master key (derived from it; the key cannot be recovered from it), and every start checks the master key against it:
 
-- `master.key` is generated (with permissions 0600) only when a brand-new metadata database (no fingerprint, and no ciphertext or derived data depending on a master key) finds no master key. On a brand-new database the master key in use (generated or given) has its fingerprint recorded right away.
-- If the database has no fingerprint (written by an older version that recorded none, for example after restoring an old snapshot) but already holds data depending on a master key, no new key is generated; without a master key startup fails with `数据库里已有依赖主密钥的数据,但找不到主密钥:IMGYOUNG_MASTER_KEY 未设置,<path> 也不存在。请恢复原来的主密钥再启动;生成新密钥会让渠道配置、加密渠道的数据与上传 Token 的 S3 凭证全部失效` ("data in the database depends on a master key, but none was found; restore the original master key").
-- When such a database holds ciphertext, the given master key counts as matching if it decrypts any one piece, and the fingerprint is then recorded (an old database mixing data encrypted with two keys accepts either key); if it decrypts none, startup fails with a reason starting with `主密钥与数据库不符` ("master key does not match the database") and noting `库里已有的 N 份加密数据都解不开`. With only derived data and no ciphertext there is nothing to check against: the given master key is used but no fingerprint is recorded, with the log line `库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把` ("no encrypted data to check against, fingerprint not recorded yet; if upload tokens' S3 credentials stop working in clients, the master key is not the original one"). Once the database holds ciphertext, the next start checks the key and records the fingerprint. Note that ciphertext written from then on (creating or editing a channel, entering a CDN token) is encrypted with exactly this master key, so the next start's check passes and records its fingerprint: with the wrong master key, the lock-in is only postponed to the first start after ciphertext is written. When restoring such an old database, make sure the master key is right first; S3 clients failing signature checks are the sign of a wrong one, and you should switch back to the original before any ciphertext is written.
-- Once a fingerprint is recorded, a missing master key (no environment variable and no `master.key`) or one that does not match makes startup fail with an explanation; no new key is generated.
+- When a fresh instance starts for the first time and finds no master key, it generates `master.key` (with permissions 0600). Whether generated or provided by you, the master key's fingerprint is recorded right away.
+- On every later start, a missing master key (no environment variable and no `master.key`) or one that does not match the fingerprint makes startup fail with an explanation; no new key is generated.
 - When restoring a snapshot from another instance, switch to that instance's master key as well.
 
+Configuring and safekeeping the master key are covered under [Master key](../configuration.mdx#master-key) in Configuration.
+
 <Callout type="error" title="Losing the master key loses encrypted channels for good">
-Without the master key no encrypted channel's password can be derived, so the ciphertext stays unreadable; the stored channel configurations cannot be decrypted either, and ImgYoung refuses to start. Keep a copy of the master key somewhere separate from the server. Configuration is covered in the [configuration reference](../configuration.mdx), backup strategy in [Metadata backups](../operations/backup.mdx).
+Without the master key no encrypted channel's password can be derived, so the ciphertext stays unreadable; the stored channel configurations cannot be decrypted either, and ImgYoung refuses to start. Keep a copy of the master key somewhere separate from the server; backup strategy is covered in [Backup & restore](../operations/backup.mdx).
 </Callout>
 
-## Self-rescue: reading a channel with stock rclone
+## Reading a channel with stock rclone
 
 crypt is a published rclone format. Even with ImgYoung gone, stock rclone can read every object on an encrypted channel. The easy way is to export each channel's rclone config file in advance; without an exported file you can still derive everything by hand from the metadata database and the master key.
 
 <Callout type="warn" title="When the snapshots are on an encrypted channel too">
-Each backup round writes the metadata snapshot to every healthy channel, and the copy on an encrypted channel is ciphertext as well. As long as one unencrypted channel holds a snapshot, or you have kept the encrypted channels' exported files offline, you can get a snapshot back after losing the host. If every channel is encrypted and there is no exported file, deriving by hand needs the channel's ID and creation time — and those are recorded inside the snapshot. In such a deployment, export a config file for every encrypted channel and keep it offline with the master key.
+Each backup round writes the metadata snapshot to every healthy channel, and the copy on an encrypted channel is ciphertext as well. As long as one unencrypted channel holds a snapshot, or you have kept the encrypted channels' exported files offline, you can get a snapshot back after losing the host. If every channel is encrypted and there is no exported file, deriving by hand needs the channel's ID and creation time, and those are recorded inside the snapshot itself. In such a deployment, export a config file for every encrypted channel and keep it offline with the master key.
 </Callout>
 
 ### With an exported config file
@@ -108,7 +108,7 @@ Each backup round writes the metadata snapshot to every healthy channel, and the
 On the Storage channels page choose **Export rclone config** in the row menu, then **Download config file**, to get `imgyoung-channel-<channel ID>.rclone.conf`. There is one file per channel; export again after changing a channel's configuration.
 </Step>
 <Step>
-Keep it offline together with the master key. The file alone is enough to read and write all of this channel's data (an encrypted channel's decryption passwords are in it); the master key is what you need to restore ImgYoung itself.
+Keep it offline together with the master key. The file alone is enough to read and write all of this channel's data, since an encrypted channel's decryption passwords are in it; the master key is what you need to restore ImgYoung itself.
 </Step>
 <Step>
 On any machine with rclone, run the commands from the comments at the top of the file. For an encrypted channel read `imgyoung-<channel ID>-crypt:`, which yields plaintext:
@@ -152,11 +152,21 @@ password2 = <rclone-encoded salt>
 remote = imgyoung-3:my-bucket/imgyoung
 ```
 
-- The backend remote has exactly the parameters ImgYoung hands to the backend, credentials and OAuth tokens included; password-type parameters are in rclone's encoded form, which rclone uses as is. s3 channels carry `no_check_bucket = true`.
-- The comments come in English and Chinese. A download from the console follows the console language; calling `GET /api/admin/channels/{id}/rclone-config` directly takes the `lang` query parameter (`zh-CN` or `en`), falls back to the request's `Accept-Language`, and defaults to Chinese without that header. The `Content-Language` response header names the language; an invalid `lang` answers 400 with error code `lang_invalid`.
-- For drive channels holding an OAuth token, the comments add a short note: rclone refreshes the token when using this file and writes it back into the file; with providers whose refresh tokens are single-use, such as Box, the file and an ImgYoung still using the channel invalidate each other's tokens, so do not use both at once. Also, once ImgYoung refreshes the token, the copy in the file is stale; with Box and the like its refresh token is invalidated and you need to export again.
-- A `local` channel exports an absolute path on the server (for the built-in local channel `<data dir>/blobs`; a relative data directory is resolved against the working directory at startup); change it to the real location when using the file on another machine.
-- If any parameter value cannot be written into an rclone config file (one containing a line break, or starting with `"""`, for example), the export returns 422 with error code `channel_unrepresentable`; the error names only the remote and the parameter key, never the value. Every download is recorded in the audit log as "Export channel rclone config".
+- The backend remote has exactly the parameters ImgYoung hands to the backend, credentials and OAuth tokens included. Password-type parameters are in rclone's encoded form, which rclone uses as is. s3 channels carry `no_check_bucket = true`.
+- For drive channels holding an OAuth token, the comments add a short note: rclone refreshes the token when using this file and writes it back into the file. With providers whose refresh tokens are single-use, such as Box, the file and an ImgYoung still using the channel invalidate each other's tokens, so do not use both at once. Also, once ImgYoung refreshes the token, the copy in the file is stale; with Box and the like its refresh token is invalidated and you need to export again.
+- A `local` channel exports an absolute path on the server: `<data dir>/blobs` for the built-in local channel; a relative data directory is resolved against the working directory at startup. Change it to the real location when using the file on another machine.
+- If any parameter value cannot be written into an rclone config file (for example one containing a line break, or starting with `"""`), the export returns 422 (error code `channel_unrepresentable`). The error names only the remote and the parameter key, never the value.
+- Every download is recorded in the audit log as "Export channel rclone config".
+
+The comments come in English and Chinese. A download from the console follows the console language; calling `GET /api/admin/channels/{id}/rclone-config` directly picks the language as follows:
+
+| Condition | Comment language |
+|---|---|
+| The `lang` query parameter is present (`zh-CN` or `en`) | As given; an invalid value answers 400 (error code `lang_invalid`) |
+| No `lang` | From the request's `Accept-Language` |
+| Neither | Chinese |
+
+The `Content-Language` response header names the language used.
 
 ### Without an exported file: deriving by hand
 
@@ -170,7 +180,7 @@ You need:
 <Step>
 #### Get the channel ID and creation time
 
-Every channel in the metadata export JSON and in the channel list API has `id` and `created_at`. If all you have is the metadata database file, query it with `sqlite3`; the database is `<data dir>/imgyoung.db`, and snapshot files are SQLite databases of the same shape:
+Every channel in the metadata export JSON and in the channel list API has `id` and `created_at`. If all you have is the metadata database file, query it with `sqlite3`. The database is `<data dir>/imgyoung.db`, and snapshot files are SQLite databases of the same shape:
 
 ```bash title="Terminal"
 sqlite3 imgyoung.db "SELECT id, name, created_at FROM channels WHERE encrypted = 1;"
@@ -213,7 +223,7 @@ rclone config create imgyoung-r2 s3 provider=Cloudflare \
   endpoint=https://<account ID>.r2.cloudflarestorage.com region=auto
 ```
 
-Then layer a crypt remote on top. `remote` points at the channel's storage path (the value of the bucket field in the template, prefix included). Do not drop `--obscure`: it tells rclone to treat both hex strings as plain passwords and encode them:
+Then layer a crypt remote on top. `remote` points at the channel's storage path: the value of the bucket field in the template, prefix included. Do not drop `--obscure`: it tells rclone to treat both hex strings as plain passwords and encode them:
 
 ```bash title="Terminal"
 rclone config create imgyoung-crypt crypt \

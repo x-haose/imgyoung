@@ -11,7 +11,7 @@ Docker command.
 
 - **Multi-channel failover**: priority defines primary and backups, and health checks demote failing channels. A failed upload moves on to the next channel, you can require N synchronous copies, and replication jobs survive restarts.
 - **Channel encryption**: built on rclone crypt, so the provider sees only ciphertext. Keys derive from the master key, and stock rclone can decrypt the data on its own.
-- **Automatic metadata backups**: scheduled snapshots go to every healthy channel; browse them in the admin console and restore with one click.
+- **Automatic metadata backups**: scheduled snapshots go to every healthy channel; browse and restore them in the admin console.
 - **Lifecycle**: expiry at three levels with renew-on-access; images nobody opens for a long time land in a cleanup queue for an admin to judge.
 - **Deduplication**: byte-identical images merge automatically; perceptually similar ones are shown side by side for an admin to decide.
 - **Many ways to upload**: HTTP API, PicGo / PicList, the S3 protocol, URL import, and drag-and-drop in the admin console, all through one pipeline.

@@ -21,7 +21,7 @@ const ProbeKey = ".imgyoung-health-probe"
 const deepProbePrefix = ".imgyoung-probe-"
 
 // IsDeepProbeKey 判断对象键是否为 DeepProbe 写出的临时对象。
-// @Description: DeepProbe 删除失败时会留下这类残留;它们只是探测用的小对象,调用方的清理逻辑可据此认领回收。
+// @Description: DeepProbe 删除失败时会留下这类残留;它们只是探测用的小对象,调用方的清理逻辑可据此识别并回收。
 // @param key 对象键
 // @return 是深探测临时对象为 true
 func IsDeepProbeKey(key string) bool {
