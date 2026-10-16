@@ -8,11 +8,11 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
@@ -51,8 +51,10 @@ type ReplicationKicker interface {
 	EnqueueChannelDrain(ctx context.Context, channelID int64) error
 }
 
-// ImageAdmin 图片管理删除入口(由 lifecycle.Sweeper 实现)。
+// ImageAdmin 图片的修改与删除入口(由 lifecycle.Sweeper 实现)。
 type ImageAdmin interface {
+	// UpdateImage 在单事务内修改一条引用的有效期与清理豁免;返回 lifecycle.ErrImageNotFound / ErrImageExpired。
+	UpdateImage(ctx context.Context, imageID string, patch lifecycle.ImagePatch) error
 	// DeleteImage 立即删除一条引用,级联由清理任务完成。
 	DeleteImage(ctx context.Context, imageID string) error
 }
@@ -85,7 +87,7 @@ type Config struct {
 	OAuth      *channel.OAuthSessions // 网盘渠道进行中的授权会话
 	Replicator ReplicationKicker      // 补齐管道唤醒口;nil 表示无补齐子系统(如部分测试装配)
 	Auth       *auth.Service          // 认证服务(登录/会话/用户/Token 管理)
-	Images     ImageAdmin             // 图片删除入口
+	Images     ImageAdmin             // 图片修改与删除入口
 	Dedup      DedupAdmin             // 相似候选裁决执行口
 	Queries    *sqlc.Queries          // 列表与统计查询
 	Audit      *audit.Recorder        // 管理操作审计记录器
@@ -124,31 +126,6 @@ func (h *Handlers) recordAudit(ctx context.Context, action, target, detail strin
 	if err := h.cfg.Audit.Record(context.WithoutCancel(ctx), actor, action, target, detail); err != nil {
 		h.cfg.Logger.Warn("审计记录失败", "action", action, "target", target, "err", err)
 	}
-}
-
-// 列表分页参数边界。
-const (
-	defaultPageSize = 20  // 未指定 page_size 时的默认值
-	maxPageSize     = 100 // page_size 上限,防单请求拉全表
-)
-
-// pagination 解析 page / page_size 查询参数为 LIMIT / OFFSET。
-// @param r 请求
-// @return limit 与 offset
-func pagination(r *http.Request) (limit, offset int64) {
-	q := r.URL.Query()
-	page, _ := strconv.ParseInt(q.Get("page"), 10, 64)
-	if page < 1 {
-		page = 1
-	}
-	size, _ := strconv.ParseInt(q.Get("page_size"), 10, 64)
-	if size < 1 {
-		size = defaultPageSize
-	}
-	if size > maxPageSize {
-		size = maxPageSize
-	}
-	return size, (page - 1) * size
 }
 
 // listResponse 列表统一信封,total 供前端分页。

@@ -21,6 +21,9 @@ const sweepBatch = 500
 // ErrImageNotFound 目标引用不存在。
 var ErrImageNotFound = errors.New("lifecycle: 引用不存在")
 
+// ErrImageExpired 引用已到期;到期是终态,有效期不再可改。
+var ErrImageExpired = errors.New("lifecycle: 引用已到期")
+
 // Deleter 渠道对象删除入队口(由 replication.Runner 实现),解耦 lifecycle 与 River。
 type Deleter interface {
 	// EnqueueDelete 入队删除某渠道内一个对象。
@@ -182,6 +185,83 @@ func (s *Sweeper) DeleteImage(ctx context.Context, imageID string) error {
 		return fmt.Errorf("查询引用: %w", err)
 	}
 	return s.expireOne(ctx, imageID, blobID)
+}
+
+// ImagePatch 一次引用修改的内容;字段为 nil 表示不改该项,至少一项非 nil。
+type ImagePatch struct {
+	TTL           *time.Duration // 新的有效时长,从现在起算并记为该图的时长;0 表示改为永久
+	CleanupExempt *bool          // 清理豁免;无论方向都摘掉待清理标签
+}
+
+// UpdateImage 在单事务内修改一条引用的有效期与清理豁免,任一项失败整次回滚。
+// @Description: 已到期的引用不再改有效期,判断与修改在同一条 UPDATE 里完成。豁免开关无论方向都摘
+// pending_cleanup:置豁免即裁决保留,取消豁免交下轮冷图扫描重判。
+// @param ctx 控制超时与取消
+// @param imageID 目标引用短 ID
+// @param patch 修改项
+// @return ErrImageNotFound / ErrImageExpired 或基础设施错误
+func (s *Sweeper) UpdateImage(ctx context.Context, imageID string, patch ImagePatch) error {
+	tx, err := s.cfg.Conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("开启事务: %w", err)
+	}
+	// 提交成功后 Rollback 返回 ErrTxDone,属预期,显式忽略。
+	defer func() { _ = tx.Rollback() }()
+
+	q := s.cfg.Queries.WithTx(tx)
+	if patch.TTL != nil {
+		if err := updateExpiry(ctx, q, imageID, *patch.TTL); err != nil {
+			return err
+		}
+	}
+	if patch.CleanupExempt != nil {
+		exempt := int64(0)
+		if *patch.CleanupExempt {
+			exempt = 1
+		}
+		n, err := q.SetImageCleanupExempt(ctx, sqlc.SetImageCleanupExemptParams{Exempt: exempt, ID: imageID})
+		if err != nil {
+			return fmt.Errorf("更新清理豁免: %w", err)
+		}
+		if n == 0 {
+			return ErrImageNotFound
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交引用修改: %w", err)
+	}
+	return nil
+}
+
+// updateExpiry 改一条未到期引用的有效期。
+// @param q 事务内查询集
+// @param imageID 目标引用短 ID
+// @param ttl 新的有效时长,从现在起算;0 表示永久
+// @return 引用不存在时的 ErrImageNotFound;已到期时的 ErrImageExpired;落库失败时的错误
+func updateExpiry(ctx context.Context, q *sqlc.Queries, imageID string, ttl time.Duration) error {
+	now := time.Now()
+	expireAt, ttlSeconds := sql.NullString{}, sql.NullInt64{}
+	if ttl > 0 {
+		expireAt = sql.NullString{String: sqlc.TimeText(now.Add(ttl)), Valid: true}
+		ttlSeconds = sql.NullInt64{Int64: int64(ttl / time.Second), Valid: true}
+	}
+	n, err := q.UpdateImageExpiry(ctx, sqlc.UpdateImageExpiryParams{
+		ExpireAt: expireAt, TtlSeconds: ttlSeconds, ID: imageID, Now: sqlc.TimeText(now),
+	})
+	if err != nil {
+		return fmt.Errorf("更新有效期: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	// 没有命中:引用不存在,或已到期。
+	if _, err := q.GetImageOwner(ctx, imageID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrImageNotFound
+		}
+		return fmt.Errorf("查询引用: %w", err)
+	}
+	return ErrImageExpired
 }
 
 // expireOne 在单事务内回收一条到期引用(引用计数是唯一真相,故删引用与减计数同事务)。

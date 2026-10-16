@@ -46,7 +46,11 @@ func (h *Handlers) HandleTokenList(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query().Get("user_id"); q != "" && p.IsAdmin() {
 		target = q
 	}
-	limit, offset := pagination(r)
+	limit, offset, err := pagination(r)
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
 	rows, err := h.cfg.Queries.ListTokensByUser(r.Context(), sqlc.ListTokensByUserParams{
 		UserID: target, Limit: limit, Offset: offset,
 	})

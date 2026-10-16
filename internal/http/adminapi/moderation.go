@@ -46,7 +46,11 @@ type candidateItem struct {
 
 // HandleDedupCandidates 分页列出待裁决相似候选(仅管理员路由)。
 func (h *Handlers) HandleDedupCandidates(w http.ResponseWriter, r *http.Request) {
-	limit, offset := pagination(r)
+	limit, offset, err := pagination(r)
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
 	rows, err := h.cfg.Queries.ListPendingDedupCandidateDetails(r.Context(),
 		sqlc.ListPendingDedupCandidateDetailsParams{Limit: limit, Offset: offset})
 	if err != nil {
@@ -150,7 +154,11 @@ type cleanupItem struct {
 
 // HandleCleanupList 分页列出冷图待清理引用(仅管理员路由);裁决走图片接口:保留为 PATCH 置清理豁免,删除为 DELETE。
 func (h *Handlers) HandleCleanupList(w http.ResponseWriter, r *http.Request) {
-	limit, offset := pagination(r)
+	limit, offset, err := pagination(r)
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
 	rows, err := h.cfg.Queries.ListPendingCleanupImages(r.Context(),
 		sqlc.ListPendingCleanupImagesParams{Limit: limit, Offset: offset})
 	if err != nil {

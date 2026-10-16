@@ -629,7 +629,7 @@ paths:
       operationId: listImages
       tags: [Admin · Images]
       summary: 图片列表
-      description: 分页返回图片，可按 Token、时间、文件名关键词，以及是否已豁免冷图清理过滤。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
+      description: 分页返回图片，可按 Token、时间、文件名关键词过滤，也可以只看已豁免冷图清理的图。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
       security:
         - session: []
       parameters:
@@ -651,11 +651,12 @@ paths:
           schema:
             type: integer
             format: int64
+            minimum: 1
         - $ref: '#/components/parameters/since'
         - $ref: '#/components/parameters/until'
         - name: exempt
           in: query
-          description: 为 `1` 时只看已清理豁免的图
+          description: 只能为 `1`，表示只看已清理豁免的图
           schema:
             type: integer
             enum: [1]
@@ -666,6 +667,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ImageList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -841,6 +844,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1710,6 +1715,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DedupCandidateList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1794,6 +1801,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CleanupList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1836,6 +1845,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AuditList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1866,6 +1877,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AlertList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -2413,6 +2426,7 @@ components:
         - source_not_allowed
         - no_healthy_channel
         - lang_invalid
+        - query_param_invalid
         - login_rate_limited
         - invalid_credentials
         - user_disabled

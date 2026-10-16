@@ -24,10 +24,19 @@ type auditItem struct {
 // since/until 为 UTC 文本时间的闭开区间 [since, until)。
 func (h *Handlers) HandleAuditList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	limit, offset := pagination(r)
+	limit, offset, err := pagination(r)
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
+	since, until, err := timeRange(q)
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
 	rows, err := h.cfg.Queries.ListAuditLog(r.Context(), sqlc.ListAuditLogParams{
 		Actor: q.Get("actor"), Action: q.Get("action"), Target: q.Get("target"),
-		Since: q.Get("since"), Until: q.Get("until"),
+		Since: since, Until: until,
 		PageLimit: limit, PageOffset: offset,
 	})
 	if err != nil {
@@ -37,7 +46,7 @@ func (h *Handlers) HandleAuditList(w http.ResponseWriter, r *http.Request) {
 	}
 	total, err := h.cfg.Queries.CountAuditLog(r.Context(), sqlc.CountAuditLogParams{
 		Actor: q.Get("actor"), Action: q.Get("action"), Target: q.Get("target"),
-		Since: q.Get("since"), Until: q.Get("until"),
+		Since: since, Until: until,
 	})
 	if err != nil {
 		h.cfg.Logger.Error("统计审计日志失败", "err", err)

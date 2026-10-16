@@ -11,6 +11,7 @@ var (
 	SourceNotAllowed   = define("source_not_allowed", "来源地址不在放行网段内")
 	NoHealthyChannel   = define("no_healthy_channel", "没有健康的渠道可用")
 	LangInvalid        = define("lang_invalid", "lang 取值非法(可选 zh-CN / en)")
+	QueryParamInvalid  = define("query_param_invalid", "查询参数 {name} 取值非法")
 )
 
 // 登录与账号。

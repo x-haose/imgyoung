@@ -12,6 +12,7 @@ export const server = {
     source_not_allowed: 'The source address is not in an allowed network',
     no_healthy_channel: 'No healthy channel is available',
     lang_invalid: 'Invalid lang (allowed: zh-CN / en)',
+    query_param_invalid: 'Invalid value for query parameter {name}',
     login_rate_limited: 'Too many sign-in attempts. Try again later',
     invalid_credentials: 'Incorrect username or password',
     user_disabled: 'This user is disabled',

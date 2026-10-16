@@ -15,6 +15,7 @@ export const server = {
     source_not_allowed: '来源地址不在放行网段内',
     no_healthy_channel: '没有健康的渠道可用',
     lang_invalid: 'lang 取值非法（可选 zh-CN / en）',
+    query_param_invalid: '查询参数 {name} 取值非法',
     login_rate_limited: '登录尝试过于频繁，请稍后再试',
     invalid_credentials: '用户名或密码错误',
     user_disabled: '该用户已被禁用',

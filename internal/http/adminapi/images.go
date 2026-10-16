@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -114,18 +116,15 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	if !p.IsAdmin() {
 		userFilter = p.UserID
 	}
-	tokenID, _ := strconv.ParseInt(q.Get("token_id"), 10, 64)
-	// exempt=1 只看已豁免;其余取值不过滤(豁免图闭环入口,配合详情抽屉的取消豁免)。
-	exemptOnly := int64(0)
-	if q.Get("exempt") == "1" {
-		exemptOnly = 1
+	f, err := parseImageFilters(r)
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
 	}
-	limit, offset := pagination(r)
-
 	rows, err := h.cfg.Queries.ListImagesAdmin(r.Context(), sqlc.ListImagesAdminParams{
-		UserID: userFilter, TokenID: tokenID, Search: q.Get("search"),
-		Since: q.Get("since"), Until: q.Get("until"), Exempt: exemptOnly,
-		PageLimit: limit, PageOffset: offset,
+		UserID: userFilter, TokenID: f.tokenID, Search: q.Get("search"),
+		Since: f.since, Until: f.until, Exempt: f.exempt,
+		PageLimit: f.limit, PageOffset: f.offset,
 	})
 	if err != nil {
 		h.cfg.Logger.Error("查询图片列表失败", "err", err)
@@ -133,8 +132,8 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	total, err := h.cfg.Queries.CountImagesAdmin(r.Context(), sqlc.CountImagesAdminParams{
-		UserID: userFilter, TokenID: tokenID, Search: q.Get("search"),
-		Since: q.Get("since"), Until: q.Get("until"), Exempt: exemptOnly,
+		UserID: userFilter, TokenID: f.tokenID, Search: q.Get("search"),
+		Since: f.since, Until: f.until, Exempt: f.exempt,
 	})
 	if err != nil {
 		h.cfg.Logger.Error("统计图片总数失败", "err", err)
@@ -146,6 +145,43 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 		items = append(items, imageItemFrom(sqlc.GetImageAdminRow(row)))
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: items, Total: total})
+}
+
+// imageFilters 图片列表的分页与过滤条件,已校验。
+type imageFilters struct {
+	limit, offset int64  // 分页
+	tokenID       int64  // 只看来自该 Token 的图;0 表示不限
+	since, until  string // 上传时间范围 [since, until),UTC 文本;空串表示该端不限
+	exempt        int64  // 1 表示只看已清理豁免的图,0 表示不限
+}
+
+// parseImageFilters 解析图片列表的查询参数;user_id 与 search 不需校验,由调用方直接取用。
+// @param r 请求
+// @return 已校验的条件
+// @return 取值非法时的 invalidParam
+func parseImageFilters(r *http.Request) (imageFilters, error) {
+	q := r.URL.Query()
+	limit, offset, err := pagination(r)
+	if err != nil {
+		return imageFilters{}, err
+	}
+	tokenID, err := intParam(q, "token_id", 0, 1, math.MaxInt64)
+	if err != nil {
+		return imageFilters{}, err
+	}
+	since, until, err := timeRange(q)
+	if err != nil {
+		return imageFilters{}, err
+	}
+	exempt, err := flagParam(q, "exempt", "1")
+	if err != nil {
+		return imageFilters{}, err
+	}
+	f := imageFilters{limit: limit, offset: offset, tokenID: tokenID, since: since, until: until}
+	if exempt {
+		f.exempt = 1
+	}
+	return f, nil
 }
 
 // HandleImageGet 图片详情(含副本分布);普通用户只可见自己的(他人图一律 404,不泄露存在性)。
@@ -213,12 +249,12 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.imageVisible(w, r, p, imageID); !ok {
 		return
 	}
-	detail, err := h.applyImagePatch(r.Context(), imageID, req)
+	err := h.cfg.Images.UpdateImage(r.Context(), imageID, imagePatchFrom(req))
 	switch {
-	case errors.Is(err, errImageExpired):
+	case errors.Is(err, lifecycle.ErrImageExpired):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ImageExpired)
 		return
-	case errors.Is(err, sql.ErrNoRows):
+	case errors.Is(err, lifecycle.ErrImageNotFound):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
 		return
 	case err != nil:
@@ -226,10 +262,15 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	h.recordAudit(r.Context(), audit.ActionImageUpdate, imageID, detail)
+	h.recordAudit(r.Context(), audit.ActionImageUpdate, imageID, imagePatchDetail(req))
 
 	row, err := h.cfg.Queries.GetImageAdmin(r.Context(), imageID)
-	if err != nil {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// 修改已生效,回读前图片被并发删除。
+		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
+		return
+	case err != nil:
 		h.cfg.Logger.Error("回读图片详情失败", "id", imageID, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
@@ -237,66 +278,30 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	h.writeImageDetail(w, r, row)
 }
 
-// errImageExpired 图片已到期,有效期不再可改。
-var errImageExpired = errors.New("图片已到期")
-
-// expiryUnchangedReason 有效期 UPDATE 没有命中任何行时,区分图片已被删除与已到期。
-// @param imageID 目标引用短 ID
-// @return 图片不存在时的 sql.ErrNoRows;存在时的 errImageExpired;查询失败时的错误
-func (h *Handlers) expiryUnchangedReason(ctx context.Context, imageID string) error {
-	if _, err := h.cfg.Queries.GetImageOwner(ctx, imageID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		return fmt.Errorf("查询图片归属: %w", err)
+// imagePatchFrom 把已通过校验的请求体译成领域侧的修改项。
+// @param req 已通过校验的修改项
+// @return 领域侧修改项
+func imagePatchFrom(req imagePatchRequest) lifecycle.ImagePatch {
+	patch := lifecycle.ImagePatch{CleanupExempt: req.CleanupExempt}
+	if req.TTLHours != nil {
+		ttl := time.Duration(*req.TTLHours) * time.Hour
+		patch.TTL = &ttl
 	}
-	return errImageExpired
+	return patch
 }
 
-// applyImagePatch 落库 PATCH 的修改项并拼审计说明。
-// @Description: ttl_hours>0 → 到期 = 现在 + 时长并同步 ttl_seconds;=0 → 双列置空(永久)。到期是终态:
-// 已到期的图不再改有效期,判断与修改在同一条 UPDATE 里完成。
-// 豁免开关无论方向都摘 pending_cleanup:置豁免即裁决保留,取消豁免交下轮冷图扫描重判。
-// @param imageID 目标引用短 ID
-// @param req 已通过校验的修改项
-// @return 审计 detail(记录改了什么)
-// @return 图片已到期时的 errImageExpired;图片已不存在时的 sql.ErrNoRows;落库失败时的错误
-func (h *Handlers) applyImagePatch(ctx context.Context, imageID string, req imagePatchRequest) (string, error) {
-	detail := ""
+// imagePatchDetail 拼审计说明,记录改了哪几项。
+// @param req 已生效的修改项
+// @return 审计 detail
+func imagePatchDetail(req imagePatchRequest) string {
+	var parts []string
 	if req.TTLHours != nil {
-		expireAt, ttlSeconds := sql.NullString{}, sql.NullInt64{}
-		if *req.TTLHours > 0 {
-			ttl := time.Duration(*req.TTLHours) * time.Hour
-			expireAt = sql.NullString{String: sqlc.TimeText(time.Now().Add(ttl)), Valid: true}
-			ttlSeconds = sql.NullInt64{Int64: int64(ttl / time.Second), Valid: true}
-		}
-		n, err := h.cfg.Queries.UpdateImageExpiry(ctx, sqlc.UpdateImageExpiryParams{
-			ExpireAt: expireAt, TtlSeconds: ttlSeconds, ID: imageID, Now: sqlc.TimeText(time.Now()),
-		})
-		if err != nil {
-			return "", fmt.Errorf("更新有效期: %w", err)
-		}
-		if n == 0 {
-			return "", h.expiryUnchangedReason(ctx, imageID)
-		}
-		detail = fmt.Sprintf("ttl_hours=%d", *req.TTLHours)
+		parts = append(parts, fmt.Sprintf("ttl_hours=%d", *req.TTLHours))
 	}
 	if req.CleanupExempt != nil {
-		exempt := int64(0)
-		if *req.CleanupExempt {
-			exempt = 1
-		}
-		if _, err := h.cfg.Queries.SetImageCleanupExempt(ctx, sqlc.SetImageCleanupExemptParams{
-			Exempt: exempt, ID: imageID,
-		}); err != nil {
-			return "", fmt.Errorf("更新清理豁免: %w", err)
-		}
-		if detail != "" {
-			detail += " "
-		}
-		detail += fmt.Sprintf("cleanup_exempt=%t", *req.CleanupExempt)
+		parts = append(parts, fmt.Sprintf("cleanup_exempt=%t", *req.CleanupExempt))
 	}
-	return detail, nil
+	return strings.Join(parts, " ")
 }
 
 // HandleImageDelete 删除图片引用;普通用户只可删自己的(他人图一律 404)。

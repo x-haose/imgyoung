@@ -450,3 +450,52 @@ func TestDashboardOffsiteMissing(t *testing.T) {
 		t.Fatal("优先级低于 local 的异地渠道同样存放快照与副本,不应再提示")
 	}
 }
+
+// TestListQueryParamsRejectInvalid 列表接口的查询参数省略时取默认,给出的值不合法即 400 query_param_invalid,
+// 错误信封的 params.name 点名是哪个参数;合法取值照常返回。
+func TestListQueryParamsRejectInvalid(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, nil)
+	admin, csrf := adminSession(t, inst)
+	cases := map[string]string{
+		"/api/admin/images?page=0":             "page",
+		"/api/admin/images?page_size=101":      "page_size",
+		"/api/admin/images?token_id=abc":       "token_id",
+		"/api/admin/images?since=yesterday":    "since",
+		"/api/admin/images?exempt=0":           "exempt",
+		"/api/admin/audit?until=2026-10-16":    "until",
+		"/api/admin/alerts?status=open":        "status",
+		"/api/admin/alerts?status=all&page=-1": "page",
+		"/api/admin/tokens?page_size=x":        "page_size",
+		"/api/admin/dedup?page=1.5":            "page",
+		"/api/admin/cleanup?page_size=0":       "page_size",
+	}
+	for path, name := range cases {
+		resp := adminReq(t, admin, csrf, http.MethodGet, inst.baseURL+path, "")
+		raw, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		var env struct {
+			Code   string            `json:"code"`
+			Params map[string]string `json:"params"`
+		}
+		if err == nil {
+			err = json.Unmarshal(raw, &env)
+		}
+		if err != nil || resp.StatusCode != http.StatusBadRequest || env.Code != "query_param_invalid" ||
+			env.Params["name"] != name {
+			t.Errorf("GET %s: 状态码 %d body=%s err=%v, 期望 400 query_param_invalid 点名 %s",
+				path, resp.StatusCode, raw, err, name)
+		}
+	}
+	for _, path := range []string{
+		"/api/admin/images?page=2&page_size=100&token_id=1&exempt=1&since=2026-10-01%2000:00:00",
+		"/api/admin/audit?since=2026-10-01%2000:00:00&until=2026-10-02%2000:00:00",
+		"/api/admin/alerts?status=all",
+	} {
+		resp := adminReq(t, admin, csrf, http.MethodGet, inst.baseURL+path, "")
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s 状态码 = %d, 期望 200", path, resp.StatusCode)
+		}
+	}
+}
