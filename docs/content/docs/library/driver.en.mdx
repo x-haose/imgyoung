@@ -378,7 +378,7 @@ case err != nil:
 ```
 
 Other errors: an unknown backend name, a section name that breaks rclone's naming rules (only letters, digits, `_`,
-`-`, `.`, `+`, `@` and spaces), or a failure to encode a password.
+`-`, `.`, `+`, `@` and spaces; it cannot start with `-` or a space, or end with a space), or a failure to encode a password.
 
 ### Complete example
 

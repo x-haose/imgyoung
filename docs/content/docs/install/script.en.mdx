@@ -160,7 +160,7 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 
 ## Error messages
 
-On an error the script prints one line starting with `错误:` ("error:") and exits. The ones below all happen before anything is installed, so the system is left untouched:
+Errors the script detects itself are printed as one line starting with `错误:` ("error:"), and the script exits; when a command such as `tar`, `install` or `systemctl` fails, you see that command's own error instead. The ones below all happen before anything is installed, so the system is left untouched:
 
 | Message | Meaning |
 |---|---|

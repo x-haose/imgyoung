@@ -154,8 +154,8 @@ redirect target changes with channel health and configuration, so it stays out o
 | 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, or a channel configuration that changed while saving |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
 | 415 | Not a supported image format (judged by file content) |
-| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file (`snapshot_corrupt`) |
-| 429 | Upload concurrency is full, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
+| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file or not an ImgYoung metadata database (`snapshot_corrupt`) |
+| 429 | The upload concurrency limit is reached, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
 | 500 | Internal server error, including database faults; error code `internal`, retry later. Any endpoint that touches the database can return 500 |
 | 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |
 
@@ -167,9 +167,9 @@ The group pages list the status codes each endpoint can actually return.
   `2026-10-15 08:30:00`), with no time zone suffix. The exceptions are `built_at` in build info and `taken_at` on
   backup snapshots, which are RFC 3339, with `taken_at` at millisecond precision.
 - **Lists**: list endpoints return `{"items": […], "total": N}`, where `total` counts all items after filtering.
-- **Pagination**: the image, upload token, duplicate, cleanup, audit log, and alert lists accept `page` and
-  `page_size`. `page` starts at 1 and defaults to 1; `page_size` defaults to 20, with a maximum of 100 (larger values
-  are treated as 100).
+- **Pagination**: the image, upload token, duplicate, cleanup, and audit log lists, as well as the alert list with
+  `status=all`, accept `page` and `page_size`. `page` starts at 1 and defaults to 1; `page_size` defaults to 20, with
+  a maximum of 100 (larger values are treated as 100).
 - **Time ranges**: the image list and the audit log accept `since` (inclusive) and `until` (exclusive), in the same format.
 - **IDs**: images use a 10-character short ID string; user IDs are strings, and the built-in administrator is
   `default`; tokens, channels, duplicate candidates, and similar records use integers; backup snapshots are identified by file name.
@@ -197,7 +197,7 @@ The group pages list the status codes each endpoint can actually return.
     Dashboard and runtime settings
   </Card>
   <Card title="Admin · Upload" href="./admin-upload.mdx">
-    Session-authenticated uploads from the admin console, through the same pipeline as the data plane
+    Session-authenticated uploads through the same pipeline as the data plane
   </Card>
   <Card title="Admin · Images" href="./admin-images.mdx">
     Image list, details, edits, and deletion
@@ -209,7 +209,7 @@ The group pages list the status codes each endpoint can actually return.
     Channel templates, creation, editing, health checks, deletion, and cloud drive authorization
   </Card>
   <Card title="Admin · Users" href="./admin-users.mdx">
-    Accounts, quotas, and password resets (administrators only)
+    User accounts, quotas, and password resets (administrators only)
   </Card>
   <Card title="Admin · Hotlink protection" href="./admin-referer.mdx">
     The Referer allowlist (administrators only)

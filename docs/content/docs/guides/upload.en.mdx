@@ -89,7 +89,7 @@ For example, uploading an oversized file with the default 50 MB per-image limit 
 
 - Scripts should branch on `code` (together with the HTTP status), not match the text of `error`.
 - The admin console renders the message for `code` and `params` in the current interface language, so the English interface shows English.
-- Upload-related codes are listed in [Status codes](#status-codes) below; the complete list is the `ErrorCode` schema in the API reference, for example [API reference: data plane](../api/data-plane.mdx).
+- Upload-related codes are listed in [Status codes](#status-codes) below; the complete list is the `ErrorCode` schema in [API reference: data plane](../api/data-plane.mdx).
 
 curl prints the body of a failed response by default (unless you pass `-f` / `--fail`), so the envelope shows up directly while debugging:
 
@@ -184,13 +184,13 @@ Only JPEG, PNG, GIF and WebP are accepted. The format is determined from the fil
 |---|---|---|---|
 | Image size | `max_upload_mb` | 50 MB | 413 |
 | Pixel budget | `max_pixels_mp` | 50 megapixels (width × height) | 422 |
-| Upload concurrency limit | `max_concurrent_uploads` | 8 | 429 with `Retry-After: 1` |
+| Concurrent uploads | `max_concurrent_uploads` | 8 | 429 with `Retry-After: 1` |
 | Upload rate limit | `upload_rate_per_min` | 0 (off) | 429 with `Retry-After: 60` |
 | Storage quota | Set per user | Unlimited | 403 |
 
 - **Image size**: only the file itself counts, so a file exactly at the limit is accepted. The request body as a whole is capped separately at the limit + 64 KiB, and exceeding that also returns 413.
 - **Pixel budget**: this guards decoded memory, which depends on resolution rather than file size: a 20-megapixel image decodes to about 80 MB of RGBA. The server judges it from the image header alone, so an oversized image never reaches the decoder.
-- **Upload concurrency limit**: a single limit for the whole site, shared by data API uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once. Uploads of any size are processed in memory and never written to temporary files, so this number bounds the peak memory of uploading. When every slot is taken, requests get 429 immediately instead of queueing.
+- **Concurrent uploads**: a single limit for the whole site, shared by data API uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once. Uploads of any size are processed in memory and never written to temporary files, so this number bounds the peak memory of uploading. When every slot is taken, requests get 429 immediately instead of queueing.
 - **Upload rate limit**: per user, and uploads by the same user through tokens, the console and S3 PutObject share one allowance. It is a token bucket: up to N uploads can go through back to back (N being the per-minute allowance), after which one more is allowed every 60/N seconds. The buckets live in process memory and reset on restart.
 - **Storage quota**: every reference counts in full. Each image record counts the full size of its physical file against its owner, and background deduplication does not reduce usage. The pre-check uses the size of the uploaded bytes.
 
@@ -237,7 +237,7 @@ The policy for an upload is the form (or JSON) field if given, otherwise the glo
 |---|---|---|
 | JPEG | Every APPn segment except APP0 (JFIF), APP2 (ICC color profile) and APP14 (Adobe), which covers EXIF (GPS, camera model, capture time and so on), XMP, IPTC and vendor segments; COM comment segments; any data after EOI (such as the video in a Motion Photo) | Entropy-coded data is kept untouched. If the original has a non-default orientation tag (Orientation), a minimal EXIF segment holding only the orientation is added back, so the photo still displays upright. Segments between the scans of a progressive JPEG are not inspected |
 | PNG | `eXIf`, `tEXt`, `zTXt` and `iTXt` chunks; any data after IEND | `gAMA`, `iCCP` and other chunks that affect color rendering |
-| WebP | `EXIF` and `XMP` chunks, clearing the matching flags in the VP8X header and fixing the RIFF length; any data beyond the declared RIFF length | Pixel chunks (including animation frames) |
+| WebP | `EXIF` and `XMP` chunks, clearing the matching flags in the VP8X header and fixing the RIFF length; any data beyond the declared RIFF length | Pixel chunks |
 | GIF | Nothing | GIF has no standard container for EXIF / XMP |
 
 An image's SHA-256 (the hash shown in the console and the basis of deduplication) is computed over the bytes actually stored, after stripping.
@@ -250,7 +250,9 @@ With `passthrough`, GPS and other metadata in the original can be read by anyone
 
 The EXIF policy takes effect at upload time, and the processed bytes are what the channels store. Changing the global policy later affects only new uploads; existing images are not reprocessed on access.
 
-This is because the bytes behind a given `/i/` link never change: responses carry `Cache-Control: immutable`, so browsers and CDNs can safely cache them for a year. If processing happened on access, changing the global policy would change the bytes served by the same link: the CDN cache would have to be purged wholesale, and old bytes already cached in visitors' browsers could not be invalidated at all.
+This is because an original's bytes never change after upload, and responses carry `Cache-Control: immutable`, so browsers and CDNs can safely cache them for a year. If EXIF were processed on access, changing the global policy would change the bytes served by the same original's link: the CDN cache would have to be purged wholesale, and old bytes already cached in visitors' browsers could not be invalidated at all.
+
+A `/i/` link does not always serve the original: for a JPEG, PNG or WebP original requested without parameters, the format is negotiated from the request's `Accept` header, and variants are generated with the current **Target formats** and encoding quality; see [on-demand processing](./access.mdx#on-demand-processing). After you change these settings, output that is already cached does not update right away: CDN caches update once they expire or are purged manually, and browser caches once they expire (up to a year). See [CDN](../operations/cdn.mdx).
 
 ## Uploading the same image more than once
 

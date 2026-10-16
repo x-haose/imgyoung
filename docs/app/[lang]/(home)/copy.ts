@@ -43,7 +43,7 @@ export const COPY: Record<Language, HomeCopy> = {
       '自部署图床：一张图同时存进多个存储渠道，主渠道故障时上传与访问自动切换；渠道商只见密文，元数据库自动备份到渠道。单二进制，Docker 一行起。',
     eyebrow: '开源 · MIT · 自部署',
     headline: '一张图，存进多个渠道',
-    lede: '上传先写进优先级最高的健康渠道即返回，其余渠道在后台补齐副本；某个渠道挂了，访问立刻切到下一个有副本的渠道。渠道可以加密到只剩密文，元数据库按时快照到渠道里。本机损坏后，图片与元数据都能从其他渠道找回。',
+    lede: '上传先写进优先级最高的健康渠道即返回，其余渠道在后台补齐副本；某个渠道挂了，访问立刻切到下一个有副本的渠道。渠道可以加密到只剩密文，元数据库按时快照到渠道里。只要另行备份了主密钥，本机损坏后，图片与元数据都能从异地渠道找回。',
     start: '快速开始',
     install: '安装方式',
     demo: {
@@ -135,7 +135,7 @@ export const COPY: Record<Language, HomeCopy> = {
       'Self-hosted image hosting that stores every image in several storage channels and fails over automatically when one goes down. Channels can see only ciphertext, and the metadata database backs itself up to them. One binary, one Docker command.',
     eyebrow: 'Open source · MIT · Self-hosted',
     headline: 'One image, many channels',
-    lede: 'An upload returns as soon as the highest-priority healthy channel has it; the other channels receive replicas in the background. When a channel goes down, reads switch to the next one that holds a replica. Channels can be encrypted down to ciphertext, and the metadata database snapshots itself into them. If the server is lost, the images and the metadata can be recovered from the other channels.',
+    lede: 'An upload returns as soon as the highest-priority healthy channel has it; the other channels receive replicas in the background. When a channel goes down, reads switch to the next one that holds a replica. Channels can be encrypted down to ciphertext, and the metadata database snapshots itself into them. As long as the master key is backed up separately, the images and the metadata can be recovered from the off-site channels if the server is lost.',
     start: 'Quick start',
     install: 'Install',
     demo: {

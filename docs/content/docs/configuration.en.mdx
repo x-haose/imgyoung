@@ -14,7 +14,7 @@ ImgYoung has two kinds of settings and no configuration file. The only command-l
 | Changing | Change the variable and restart the process | Edit under **Settings** in the admin console; takes effect on save, no restart |
 | Where to see them | The read-only **Bootstrap configuration** card at the bottom of **Settings → Runtime settings** | **Settings** in the admin console |
 
-This way every value has exactly one source. Environment variables only get the process started, and some of them also decide which networks are trusted. Runtime settings can only be changed in the admin console: environment variables cannot seed them, and there is no configuration file.
+Runtime settings can only be changed in the admin console; environment variables cannot seed them.
 
 Runtime settings live in the metadata database, so they are included in metadata snapshots and restored with them. Configure a new instance once in the admin console; settings added in a new version take their factory defaults when you upgrade.
 
@@ -30,7 +30,7 @@ Runtime settings live in the metadata database, so they are included in metadata
 
 - **`IMGYOUNG_LISTEN`**: `host:port`, e.g. `127.0.0.1:8721` or `[::1]:8721`; port `0` lets the OS pick one. ImgYoung only speaks plain HTTP; HTTPS is the job of the reverse proxy in front of it.
 - **`IMGYOUNG_DATA_DIR`**: holds the metadata database `imgyoung.db`, the master key file `master.key`, the built-in local channel's `blobs/` and the variant cache `variants/`. A relative path is resolved against the working directory at startup; the directory is created with mode `0750` if missing. The **Bootstrap configuration** card and exported local channel rclone configs show the resolved absolute path. The Docker image sets it to `/data`, and `deploy/imgyoung.service` sets it to `/var/lib/imgyoung`.
-- **`IMGYOUNG_MASTER_KEY`**: 64 hex characters (32 bytes). It is checked against the master key fingerprint recorded in the database at every start, and a missing or mismatched key refuses to start. See [Master key](#master-key) below.
+- **`IMGYOUNG_MASTER_KEY`**: 64 hex characters (32 bytes). It is checked against the master key fingerprint recorded in the database at every start, and startup is refused if the key is missing or does not match. See [Master key](#master-key) below.
 - **`IMGYOUNG_TRUSTED_PROXIES`**: comma-separated CIDRs or single IPs; a single IP means a network containing only that address. `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are honored only when the connecting peer is in one of these networks. See [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx).
 - **`IMGYOUNG_METRICS_ALLOW`**: same format. Only clients in these networks can read `/metrics`; everyone else gets 403. See [Monitoring & alerts](./operations/monitoring.mdx).
 
@@ -56,9 +56,9 @@ Logs and exit codes when the process exits on an error:
 
 | Situation | Log | Exit code |
 |---|---|---|
-| An error during startup, such as an invalid bootstrap setting or a master key that is missing or does not match the database | Error line `启动失败` (startup failed) | 1 |
-| A fatal runtime error: port already in use, invalid listen address, the HTTP server exiting abnormally, or the replication subsystem (the background jobs that copy images to the other channels) failing to start | Error line `运行失败` (run failed) | 1 |
-| A command-line argument other than `-version`; the server does not start | None; the usage is printed to the terminal | 2 |
+| An error during startup, such as a malformed network list, an empty listen address or data directory, a failed database migration, or a master key that is missing or does not match the database | Error line `启动失败` (startup failed) | 1 |
+| Binding the listen address fails (port already in use or malformed address), the HTTP server exits abnormally, or the replication subsystem (the background jobs that copy images to the other channels) fails to start | Error line `运行失败` (run failed) | 1 |
+| A command-line argument other than `-version`; the server does not start | No log; an error message and the usage are printed to the terminal | 2 |
 
 ### Setting them per deployment
 
@@ -192,7 +192,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 - **`process_formats`**: `?format=` accepts only the listed values. With `webp` included, browsers that support WebP automatically get WebP for JPEG and PNG images.
 - **`exif_policy`**: `passthrough` keeps metadata as is; `strip` removes it. A single upload can override it with the `exif_policy` form field. It does not apply to S3 uploads, which are stored byte for byte.
 - **`process_quality_webp`**: 0 is not accepted, because the encoder treats 0 as its default quality of 75.
-- **`process_workers` and `process_timeout_ms`**: the timeout covers waiting for a processing slot and reading the original, including time spent queued for a slot, but not the encoding itself. On timeout the original is served, and that response carries `Cache-Control: no-store`.
+- **`process_workers` and `process_timeout_ms`**: the timeout covers time queued for a processing slot and reading the original, not the encoding itself. On timeout the original is served, and that response carries `Cache-Control: no-store`.
 - **`variants_cache_mb`**: variants are cached in `<data dir>/variants/`; beyond the limit, the least recently accessed are evicted.
 
 ### Deduplication
@@ -227,7 +227,7 @@ Each round first merges byte-identical images automatically, then scans for simi
 | `cdn_cloudflare_api_token` | Cloudflare API token | Empty | Text | Needs the Cache Purge permission |
 
 - The API token is stored encrypted with the master key and never shown by any API, page or log. Leaving the field empty keeps the current value; **Clear token** removes it.
-- Purging is enabled only when the Zone ID, the API token and `base_url` are all set. The badge next to the group title reads **Purge enabled** or **Purge disabled**, and the startup log prints the same state. See [CDN](./operations/cdn.mdx).
+- Purging is enabled only when the Zone ID, the API token and `base_url` are all set. The badge next to the group title reads **Enabled** or **Disabled**, and the startup log prints the same state. See [CDN](./operations/cdn.mdx).
 
 ### Alerts & audit
 
@@ -254,7 +254,7 @@ When `PUT /api/admin/config` refuses to save, it returns 400 with the standard e
 - `error` is the Chinese message with its parameters filled in;
 - `params` holds string values, with `params.key` naming the setting.
 
-If one request contains several invalid values, only the first is reported. For example, a backup interval longer than 100 years:
+If one request contains several invalid values, only one of them is reported, picked by the server's fixed validation order rather than the order of keys in the request body. For example, a backup interval longer than 100 years:
 
 ```json
 {"code":"setting_too_large","error":"backup_interval_hours=900000 非法: 不可超过 876000","params":{"key":"backup_interval_hours","max":"876000","value":"900000"}}

@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: Single-instance design, layers and dependency direction, the data model, upload and access data flows, the outbox pattern, periodic tasks, technology choices, and why rclone is integrated in-process.
+description: Single-instance design, layers and dependency direction, the data model, upload and access data flows, the outbox pattern, periodic tasks, shutdown, technology choices, and why rclone is integrated in-process.
 ---
 
 ## Single-instance design
@@ -126,9 +126,10 @@ every upload creates a new blob and deduplication happens in the background, so 
 <Steps>
 <Step>
 
-**Authentication and rate limits**: the request is authenticated (upload token, session, or S3 signature), then checked
+**Authentication and rate limits**: the request is authenticated (upload token, session, or S3 signature) and checked
 against the per-user upload rate limit (`upload_rate_per_min`) and the global upload concurrency limit
-(`max_concurrent_uploads`, which returns 429 immediately when full). The image bytes are then read fully into memory;
+(`max_concurrent_uploads`, which returns 429 immediately when full). The S3 endpoint checks the concurrency limit
+before verifying the signature. The image bytes are then read fully into memory;
 no upload of any size is written to a temporary file. Request size limits are listed at the end of this section.
 
 </Step>
@@ -224,11 +225,11 @@ as an access.
 4. **Access counting**: only GET requests on the public endpoints add to the in-memory activity, which is flushed to
    the database in batches every `activity_flush_seconds`. HEAD requests, requests with invalid parameters, and admin
    console previews are not counted.
-5. **On-demand processing**: the image is resized or converted when the request has a `w`, an explicit `format`, or no
-   format while the browser accepts WebP, WebP is among the allowed formats, and the original is not WebP already. GIFs
-   are always served as originals. A variant cache hit is returned directly; on a miss the image is processed within
-   the `process_workers` concurrency limit and cached, with concurrent requests for the same parameters merged into
-   one processing run. When processing is busy or fails, the original is served instead, with
+5. **On-demand processing**: the image is resized or converted when the request has a `w`, an explicit `format` that
+   differs from the original's, or no format while the browser accepts WebP, WebP is among the allowed formats, and the
+   original is not WebP already. GIFs are always served as originals. A variant cache hit is returned directly; on a
+   miss the image is processed within the `process_workers` concurrency limit and cached, with concurrent requests for
+   the same parameters merged into one processing run. When processing is busy or fails, the original is served instead, with
    `Cache-Control: no-store`. A HEAD request fetches or generates the variant the same way; it just returns no body.
 6. **Serving the original**: the candidate channels are those that are healthy, not draining, and hold a `done`
    replica of the image, in priority order. In `redirect` access mode, if a candidate allows direct links, is not
@@ -275,7 +276,9 @@ Asynchronous replication runs on River, but River jobs are only idempotent trigg
 Uploads, replication, metadata snapshots, and deep checks (including a connection test against an existing channel)
 write objects and their records under the channel's write lease. Once a channel is marked as draining, new writes are
 refused immediately rather than queued behind the drain. The drain job waits for the writes already in progress to
-finish before it lists objects and records, which guarantees that it sees every object this service wrote to the channel.
+finish before it lists objects and records. As a result, the drain sees every object this service wrote under the lease
+that already has a replica record. The exception is objects left behind when an upload was not recorded and deleting
+what it had already written also failed; see [Upload data flow](#upload-data-flow).
 
 ### Other asynchronous jobs
 
@@ -308,7 +311,7 @@ When a drain fails:
   cannot be loaded cannot be drained.
 - The job keeps retrying with backoff. Once its attempts run out, reconciliation queues a new job that counts from
   attempt 1 again, while the recorded conclusion and alert stay until the channel is cleaned out. The job's own timeout
-  or a shutdown cancellation does not count as a failure.
+  or a shutdown cancellation writes no failure conclusion and raises no alert.
 - Retries never stop. To end a drain, choose **Remove now** on the channel in the admin console; the remote objects are kept.
 
 ## Error codes and failure conclusions [#errors]
@@ -375,7 +378,7 @@ Reconciliation GC compares the objects in a channel with the replica records in 
 | Situation | How it is identified | Action |
 |---|---|---|
 | **Orphans** | The key has this service's object key format `<short ID>_<first 8 hex digits of SHA-256>`; the database has no replica record of it on that channel in any state; its modification time is not earlier than the channel's binding time | Deleted once written more than 48 hours ago. The grace period covers uploads already written to the channel but not yet recorded |
-| **Foreign objects** | No record in the database, but the key is not in this service's format or the modification time is earlier than the binding time: for example files written by other programs, objects already in an old bucket that a new instance attaches during disaster recovery, or objects written after the snapshot of a later restore | Counted, never deleted; they appear as `foreign` in the reconciliation log |
+| **Foreign objects** | No record in the database, but the key is not in this service's format or the modification time is earlier than the binding time: for example files written by other programs, objects already in an old bucket that a new instance attaches during disaster recovery, or objects written after the snapshot was taken and before it was restored (the restored database has no record of them) | Counted, never deleted; they appear as `foreign` in the reconciliation log |
 | **Probe leftovers** | `.imgyoung-probe-` temporary objects left when a deep check fails to delete them | Deleted once written more than 48 hours ago, regardless of the binding time (leftovers from a connection test predate it); not counted in the reconciliation's object and byte totals |
 | **Missing replicas** | Replicas recorded as `done` but missing from the channel | Set back to `pending` and queued for replication again |
 
@@ -392,9 +395,9 @@ location; this service only writes objects there after that moment.
 | Only the name, priority, or direct-link setting changes; a token refresh is written back | Unchanged |
 | A snapshot is restored | Every channel is set to the time of the first start after the restore |
 
-During a restore, when the staged file `<data dir>/imgyoung.db.restore` is swapped in, the service writes a marker file
-`imgyoung.db.restored` to the data directory. At startup, after migrations and before the master key is loaded, the
-marker triggers the reset and is deleted on success, with the log line
+During a restore, the service swaps in the staged file `<data dir>/imgyoung.db.restore` at startup, and before
+swapping it in writes a marker file `imgyoung.db.restored` to the data directory. After migrations and before the
+master key is loaded, the marker triggers the reset and is deleted on success, with the log line
 `换入快照后已把渠道绑定时刻重置为当前时刻,快照之后写入渠道的对象不会被对账回收`. Objects uploaded after the snapshot,
 which the restored database has no record of, are therefore never deleted as orphans. A restore from the admin console
 stages that file automatically; a manual restore must also put the snapshot there and then start, rather than
@@ -408,7 +411,7 @@ Reconciliation only trusts this database's replica records. Objects another inst
 right key format but no record here, so once past the grace period they are deleted as orphans.
 </Callout>
 
-### Shutdown
+## Shutdown
 
 On SIGINT / SIGTERM, or a restart requested after restoring a snapshot in the admin console, the service shuts down in this order:
 

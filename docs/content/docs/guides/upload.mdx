@@ -89,7 +89,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 
 - 脚本应按 `code`（配合 HTTP 状态码）判断失败种类，不要匹配 `error` 的文字。
 - 管理后台按 `code` 和 `params` 生成当前界面语言的文案，英文界面看到的是英文。
-- 上传相关的错误码见下文[状态码速查](#状态码速查)；完整列表见接口参考里的 `ErrorCode`，例如[接口参考：数据面](../api/data-plane.mdx)。
+- 上传相关的错误码见下文[状态码速查](#状态码速查)；完整列表见[接口参考：数据面](../api/data-plane.mdx)里的 `ErrorCode`。
 
 curl 默认会输出失败响应的正文（加了 `-f` / `--fail` 时不输出），调试时可以直接看到错误信封：
 
@@ -137,7 +137,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 
 ### 抓取限制
 
-这个入口会让服务端代替请求方向外发起请求，所以抓取受一组固定规则约束，防止被用来探测你的内网：
+这个入口会让服务端替调用方访问外部地址，所以抓取受一组固定规则约束，防止被用来探测你的内网：
 
 | 规则 | 说明 | 不满足时 |
 |---|---|---|
@@ -237,7 +237,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 |---|---|---|
 | JPEG | 除 APP0（JFIF）、APP2（ICC 色彩配置）、APP14（Adobe）之外的全部 APPn 段，包括 EXIF（GPS、机型、拍摄时间等）、XMP、IPTC 与相机私有段；COM 注释段；EOI 之后的附加数据（如 Motion Photo 里的视频）| 熵编码数据原样保留。原图带非默认的方向标记（Orientation）时，补回一个只含方向的最小 EXIF 段，照片仍按正确方向显示。渐进式 JPEG 各次扫描之间的段不检查 |
 | PNG | `eXIf`、`tEXt`、`zTXt`、`iTXt` 块；IEND 之后的附加数据 | `gAMA`、`iCCP` 等影响颜色渲染的块 |
-| WebP | `EXIF` 与 `XMP` chunk，并同步清除 VP8X 头里对应的标志位、修正 RIFF 长度；RIFF 声明长度之外的附加数据 | 像素 chunk（含动画帧）|
+| WebP | `EXIF` 与 `XMP` chunk，并同步清除 VP8X 头里对应的标志位、修正 RIFF 长度；RIFF 声明长度之外的附加数据 | 像素 chunk |
 | GIF | 不处理 | GIF 没有承载 EXIF / XMP 的标准容器 |
 
 图片的 SHA-256（后台显示的哈希，也是查重的依据）按剥离后实际保存的字节计算。
@@ -250,7 +250,9 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 
 EXIF 档位在上传时生效，渠道里保存的就是处理后的字节。之后修改全局档位只影响新的上传，访问已有图片时不会按新设置重新处理。
 
-这是因为同一个 `/i/` 链接的字节永不改变：响应带 `Cache-Control: immutable`，浏览器和 CDN 可以放心缓存一年。如果在访问时处理，修改全局档位就会改变同一个链接输出的字节，CDN 上的缓存要整体清除，访客浏览器里已经缓存的旧内容也无法失效。
+这是因为原图的字节在上传后不再改变，响应带 `Cache-Control: immutable`，浏览器和 CDN 可以放心缓存一年。如果在访问时处理 EXIF，修改全局档位后，同一张原图的链接就会输出不同的字节：CDN 上的缓存要整体清除，访客浏览器里已经缓存的旧内容也无法失效。
+
+`/i/` 链接输出的不一定是原图：JPEG、PNG、WebP 原图不带参数访问时，按请求的 `Accept` 协商格式，转出的衍生图按当前的「目标格式」和编码质量生成，见[按需处理](./access.mdx#on-demand-processing)。修改这些设置后，已经缓存的输出不会立即更新：CDN 上的缓存要等过期或手动清除，浏览器里的要等过期（最长一年）。见 [CDN](../operations/cdn.mdx)。
 
 ## 同一张图多次上传
 

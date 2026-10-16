@@ -108,11 +108,11 @@ Channels the upload did not write to synchronously receive their replicas from a
 | `pending` | Waiting to be replicated |
 | `uploading` | Replication in progress |
 | `done` | Ready to serve reads |
-| `failed` | Still failing after all retries |
+| `failed` | Still failing after all retries, or the target channel is not loaded |
 
 The replica table in the metadata database is the source of truth for replica states; the job queue (River, in the same SQLite database) only triggers the work.
 
-- **Copying**: the replica is read from the highest-priority healthy channel that already holds a ready one and streamed into the target channel. The queue runs at most 4 jobs at a time (shared by replication, deletion and draining), and one replication job may run for at most 15 minutes.
+- **Copying**: the replica is read from the highest-priority healthy channel that already holds a ready one and streamed into the target channel. The queue runs at most 4 jobs at a time (shared by replication, deletion, draining and CDN cache purges), and one replication job may run for at most 15 minutes.
 - **Retries**: a failed replica goes back to `pending` and is retried with exponential backoff, roughly n⁴ seconds after the n-th failure (1 s, 16 s, 81 s…), up to 25 attempts spanning about 20 days. If the last attempt fails, the replica becomes `failed`.
 - **Periodic reconciliation**: at startup and every 10 minutes after, ImgYoung adds missing replica records for every channel that is not draining, sets `failed` replicas on healthy channels back to `pending`, and queues every unfinished replica again. The "Replica reconciliation every … s" line under **Settings → Runtime settings → Bootstrap configuration** shows this interval.
 - **Restarts**: jobs and replica states live in SQLite, so restarts lose nothing. A graceful shutdown cancels in-flight replication jobs, and the periodic reconciliation queues them again at the next startup; jobs that were running when the process was killed run again after about 16 minutes.
@@ -247,7 +247,7 @@ Files other programs wrote are left alone. Also:
 - Once the channel turns **Draining**, new writes are refused immediately. The drain waits for writes already in progress to finish before it starts, so nothing this service wrote is missed.
 - The drain deletes only these recorded objects, and the daily reconciliation does not scan draining channels. Orphans left by failed uploads that are less than 48 hours old stay at the provider after the purge.
 - One drain run lasts at most an hour. After a timeout or a shutdown, the next run continues with what is left; neither counts as a failure.
-- A draining channel cannot be edited, tested, probed again or re-authorized, even one that failed to load. Its row menu offers only **Remove now**, and the API answers 409 (error code `channel_deleting`).
+- A draining channel, even one that failed to load, cannot be edited, tested, probed again or re-authorized. Its row menu offers only **Remove now**, and the API answers 409 (error code `channel_deleting`).
 
 ### When draining fails
 
@@ -312,6 +312,7 @@ Other relevant metrics:
 | Upload | 503 | `upload_unavailable` | Not enough healthy channels, or every write failed; uploads through the S3-compatible API get 503 `ServiceUnavailable` |
 | Image access | 503 | — | No candidate channel, or every read failed; the response body is `渠道暂不可用` |
 | Create, edit | 400 | `channel_local_path_relative` | The `path` of a `local` channel is not absolute |
+| Create, edit | 400 | `channel_encrypted_direct_link` | Both encryption and 302 direct links were requested |
 | Edit | 409 | `channel_encrypted_immutable` | An attempt to change **Server-side encryption** |
 | Edit | 409 | `channel_config_changed` | Another edit or a token write-back changed the channel configuration during the save; just save again |
 | Delete | 409 | `channel_sole_replicas` | The channel holds the only replica of some images; the `count` parameter is how many |
@@ -324,10 +325,8 @@ Other error codes returned when saving the form are listed under [Error codes wh
 
 | Log line | Meaning |
 |---|---|
-| `渠道装载失败,本渠道跳过,健康检查时重试` | The channel could not be loaded and was skipped |
-| `构造后端未在时限内完成: context deadline exceeded` | Building the backend took longer than 30 seconds |
-| `构造后端未在时限内完成(同一配置上一次构造仍未结束): context deadline exceeded` | An earlier build of the same configuration that timed out is still running in the background, so no new build was started |
-| `渠道已清理完毕并删除` | Draining finished and the channel was removed; the field `objects` is the number of image replicas deleted, `system_objects` the number of system objects deleted |
+| `渠道装载失败,本渠道跳过,健康检查时重试` | The channel could not be loaded and was skipped; the `err` field holds the cause. If building the backend took longer than 30 seconds, it is `构造后端未在时限内完成: context deadline exceeded`; if an earlier build of the same configuration that timed out is still running in the background, so no new build was started, it is `构造后端未在时限内完成(同一配置上一次构造仍未结束): context deadline exceeded` |
+| `渠道已清理完毕并删除` | Draining finished and the channel was removed; the field `objects` is the number of image replicas deleted in the last drain run, `system_objects` the number of system objects deleted |
 
 ## Next
 

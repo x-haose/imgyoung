@@ -135,17 +135,17 @@ When you delete a channel, **Also delete what this service stored on the channel
 | Keep it ticked and click **Delete and purge** | Shows as **Draining** and is removed once its data is gone | Image replicas, metadata snapshots and leftover deep-check files are deleted one by one in the background |
 | Untick it and click **Remove only** | Removed immediately | Image replicas and metadata snapshots are left as they are, for you to deal with at the provider if needed |
 
-If any image has no ready replica on another channel (replicas on draining channels do not count), both kinds of deletion are refused with 409, and the message gives the number of such images. Move or delete those images first, then delete the channel.
+If this channel holds the only ready replica of some images, both kinds of deletion are refused with 409, and the message gives the number of such images; replicas on draining channels do not count. Add or fix another channel first and wait until its **Replicas** column shows no pending replicas, or delete those images, then delete the channel.
 
-**Delete and purge** deletes only objects this service has on record and does not scan the rest of the channel. Files written by other programs are left alone, and so are orphans left by failed uploads that reconciliation has not deleted yet; those stay at the provider.
+**Delete and purge** deletes only these objects: image replicas on record, objects under the system directory `_imgyoung/` (metadata snapshots included) and deep-check leftovers. Everything else in the channel is left alone: files written by other programs are untouched, and orphans left by failed uploads that reconciliation has not deleted yet also stay at the provider.
 
 Once a channel is draining, editing, test connection, probing and re-authorizing are all refused (409), and the only action left is **Remove now**. **Remove now** removes the channel immediately and stops the purge: apart from the one object being deleted at that moment, the remaining remote objects (snapshots included) are left as they are.
 
 #### When purging fails
 
-A failed purge is retried automatically with backoff and never stops. A channel that was only temporarily unavailable finishes draining on its own once it recovers.
+A failed purge is retried automatically with backoff and never stops. If the channel was only temporarily unavailable, it finishes draining on its own once it recovers.
 
-- Only when the same purge job still fails on its 4th attempt (about 98 seconds after the first failure with the default backoff) is the reason written to the channel and shown in the **Draining** badge's tooltip, prefixed with an explanation of the purge failure, and a "Channel drain failed" alert opened. Until then the channel just shows **Draining**, so a single network hiccup does not raise an alert. A purge run that merely times out or is interrupted by a shutdown does not count as a failure.
+- Only when the same purge job still fails on its 4th attempt (about 98 seconds after the first failure with the built-in backoff) is the reason written to the channel and shown in the **Draining** badge's tooltip, prefixed with an explanation of the purge failure, and a "Channel drain failed" alert opened. Until then the channel just shows **Draining**, so a single network hiccup does not raise an alert. A purge run that merely times out or is interrupted by a shutdown does not count as a failure.
 - A draining channel that cannot be loaded cannot be purged either, so the load failure is shown right away and opens the "Channel drain failed" alert. As soon as the channel loads, that reason is cleared and the alert resolves; from then on only failures of the purge itself can open it again.
 - The reason for a purge failure and its alert stay until the channel is purged or removed.
 
@@ -197,7 +197,13 @@ Administrators only, with four tabs:
 - **Backups & export**: metadata snapshots are written to every healthy channel on the **Backup interval**, each channel keeping its own most recent copies. The snapshot table lists each snapshot with its size, time and **Stored on** (the channels holding it, in priority order), with **Back up now**, **Download** and **Restore**; **Export JSON** exports all metadata. For usage, working through a reverse proxy and error codes, see [Backup & restore](../operations/backup.mdx).
 - **Alert history**: every alert's open and resolve record. For the alert webhook, see [Monitoring](../operations/monitoring.mdx).
 
-Below **Runtime settings**, the **Bootstrap configuration** card shows the environment variables read-only (listen address, data directory, trusted proxy networks, networks allowed on `/metrics`), along with the server version and the built-in login rate limit:
+Below **Runtime settings**, the **Bootstrap configuration** card shows the following read-only; changes to the environment variables take effect only after a process restart:
+
+| Category | Contents |
+|---|---|
+| Environment variables | Listen address, data directory, trusted proxy networks, networks allowed on `/metrics` |
+| Build | Server version, build commit, build time |
+| Built-in policies | Login rate limit, replica reconciliation interval |
 
 - The data directory is shown as the absolute path resolved at startup; a relative path is resolved against the working directory at startup.
 - A network variable that is not set shows its default networks.
@@ -235,15 +241,15 @@ On the **Users** page:
 - **Quota**: set per user when creating or editing the account, in MB or GB; empty or 0 means unlimited. An upload that would exceed the quota gets 403. Users see their space used and quota on the dashboard; administrators see the **Usage / quota** column on the **Users** page.
   Every reference counts in full: each image counts the complete size of its physical file, and deduplication merges do not reduce usage, so uploading the same images as someone else does not lower anyone's usage.
 - **Upload rate limit**: `upload_rate_per_min` under **Settings → Runtime settings**, applied to every user alike; the default, 0, turns it off. Uploads by the same user through tokens, the console and the S3-compatible API share one allowance.
-- **Upload concurrency limit**: `max_concurrent_uploads`, shared by the whole site, 8 by default.
+- **Concurrent uploads**: `max_concurrent_uploads`, shared by the whole site, 8 by default.
 
 What happens when a limit is hit, and the status codes, are covered in [Uploading](./upload.mdx#formats-and-limits).
 
 ## Upload tokens [#upload-tokens]
 
-Upload tokens are the credentials for the data API (`/api/upload`, `/api/upload/url`) and the S3-compatible API. They can only upload: they cannot sign in to the console or call the console API. Each token has a matching set of S3 credentials; see **S3 client settings** below. The console itself uses a session from signing in with a password; see [Sessions and security](#sessions-and-security).
+Sent in an `Authorization: Bearer` header, an upload token can only call `/api/upload` and `/api/upload/url`. Each token also has a matching set of S3 credentials (see **S3 client settings** below), which can upload through the S3-compatible API and also read and delete the objects that user uploaded through S3. Neither can sign in to the console or call the console API. The console itself uses a session from signing in with a password; see [Sessions and security](#sessions-and-security).
 
-A leaked token can do no more than upload as its user. Issue one token per client, so that a leaked one can be revoked on its own.
+If a token or its S3 credentials leak, the damage is limited to uploading as that user and to the objects that user uploaded through S3. Issue one token per client, so that a leaked one can be revoked on its own.
 
 ### Issuing
 
@@ -277,7 +283,7 @@ Open **More actions** at the end of a row:
 
 Administrators can use **View by user** to switch to any user's token list and **Revoke** or **Delete record** there.
 
-**Rotate** and **S3 client settings** are only available for your own tokens. Both hand out working credentials, so using them on someone else's token would amount to taking over that user's upload access.
+**Rotate** and **S3 client settings** are only available for your own tokens. Both hand out working credentials, so using them on someone else's token would amount to taking over that user's upload access and the objects they uploaded through S3.
 
 ## Sessions and security
 
@@ -306,12 +312,12 @@ All interface text follows the selected language, including what the server retu
 
 ## Error codes
 
-Console actions return these status and error codes on failure. Upload-related codes are listed in [Uploading](./upload.mdx#status-codes), and backup and restore codes in [Backup & restore](../operations/backup.mdx#error-codes).
+Common error codes for console actions are listed below; the complete list is the `ErrorCode` schema in the [API reference](../api/index.mdx#error-format). Upload-related codes are listed in [Uploading](./upload.mdx#status-codes), and backup and restore codes in [Backup & restore](../operations/backup.mdx#error-codes).
 
 | Action | Status | Error code | Meaning |
 |---|---|---|---|
 | Any console action other than changing the password, signing out and reading the current account | 403 | `must_change_password` | The built-in administrator still uses the factory password; change it first |
 | Saving a channel | 409 | `channel_config_changed` | Another edit changed the configuration while saving, or the provider refreshed the authorization token; save again |
-| Deleting a channel | 409 | `channel_sole_replicas` | The channel holds the only replica of some images; the message gives the number of images |
+| Deleting a channel | 409 | `channel_sole_replicas` | This channel holds the only ready replica of some images; the message gives the number of images |
 | Editing, test connection, probing, re-authorizing | 409 | `channel_deleting` | The channel is draining; the only action left is **Remove now** |
 | Opening image details | 404 | `image_not_found` | The image does not exist, or a regular user opened someone else's image |

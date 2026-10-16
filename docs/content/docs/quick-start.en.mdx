@@ -39,7 +39,7 @@ Open `http://<server address>:8721/` in a browser (`http://localhost:8721/` on t
 |---|---|
 | `admin` | `imgyoung123` |
 
-The factory password is public. The first sign-in takes you straight to the **Set the admin password** page. Until the password is changed, no other console page opens, and the server answers every console API call except signing out, reading your own account and changing the password with 403.
+The factory password is public. The first sign-in takes you straight to the **Set the admin password** page. Until the password is changed, no other console page opens, and the server rejects every other console API call with 403; only signing out, reading your own account and changing the password are allowed.
 
 The new password needs at least 8 characters, and each Chinese character counts as one. Click **Save and sign in again**, then sign in with the new password.
 

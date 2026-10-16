@@ -345,7 +345,7 @@ export interface paths {
         };
         /**
          * 图片列表
-         * @description 分页返回图片，可按 Token、时间与文件名关键词过滤。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
+         * @description 分页返回图片，可按 Token、时间、文件名关键词，以及是否已豁免冷图清理过滤。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
          */
         get: operations["listImages"];
         put?: never;
@@ -395,7 +395,7 @@ export interface paths {
         post?: never;
         /**
          * 删除图片
-         * @description 立即删除这条图片引用；已启用 CDN 缓存清除（`derived.cdn_purge_enabled`）时，同时清除它在 CDN 上的缓存。内容相同的图片共用一份物理图，物理图不再被任何图片引用时，经过删除宽限（`delete_grace_minutes`）后，后台删除它在各渠道上的副本与衍生图。普通用户删除他人的图返回 404。
+         * @description 立即删除这条图片引用；已启用 CDN 缓存清除（`derived.cdn_purge_enabled`）时，删除后在后台清除它在 CDN 上的缓存。内容相同的图片共用一份物理图，物理图不再被任何图片引用时，经过删除宽限（`delete_grace_minutes`）后，后台删除它在各渠道上的副本，以及本机的衍生图缓存。普通用户删除他人的图返回 404。
          */
         delete: operations["deleteImage"];
         options?: never;
@@ -1172,7 +1172,7 @@ export interface components {
              * @enum {string}
              */
             exif_policy?: "strip" | "passthrough";
-            /** @description 有效期秒数（数字或数字字符串），或 `never` 表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
+            /** @description 有效期秒数，0 到 3153600000 的整数，可写成数字或数字字符串；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
             ttl?: number | string;
         };
         LoginRequest: {
@@ -2424,7 +2424,7 @@ export interface components {
                      * @enum {string}
                      */
                     exif_policy?: "strip" | "passthrough";
-                    /** @description 有效期秒数（0 到 3153600000 的整数），或 `never` 表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
+                    /** @description 有效期秒数，0 到 3153600000 的整数；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
                     ttl?: string;
                 };
             };
@@ -4241,7 +4241,7 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
-            /** @description 有健康渠道列举快照失败 */
+            /** @description 任一健康渠道列举快照失败 */
             500: {
                 headers: {
                     [name: string]: unknown;

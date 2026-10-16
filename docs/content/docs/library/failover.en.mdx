@@ -128,7 +128,8 @@ How `DeepProbe` behaves:
 - **Temporary object**: the key is `.imgyoung-probe-` followed by 16 random hex characters, and the content is a fixed
   19 bytes. Random keys keep concurrent deep checks from interfering with each other.
 - **Timeouts**: the write and the read-back are bound by `ctx`. The delete uses its own 10-second timeout that `ctx`
-  cancellation does not affect, so the object is still deleted after a failed read-back or an expired `ctx`.
+  cancellation does not affect. Once the write succeeds, a delete is still attempted even if the read-back fails or
+  `ctx` expires; if the write itself fails, nothing is deleted.
 - **Return value**: a failure in the write, the read-back, or the content comparison returns the corresponding error.
   If the content read back differs from what was written, the error matches `errors.Is(err, failover.ErrProbeMismatch)`,
   which means the store is silently rewriting or truncating objects.

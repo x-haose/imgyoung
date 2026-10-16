@@ -35,6 +35,8 @@ Originals also carry `Last-Modified`, set to the upload time.
 
 The content behind `/i/<short ID>` never changes, which is why it is cached for a year. The one exception is when an administrator merges two images under **Duplicates**: from then on, the short ID of the merged-away image returns the image that was kept. A merge does not trigger cache purging, so CDNs and browsers keep returning the pre-merge image for as long as it stays cached (up to a year). If you need the change to show right away, purge that URL on the CDN by hand. See [Lifecycle and deduplication](../guides/lifecycle.mdx#deduplication).
 
+Changing the **Target formats** or the encoding quality (**WebP quality**, **JPEG quality**) does not update variants and negotiated responses already cached by CDNs and browsers; they change only once the cache expires or you purge them on the CDN. A variant's ETag does not include the quality, so after a quality-only change, revalidating with the ETag still gets 304.
+
 `/o/<user ID>/<object key>` is the address S3 clients use, under an object key of their choosing. Uploading again with the same object key points it at the new image, so its responses may be cached but must be revalidated with the ETag before each use: an unchanged image gets 304, a re-pointed key gets the new image, and a deleted image gets 404. When sharing through a CDN, `/i/` links cache better.
 
 ## WebP negotiation and Vary
@@ -69,7 +71,7 @@ Fill in three settings under **Settings → Runtime settings** in the admin cons
 | Cloudflare API token | **CDN cache purge** | Needs the Cache Purge permission for that zone. Stored encrypted with the master key and never shown again after saving |
 | Public site address (`base_url`) | **Access & links** | Used to build the public URLs to purge; must match the domain on the CDN |
 
-With all three filled in, the group title shows **Purge enabled**; if any is missing, nothing is purged. Changes apply as soon as you save, without a restart. The service also logs whether purging is enabled when it starts.
+With all three filled in, the group title shows **Enabled**; if any is missing, it shows **Disabled** and nothing is purged. Changes apply as soon as you save, without a restart. The service also logs whether purging is enabled when it starts.
 
 Purging works as follows:
 

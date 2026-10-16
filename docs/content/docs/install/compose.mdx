@@ -43,7 +43,7 @@ docker compose up -d
 
 ## 固定版本与升级
 
-要固定版本，把 `image:` 改成主次版本标签（如 `ghcr.io/x-haose/imgyoung:1.0`）或具体版本，再执行 `docker compose up -d`。
+要固定版本，把 `image:` 改成主次版本标签（如 `ghcr.io/x-haose/imgyoung:0.1`）或具体版本，再执行 `docker compose up -d`。
 
 改回更旧的标签不能降级：旧版本会拒绝启动被新版本迁移过的数据库。升级前建议先在后台「设置 → 备份与导出」点「立即备份」，回滚步骤与更多注意事项见[升级](../operations/upgrade.mdx)。
 

@@ -106,7 +106,7 @@ When it finishes, the callback page reads `Authorization complete. Go back to th
 When the access token nears expiry, rclone refreshes it on its own and writes the new token back. ImgYoung immediately encrypts it with the master key and stores it in the channel configuration. Any other parameter rclone writes back at runtime is stored the same way.
 
 - **There is exactly one refresher**: ImgYoung does not refresh tokens on a schedule of its own. Some providers invalidate the old refresh token on every refresh, so two refreshers would keep invalidating each other's tokens. The read-only requests of the periodic light check (every 60 s by default) are enough for rclone to refresh on time.
-- **If storing fails**: when the new token cannot be written to the metadata database, only a log line `后端写回参数无法落库` is written. The driver keeps using the new token it holds, and the next write-back stores it; a restart before that falls back to the old token in the database.
+- **If the write-back fails**: when the new token cannot be written to the metadata database, only a log line `后端写回参数无法落库` is written. The driver keeps using the new token it holds, and the next write-back stores it; a restart before that falls back to the old token in the database.
 - **Alongside an edit**: after re-authorizing with a new token, a token refreshed by the old driver never overwrites the new one. If an edit changed only other parameters (priority, folder and so on) and left the token masked, the refreshed token is stored as usual. If a token refresh happens while an edit is being saved, that save answers 409 (error code `channel_config_changed`); just save again, see [Editing a channel](./index.mdx#save-conflicts).
 
 When editing a drive channel, the **Authorization** field shows **Authorized · using the stored token**: leave it to keep the token, or click **Authorize again** to replace it.
@@ -119,9 +119,9 @@ Testing the connection or saving a channel builds a temporary backend, and the p
 |---|---|---|
 | Save succeeds | Any | Stored with the configuration |
 | Save fails | A token submitted in the form (for a new channel, or newly authorized or pasted while editing) | Comes back in the `token` field of the error response and replaces the one in the form, with the notice "Saving failed, but the provider refreshed the authorization token meanwhile. The form now holds the new token; fix the problem and save again, no need to authorize again." |
-| Save fails | A stored token kept while editing | Written straight back to the channel, which is then reloaded; not returned with the error |
-| Test connection | A stored token kept while editing (the **Authorization** field left at **Authorized · using the stored token**) | Written straight back to the channel |
-| Test connection (passed or failed) | A token submitted in the form | Handed back to the form: below the result the form notes "The provider refreshed the authorization token during the test. The form now holds the new token and will save it; the old one may no longer work.", the **Authorization** field shows **Authorized**, and saving submits the new token |
+| Save fails | A stored token kept while editing | Written straight back to the channel, which is then reloaded; not returned with the error. If the write-back fails, it is handed back to the form as well |
+| Test connection | A stored token kept while editing (the **Authorization** field left at **Authorized · using the stored token**) | Written straight back to the channel. If the write-back fails, it is handed back to the form as well |
+| Test connection (passed or failed) | A token submitted in the form | Handed back to the form: below the test result the form notes "The provider refreshed the authorization token during the test. The form now holds the new token, so just save; the old one may no longer work.", the **Authorization** field shows **Authorized**, and saving submits the new token |
 
 In custom mode, a new token handed back to the form goes into the `token` row of the backend parameters.
 
@@ -185,7 +185,7 @@ Run **Test connection** to confirm that write, read and delete all pass, give th
 - **Rate and traffic limits**: drives limit request rates and traffic far more tightly than object storage, so heavy image traffic easily triggers throttling or anti-abuse measures. The periodic light check sends one read-only request per channel per round.
 - **Full mirror**: like any channel, a drive channel ends up storing every image in the library.
 
-That makes drives best suited as **low-priority backup channels**: give them a priority below your object storage channels so that normally they only receive asynchronous replication, and reads move to them only when the primary channel is down. This is set entirely through priority, see [Channels and failover](./index.mdx#primary-and-backup-channels).
+That makes drives best suited as **low-priority backup channels**: give them a priority below your object storage channels so that normally they only receive asynchronous replication, and reads move to them only when every higher-priority channel is unavailable or does not yet hold a ready replica of the image. This is set entirely through priority, see [Channels and failover](./index.mdx#primary-and-backup-channels).
 
 ## Error codes
 

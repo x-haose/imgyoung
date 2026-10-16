@@ -10,11 +10,11 @@ ImgYoung 的配置分为两类，没有配置文件。命令行参数只有 `-ve
 | | 引导配置 | 运营配置 |
 |---|---|---|
 | 内容 | 进程启动前就必须知道的：监听地址、数据目录、主密钥、信任的反向代理、允许访问指标的网段 | 其余全部运行参数 |
-| 来源 | 只读环境变量 `IMGYOUNG_*` | 元数据库，不读环境变量 |
+| 来源 | 只从环境变量 `IMGYOUNG_*` 读取 | 元数据库，不读环境变量 |
 | 修改 | 改环境变量后重启进程 | 在后台「设置」里修改，保存即生效，无需重启 |
 | 查看 | 后台「设置 → 运行配置」底部的「引导配置」卡片（只读）| 后台「设置」 |
 
-这样每个值都只有一个来源。环境变量只负责让进程启动起来，其中一部分还决定信任哪些网段。运营配置只能在后台修改，不能用环境变量设初始值，也没有配置文件。
+运营配置只能在后台修改，不能用环境变量设置初始值。
 
 运营配置存放在元数据库里，随元数据库快照一起备份与恢复。新实例在后台配置一次即可；新版本增加的配置项，在升级时取出厂默认值。
 
@@ -56,9 +56,9 @@ Compose 文件里写了 `${VAR}`、而宿主机没有设置该变量时，容器
 
 | 情况 | 日志 | 退出码 |
 |---|---|---|
-| 启动阶段出错，如引导配置不合法、主密钥缺失或与数据库不符 | Error 日志 `启动失败` | 1 |
-| 运行期的致命错误：端口被占用、监听地址不合法、HTTP 服务异常退出、补齐子系统（把图片复制到其他渠道的后台任务）启动失败 | Error 日志 `运行失败` | 1 |
-| 命令行带了 `-version` 以外的参数，服务不会启动 | 无，在终端打印命令行用法 | 2 |
+| 启动阶段出错，如网段清单写错、监听地址或数据目录设为空串、数据库迁移失败、主密钥缺失或与数据库不符 | Error 日志 `启动失败` | 1 |
+| 绑定监听地址失败（端口被占用或地址格式不对）、HTTP 服务异常退出、补齐子系统（把图片复制到其他渠道的后台任务）启动失败 | Error 日志 `运行失败` | 1 |
+| 命令行带了 `-version` 以外的参数，服务不会启动 | 无日志；在终端打印报错与命令行用法 | 2 |
 
 ### 在各部署方式中设置
 
@@ -163,7 +163,7 @@ sudo systemctl restart imgyoung
 | `cold_cleanup_days` | 冷图清理阈值 | `90` | ≥ 0，天 | 多久没被访问的图片进入「待清理」；`0` 不标记 |
 | `delete_grace_minutes` | 删除宽限 | `0` | ≥ 0，分钟 | 图片不再被引用后，等多久删除渠道上的对象 |
 | `cleanup_sweep_seconds` | 清理扫描间隔 | `60` | ≥ 1，秒 | 清理扫描的执行间隔 |
-| `activity_flush_seconds` | 活跃度落库间隔 | `60` | ≥ 1，秒 | 访问统计批量写入数据库的间隔 |
+| `activity_flush_seconds` | 访问统计写入间隔 | `60` | ≥ 1，秒 | 访问统计批量写入数据库的间隔 |
 | `idempotency_key_ttl_hours` | 幂等键保留期 | `24` | ≥ 1，小时 | 带 `Idempotency-Key` 的上传重试在此期限内返回首次结果 |
 
 - **`default_ttl_hours`**：上传没有指定 `ttl`、用户也没有设置自己的默认有效期时使用。
@@ -192,7 +192,7 @@ sudo systemctl restart imgyoung
 - **`process_formats`**：`?format=` 只接受列出的值。包含 `webp` 时，支持 WebP 的浏览器访问 JPEG 或 PNG 图片会自动得到 WebP。
 - **`exif_policy`**：`passthrough` 保留原样，`strip` 剥离元数据。单次上传可以用表单字段 `exif_policy` 覆盖。S3 上传不适用，一律按原字节保存。
 - **`process_quality_webp`**：不接受 0，因为编码库会把 0 当作默认质量 75。
-- **`process_workers` 与 `process_timeout_ms`**：处理超时只计算等待处理名额与读取原图的时间，排队等待名额的时间也计入，编码本身不计入。超时后返回原图，这次响应带 `Cache-Control: no-store`。
+- **`process_workers` 与 `process_timeout_ms`**：处理超时覆盖排队等待处理名额与读取原图的时间，不含编码本身。超时后返回原图，这次响应带 `Cache-Control: no-store`。
 - **`variants_cache_mb`**：缓存位于 `<数据目录>/variants/`，超出上限时淘汰最久没有访问的衍生图。
 
 ### 查重
@@ -227,7 +227,7 @@ sudo systemctl restart imgyoung
 | `cdn_cloudflare_api_token` | Cloudflare API Token | 空 | 文本 | 需要 Cache Purge 权限 |
 
 - API Token 用主密钥加密后存入数据库，任何接口、页面与日志都不显示它。表单里留空表示不修改，点「清除 Token」才会清空。
-- Zone ID、API Token 与 `base_url` 三项都已设置时才启用缓存清除。分组标题旁的徽标显示「purge 已启用」或「purge 未启用」，启动日志也会打印一行启用状态。见 [CDN](./operations/cdn.mdx)。
+- Zone ID、API Token 与 `base_url` 三项都已设置时才启用缓存清除。分组标题旁的徽标显示「已启用」或「未启用」，启动日志也会打印一行启用状态。见 [CDN](./operations/cdn.mdx)。
 
 ### 告警与审计
 
@@ -254,7 +254,7 @@ sudo systemctl restart imgyoung
 - `error` 是填好参数的中文说明；
 - `params` 的值都是字符串，其中 `params.key` 指明是哪个配置键。
 
-一次提交里有多项不合法时，只报第一项。例如把备份间隔设得超过 100 年：
+一次提交里有多项不合法时，只报其中一项，按服务端固定的校验顺序，与请求体里键的先后无关。例如把备份间隔设得超过 100 年：
 
 ```json
 {"code":"setting_too_large","error":"backup_interval_hours=900000 非法: 不可超过 876000","params":{"key":"backup_interval_hours","max":"876000","value":"900000"}}
@@ -263,7 +263,7 @@ sudo systemctl restart imgyoung
 | 错误码 | 原因 | `params` |
 |---|---|---|
 | `setting_unknown` | 没有这个配置键 | `key` |
-| `setting_type` | 取值类型不对，如开关项给了字符串 | `key` |
+| `setting_type` | 取值类型错误，如开关项给了字符串 | `key` |
 | `setting_positive` | 需要正整数 | `key`、`value` |
 | `setting_non_negative` | 不可为负 | `key`、`value` |
 | `setting_too_large` | 超过上限（时长类配置的 100 年上限）| `key`、`value`、`max` |

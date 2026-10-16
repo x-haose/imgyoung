@@ -9,7 +9,7 @@ Channel encryption is aimed at the **storage provider**. Free or third-party sto
 
 It does **not** protect against the server itself. ImgYoung holds the master key, and format checks, metadata stripping, hashing, deduplication and on-demand processing all run on plaintext before encryption, so none of them are affected. Anyone with the server and the master key can read everything.
 
-The provider can still see the number of objects, their sizes (the plaintext size can be worked out from the ciphertext size to within 16 bytes), modification times and access patterns.
+The provider can still see the number of objects, their sizes (the plaintext size can be worked out exactly from the ciphertext size), modification times and access patterns.
 
 ## How it works
 

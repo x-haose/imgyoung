@@ -145,7 +145,7 @@ PicGo has no built-in S3 uploader. Install the `s3` plugin (npm package `picgo-p
 | `pathStyleAccess` | On (labelled ForcePathStyle in the UI) |
 | `outputURLPattern` | `https://img.example.com/o/<user id>/{path}` |
 
-Use a content hash such as `{md5}` in the object key: re-uploading the same image then yields the same key, and different images never overwrite each other.
+Use a content hash such as `{md5}` in the object key: re-uploading the same image then yields the same key, and different images never overwrite each other. Re-uploading the same image still adds a new image record that counts against your quota, and the old record is not deleted automatically; see [Overwriting a key](#overwriting-a-key).
 
 ### aws CLI
 
@@ -337,19 +337,20 @@ Errors come back as S3-style XML, and clients act on the `Code`. Every error fro
 
 | Situation | Status | Code |
 |---|---|---|
-| Signature mismatch, unknown access key, token no longer valid | 403 | `SignatureDoesNotMatch` |
+| Signature mismatch (including a body that does not match the declared hash), unknown access key, token no longer valid | 403 | `SignatureDoesNotMatch` |
 | Request time more than 15 minutes off | 403 | `RequestTimeTooSkewed` |
 | `Authorization` header missing or unparsable | 400 | `AuthorizationHeaderMalformed` |
 | Signature is not `AWS4-HMAC-SHA256` | 400 | `InvalidRequest` |
 | Over the per-image size limit | 400 | `EntityTooLarge` |
+| The body could not be read, or its aws-chunked encoding is malformed | 400 | `IncompleteBody` |
 | Not a supported image, or over the pixel budget | 400 | `InvalidRequest` |
 | Storage quota full | 403 | `QuotaExceeded` |
 | Object key too long / with invalid characters / missing | 400 | `KeyTooLongError` / `InvalidArgument` / `InvalidRequest` |
 | Object does not exist, or the image it points to has expired | 404 | `NoSuchKey` |
 | No healthy channel to write to during upload, or fewer synchronous copies than the minimum succeeded | 503 | `ServiceUnavailable` |
 | Object temporarily unreadable (GET / HEAD) | 503 | `ServiceUnavailable` |
-| Upload concurrency limit reached, or the user is uploading too fast | 429 | `SlowDown` |
+| Upload concurrency limit reached (all S3 requests share it, see [Uploading](./upload.mdx#formats-and-limits)), or the user is uploading too fast (PutObject only) | 429 | `SlowDown` |
 | Unsupported operation | 501 | `NotImplemented` |
 | Any other server error | 500 | `InternalError` |
 
-A 429 carries a `Retry-After` header. When the upload concurrency limit is reached, the message is `上传并发已满,请稍后重试` and `Retry-After` is 1 second; when the user is uploading too fast, the message is `上传过于频繁,请稍后重试` and `Retry-After` is 60 seconds. S3 clients treat `SlowDown` as retryable and back off before retrying.
+A 429 carries a `Retry-After` header. When the upload concurrency limit is reached, the message is `已达上传并发上限,请稍后重试` (The upload concurrency limit is reached. Try again later) and `Retry-After` is 1 second; when the user is uploading too fast, the message is `上传过于频繁,请稍后重试` (Too many uploads. Try again later) and `Retry-After` is 60 seconds. S3 clients treat `SlowDown` as retryable and back off before retrying.

@@ -145,7 +145,7 @@ PicGo 没有内置 S3 上传。在插件设置里安装 `s3`（npm 包 `picgo-pl
 | `pathStyleAccess` | 开启（界面上叫 ForcePathStyle）|
 | `outputURLPattern` | `https://img.example.com/o/<用户 id>/{path}` |
 
-用 `{md5}` 之类的内容哈希做对象键：同一张图重复上传得到同一个键，不同的图不会互相覆盖。
+用 `{md5}` 之类的内容哈希做对象键：同一张图重复上传得到同一个键，不同的图不会互相覆盖。同一张图再次上传仍会新增一条图片记录并占用配额，旧记录不会自动删除，见[同键覆盖](#同键覆盖)。
 
 ### aws CLI
 
@@ -337,19 +337,20 @@ S3 客户端不会自动重试 501，会直接报错。这项检查在验签之�
 
 | 情形 | 状态码 | Code |
 |---|---|---|
-| 签名不符、access key 不存在、Token 已失效 | 403 | `SignatureDoesNotMatch` |
+| 签名不符（含正文与声明的哈希不符）、access key 不存在、Token 已失效 | 403 | `SignatureDoesNotMatch` |
 | 请求时间偏差超过 15 分钟 | 403 | `RequestTimeTooSkewed` |
 | 缺少或无法解析 `Authorization` 头 | 400 | `AuthorizationHeaderMalformed` |
 | 不是 `AWS4-HMAC-SHA256` 签名 | 400 | `InvalidRequest` |
 | 超过单图大小上限 | 400 | `EntityTooLarge` |
+| 正文读取失败，或 aws-chunked 分块格式非法 | 400 | `IncompleteBody` |
 | 不是支持的图片，或超过像素预算 | 400 | `InvalidRequest` |
 | 存储配额已满 | 403 | `QuotaExceeded` |
 | 对象键过长 / 含非法字符 / 缺失 | 400 | `KeyTooLongError` / `InvalidArgument` / `InvalidRequest` |
 | 对象不存在，或指向的图已到期 | 404 | `NoSuchKey` |
 | 上传时没有健康渠道可写，或同步写入的份数达不到最少同步副本数 | 503 | `ServiceUnavailable` |
 | 对象暂时读不出来（GET / HEAD）| 503 | `ServiceUnavailable` |
-| 上传并发已满，或该用户上传过于频繁 | 429 | `SlowDown` |
+| 已达上传并发上限（所有 S3 请求共用这个名额，见[上传](./upload.mdx#格式与上限)），或该用户上传过于频繁（仅 PutObject）| 429 | `SlowDown` |
 | 不支持的操作 | 501 | `NotImplemented` |
 | 其余服务端错误 | 500 | `InternalError` |
 
-429 带 `Retry-After` 头。上传并发已满时，文案为 `上传并发已满,请稍后重试`，`Retry-After` 为 1 秒；上传过于频繁时，文案为 `上传过于频繁,请稍后重试`，`Retry-After` 为 60 秒。S3 客户端把 `SlowDown` 当作可重试的错误，会退避后重试。
+429 带 `Retry-After` 头。达到上传并发上限时，文案为 `已达上传并发上限,请稍后重试`，`Retry-After` 为 1 秒；上传过于频繁时，文案为 `上传过于频繁,请稍后重试`，`Retry-After` 为 60 秒。S3 客户端把 `SlowDown` 当作可重试的错误，会退避后重试。

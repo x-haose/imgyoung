@@ -62,7 +62,7 @@ An image is redirected only when all of these hold:
 4. the channel is healthy, holds a ready replica of the image, and is the highest-priority channel meeting the conditions above;
 5. the request does not produce a variant: one with `w`, with an explicit `format` other than the original's, or negotiated to WebP through `Accept` (the default for browsers opening a JPEG / PNG) is converted and proxied.
 
-Otherwise the image is proxied. With **Allow 302 direct links** on but no public URL, the form warns "public_base_url is not set, so direct links will not take effect and access falls back to proxying".
+Otherwise the image is proxied. With **Allow 302 direct links** on but no public URL, the form warns "The public URL (public_base_url) is not set, so direct links will not take effect and images are still served by this service".
 
 The 302 response carries `Cache-Control: no-store`, so neither browsers nor CDNs cache the redirect, and switching channels, retiring one or an image expiring takes effect immediately. Objects are written with a `Content-Type` detected from their content, so a browser opening a direct link displays the image even though object keys have no extension.
 
@@ -95,7 +95,7 @@ The generic WebDAV template sits in the **Cloud drives** group of the type picke
 | Key | Label | Meaning |
 |---|---|---|
 | `url` | Server URL | WebDAV root URL. Nutstore `https://dav.jianguoyun.com/dav/`; Nextcloud / ownCloud `https://domain/remote.php/dav/files/username/`; Alist `https://domain/dav/`; Synology `https://domain:5006/` |
-| `vendor` | Server type | A wrong choice breaks folder listing or chunked uploads; if unsure, choose **Other (Nutstore, Alist, Synology, …)** |
+| `vendor` | Server type | A wrong choice can break directory listing or chunked uploads; if unsure, choose **Other (Nutstore, Alist, Synology, …)** |
 | `user` | Username | WebDAV user name |
 | `pass` | Password | Nutstore requires an **app password** generated in its security settings, not the login password |
 | `path` | Folder | Folder for the images, `imgyoung` suggested; empty means the root |
@@ -141,8 +141,8 @@ In the API a failure reason is `{reason, detail}`; a channel's failure reason al
 | `tls` | "TLS certificate verification failed: check the endpoint certificate or use the right protocol" | `certificate`, `x509`, `tls handshake` (except `TLS handshake timeout`, which counts as `timeout`) | A self-signed certificate, or `https` used for an `http` service |
 | `timeout` | "Connection timed out: check the endpoint address and network connectivity" | Timeouts, including `TLS handshake timeout`, the check's own 10 s / 20 s limits and the 30 s load limit (root cause `context deadline exceeded`) | Network reachability or a very slow service |
 | `permission` | "No write permission on the storage path: check the directory permissions" | `permission denied`, `read-only file system` | Folder permissions of a `local` channel; in the container image the process runs as uid 65532, so mounted folders must be writable by it |
-| `probe_mismatch` | "The probe object read back differently: the storage rewrote or truncated it" | The deep check read back something other than what it wrote | The storage service silently rewrites or truncates objects; check its settings or use another service |
-| `config_unreadable` | "The channel settings cannot be decrypted: the master key differs from the one they were written with" | The channel configuration cannot be decrypted while loading | Switch back to the master key the configuration was written with |
+| `probe_mismatch` | "The probe object read back does not match what was written: the storage rewrote or truncated it" | The deep check read back something other than what it wrote | The storage service silently rewrites or truncates objects; check its settings or use another service |
+| `config_unreadable` | "The channel settings cannot be decrypted: the current master key differs from the one used to save them" | The channel configuration cannot be decrypted while loading | Switch back to the master key the configuration was written with |
 | `no_source` | "No readable source replica" | No readable source replica while syncing | Replicas only: every channel holding a ready replica is unhealthy or failed to read |
 | `channel_unavailable` | "The target channel is not loaded" | The sync target channel is not loaded | Replicas only: fix the channel's load failure first |
 | `object_missing` | "Reconciliation found the object missing from the channel" | The daily reconciliation found a replica marked ready missing from the channel | Replicas only: the replica went back to pending and is copied again |
@@ -162,7 +162,7 @@ Error responses are `{code, error, params}`: `code` is a fixed error code, `erro
 | `channel_unknown_backend` | "Invalid channel settings: unknown backend `{driver}`" | A misspelt backend name in custom mode |
 | `channel_local_path_relative` | "Invalid channel settings: the path of a local channel must be absolute, got `{path}`" | A relative `path` for a `local` channel |
 | `channel_config_key_invalid` | "Invalid channel settings: parameter key `{key}` is invalid (only letters, digits and underscores)" | A custom parameter key contains other characters (such as `-`) |
-| `channel_bucket_failed` | "Creating the bucket failed (check that the key may create buckets, or create the bucket in the console and turn this option off): `{detail}`" | **Create the bucket automatically** is on but the key cannot create buckets |
+| `channel_bucket_failed` | "Creating the bucket failed (check that the key may create buckets, or create the bucket in the console first and turn off automatic creation): `{detail}`" | **Create the bucket automatically** is on but the key cannot create buckets |
 | `channel_keep_not_secret` | "Invalid channel settings: field `{field}` is not a credential, so its stored value cannot be kept" | The mask value `__imgyoung_secret_keep__` was put on a parameter that is not a credential |
 | `channel_keep_no_value` | "Invalid channel settings: field `{field}` has no stored value to keep. Fill it in again" | The mask value was submitted for a parameter that has no stored value |
 | `channel_deleting` | "The channel is being cleaned up and cannot be changed or probed" | The channel is **Draining** (409) |

@@ -69,7 +69,7 @@ type purgeResponse struct {
 	} `json:"errors"` // 失败明细
 }
 
-// Purge 按批清理给定 URL 的边缘缓存(每批 ≤ 30,顺序发起)。
+// Purge 按批清理给定 URL 的边缘缓存(每批至多 purgeBatchSize 个,顺序发起)。
 // @Description: 任一批失败即返回错误,调用方(任务队列)整体重试——purge 幂等,重复清理无害。
 // @param ctx 控制超时与取消
 // @param urls 待清理的绝对 URL 列表,空列表直接返回

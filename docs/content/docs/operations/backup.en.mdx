@@ -120,7 +120,7 @@ Before you start, you need:
 
 **Stop the service and put the master key and snapshot in place**: put the original master key in the data directory as `master.key`, and the snapshot file in the data directory as `imgyoung.db.restore`.
 
-Do not overwrite `imgyoung.db` with the snapshot. A snapshot put in place as `imgyoung.db.restore` is handled as a restore, which keeps the objects written to the channels after the snapshot; if you overwrite the database directly, those objects are treated as orphans and deleted after 48 hours.
+Do not overwrite `imgyoung.db` with the snapshot. A snapshot put in place as `imgyoung.db.restore` is handled as a restore, which keeps the objects written to the channels after the snapshot; if you overwrite the database directly, those objects are treated as orphans, and those written more than 48 hours earlier are deleted at the next reconciliation GC (24 hours after the service starts).
 
 A snapshot put in place by hand skips the integrity check that restores from the admin console get, so you may want to check it yourself: `sqlite3 imgyoung-20261015-083000.123.db 'PRAGMA quick_check;'` should print `ok`, and the output of `sqlite3 imgyoung-20261015-083000.123.db '.tables'` should include `schema_revisions`.
 
@@ -228,12 +228,12 @@ Every 24 hours (first 24 hours after service start), each healthy channel is rec
 
 | Situation | Action |
 |---|---|
-| **Orphans**: objects ImgYoung wrote that have no replica record at all in the metadata database | Deleted once written more than 48 hours ago, so pay-per-use channels do not bill you for them |
+| **Orphans**: objects ImgYoung wrote that have no replica record on this channel in the metadata database, in any state | Deleted once written more than 48 hours ago, so pay-per-use channels do not bill you for them |
 | **Foreign objects**: objects ImgYoung did not write | Counted, never deleted |
 | **Missing replicas**: replicas the metadata database records as completed but that are missing from the channel | Reset to pending and copied again from another channel |
-| **Probe leftovers**: temporary `.imgyoung-probe-*` objects left by health checks | Deleted once written more than 48 hours ago |
+| **Probe leftovers**: temporary `.imgyoung-probe-*` objects left by health checks | Deleted once written more than 48 hours ago, regardless of the binding time |
 
-An object counts as written by ImgYoung only if both hold: its key has the format `<short ID>_<first 8 hex digits of SHA-256>`, and it was written no earlier than the channel's **binding time**. The binding time is when the channel started using its current storage location, and it changes as follows:
+Apart from probe leftovers, an object counts as written by ImgYoung only if both hold: its key has the format `<short ID>_<first 8 hex digits of SHA-256>`, and it was written no earlier than the channel's **binding time**. The binding time is when the channel started using its current storage location, and it changes as follows:
 
 | Situation | Binding time |
 |---|---|
@@ -242,12 +242,12 @@ An object counts as written by ImgYoung only if both hold: its key has the forma
 | Only the name, priority or direct-link setting changes; the provider refreshes a token | Unchanged |
 | A snapshot is restored | The time of the start after the restore |
 
-So files written to the same path by other programs, objects already in a bucket before it was added as a channel, and images uploaded after the snapshot of a later restore are only counted and never deleted. System objects under `_imgyoung/` in the channel (snapshots included) are not reconciled, and draining channels are not reconciled either.
+So files written to the same path by other programs, objects already in a bucket before it was added as a channel, and, after a restore, images uploaded after the snapshot was taken are only counted and never deleted. System objects under `_imgyoung/` in the channel (snapshots included) are not reconciled, and draining channels are not reconciled either.
 
 Each channel's reconciliation logs a `渠道对账完成` line with the fields `objects` (object count), `bytes`, `foreign` (foreign objects), `orphans_deleted` (orphans deleted, probe leftovers included) and `phantoms_requeued` (missing replicas queued for replication).
 
 <Callout type="error" title="Two instances must not share a channel path">
-If two ImgYoung instances use the same storage path, objects written by the other instance are orphans to this one and are deleted after 48 hours. Give each instance its own bucket or path.
+If two ImgYoung instances use the same storage path, objects written by the other instance are orphans to this one, and those written more than 48 hours earlier are deleted at reconciliation GC (every 24 hours, first 24 hours after the service starts). Give each instance its own bucket or path.
 </Callout>
 
 In addition, replica states are checked every 10 minutes (without listing channel objects): once a channel is healthy again, its failed replicas are replicated again, and unfinished replicas are queued again.
@@ -262,6 +262,7 @@ Backup and restore actions in the admin console return these status and error co
 | Back up now | 500 | `backup_prune_failed` | The snapshot was written to every channel, but some channels could not prune old snapshots |
 | Back up now | 500 | `backup_snapshot_failed` | The snapshot could not be taken |
 | Restore | 422 | `snapshot_corrupt` | The snapshot is incomplete or is not an ImgYoung metadata database; the service keeps running, so pick another snapshot |
+| Download, restore | 400 | `snapshot_name_invalid` | The snapshot name is not in the format ImgYoung generates |
 | Download, restore | 404 | `snapshot_not_found` | No healthy channel has this snapshot |
 | Any | 503 | `no_healthy_channel` | There is no healthy channel |
 | List, download, restore | 500 | `internal` | List: listing a healthy channel failed. Download and restore: every channel holding the snapshot failed to read it, or a local disk or memory error occurred |

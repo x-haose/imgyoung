@@ -12,7 +12,7 @@ description: The two forms of image links, on-demand resizing and format convers
 
 Both links are public and need no sign-in. Hotlink protection, access counting, on-demand processing and failover reads across channels work the same for both; only caching differs, see [Caching and conditional requests](#caching).
 
-A link returns 404 as soon as its image is deleted. An image with a lifetime returns 404 the moment it expires, without waiting for the cleanup sweep to reclaim it; see [Lifecycle and deduplication](./lifecycle.mdx).
+A link returns 404 as soon as its image is deleted; behind a CDN, content the CDN has already cached stays available until the cache is purged, see [The delete flow](./lifecycle.mdx#delete-flow). An image with a lifetime returns 404 the moment it expires, without waiting for the cleanup sweep to reclaim it; see [Lifecycle and deduplication](./lifecycle.mdx).
 
 Links support GET and HEAD. HEAD returns no body and is not counted as an access. Other status codes are listed in [Status codes](#status-codes) at the end of this page, and the full API definition is in [API reference: image access](../api/image-access.mdx).
 
@@ -49,7 +49,7 @@ Without `format`, or with `format=auto`, the output format follows the request's
 
 Every modern browser lists `image/webp` in `Accept`, so opening the `/i/` link of a JPEG or PNG in a browser gets you WebP by default. To get the original bytes, ask for the original's own format, for example `?format=jpeg` on a JPEG. When the target format equals the original's and there is no resizing, the original is served without re-encoding.
 
-Every negotiated response carries `Vary: Accept`, including originals served unchanged after negotiation and 304 responses. Responses with an explicit `format` do not. GIFs take no part in negotiation and do not carry it either.
+Every cacheable negotiated response carries `Vary: Accept`, including originals served unchanged after negotiation and 304 responses. Responses with an explicit `format` do not. GIFs take no part in negotiation and do not carry it either.
 
 ### Processing rules
 
@@ -70,7 +70,7 @@ Encoding settings by output format; no output carries metadata:
 
 - Results are cached under `variants/` in the data directory, up to `variants_cache_mb` in total (10240 MB out of the box); beyond that, the least recently used entries are evicted. After you change the encoding settings, later requests produce new cache entries and the old ones age out.
 - Concurrent first requests for the same image and parameters are processed once and share the result.
-- At most `process_workers` images (4 out of the box) are processed at the same time. Waiting for a slot and reading the original share one timeout, `process_timeout_ms` (5000 ms out of the box).
+- At most `process_workers` processing jobs (4 out of the box) run at the same time. Waiting for a slot and reading the original share one timeout, `process_timeout_ms` (5000 ms out of the box).
 
 When processing fails (no slot within the timeout, a decoding error and so on), the original is served instead. This fallback carries `Cache-Control: no-store` and no `ETag`, so the full-size original is never cached as the content of the parameterized link.
 
@@ -81,7 +81,7 @@ The image behind an `/i/` short link never changes and can be cached for a long 
 | Header | Short link `/i/` | Alias `/o/` |
 |---|---|---|
 | `Cache-Control` | `public, max-age=31536000, immutable` | `public, no-cache` |
-| `ETag` | `"<SHA-256>"` for the original, `"<SHA-256>-<width>-<format>"` for a variant | Same |
+| `ETag` | `"<SHA-256>"` for the original, `"<SHA-256>-<width>-<format>"` for a variant, with a width of `0` when the image is not resized | Same |
 | `Vary` | `Accept` when the output format comes from `Accept` negotiation, see [WebP negotiation](#webp-negotiation) | Same |
 | `Last-Modified` | The upload time for the original; not set for variants | Same |
 | `Content-Type` | The type detected from the content at upload for the original; the target format's type for variants | Same |
@@ -93,7 +93,7 @@ The image behind an `/i/` short link never changes and can be cached for a long 
 
 Two kinds of response carry `Cache-Control: no-store` and are never cached: the fallback after an on-demand processing failure, and 302 redirects.
 
-The content behind a short link changes in only one case: when an administrator merges a near-duplicate pair, the links of the merged image serve the kept image's content. Browsers and CDNs keep the old content until their cache expires. See [Lifecycle and deduplication](./lifecycle.mdx#deduplication).
+The content behind a short link changes in only one case: when an administrator merges a near-duplicate pair, the links of the merged image serve the kept image's content. Browsers and CDNs keep the old content until their cache expires; see [Lifecycle and deduplication](./lifecycle.mdx#deduplication). A merge does not trigger a CDN cache purge, so if the change must take effect immediately, purge the CDN cache by hand; see [CDN](../operations/cdn.mdx#cloudflare-cache-purging).
 
 ## Access modes: proxy and 302
 
@@ -229,6 +229,6 @@ So administrators browsing images do not skew access statistics or cold-image de
 | 403 | Plain text `禁止访问` (forbidden) | Rejected by hotlink protection |
 | 404 | Plain text | The image does not exist, was deleted or has expired |
 | 500 | Plain text `服务内部错误` (internal error) | Looking up the image metadata failed (a database fault); retry later |
-| 503 | Plain text `渠道暂不可用` (channel temporarily unavailable) | No healthy channel holds a usable replica of the image, or every candidate channel failed to read it |
+| 503 | Plain text `渠道暂不可用` (channel temporarily unavailable) | No healthy channel holds a usable replica of the image, or every candidate channel failed to read it (in the latter case HEAD still returns 200, see below) |
 
-HEAD returns the same status and headers as GET. When no on-demand processing is needed, HEAD does not read the object from the channel; when processing is needed, the variant is still produced.
+HEAD returns no body and the same headers as GET. When no on-demand processing is needed, HEAD does not read the object from the channel, so if every candidate channel fails to read it, GET returns 503 while HEAD still returns 200. When processing is needed, HEAD still produces the variant.

@@ -26,6 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
 ```
 
+If you installed with `--dir` or with `sudo`, upgrade with the same options. Otherwise the new version goes to the default directory (`/usr/local/bin` when run as root, `~/.local/bin` for other users), and the old binary stays where it was.
+
 `--service` overwrites `/etc/systemd/system/imgyoung.service` with `deploy/imgyoung.service` from the release archive. Keep your own environment variables in a drop-in created with `systemctl edit`, which is not overwritten.
 
 </Tab>
@@ -85,7 +87,7 @@ Replace the running binary with the newly built `./imgyoung` and restart.
 </Tab>
 </Tabs>
 
-When the service is stopped, ImgYoung stops accepting new requests, waits for requests in progress and replication jobs to finish — about 8 seconds at most in total, after which remaining requests are cut off — and then exits. Docker's default 10-second stop timeout and the `stop_grace_period: 15s` (Compose) and `TimeoutStopSec=15s` (systemd) in the `deploy/` examples are all enough. Interrupted replication jobs are queued again after the next start.
+When the service is stopped, ImgYoung stops accepting new requests, waits for requests in progress to finish, then cancels replication jobs in flight — about 8 seconds at most in total, after which remaining requests are cut off — and then exits. Docker's default 10-second stop timeout and the `stop_grace_period: 15s` (Compose) and `TimeoutStopSec=15s` (systemd) in the `deploy/` examples are all enough. Interrupted replication jobs are queued again after the next start.
 
 ## Database migrations
 
@@ -116,7 +118,7 @@ Switch back to the older binary or image tag.
 </Step>
 <Step>
 
-Put the pre-upgrade snapshot (or the database copied while the service was stopped) in the data directory as `imgyoung.db.restore`. Do not overwrite `imgyoung.db` with it: if you do, objects written to the channels after the upgrade are treated as orphans and deleted after 48 hours.
+Put the pre-upgrade snapshot (or the database copied while the service was stopped) in the data directory as `imgyoung.db.restore`. Do not overwrite `imgyoung.db` with it: if you do, objects written to the channels after the upgrade are treated as orphans, and those written more than 48 hours earlier are deleted at the next reconciliation GC (24 hours after the service starts).
 
 For Docker, the file must be owned by `65532:65532`; use the throwaway-container approach shown in [disaster recovery](./backup.mdx#disaster-recovery-after-losing-the-host).
 

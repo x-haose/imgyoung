@@ -142,7 +142,7 @@ The **Duplicates** page (administrators only) shows each candidate pair side by 
 - **Keep this one** → confirm **Merge**: every reference of the other image now points to the kept one, the merged file is removed after the delete grace period, and any other candidates involving it are dropped. **This cannot be undone.**
 - **Dismiss**: the pair is never shown again; several pairs can be dismissed at once.
 
-After a merge, every link of the merged image (including other users' references) serves the kept image's content, which may differ in size, format and even picture. So keep the higher-resolution or better-format image, and choose **Dismiss** when the two are actually different pictures. Browsers and CDNs that already cached the old content keep showing it until their cache expires.
+After a merge, every link of the merged image (including other users' references) serves the kept image's content, which may differ in size, format and even picture. So keep the higher-resolution or better-format image, and choose **Dismiss** when the two are actually different pictures. Browsers and CDNs that already cached the old content keep showing it until their cache expires. A merge does not trigger a CDN cache purge, so if the change must take effect immediately, purge the CDN cache by hand; see [CDN](../operations/cdn.mdx#cloudflare-cache-purging).
 
 Merges and dismissals are recorded in the audit log, with the actions "Merge duplicates" and "Dismiss duplicates".
 

@@ -70,22 +70,22 @@ tags:
   - name: Admin · Users
     x-displayName: 后台·用户
     description: 用户的创建、配额与密码重置（仅管理员）
-    x-description-en: User accounts, quotas and password resets (admins only)
+    x-description-en: User accounts, quotas, and password resets (administrators only)
     x-slug: admin-users
   - name: Admin · Hotlink protection
     x-displayName: 后台·防盗链
     description: Referer 白名单（仅管理员）
-    x-description-en: Referer allowlist (admins only)
+    x-description-en: Referer allowlist (administrators only)
     x-slug: admin-referer
   - name: Admin · Review
     x-displayName: 后台·裁决
     description: 相似重复与冷图待清理的裁决（仅管理员）
-    x-description-en: Review of similar duplicates and cold images awaiting cleanup (admins only)
+    x-description-en: Review of similar duplicates and cold images awaiting cleanup (administrators only)
     x-slug: admin-review
   - name: Admin · Operations
     x-displayName: 后台·运维
     description: 审计日志、告警、备份快照与元数据导出（仅管理员）
-    x-description-en: Audit log, alerts, backup snapshots and metadata export (admins only)
+    x-description-en: Audit log, alerts, backup snapshots, and metadata export (administrators only)
     x-slug: admin-operations
   - name: System
     x-displayName: 系统
@@ -629,7 +629,7 @@ paths:
       operationId: listImages
       tags: [Admin · Images]
       summary: 图片列表
-      description: 分页返回图片，可按 Token、时间与文件名关键词过滤。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
+      description: 分页返回图片，可按 Token、时间、文件名关键词，以及是否已豁免冷图清理过滤。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
       security:
         - session: []
       parameters:
@@ -756,7 +756,7 @@ paths:
       operationId: deleteImage
       tags: [Admin · Images]
       summary: 删除图片
-      description: 立即删除这条图片引用；已启用 CDN 缓存清除（`derived.cdn_purge_enabled`）时，同时清除它在 CDN 上的缓存。内容相同的图片共用一份物理图，物理图不再被任何图片引用时，经过删除宽限（`delete_grace_minutes`）后，后台删除它在各渠道上的副本与衍生图。普通用户删除他人的图返回 404。
+      description: 立即删除这条图片引用；已启用 CDN 缓存清除（`derived.cdn_purge_enabled`）时，删除后在后台清除它在 CDN 上的缓存。内容相同的图片共用一份物理图，物理图不再被任何图片引用时，经过删除宽限（`delete_grace_minutes`）后，后台删除它在各渠道上的副本，以及本机的衍生图缓存。普通用户删除他人的图返回 404。
       security:
         - session: []
       parameters:
@@ -1886,7 +1886,7 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '500':
-          description: 有健康渠道列举快照失败
+          description: 任一健康渠道列举快照失败
           content:
             application/json:
               schema:
@@ -2195,7 +2195,7 @@ components:
                 description: 本次 EXIF 档位；缺省用运营配置的全局默认
               ttl:
                 type: string
-                description: 有效期秒数（0 到 3153600000 的整数），或 `never` 表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
+                description: 有效期秒数，0 到 3153600000 的整数；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
     UploadURL:
       required: true
       content:
@@ -2580,7 +2580,7 @@ components:
           enum: [strip, passthrough]
           description: 本次 EXIF 档位；缺省用运营配置的全局默认
         ttl:
-          description: 有效期秒数（数字或数字字符串），或 `never` 表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
+          description: 有效期秒数，0 到 3153600000 的整数，可写成数字或数字字符串；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
           oneOf:
             - type: integer
             - type: string

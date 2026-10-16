@@ -125,8 +125,8 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 | 409 | 与现有状态冲突，如重名、渠道持有部分图片的唯一副本、渠道正在清理中，或渠道配置在保存期间已被改动 |
 | 413 | 超过单图大小上限（运营配置 `max_upload_mb`）|
 | 415 | 不是支持的图片格式（按文件内容判定）|
-| 422 | 分辨率超出像素预算（运营配置 `max_pixels_mp`）；导出 rclone 配置时有参数值写不进配置文件（`channel_unrepresentable`）；要恢复的快照不是完整的数据库文件（`snapshot_corrupt`）|
-| 429 | 上传并发已满、该用户上传过于频繁，或登录尝试过于频繁；有 `Retry-After` 头时按它等待 |
+| 422 | 分辨率超出像素预算（运营配置 `max_pixels_mp`）；导出 rclone 配置时有参数值写不进配置文件（`channel_unrepresentable`）；要恢复的快照不是完整的数据库文件，或不是 ImgYoung 的元数据库（`snapshot_corrupt`）|
+| 429 | 已达上传并发上限、该用户上传过于频繁，或登录尝试过于频繁；有 `Retry-After` 头时按它等待 |
 | 500 | 服务端内部错误，包括数据库故障，错误码 `internal`，可稍后重试。访问数据库的接口都可能返回 500 |
 | 503 | 上传时没有健康渠道可写，或同步副本数不足；访问图片时暂无渠道能读出 |
 
@@ -136,7 +136,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 
 - **时刻**：除特别说明外，均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`（如 `2026-10-15 08:30:00`），不带时区后缀。例外是构建信息的 `built_at` 与备份快照的 `taken_at`，为 RFC 3339 格式，其中 `taken_at` 精确到毫秒。
 - **列表**：列表接口返回 `{"items": […], "total": N}`，`total` 是过滤后的总条数。
-- **分页**：图片、上传 Token、疑似重复、待清理、审计日志、告警列表支持 `page` 与 `page_size`。`page` 从 1 起，默认 1；`page_size` 默认 20，最大 100，超出按 100 处理。
+- **分页**：图片、上传 Token、疑似重复、待清理、审计日志列表，以及告警列表（`status=all` 时）支持 `page` 与 `page_size`。`page` 从 1 起，默认 1；`page_size` 默认 20，最大 100，超出按 100 处理。
 - **时间范围**：图片列表与审计日志支持 `since`（含）与 `until`（不含），格式同上。
 - **ID**：图片为 10 位短 ID 字符串；用户 ID 为字符串，内置管理员为 `default`；Token、渠道、疑似重复候选等记录为整数；备份快照以文件名标识。
 - **幂等上传**：上传请求可带 `Idempotency-Key` 头。在保留期内，同一用户用同一个键重试，返回同一张图。保留期由运营配置 `idempotency_key_ttl_hours` 决定，默认 24 小时。键按用户隔离。
@@ -159,7 +159,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
     仪表盘与运行配置
   </Card>
   <Card title="后台·上传" href="./admin-upload.mdx">
-    会话认证的后台上传，与数据面同一管道
+    会话认证的后台上传，处理流程与数据面相同
   </Card>
   <Card title="后台·图片" href="./admin-images.mdx">
     图片列表、详情、修改与删除
@@ -171,7 +171,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
     渠道模板、创建、编辑、探测、删除与网盘授权
   </Card>
   <Card title="后台·用户" href="./admin-users.mdx">
-    多用户建号、配额与密码重置（仅管理员）
+    用户的创建、配额与密码重置（仅管理员）
   </Card>
   <Card title="后台·防盗链" href="./admin-referer.mdx">
     Referer 白名单（仅管理员）

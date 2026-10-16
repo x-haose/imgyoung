@@ -26,6 +26,8 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh
 ```
 
+安装时用了 `--dir` 或 `sudo` 的，升级时要带同样的参数。否则新版本会装到默认目录（以 root 运行时为 `/usr/local/bin`，其他用户为 `~/.local/bin`），旧的二进制原样留在原处。
+
 `--service` 会用发布包里的 `deploy/imgyoung.service` 覆盖 `/etc/systemd/system/imgyoung.service`。自定义的环境变量请放在 `systemctl edit` 创建的 drop-in 里，它不会被覆盖。
 
 </Tab>
@@ -85,7 +87,7 @@ task build
 </Tab>
 </Tabs>
 
-停止服务时，ImgYoung 先停止接收新请求，等正在处理的请求和补齐任务结束，总共最多约 8 秒，超时的请求会被强制断开，然后退出。Docker 默认的 10 秒停止时限，以及 `deploy/` 示例里的 `stop_grace_period: 15s`（Compose）和 `TimeoutStopSec=15s`（systemd）都足够。被打断的补齐任务会在下次启动后重新排队。
+停止服务时，ImgYoung 先停止接收新请求，等正在处理的请求结束，再中止在途的补齐任务，总共最多约 8 秒，超时的请求会被强制断开，然后退出。Docker 默认的 10 秒停止时限，以及 `deploy/` 示例里的 `stop_grace_period: 15s`（Compose）和 `TimeoutStopSec=15s`（systemd）都足够。被打断的补齐任务会在下次启动后重新排队。
 
 ## 数据库迁移
 
@@ -116,7 +118,7 @@ task build
 </Step>
 <Step>
 
-把升级前的快照（或停止服务时复制的数据库）放到数据目录，命名为 `imgyoung.db.restore`。不要直接覆盖 `imgyoung.db`：直接覆盖的话，升级之后写进渠道的对象会被当作无主对象，48 小时后删除。
+把升级前的快照（或停止服务时复制的数据库）放到数据目录，命名为 `imgyoung.db.restore`。不要直接覆盖 `imgyoung.db`：直接覆盖的话，升级之后写进渠道的对象会被当作无主对象，写入已满 48 小时的会在下一次对账 GC（服务启动 24 小时后）时删除。
 
 Docker 部署时，文件属主必须是 `65532:65532`，写入方法参考[灾难恢复](./backup.mdx#主机全损后的灾难恢复)里借助临时容器的做法。
 
