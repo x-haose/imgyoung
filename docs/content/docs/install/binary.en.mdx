@@ -136,7 +136,7 @@ A relative path is resolved against the working directory at startup. The direct
 ### Listening address and command-line flags
 
 - It listens on `:8721` by default, which is every interface. If only a reverse proxy on the same host should reach it, set `IMGYOUNG_LISTEN=127.0.0.1:8721`. Other environment variables are listed in [Configuration](../configuration.mdx).
-- `./imgyoung -version` prints the version and exits. This is the only command-line flag; everything else is configured through environment variables and the console. Any other argument makes it exit with an error (exit code 2) without starting the server.
+- `./imgyoung -version` prints the version and exits. This is the only command-line flag; everything else is configured through environment variables and the console. `-h` only prints the usage; any other argument makes it exit with an error (exit code 2) without starting the server.
 
 ## Running under a process supervisor
 

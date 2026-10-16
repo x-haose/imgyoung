@@ -93,7 +93,7 @@ The upload fails with 503 (error code `upload_unavailable`), and no metadata is 
 - there are not enough healthy channels, or every write fails;
 - a channel the upload already wrote to turns **Draining** in the meantime, so its copy no longer counts, and the remaining copies fall short of **Minimum synced replicas**.
 
-Whichever step an upload fails at, the objects it wrote to channels are deleted right away. Anything that could not be deleted is reclaimed as an orphan by the daily reconciliation.
+Whichever step an upload fails at, the objects it wrote to channels are deleted right away. Objects left behind because that deletion failed or the process exited midway are reclaimed as orphans by the daily reconciliation on active channels; on a channel that turned **Draining** during the upload they stay at the provider, see [Deleting a channel](#deleting-a-channel).
 
 <Callout type="info">
 If **Minimum synced replicas** exceeds the number of healthy channels, every upload fails. Setting it to 2 means an upload only succeeds once two channels hold it, at the cost of higher write latency and a dependency on several channels being up at once.
@@ -244,9 +244,9 @@ With **Delete and purge**, the drain job deletes objects in this order:
 
 Files other programs wrote are left alone. Also:
 
-- Once the channel turns **Draining**, new writes are refused immediately. The drain waits for writes already in progress to finish before it starts, so nothing this service wrote is missed.
-- The drain deletes only these recorded objects, and the daily reconciliation does not scan draining channels. Orphans left by failed uploads that are less than 48 hours old stay at the provider after the purge.
-- One drain run lasts at most an hour. After a timeout or a shutdown, the next run continues with what is left; neither counts as a failure.
+- Once the channel turns **Draining**, new writes are refused immediately. The drain waits for writes already in progress to finish before it starts, so every object this service wrote and recorded is deleted.
+- The drain deletes only these recorded objects, and the daily reconciliation does not scan draining channels. Orphans that failed uploads could not delete and reconciliation has not reclaimed yet stay at the provider after the purge.
+- One drain run lasts at most an hour. After a timeout or a shutdown, the next run continues with what is left; neither counts as a failure or as an attempt.
 - A draining channel, even one that failed to load, cannot be edited, tested, probed again or re-authorized. Its row menu offers only **Remove now**, and the API answers 409 (error code `channel_deleting`).
 
 ### When draining fails

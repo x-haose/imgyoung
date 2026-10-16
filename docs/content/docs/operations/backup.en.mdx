@@ -120,7 +120,7 @@ Before you start, you need:
 
 **Stop the service and put the master key and snapshot in place**: put the original master key in the data directory as `master.key`, and the snapshot file in the data directory as `imgyoung.db.restore`.
 
-Do not overwrite `imgyoung.db` with the snapshot. A snapshot put in place as `imgyoung.db.restore` is handled as a restore, which keeps the objects written to the channels after the snapshot; if you overwrite the database directly, those objects are treated as orphans, and those written more than 48 hours earlier are deleted at the next reconciliation GC (24 hours after the service starts).
+Do not overwrite `imgyoung.db` with the snapshot. A snapshot put in place as `imgyoung.db.restore` is handled as a restore, which keeps the objects written to the channels after the snapshot; if you overwrite the database directly, those objects are treated as orphans: reconciliation GC first runs 24 hours after the service starts and then every 24 hours, and each run deletes the orphans written more than 48 hours earlier.
 
 A snapshot put in place by hand skips the integrity check that restores from the admin console get, so you may want to check it yourself: `sqlite3 imgyoung-20261015-083000.123.db 'PRAGMA quick_check;'` should print `ok`, and the output of `sqlite3 imgyoung-20261015-083000.123.db '.tables'` should include `schema_revisions`.
 

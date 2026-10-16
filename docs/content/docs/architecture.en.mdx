@@ -278,7 +278,7 @@ write objects and their records under the channel's write lease. Once a channel 
 refused immediately rather than queued behind the drain. The drain job waits for the writes already in progress to
 finish before it lists objects and records. As a result, the drain sees every object this service wrote under the lease
 that already has a replica record. The exception is objects left behind when an upload was not recorded and deleting
-what it had already written also failed; see [Upload data flow](#upload-data-flow).
+what it had already written also failed or the process exited midway; see [Upload data flow](#upload-data-flow).
 
 ### Other asynchronous jobs
 
@@ -307,6 +307,7 @@ When a drain fails:
 - Only when the same drain job still fails on its 4th attempt (about 98 seconds after the first failure with River's
   default backoff) does it write the failure conclusion into the channel and raise a `drain_failed` alert. Before that
   the channel just shows as **Draining**, so a single network blip does not produce an open/resolve pair of alerts.
+  A run interrupted by its timeout or a shutdown is requeued at once and does not count as an attempt.
 - A draining channel that fails to load records the conclusion and raises the alert immediately, since a channel that
   cannot be loaded cannot be drained.
 - The job keeps retrying with backoff. Once its attempts run out, reconciliation queues a new job that counts from
@@ -455,6 +456,7 @@ deploy apart from the storage channels. Exact dependency versions are whatever t
 | Periodic tasks | A `Run(ctx, wait)` loop owned by each service | Periodic tasks only need "run every so often", with the interval taken from runtime settings and rescheduled the moment it changes; no cron library |
 | Wiring | Assembled by hand in `cmd/imgyoung/build.go` | The set of components is fixed and their dependencies are static, so calling constructors in order is enough: searchable, navigable, with no reflection or runtime container. No DI framework |
 | Lifecycle | oklog/run | HTTP, River, and each background loop are actors; when any of them exits, the whole group shuts down in order. Harder to get wrong than hand-rolled `WaitGroup`s and channels |
+| systemd readiness | the `daemon` package of coreos/go-systemd | The systemd unit is `Type=notify`; the service sends `READY=1` once it has opened the database and is listening. rclone already depends on this module, so it adds no new dependency |
 | Architecture guard | depguard (built into golangci-lint) | The direction of dependencies between layers is a lint rule enforced in CI; see [Layers and dependency direction](#layers) |
 | Perceptual hash | goimagehash | Pure Go; takes the decoded `image.Image`, so it plugs straight into the upload's decode step |
 | Image codecs | Standard library, `golang.org/x/image`, gen2brain/webp | None needs cgo; gen2brain/webp encodes WebP by running libwebp in a pure-Go WebAssembly runtime |

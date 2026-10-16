@@ -48,8 +48,8 @@
 
 ## 功能
 
-- **上传**：后台拖拽与粘贴、HTTP 接口、URL 转存、S3 兼容接口，PicGo、PicList、ShareX、Typora 都能直接接入；上传接口支持幂等键，客户端重试不会产生重复的图。
-- **访问**：短链接 `/i/<id>` 指向的内容永不改变，可以交给 CDN 按一年缓存；`?w=` 按预设宽度缩放，浏览器支持时自动输出 WebP；Referer 白名单防盗链；也可以把访问 302 到渠道自己的公开地址，节省本机流量。
+- **上传**：后台拖拽与粘贴、HTTP 接口、URL 转存、S3 兼容接口，PicGo、PicList、ShareX 可以直接接入，Typora 经 PicGo 接入；上传接口支持幂等键，客户端重试不会产生重复的图。
+- **访问**：短链接 `/i/<id>` 可以交给 CDN 按一年缓存；`?w=` 按预设宽度缩放，浏览器支持时自动输出 WebP；Referer 白名单防盗链；也可以把访问 302 到渠道自己的公开地址，节省本机流量。
 - **存储**：常用对象存储与网盘都有现成模板，其他 rclone 后端直接填参数；优先级决定主备；定时健康探测，故障渠道自动降级，恢复后自动启用；可以要求每次上传同步写够 N 份。
 - **管理**：多用户与存储配额；具名上传 Token，可设有效期、轮转、吊销；审计日志、告警与 Webhook、Prometheus 指标；中英双语，亮色与暗色主题。
 - **生命周期**：图片有效期与访问续期；长期没人访问的图进入待清理列表；字节完全相同的图自动合并，外观相似的图由管理员裁决。
@@ -69,7 +69,7 @@
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/public/screenshots/detail-zh-dark.webp">
-        <img src="docs/public/screenshots/detail-zh-light.webp" alt="图片详情：分享链接、缩放档位、副本分布">
+        <img src="docs/public/screenshots/detail-zh-light.webp" alt="图片详情：分享链接、复制格式、缩放档位与元数据">
       </picture>
       <p align="center">图片详情</p>
     </td>
@@ -110,7 +110,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
 ```
 
-或者在 Linux / macOS 上一行装成本机程序（Linux 上改用 `| sudo sh -s -- --service`，会同时注册 systemd 服务）：
+或者在 Linux / macOS 上一行装成本机程序，装完运行 `imgyoung` 启动（Linux 上改用 `| sudo sh -s -- --service`，会注册 systemd 服务并直接启动）：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh

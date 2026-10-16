@@ -120,7 +120,7 @@ ImgYoung 定期为元数据库做快照，并把同一份快照写到每个健�
 
 **停止服务，放入主密钥与快照**：把原来的主密钥放到数据目录，命名为 `master.key`；把快照文件放到数据目录，命名为 `imgyoung.db.restore`。
 
-不要直接用快照覆盖 `imgyoung.db`。以 `imgyoung.db.restore` 放入时，ImgYoung 会按恢复处理，保留快照之后写进渠道的对象；直接覆盖的话，这些对象会被当作无主对象，写入已满 48 小时的会在下一次对账 GC（服务启动 24 小时后）时删除。
+不要直接用快照覆盖 `imgyoung.db`。以 `imgyoung.db.restore` 放入时，ImgYoung 会按恢复处理，保留快照之后写进渠道的对象；直接覆盖的话，这些对象会被当作无主对象：对账 GC 在服务启动 24 小时后第一次运行，此后每 24 小时一次，每次都删除写入已满 48 小时的无主对象。
 
 手动放入的快照不经过后台恢复时的完整性检查，可以先自行检查：`sqlite3 imgyoung-20261015-083000.123.db 'PRAGMA quick_check;'` 应输出 `ok`，`sqlite3 imgyoung-20261015-083000.123.db '.tables'` 的结果里应有 `schema_revisions`。
 

@@ -135,7 +135,7 @@ When you delete a channel, **Also delete what this service stored on the channel
 | Keep it ticked and click **Delete and purge** | Shows as **Draining** and is removed once its data is gone | Image replicas, metadata snapshots and leftover deep-check files are deleted one by one in the background |
 | Untick it and click **Remove only** | Removed immediately | Image replicas and metadata snapshots are left as they are, for you to deal with at the provider if needed |
 
-If this channel holds the only ready replica of some images, both kinds of deletion are refused with 409, and the message gives the number of such images; replicas on draining channels do not count. Add or fix another channel first and wait until its **Replicas** column shows no pending replicas, or delete those images, then delete the channel.
+If this channel holds the only ready replica of some images, both kinds of deletion are refused with 409, and the message gives the number of such images; replicas on draining channels do not count. Add or fix another channel first and wait until those images have ready replicas on the other channels (no **pending** and no **failed** in their **Replicas** column), or delete those images, then delete the channel.
 
 **Delete and purge** deletes only these objects: image replicas on record, objects under the system directory `_imgyoung/` (metadata snapshots included) and deep-check leftovers. Everything else in the channel is left alone: files written by other programs are untouched, and orphans left by failed uploads that reconciliation has not deleted yet also stay at the provider.
 
@@ -145,7 +145,7 @@ Once a channel is draining, editing, test connection, probing and re-authorizing
 
 A failed purge is retried automatically with backoff and never stops. If the channel was only temporarily unavailable, it finishes draining on its own once it recovers.
 
-- Only when the same purge job still fails on its 4th attempt (about 98 seconds after the first failure with the built-in backoff) is the reason written to the channel and shown in the **Draining** badge's tooltip, prefixed with an explanation of the purge failure, and a "Channel drain failed" alert opened. Until then the channel just shows **Draining**, so a single network hiccup does not raise an alert. A purge run that merely times out or is interrupted by a shutdown does not count as a failure.
+- Only when the same purge job still fails on its 4th attempt (about 98 seconds after the first failure with the built-in backoff) is the reason written to the channel and shown in the **Draining** badge's tooltip, prefixed with an explanation of the purge failure, and a "Channel drain failed" alert opened. Until then the channel just shows **Draining**, so a single network hiccup does not raise an alert. A purge run that merely times out or is interrupted by a shutdown does not count as a failure or as an attempt.
 - A draining channel that cannot be loaded cannot be purged either, so the load failure is shown right away and opens the "Channel drain failed" alert. As soon as the channel loads, that reason is cleared and the alert resolves; from then on only failures of the purge itself can open it again.
 - The reason for a purge failure and its alert stay until the channel is purged or removed.
 

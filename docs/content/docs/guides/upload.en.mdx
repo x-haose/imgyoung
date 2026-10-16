@@ -109,7 +109,7 @@ On a flaky network a client may send the same upload twice. Sending an `Idempote
 - Only successful uploads record their key, so a failed request can safely be retried with the same key.
 - Of several concurrent requests with the same key, only one is stored; the others return the same result, and the objects they already wrote to channels are deleted right away.
 - Keys are scoped per user: two users can use the same key without affecting each other, so nobody can use an idempotency key to probe for or retrieve someone else's image.
-- Once the retention period has passed, or the image the key points to has been deleted, the same key is treated as a new upload.
+- Once the retention period has passed, or the image the key points to has been deleted or has expired, the same key is treated as a new upload.
 
 Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3-compatible API does not. A URL import that hits a key returns the first result right away without fetching the remote address again.
 
@@ -252,7 +252,7 @@ The EXIF policy takes effect at upload time, and the processed bytes are what th
 
 This is because an original's bytes never change after upload, and responses carry `Cache-Control: immutable`, so browsers and CDNs can safely cache them for a year. If EXIF were processed on access, changing the global policy would change the bytes served by the same original's link: the CDN cache would have to be purged wholesale, and old bytes already cached in visitors' browsers could not be invalidated at all.
 
-A `/i/` link does not always serve the original: for a JPEG, PNG or WebP original requested without parameters, the format is negotiated from the request's `Accept` header, and variants are generated with the current **Target formats** and encoding quality; see [on-demand processing](./access.mdx#on-demand-processing). After you change these settings, output that is already cached does not update right away: CDN caches update once they expire or are purged manually, and browser caches once they expire (up to a year). See [CDN](../operations/cdn.mdx).
+A `/i/` link does not always serve the original: for a JPEG or PNG original requested without parameters, the format is negotiated from the request's `Accept` header, and variants are generated with the current **Target formats** and encoding quality; see [on-demand processing](./access.mdx#on-demand-processing). After you change these settings, output that is already cached does not update right away: CDN caches update once they expire or are purged manually, and browser caches once they expire (up to a year). See [CDN](../operations/cdn.mdx).
 
 ## Uploading the same image more than once
 

@@ -48,8 +48,8 @@ When an image host loses your files, every link to them in blog posts, docs and 
 
 ## Features
 
-- **Upload**: drag and drop or paste in the admin console, the HTTP API, URL import, and an S3-compatible API; PicGo, PicList, ShareX and Typora connect directly. The upload API accepts idempotency keys, so client retries never create duplicates.
-- **Serve**: short links `/i/<id>` never change content, so a CDN can cache them for a year; `?w=` resizes to preset widths and serves WebP to browsers that accept it; Referer allowlist against hotlinking; optionally 302 visitors to a channel's own public URL to save bandwidth.
+- **Upload**: drag and drop or paste in the admin console, the HTTP API, URL import, and an S3-compatible API; PicGo, PicList and ShareX connect directly, and Typora connects through PicGo. The upload API accepts idempotency keys, so client retries never create duplicates.
+- **Serve**: short links `/i/<id>` can be cached by a CDN for a year; `?w=` resizes to preset widths and serves WebP to browsers that accept it; Referer allowlist against hotlinking; optionally 302 visitors to a channel's own public URL to save bandwidth.
 - **Storage**: ready-made templates for common object storage and cloud drives, raw parameters for any other rclone backend; priority decides primary and backups; scheduled health checks demote failing channels and bring them back once they recover; optionally require N synchronous copies per upload.
 - **Administration**: multiple users with storage quotas; named upload tokens with expiry, rotation and revocation; audit log, alerts and webhooks, Prometheus metrics; English and Simplified Chinese, light and dark themes.
 - **Lifecycle**: per-image expiry with renew-on-access; images nobody has opened for a long time go to a cleanup queue; byte-identical images merge automatically, and look-alikes wait for an admin's decision.
@@ -69,7 +69,7 @@ When an image host loses your files, every link to them in blog posts, docs and 
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/public/screenshots/detail-en-dark.webp">
-        <img src="docs/public/screenshots/detail-en-light.webp" alt="Image details: share links, resize presets, and where the copies live">
+        <img src="docs/public/screenshots/detail-en-light.webp" alt="Image details: share links, copy formats, resize presets and metadata">
       </picture>
       <p align="center">Image details</p>
     </td>
@@ -110,7 +110,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
 ```
 
-Or install it as a local program on Linux or macOS in one line (on Linux, use `| sudo sh -s -- --service` instead to also register a systemd service):
+Or install it as a local program on Linux or macOS in one line, then run `imgyoung` to start it (on Linux, use `| sudo sh -s -- --service` instead to register a systemd service and start it right away):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh

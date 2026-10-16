@@ -12,7 +12,7 @@ description: 图片链接的两种形式、按需缩放与格式转换、缓存�
 
 两种链接都公开访问，不需要登录。它们的防盗链、访问计数、按需处理和渠道容灾读取完全一致，只有缓存方式不同，见[缓存与条件请求](#caching)。
 
-图片删除后，链接立即返回 404；经 CDN 访问时，CDN 已缓存的内容要靠缓存清理才会失效，见[删除流程](./lifecycle.mdx#delete-flow)。设了有效期的图一到期就返回 404，不等清理扫描回收，见[生命周期与查重](./lifecycle.mdx)。
+图片删除后，链接立即返回 404；经 CDN 访问 `/i/` 链接时，CDN 已缓存的内容要靠缓存清理才会失效（`/o/` 链接每次都回源确认，随即返回 404），见[删除流程](./lifecycle.mdx#delete-flow)。设了有效期的图一到期就返回 404，不等清理扫描回收，见[生命周期与查重](./lifecycle.mdx)。
 
 链接支持 GET 与 HEAD。HEAD 不带正文，也不计访问。其他状态码见页末[状态码](#status-codes)，完整接口定义见[接口参考：图片访问](../api/image-access.mdx)。
 
@@ -93,7 +93,7 @@ https://img.example.com/i/R0RjUyP1UW?format=jpeg
 
 两种响应带 `Cache-Control: no-store`，不缓存：按需处理失败后的降级输出，以及 302 跳转。
 
-短链背后的内容只在一种情况下会变：管理员合并疑似重复图后，被合并一方的链接输出保留方的内容。浏览器与 CDN 已缓存的旧内容，要等缓存过期才更新，见[生命周期与查重](./lifecycle.mdx#deduplication)。合并不会触发 CDN 缓存清除，需要立即生效时，手动清除 CDN 缓存，见 [CDN](../operations/cdn.mdx#cloudflare-缓存清除)。
+短链指向的原图只在一种情况下会变：管理员合并疑似重复图后，被合并一方的链接输出保留方的图片。浏览器与 CDN 已缓存的旧内容，要等缓存过期才更新，见[生命周期与查重](./lifecycle.mdx#deduplication)。合并不会触发 CDN 缓存清除，需要立即生效时，手动清除 CDN 缓存，见 [CDN](../operations/cdn.mdx#cloudflare-缓存清除)。
 
 ## 访问模式：代理与 302
 

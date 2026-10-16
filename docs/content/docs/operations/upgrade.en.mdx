@@ -118,7 +118,7 @@ Switch back to the older binary or image tag.
 </Step>
 <Step>
 
-Put the pre-upgrade snapshot (or the database copied while the service was stopped) in the data directory as `imgyoung.db.restore`. Do not overwrite `imgyoung.db` with it: if you do, objects written to the channels after the upgrade are treated as orphans, and those written more than 48 hours earlier are deleted at the next reconciliation GC (24 hours after the service starts).
+Put the pre-upgrade snapshot (or the database copied while the service was stopped) in the data directory as `imgyoung.db.restore`. Do not overwrite `imgyoung.db` with it: if you do, objects written to the channels after the upgrade are treated as orphans: reconciliation GC first runs 24 hours after the service starts and then every 24 hours, and each run deletes the orphans written more than 48 hours earlier.
 
 For Docker, the file must be owned by `65532:65532`; use the throwaway-container approach shown in [disaster recovery](./backup.mdx#disaster-recovery-after-losing-the-host).
 
