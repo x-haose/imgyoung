@@ -38,7 +38,13 @@ func alertItemFrom(a sqlc.Alert) (alertItem, error) {
 
 // HandleAlertList 列出告警:缺省只给未恢复的全部;?status=all 分页给全部历史(含已恢复),最新在前。
 func (h *Handlers) HandleAlertList(w http.ResponseWriter, r *http.Request) {
+	// 分页参数无论是否用到都先校验:缺省模式不分页,但给出的非法值同样拒绝。
 	all, err := flagParam(r.URL.Query(), "status", "all")
+	if err != nil {
+		h.writeQueryError(w, err)
+		return
+	}
+	limit, offset, err := pagination(r)
 	if err != nil {
 		h.writeQueryError(w, err)
 		return
@@ -48,11 +54,6 @@ func (h *Handlers) HandleAlertList(w http.ResponseWriter, r *http.Request) {
 		total int64
 	)
 	if all {
-		limit, offset, perr := pagination(r)
-		if perr != nil {
-			h.writeQueryError(w, perr)
-			return
-		}
 		rows, err = h.cfg.Queries.ListAlertsPage(r.Context(), sqlc.ListAlertsPageParams{Limit: limit, Offset: offset})
 		if err == nil {
 			total, err = h.cfg.Queries.CountAlerts(r.Context())

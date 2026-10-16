@@ -1,5 +1,5 @@
 import { createFileRoute, stripSearchParams } from '@tanstack/react-router'
-import { day, int, oneOf, searchSchema, str } from '@/lib/search'
+import { day, int, oneOf, pageParam, searchSchema, str } from '@/lib/search'
 import { requireAdmin } from '@/lib/session'
 import { Audit } from '@/features/audit'
 import { AUDIT_ACTIONS } from '@/features/audit/actions'
@@ -9,7 +9,7 @@ const defaults = { page: 1, page_size: AUDIT_PAGE_SIZE }
 
 export const Route = createFileRoute('/_authenticated/audit/')({
   validateSearch: searchSchema({
-    page: int(defaults.page, 1),
+    page: pageParam(defaults.page),
     page_size: int(defaults.page_size, 1, 100),
     action: oneOf(AUDIT_ACTIONS, undefined),
     actor: str(),

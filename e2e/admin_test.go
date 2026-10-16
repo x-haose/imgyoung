@@ -466,6 +466,7 @@ func TestListQueryParamsRejectInvalid(t *testing.T) {
 		"/api/admin/audit?until=2026-10-16":    "until",
 		"/api/admin/alerts?status=open":        "status",
 		"/api/admin/alerts?status=all&page=-1": "page",
+		"/api/admin/alerts?page_size=abc":      "page_size",
 		"/api/admin/tokens?page_size=x":        "page_size",
 		"/api/admin/dedup?page=1.5":            "page",
 		"/api/admin/cleanup?page_size=0":       "page_size",

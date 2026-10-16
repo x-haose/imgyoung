@@ -73,6 +73,13 @@ export const int =
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback
   }
 
+/** 页码上限,与服务端分页参数 page 的上限一致。 */
+const MAX_PAGE = 2147483647
+
+/** 页码:1 到 MAX_PAGE 的整数,其余回缺省。 */
+export const pageParam = (fallback: number): Parser<number> =>
+  int(fallback, 1, MAX_PAGE)
+
 /** 枚举值之一;不在集合内回缺省,给了缺省值则结果必有值。 */
 export function oneOf<const V extends readonly string[]>(
   values: V,

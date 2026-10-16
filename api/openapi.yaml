@@ -69,7 +69,7 @@ tags:
     x-slug: admin-channels
   - name: Admin · Users
     x-displayName: 后台·用户
-    description: 用户的创建、配额与密码重置（仅管理员）
+    description: 用户账号、配额与密码重置（仅管理员）
     x-description-en: User accounts, quotas, and password resets (administrators only)
     x-slug: admin-users
   - name: Admin · Hotlink protection
@@ -2111,6 +2111,7 @@ components:
       schema:
         type: integer
         minimum: 1
+        maximum: 2147483647
     pageSize:
       name: page_size
       in: query
