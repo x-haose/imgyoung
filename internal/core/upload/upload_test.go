@@ -385,6 +385,38 @@ func TestProcessIdempotencyKeyExpires(t *testing.T) {
 	}
 }
 
+// TestProcessIdempotencyKeyImageExpired 验证幂等键所指的图到期后(清理扫描还没回收)键即失效:
+// 不再命中,同键的新上传删掉旧键再写入,不会撞主键。
+func TestProcessIdempotencyKeyImageExpired(t *testing.T) {
+	env := newTestEnv(t, nil)
+	opts := upload.Options{
+		UserID: sqlc.DefaultUserID, FileName: "a.png", IdempotencyKey: "short-lived",
+		EXIFPolicy: imaging.PolicyPassthrough, TTL: time.Hour, TTLSet: true,
+	}
+	first, err := env.svc.Process(t.Context(), pngBytes(t), opts)
+	if err != nil {
+		t.Fatalf("第一次 Process: %v", err)
+	}
+	if _, err := env.Conn.ExecContext(t.Context(), `UPDATE images SET expire_at = ? WHERE id = ?`,
+		sqlc.TimeText(time.Now().Add(-time.Minute)), first.ImageID); err != nil {
+		t.Fatalf("改写到期时刻: %v", err)
+	}
+	if _, found, err := env.svc.ExistingUpload(t.Context(), sqlc.DefaultUserID, "short-lived"); err != nil || found {
+		t.Fatalf("所指的图已到期,幂等键不应命中: found=%v err=%v", found, err)
+	}
+	second, err := env.svc.Process(t.Context(), pngBytes(t), opts)
+	if err != nil {
+		t.Fatalf("到期后同键上传: %v", err)
+	}
+	if second.ImageID == first.ImageID {
+		t.Fatalf("到期的图仍被幂等键命中 %q", first.ImageID)
+	}
+	got, found, err := env.svc.ExistingUpload(t.Context(), sqlc.DefaultUserID, "short-lived")
+	if err != nil || !found || got != second.ImageID {
+		t.Fatalf("同键新上传后命中 %q(found=%v err=%v), 期望 %q", got, found, err, second.ImageID)
+	}
+}
+
 // TestProcessIdempotencyIsolatedPerUser 验证幂等键按用户隔离:两个用户用同一个键各得一张图,
 // 各自重试仍只命中自己的那张。
 func TestProcessIdempotencyIsolatedPerUser(t *testing.T) {

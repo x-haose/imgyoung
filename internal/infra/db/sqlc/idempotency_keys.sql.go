@@ -49,36 +49,53 @@ func (q *Queries) DeleteIdempotencyKeysByImage(ctx context.Context, imageID stri
 }
 
 const getIdempotencyImage = `-- name: GetIdempotencyImage :one
-SELECT image_id
-FROM idempotency_keys
-WHERE user_id = ?1 AND key = ?2 AND created_at >= CAST(?3 AS TEXT)
+SELECT k.image_id
+FROM idempotency_keys k
+JOIN images i ON i.id = k.image_id
+WHERE k.user_id = ?1 AND k.key = ?2 AND k.created_at >= CAST(?3 AS TEXT)
+  AND (i.expire_at IS NULL OR i.expire_at > CAST(?4 AS TEXT))
 `
 
 type GetIdempotencyImageParams struct {
 	UserID string
 	Key    string
 	Since  string
+	Now    string
 }
 
 func (q *Queries) GetIdempotencyImage(ctx context.Context, arg GetIdempotencyImageParams) (string, error) {
-	row := q.db.QueryRowContext(ctx, getIdempotencyImage, arg.UserID, arg.Key, arg.Since)
+	row := q.db.QueryRowContext(ctx, getIdempotencyImage,
+		arg.UserID,
+		arg.Key,
+		arg.Since,
+		arg.Now,
+	)
 	var image_id string
 	err := row.Scan(&image_id)
 	return image_id, err
 }
 
-const releaseExpiredIdempotencyKey = `-- name: ReleaseExpiredIdempotencyKey :exec
+const releaseStaleIdempotencyKey = `-- name: ReleaseStaleIdempotencyKey :exec
 DELETE FROM idempotency_keys
-WHERE user_id = ?1 AND key = ?2 AND created_at < CAST(?3 AS TEXT)
+WHERE idempotency_keys.user_id = ?1 AND idempotency_keys.key = ?2
+  AND (idempotency_keys.created_at < CAST(?3 AS TEXT)
+       OR EXISTS (SELECT 1 FROM images i
+                  WHERE i.id = idempotency_keys.image_id AND i.expire_at <= CAST(?4 AS TEXT)))
 `
 
-type ReleaseExpiredIdempotencyKeyParams struct {
+type ReleaseStaleIdempotencyKeyParams struct {
 	UserID string
 	Key    string
 	Since  string
+	Now    string
 }
 
-func (q *Queries) ReleaseExpiredIdempotencyKey(ctx context.Context, arg ReleaseExpiredIdempotencyKeyParams) error {
-	_, err := q.db.ExecContext(ctx, releaseExpiredIdempotencyKey, arg.UserID, arg.Key, arg.Since)
+func (q *Queries) ReleaseStaleIdempotencyKey(ctx context.Context, arg ReleaseStaleIdempotencyKeyParams) error {
+	_, err := q.db.ExecContext(ctx, releaseStaleIdempotencyKey,
+		arg.UserID,
+		arg.Key,
+		arg.Since,
+		arg.Now,
+	)
 	return err
 }

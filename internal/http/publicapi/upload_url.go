@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
@@ -54,60 +55,84 @@ func (h *Handlers) HandleSessionUploadURL(w http.ResponseWriter, r *http.Request
 	h.serveUploadURL(w, r, si.Principal.UserID, 0)
 }
 
-// serveUploadURL URL 转存的共享管道:解析请求 → 查幂等键 → 带 SSRF 约束地抓取 → 交给上传管道。
-// @Description: 幂等键在抓取之前查,命中即返回第一次的结果,不再访问远端。抓回的字节走与直传完全相同的编排
-// (格式白名单/像素预算/净化/哈希/配额),远端声明的 Content-Type 不参与格式判定——判定一律以 magic bytes 为准。
+// serveUploadURL URL 转存的共享管道:解析并校验请求 → 查幂等键 → 带 SSRF 约束地抓取 → 交给上传管道。
+// @Description: 幂等键在参数校验之后、抓取之前查(与表单上传同序),命中即返回第一次的结果,不再访问远端。
+// 抓回的字节走与直传完全相同的编排(格式白名单/像素预算/净化/哈希/配额),远端声明的 Content-Type
+// 不参与格式判定——判定一律以 magic bytes 为准。
 // @param userID 归属用户 id
 // @param tokenID 来源 Token 记录 id,0 表示非 Token 途径
 func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID string, tokenID int64) {
 	set := h.cfg.Settings()
-	var req urlUploadRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLBodyInvalid)
-		return
-	}
-	if strings.TrimSpace(req.URL) == "" {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLRequired)
-		return
-	}
-
-	policy := imaging.EXIFPolicy(req.EXIFPolicy)
-	if policy == "" {
-		policy = set.EXIFPolicy
-	}
-	ttl, ttlSet, ok := parseTTL(rawTTLString(req.TTL))
+	req, ok := h.parseURLUpload(w, r, set)
 	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
-			"max", strconv.FormatInt(maxTTLSeconds, 10))
 		return
 	}
-
 	idemKey := r.Header.Get(idempotencyHeader)
 	if h.respondExisting(w, r, set, userID, idemKey) {
 		return
 	}
 
-	data, _, err := h.cfg.Fetch.Fetch(r.Context(), req.URL)
+	data, _, err := h.cfg.Fetch.Fetch(r.Context(), req.url)
 	if err != nil {
-		h.writeFetchError(w, set, req.URL, err)
+		h.writeFetchError(w, set, req.url, err)
 		return
-	}
-
-	name := req.FileName
-	if name == "" {
-		name = fileNameFromURL(req.URL)
 	}
 	h.runUpload(w, r, set, data, upload.Options{
 		UserID:         userID,
 		TokenID:        tokenID,
-		FileName:       name,
+		FileName:       req.fileName,
 		IdempotencyKey: idemKey,
-		EXIFPolicy:     policy,
-		TTL:            ttl,
-		TTLSet:         ttlSet,
+		EXIFPolicy:     req.policy,
+		TTL:            req.ttl,
+		TTLSet:         req.ttlSet,
 	})
+}
+
+// urlUpload 解析并校验过的 URL 转存参数。
+type urlUpload struct {
+	url      string             // 待转存的远端地址
+	fileName string             // 文件名:请求显式给出的,否则由地址末段推断
+	policy   imaging.EXIFPolicy // 本次生效的 EXIF 档位,已校验合法
+	ttl      time.Duration      // 显式指定的有效时长,仅 ttlSet 为 true 时生效;0 表示显式永久
+	ttlSet   bool               // 请求是否显式指定了 ttl
+}
+
+// parseURLUpload 解析 URL 转存的请求体并校验参数。
+// @Description: 档位省略时取全局默认;校验失败时已写出错误响应。
+// @param set 配置快照
+// @return 解析后的参数
+// @return 是否通过校验
+func (h *Handlers) parseURLUpload(w http.ResponseWriter, r *http.Request, set config.Settings) (urlUpload, bool) {
+	var req urlUploadRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLBodyInvalid)
+		return urlUpload{}, false
+	}
+	if strings.TrimSpace(req.URL) == "" {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLRequired)
+		return urlUpload{}, false
+	}
+	policy := imaging.EXIFPolicy(req.EXIFPolicy)
+	if policy == "" {
+		policy = set.EXIFPolicy
+	}
+	if err := imaging.ValidatePolicy(policy); err != nil {
+		h.writeUploadError(w, set, err)
+		return urlUpload{}, false
+	}
+	ttl, ttlSet, ok := parseTTL(rawTTLString(req.TTL))
+	if !ok {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
+			"max", strconv.FormatInt(maxTTLSeconds, 10))
+		return urlUpload{}, false
+	}
+	name := req.FileName
+	if name == "" {
+		name = fileNameFromURL(req.URL)
+	}
+	return urlUpload{url: req.URL, fileName: name, policy: policy, ttl: ttl, ttlSet: ttlSet}, true
 }
 
 // respondExisting 幂等键命中时直接返回第一次的结果。
