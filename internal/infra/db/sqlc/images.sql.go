@@ -165,12 +165,13 @@ func (q *Queries) DeleteImage(ctx context.Context, id string) (int64, error) {
 }
 
 const getImageAdmin = `-- name: GetImageAdmin :one
-SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+JOIN users u ON u.id = i.user_id
 LEFT JOIN tokens t ON t.id = i.token_id
 WHERE i.id = ?
 `
@@ -178,6 +179,7 @@ WHERE i.id = ?
 type GetImageAdminRow struct {
 	ID                 string
 	UserID             string
+	UserName           string
 	TokenID            sql.NullInt64
 	TokenName          sql.NullString
 	FileName           string
@@ -202,6 +204,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.UserName,
 		&i.TokenID,
 		&i.TokenName,
 		&i.FileName,
@@ -364,12 +367,13 @@ func (q *Queries) ListExpiredImages(ctx context.Context, arg ListExpiredImagesPa
 }
 
 const listImagesAdmin = `-- name: ListImagesAdmin :many
-SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+JOIN users u ON u.id = i.user_id
 LEFT JOIN tokens t ON t.id = i.token_id
 WHERE (?1 = '' OR i.user_id = ?1)
   AND (?2 = 0 OR i.token_id = ?2)
@@ -395,6 +399,7 @@ type ListImagesAdminParams struct {
 type ListImagesAdminRow struct {
 	ID                 string
 	UserID             string
+	UserName           string
 	TokenID            sql.NullInt64
 	TokenName          sql.NullString
 	FileName           string
@@ -434,6 +439,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
+			&i.UserName,
 			&i.TokenID,
 			&i.TokenName,
 			&i.FileName,

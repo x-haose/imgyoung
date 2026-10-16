@@ -27,6 +27,7 @@ type imageItem struct {
 	ID             string  `json:"id"`              // 对外短 ID
 	URL            string  `json:"url"`             // 访问路径
 	UserID         string  `json:"user_id"`         // 归属用户
+	UserName       string  `json:"user_name"`       // 归属用户的登录名
 	TokenID        *int64  `json:"token_id"`        // 上传来源 Token;null 表示非 Token 途径或来源 Token 记录已删除
 	TokenName      *string `json:"token_name"`      // 上传来源 Token 用途名;null 表示非 Token 途径或来源 Token 记录已删除
 	FileName       string  `json:"file_name"`       // 原始文件名
@@ -90,7 +91,7 @@ func (h *Handlers) imageDetailFrom(ctx context.Context, row sqlc.GetImageAdminRo
 // @return 面向前端的响应项
 func imageItemFrom(row sqlc.GetImageAdminRow) imageItem {
 	return imageItem{
-		ID: row.ID, URL: "/i/" + row.ID, UserID: row.UserID,
+		ID: row.ID, URL: "/i/" + row.ID, UserID: row.UserID, UserName: row.UserName,
 		TokenID: nullableInt(row.TokenID), TokenName: nullableStr(row.TokenName),
 		FileName: row.FileName, Mime: row.Mime, Size: row.Size,
 		Width: row.Width, Height: row.Height, Sha256: row.Sha256,

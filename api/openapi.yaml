@@ -3130,6 +3130,7 @@ components:
         - id
         - url
         - user_id
+        - user_name
         - token_id
         - token_name
         - file_name
@@ -3156,6 +3157,9 @@ components:
         user_id:
           type: string
           description: 归属用户
+        user_name:
+          type: string
+          description: 归属用户的登录名
         token_id:
           type: [integer, 'null']
           format: int64

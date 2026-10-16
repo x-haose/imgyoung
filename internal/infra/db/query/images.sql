@@ -53,12 +53,13 @@ SET blob_id = ?
 WHERE blob_id = ?;
 
 -- name: ListImagesAdmin :many
-SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+JOIN users u ON u.id = i.user_id
 LEFT JOIN tokens t ON t.id = i.token_id
 WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@token_id = 0 OR i.token_id = @token_id)
@@ -80,12 +81,13 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@exempt = 0 OR i.cleanup_exempt = 1);
 
 -- name: GetImageAdmin :one
-SELECT i.id, i.user_id, i.token_id, t.name AS token_name, i.file_name,
+SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
+JOIN users u ON u.id = i.user_id
 LEFT JOIN tokens t ON t.id = i.token_id
 WHERE i.id = ?;
 

@@ -1521,6 +1521,8 @@ export interface components {
             url: string;
             /** @description 归属用户 */
             user_id: string;
+            /** @description 归属用户的登录名 */
+            user_name: string;
             /**
              * Format: int64
              * @description 上传来源 Token；null 表示后台上传或来源 Token 记录已删除

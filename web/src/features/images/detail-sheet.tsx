@@ -325,9 +325,7 @@ function MetaList({
         </span>
       </Row>
       <Row label={m.images.size}>{formatBytes(image.size)}</Row>
-      <Row label={m.images.owner}>
-        <span className='font-mono text-xs'>{image.user_id}</span>
-      </Row>
+      <Row label={m.images.owner}>{image.user_name}</Row>
       <Row label={m.images.source}>
         {image.token_name ?? (
           <span className='text-muted-foreground'>{m.images.sourceNone}</span>
