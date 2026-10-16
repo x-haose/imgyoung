@@ -15,7 +15,6 @@ import (
 	"maps"
 	"net/http"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/rclone/rclone/fs"
@@ -357,7 +356,7 @@ func (d *Driver) Delete(ctx context.Context, key string) error {
 }
 
 // List 递归列举 dir 目录下的全部对象(dir 为空表示整个渠道)。
-// @Description: 列举失败由回调自己接住:目录不存在视为空,其余失败记下、停止下探并由本方法返回。
+// @Description: 列举失败由回调自己接住:目录不存在(见 noDir)视为空,其余失败记下、停止下探并由本方法返回。
 // 交给 walk 处理的失败会被它打成 ERROR 日志并计入 rclone 全局错误统计——目录不存在是正常情形
 // (如首次备份前的备份目录),不该出现在日志里。
 func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
@@ -365,7 +364,7 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 	var listErr error
 	err := walk.Walk(ctx, d.f, dir, false, -1, func(path string, entries fs.DirEntries, err error) error {
 		if err != nil {
-			if !isMissingDir(err) && listErr == nil {
+			if listErr == nil && !d.noDir(ctx, path, err) {
 				listErr = fmt.Errorf("列举目录 %q: %w", path, err)
 			}
 			return walk.ErrorSkipDir
@@ -387,10 +386,10 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 // ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根);目录不存在视为空。
 func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
 	entries, err := d.f.List(ctx, dir)
-	if isMissingDir(err) {
-		return nil, nil
-	}
 	if err != nil {
+		if d.noDir(ctx, dir, err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("列举目录 %q: %w", dir, err)
 	}
 	var out []driver.ObjectInfo
@@ -400,13 +399,22 @@ func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectIn
 	return out, nil
 }
 
-// isMissingDir 判断列举失败是否只因目录不存在:路径不存在,或者该路径上是一个对象而不是目录。
-// @Description: 两种情况下目录下都没有任何对象,按「目录不存在视为空」处理。rclone 的 local 后端对后者
-// 返回包裹 ENOTDIR 的错误,dropbox、yandex 等后端返回 fs.ErrorIsFile。
-// @param err 列举返回的错误
+// noDir 判断列举 dir 的失败是否只因这个目录不存在:路径不存在,或者该路径上是一个对象而不是目录。
+// @Description: 两种情况下目录下都没有对象,列举按空处理。后端对后者报的错误各不相同,且不都可按
+// 错误值识别,故按该路径取一次对象来确认;取对象也失败时以原列举错误为准。
+// @param ctx 控制超时与取消
+// @param dir 列举失败的目录,空串为渠道根
+// @param err 列举返回的错误,非 nil
 // @return 属于目录不存在为 true
-func isMissingDir(err error) bool {
-	return errors.Is(err, fs.ErrorDirNotFound) || errors.Is(err, fs.ErrorIsFile) || errors.Is(err, syscall.ENOTDIR)
+func (d *Driver) noDir(ctx context.Context, dir string, err error) bool {
+	if errors.Is(err, fs.ErrorDirNotFound) {
+		return true
+	}
+	if dir == "" {
+		return false
+	}
+	_, objErr := d.f.NewObject(ctx, dir)
+	return objErr == nil
 }
 
 // object 查找 key 对应的 rclone 对象,并把"不存在"统一映射为 driver.ErrNotFound。
