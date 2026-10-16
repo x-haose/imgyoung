@@ -180,6 +180,34 @@ install_service() {
 		systemctl start imgyoung || fail "服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因"
 		info "服务 imgyoung 已启动,数据目录 /var/lib/imgyoung"
 	fi
+	show_initial_password
+}
+
+# invocation_logs 输出服务这一次运行(InvocationID)的日志,不含以前运行留下的;读不到时返回非零。
+# 服务单元是 Type=notify,start/restart 返回时服务早已写下初始密码,读之前用 --sync 让 journald 落盘。
+invocation_logs() {
+	invocation=$(systemctl show -p InvocationID --value imgyoung) || return 1
+	[ -n "$invocation" ] || return 1
+	journalctl --sync || return 1
+	journalctl -o cat "_SYSTEMD_INVOCATION_ID=$invocation"
+}
+
+# show_initial_password 打印服务这一次启动时为内置管理员设置的初始密码;管理员已有密码时日志里没有这一行。
+show_initial_password() {
+	if ! logs=$(invocation_logs); then
+		info "无法读取服务日志;首次安装时用 journalctl -u imgyoung | grep 初始密码 查看管理员的初始密码"
+		return 0
+	fi
+	case "$logs" in
+	*已为内置管理员生成初始密码*)
+		password=$(printf '%s\n' "$logs" | sed -n 's/.*已为内置管理员生成初始密码.* password=\([^ ]*\).*/\1/p')
+		info "内置管理员(默认登录名 admin)的初始密码:$password,首次登录后需立即修改"
+		;;
+	*已按\ IMGYOUNG_ADMIN_PASSWORD\ 设置内置管理员的初始密码*)
+		info "内置管理员的初始密码为 IMGYOUNG_ADMIN_PASSWORD 指定的值,首次登录后需立即修改"
+		;;
+	*) info "内置管理员沿用已有的密码" ;;
+	esac
 }
 
 # next_steps 提示安装后的下一步。
@@ -192,9 +220,7 @@ next_steps() {
 		info "运行 imgyoung 启动服务(数据写在当前目录的 data/,可用 IMGYOUNG_DATA_DIR 指定);"
 		info "长期运行建议交给 systemd(加 --service)或 Docker 托管。"
 	fi
-	if [ "$service" -eq 1 ]; then
-		info "首次安装时,管理员 admin 的初始密码打印在服务日志里:journalctl -u imgyoung | grep 初始密码"
-	else
+	if [ "$service" -eq 0 ]; then
 		info "首次启动时,日志里会打印管理员 admin 的初始密码;也可以先用环境变量 IMGYOUNG_ADMIN_PASSWORD 指定。"
 	fi
 	info "浏览器打开 http://<主机>:8721/ 登录,首次登录会要求改密。"
