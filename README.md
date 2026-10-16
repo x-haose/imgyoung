@@ -13,6 +13,7 @@
   <a href="https://github.com/x-haose/imgyoung/releases"><img src="https://img.shields.io/github/v/release/x-haose/imgyoung?sort=semver&color=10b981" alt="最新版本"></a>
   <a href="https://github.com/x-haose/imgyoung/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/x-haose/imgyoung/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="./go.mod"><img src="https://img.shields.io/github/go-mod/go-version/x-haose/imgyoung" alt="Go 版本"></a>
+  <a href="https://pkg.go.dev/github.com/x-haose/imgyoung"><img src="https://pkg.go.dev/badge/github.com/x-haose/imgyoung.svg" alt="Go 包文档"></a>
   <a href="https://github.com/x-haose/imgyoung/pkgs/container/imgyoung"><img src="https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker 镜像"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/x-haose/imgyoung?color=blue" alt="MIT 许可证"></a>
 </p>
@@ -160,7 +161,7 @@ curl -H "Authorization: Bearer <Token>" -F "file=@photo.png" http://localhost:87
 go get github.com/x-haose/imgyoung/store/failover github.com/x-haose/imgyoung/store/rclone
 ```
 
-用法与示例见 [Go 库文档](https://imgyoung.x-haose.com/zh/docs/library)。
+用法与示例见 [Go 库文档](https://imgyoung.x-haose.com/zh/docs/library)，各包的接口说明见 [pkg.go.dev](https://pkg.go.dev/github.com/x-haose/imgyoung)。
 
 ## 参与开发
 

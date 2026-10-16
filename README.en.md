@@ -13,6 +13,7 @@
   <a href="https://github.com/x-haose/imgyoung/releases"><img src="https://img.shields.io/github/v/release/x-haose/imgyoung?sort=semver&color=10b981" alt="Latest release"></a>
   <a href="https://github.com/x-haose/imgyoung/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/x-haose/imgyoung/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="./go.mod"><img src="https://img.shields.io/github/go-mod/go-version/x-haose/imgyoung" alt="Go version"></a>
+  <a href="https://pkg.go.dev/github.com/x-haose/imgyoung"><img src="https://pkg.go.dev/badge/github.com/x-haose/imgyoung.svg" alt="Go Reference"></a>
   <a href="https://github.com/x-haose/imgyoung/pkgs/container/imgyoung"><img src="https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/x-haose/imgyoung?color=blue" alt="MIT license"></a>
 </p>
@@ -160,7 +161,7 @@ The storage engine is a set of public Go packages you can use on their own: `sto
 go get github.com/x-haose/imgyoung/store/failover github.com/x-haose/imgyoung/store/rclone
 ```
 
-See the [Go library docs](https://imgyoung.x-haose.com/en/docs/library) for usage and examples.
+See the [Go library docs](https://imgyoung.x-haose.com/en/docs/library) for usage and examples, and [pkg.go.dev](https://pkg.go.dev/github.com/x-haose/imgyoung) for the API of each package.
 
 ## Contributing
 
