@@ -18,7 +18,7 @@ import (
 // drainBatch 排空任务每批取出的副本行数;逐行删对象再删行,批与批之间不留状态。
 const drainBatch = 200
 
-// drainJobTimeout 单次排空执行上限;超时中断后交 River 重试,已删的行不回退,从剩余行继续。
+// drainJobTimeout 单次排空执行上限;超时中断后立即重排,已删的行不回退,从剩余行继续。
 const drainJobTimeout = time.Hour
 
 // drainFailureReportAttempt 排空任务第几次尝试失败时起才把原因写进渠道、开启告警。
@@ -71,7 +71,7 @@ func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 // 中途直接移除即停下,除了正在删的那一个,剩下的远端对象原样保留。对象已不存在视为已删。任一对象删不掉即整体报错交 River 退避重试;
 // 同一任务第 drainFailureReportAttempt 次起仍失败,才把原因写进渠道的失败栏(随之开启 drain_failed 告警)。
 // 尝试次数用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除。任务自身
-// 超时或停机取消不算渠道失败,不写原因。
+// 超时或停机打断时立即重排、不计尝试次数,也不写原因:持续故障只按真正失败的次数判定。
 func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChannelArgs]) error {
 	h, ok := w.cfg.Manager.Get(job.Args.ChannelID)
 	if !ok || !h.PendingDelete {
@@ -89,7 +89,12 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 		return nil
 	}
 	if err != nil {
-		if ctx.Err() == nil && job.Attempt >= drainFailureReportAttempt {
+		if ctx.Err() != nil {
+			// 进度已在业务表,下次从剩余行继续;Snooze 不消耗尝试次数。
+			w.cfg.Logger.Info("排空被超时或停机打断,随即从剩余部分继续", "channel", h.Name, "err", err)
+			return river.JobSnooze(0)
+		}
+		if job.Attempt >= drainFailureReportAttempt {
 			w.recordFailure(ctx, h.ID, err)
 		}
 		return fmt.Errorf("排空渠道 %q: %w", h.Name, err)
