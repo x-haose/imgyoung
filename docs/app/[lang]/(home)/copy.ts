@@ -38,7 +38,7 @@ const COMMANDS = {
 
 export const COPY: Record<Language, HomeCopy> = {
   zh: {
-    metaTitle: 'ImgYoung — 多渠道主备容灾的自部署图床',
+    metaTitle: '图样 ImgYoung — 多渠道主备容灾的自部署图床',
     metaDescription:
       '自部署图床：一张图同时存进多个存储渠道，主渠道故障时上传与访问自动切换；渠道商只见密文，元数据库自动备份到渠道。单二进制，Docker 一行起。',
     eyebrow: '开源 · MIT · 自部署',

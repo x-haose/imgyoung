@@ -1,5 +1,8 @@
-/** 站点标识:与管理后台同一枚品牌标(翡翠绿圆角方块内嵌快门光圈线条)+ 项目名。 */
-export function Logo() {
+/**
+ * 站点标识:与管理后台同一枚品牌标(翡翠绿圆角方块内嵌快门光圈线条)+ 品牌名。
+ * @param name 当前语言下的品牌名
+ */
+export function Logo({ name }: { name: string }) {
   return (
     <span className='inline-flex items-center gap-2 font-semibold'>
       <svg viewBox='0 0 32 32' width='22' height='22' aria-hidden='true'>
@@ -13,7 +16,7 @@ export function Logo() {
           strokeLinecap='round'
         />
       </svg>
-      ImgYoung
+      {name}
     </span>
   )
 }

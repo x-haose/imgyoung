@@ -2,7 +2,7 @@
   <img src="docs/public/favicon.svg" width="84" height="84" alt="ImgYoung">
 </p>
 
-<h1 align="center">ImgYoung</h1>
+<h1 align="center">图样 ImgYoung</h1>
 
 <p align="center">
   <strong>多渠道主备容灾的自部署图床</strong><br>

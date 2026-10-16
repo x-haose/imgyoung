@@ -1,7 +1,7 @@
 import Link from 'next/link'
 
 import type { Language } from '@/lib/i18n'
-import { REPO_URL } from '@/lib/site'
+import { REPO_URL, siteName } from '@/lib/site'
 
 /** 页脚文案。 */
 const TEXT: Record<Language, Record<string, string>> = {
@@ -73,7 +73,7 @@ export function Footer({ lang, className }: { lang: string; className?: string }
       />
       <div className='mx-auto grid w-full max-w-5xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-4'>
         <div className='flex flex-col gap-2.5'>
-          <span className='text-sm font-semibold'>ImgYoung</span>
+          <span className='text-sm font-semibold'>{siteName(lang)}</span>
           <p className='text-sm leading-relaxed text-fd-muted-foreground'>{t.tagline}</p>
         </div>
 

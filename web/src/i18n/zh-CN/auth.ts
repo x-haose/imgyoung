@@ -1,7 +1,7 @@
 /** 登录、首次改密、改密对话框与账号菜单。 */
 export const auth = {
   login: '登录',
-  loginTitle: '登录 ImgYoung',
+  loginTitle: '登录图样 ImgYoung',
   username: '用户名',
   password: '密码',
   usernameRequired: '请输入用户名',

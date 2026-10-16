@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { FailoverDemo } from '@/components/home/failover-demo'
 import { FeatureCard } from '@/components/home/feature-card'
 import type { Language } from '@/lib/i18n'
-import { languageAlternates, SITE_URL } from '@/lib/site'
+import { languageAlternates, ogImage, SITE_URL, siteName } from '@/lib/site'
 
 import { COPY } from './copy'
 
@@ -29,8 +29,9 @@ export async function generateMetadata({ params }: PageProps<'/[lang]'>): Promis
       title: t.metaTitle,
       description: t.metaDescription,
       url: `${SITE_URL}/${lang}`,
-      siteName: 'ImgYoung',
+      siteName: siteName(lang),
       type: 'website',
+      images: [ogImage(lang)],
     },
   }
 }

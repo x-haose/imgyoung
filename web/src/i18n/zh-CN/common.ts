@@ -1,7 +1,7 @@
 /** 全局通用文案:应用名、按钮、三态、表格与分页控件。 */
 export const common = {
-  appName: 'ImgYoung',
-  appTitle: 'ImgYoung 管理后台',
+  appName: '图样 ImgYoung',
+  appTitle: '图样 ImgYoung 管理后台',
   appSubtitle: '自部署多渠道图床',
   loading: '加载中…',
   loadFailed: '加载失败',

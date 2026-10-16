@@ -4,7 +4,7 @@ import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared'
 
 import { Logo } from '@/components/logo'
 import { i18n, type Language } from '@/lib/i18n'
-import { REPO_URL } from '@/lib/site'
+import { REPO_URL, siteName } from '@/lib/site'
 
 /** 界面文案:中文界面用 fumadocs 官方简体词表,英文取内置默认。 */
 export const translations = i18n.translations().extend(uiTranslations()).preset('zh', zhCN())
@@ -22,7 +22,7 @@ const NAV: Record<Language, { docs: string; api: string }> = {
 export function baseOptions(lang: string): BaseLayoutProps {
   const t = NAV[lang as Language] ?? NAV.en
   return {
-    nav: { title: <Logo />, url: `/${lang}` },
+    nav: { title: <Logo name={siteName(lang)} />, url: `/${lang}` },
     githubUrl: REPO_URL,
     i18n: true,
     links: [
