@@ -15,6 +15,7 @@ import (
 	"maps"
 	"net/http"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -357,7 +358,8 @@ func (d *Driver) Delete(ctx context.Context, key string) error {
 }
 
 // List 递归列举 dir 目录下的全部对象(dir 为空表示整个渠道)。
-// @Description: 列举失败由回调自己接住:目录不存在(见 noDir)视为空,其余失败记下、停止下探并由本方法返回。
+// @Description: 列举失败由回调自己接住:目录不存在视为空,dir 上只有一个同名对象(见 onlyObject)也视为空;
+// 其余失败记下、停止下探并由本方法返回。下探到的子目录在上一级列举里以目录出现,只认目录不存在。
 // 交给 walk 处理的失败会被它打成 ERROR 日志并计入 rclone 全局错误统计——目录不存在是正常情形
 // (如首次备份前的备份目录),不该出现在日志里。
 func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
@@ -365,7 +367,8 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 	var listErr error
 	err := walk.Walk(ctx, d.f, dir, false, -1, func(path string, entries fs.DirEntries, err error) error {
 		if err != nil {
-			if listErr == nil && !d.noDir(ctx, path, err) {
+			missing := errors.Is(err, fs.ErrorDirNotFound) || (path == dir && d.onlyObject(ctx, dir))
+			if listErr == nil && !missing {
 				listErr = fmt.Errorf("列举目录 %q: %w", path, err)
 			}
 			return walk.ErrorSkipDir
@@ -384,11 +387,12 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 	return out, nil
 }
 
-// ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根);目录不存在视为空。
+// ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根)。
+// @Description: 目录不存在、或 dir 上只有一个同名对象(见 onlyObject)时视为空。
 func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
 	entries, err := d.f.List(ctx, dir)
 	if err != nil {
-		if d.noDir(ctx, dir, err) {
+		if errors.Is(err, fs.ErrorDirNotFound) || d.onlyObject(ctx, dir) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("列举目录 %q: %w", dir, err)
@@ -400,19 +404,15 @@ func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectIn
 	return out, nil
 }
 
-// noDir 判断列举 dir 的失败是否只因这个目录不存在:路径不存在,或者该路径上是一个对象而不是目录。
-// @Description: 两种情况下目录下都没有对象,列举按空处理。后端对后者报的错误各不相同,且不都可按
-// 错误值识别,故列举上一级目录来确认:这个名字只以对象出现、没有同名目录时才算。同一个名字可以既是
-// 对象又是目录的存储(S3 的对象 x 与前缀 x/、Drive 的同名文件与文件夹)由此排除。ctx 已结束、或上一级
-// 也列举失败时以原列举错误为准。
+// onlyObject 判断 dir 这个路径上是否只有一个对象、没有同名目录,用于列举 dir 失败之后。
+// @Description: 这时 dir 下没有任何对象,列举按空处理。后端对「路径上是对象」报的错误各不相同,且不都
+// 可按错误值识别,故列举上一级目录来确认:这个名字只以对象出现、没有同名目录时才算。同一个名字可以既是
+// 对象又是目录的存储(S3 的对象 x 与前缀 x/、Drive 的同名文件与文件夹)由此排除;不区分大小写的存储
+// 按不区分大小写比较名字。
 // @param ctx 控制超时与取消
 // @param dir 列举失败的目录,空串为渠道根
-// @param err 列举返回的错误,非 nil
-// @return 属于目录不存在为 true
-func (d *Driver) noDir(ctx context.Context, dir string, err error) bool {
-	if errors.Is(err, fs.ErrorDirNotFound) {
-		return true
-	}
+// @return 只有对象为 true;dir 为渠道根、ctx 已结束、或上一级也列举失败时为 false
+func (d *Driver) onlyObject(ctx context.Context, dir string) bool {
 	if dir == "" || ctx.Err() != nil {
 		return false
 	}
@@ -424,9 +424,10 @@ func (d *Driver) noDir(ctx context.Context, dir string, err error) bool {
 	if err != nil {
 		return false
 	}
+	fold := d.f.Features().CaseInsensitive
 	isObject := false
 	for _, e := range entries {
-		if e.Remote() != dir {
+		if name := e.Remote(); name != dir && (!fold || !strings.EqualFold(name, dir)) {
 			continue
 		}
 		if _, ok := e.(fs.Directory); ok {
