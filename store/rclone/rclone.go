@@ -14,6 +14,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"path"
 	"sync"
 	"time"
 
@@ -401,7 +402,9 @@ func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectIn
 
 // noDir 判断列举 dir 的失败是否只因这个目录不存在:路径不存在,或者该路径上是一个对象而不是目录。
 // @Description: 两种情况下目录下都没有对象,列举按空处理。后端对后者报的错误各不相同,且不都可按
-// 错误值识别,故按该路径取一次对象来确认;取对象也失败时以原列举错误为准。
+// 错误值识别,故列举上一级目录来确认:这个名字只以对象出现、没有同名目录时才算。同一个名字可以既是
+// 对象又是目录的存储(S3 的对象 x 与前缀 x/、Drive 的同名文件与文件夹)由此排除。ctx 已结束、或上一级
+// 也列举失败时以原列举错误为准。
 // @param ctx 控制超时与取消
 // @param dir 列举失败的目录,空串为渠道根
 // @param err 列举返回的错误,非 nil
@@ -410,11 +413,28 @@ func (d *Driver) noDir(ctx context.Context, dir string, err error) bool {
 	if errors.Is(err, fs.ErrorDirNotFound) {
 		return true
 	}
-	if dir == "" {
+	if dir == "" || ctx.Err() != nil {
 		return false
 	}
-	_, objErr := d.f.NewObject(ctx, dir)
-	return objErr == nil
+	parent := path.Dir(dir)
+	if parent == "." {
+		parent = ""
+	}
+	entries, err := d.f.List(ctx, parent)
+	if err != nil {
+		return false
+	}
+	isObject := false
+	for _, e := range entries {
+		if e.Remote() != dir {
+			continue
+		}
+		if _, ok := e.(fs.Directory); ok {
+			return false
+		}
+		isObject = true
+	}
+	return isObject
 }
 
 // object 查找 key 对应的 rclone 对象,并把"不存在"统一映射为 driver.ErrNotFound。
