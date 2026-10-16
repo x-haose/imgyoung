@@ -70,8 +70,8 @@ func (*drainChannelWorker) Timeout(*river.Job[DrainChannelArgs]) time.Duration {
 // 元数据库快照)与深探测残留,别的程序写的对象不动。每个对象删除前都按渠道表确认渠道仍在清理中:管理员
 // 中途直接移除即停下,除了正在删的那一个,剩下的远端对象原样保留。对象已不存在视为已删。任一对象删不掉即整体报错交 River 退避重试;
 // 同一任务第 drainFailureReportAttempt 次起仍失败,才把原因写进渠道的失败栏(随之开启 drain_failed 告警)。
-// 尝试次数用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除。任务自身
-// 超时或停机打断时立即重排、不计尝试次数,也不写原因:持续故障只按真正失败的次数判定。
+// 尝试次数用尽后对账为清理中渠道重新入队,重试不会停止,渠道停在清理中,直到清完或管理员直接移除。被停机打断,
+// 或超时而本次删掉了对象时,立即重排、不计尝试次数,也不写原因(见 interrupted)。
 func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChannelArgs]) error {
 	h, ok := w.cfg.Manager.Get(job.Args.ChannelID)
 	if !ok || !h.PendingDelete {
@@ -89,8 +89,8 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 		return nil
 	}
 	if err != nil {
-		if ctx.Err() != nil {
-			// 进度已在业务表,下次从剩余行继续;Snooze 不消耗尝试次数。
+		if interrupted(ctx, replicas+system) {
+			// 进度已在业务表,下次从剩余部分继续;Snooze 不消耗尝试次数。
 			w.cfg.Logger.Info("排空被超时或停机打断,随即从剩余部分继续", "channel", h.Name, "err", err)
 			return river.JobSnooze(0)
 		}
@@ -107,6 +107,22 @@ func (w *drainChannelWorker) Work(ctx context.Context, job *river.Job[DrainChann
 		w.cfg.Logger.Info("渠道已清理完毕并删除", "channel", h.Name, "objects", replicas, "system_objects", system)
 	}
 	return nil
+}
+
+// interrupted 判断一次失败的排空是否只是被打断、应立即接着做而不计为失败。
+// @Description: 停机打断恒为是。超时只在本次删掉了对象时为是:一次也推进不了的排空(如单次列举或删除就撞上
+// 时限)按失败计,随尝试次数退避,第 drainFailureReportAttempt 次起写出原因并开启告警,而不是无休止地重跑。
+// @param ctx 本次执行的上下文
+// @param deleted 本次删除的对象数(副本与系统对象合计)
+// @return 是否按打断处理
+func interrupted(ctx context.Context, deleted int) bool {
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
+		return true
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return deleted > 0
+	}
+	return false
 }
 
 // stillDraining 按渠道表确认渠道仍在清理中。
