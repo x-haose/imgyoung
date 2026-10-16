@@ -49,13 +49,16 @@ func (a *app) serve() error {
 	a.addLoops(ctx, &g, shutdown)
 
 	// 补齐子系统(River):启动后阻塞至 ctx 取消;在途任务随 ctx 取消,由 shutdown 等其退出。
-	// 它是最后一个可能启动失败的组件,启动成功即整个服务就绪。
+	// worker 启动成功即整个服务就绪;随后的恢复扫描是后台追赶,耗时随待补副本数增长,不计入启动。
 	g.Add(func() error {
 		if serr := a.runner.Start(ctx); serr != nil {
 			return fmt.Errorf("启动补齐子系统: %w", serr)
 		}
 		if nerr := a.announceReady(ln.Addr()); nerr != nil {
 			return nerr
+		}
+		if rerr := a.runner.Recover(ctx); rerr != nil {
+			return fmt.Errorf("补齐子系统恢复扫描: %w", rerr)
 		}
 		<-ctx.Done()
 		return nil

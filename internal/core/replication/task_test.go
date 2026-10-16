@@ -46,6 +46,9 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err := runner.Start(t.Context()); err != nil {
 		t.Fatalf("启动 Runner: %v", err)
 	}
+	if err := runner.Recover(t.Context()); err != nil {
+		t.Fatalf("恢复扫描: %v", err)
+	}
 	t.Cleanup(func() {
 		if serr := runner.Stop(t.Context()); serr != nil {
 			t.Errorf("停止 Runner: %v", serr)

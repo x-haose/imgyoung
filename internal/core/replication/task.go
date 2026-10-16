@@ -139,13 +139,21 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	return &Runner{cfg: cfg, client: client}, nil
 }
 
-// Start 启动 worker、执行一次恢复扫描,并开启定期对账与 GC 循环。
+// Start 启动 worker;之后须调用 Recover 完成恢复扫描并开启周期循环。
 // @Description: ctx 应为独立于请求信号的生命周期上下文,由 Stop 流程收敛。
-// @return 启动或首次扫描失败时的错误
+// @return River 客户端启动失败时的错误
 func (r *Runner) Start(ctx context.Context) error {
 	if err := r.client.Start(ctx); err != nil {
 		return fmt.Errorf("启动 River 客户端: %w", err)
 	}
+	return nil
+}
+
+// Recover 执行一次恢复扫描,成功后开启定期对账与 GC 循环。
+// @Description: 恢复扫描的耗时随待补副本数增长(数十万条时可达数十秒),与 Start 分开,调用方可以先宣告就绪。
+// @param ctx 生命周期上下文,与 Start 相同
+// @return 恢复扫描失败时的错误;此时不开启周期循环
+func (r *Runner) Recover(ctx context.Context) error {
 	if err := r.Reconcile(ctx); err != nil {
 		return err
 	}

@@ -70,6 +70,9 @@ func (e *sweeperEnv) start(t *testing.T) {
 	if err := e.runner.Start(t.Context()); err != nil {
 		t.Fatalf("启动补齐子系统: %v", err)
 	}
+	if err := e.runner.Recover(t.Context()); err != nil {
+		t.Fatalf("恢复扫描: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := e.runner.Stop(context.Background()); err != nil {
 			t.Errorf("停止补齐子系统: %v", err)
