@@ -98,7 +98,7 @@ type urlUpload struct {
 }
 
 // parseURLUpload 解析 URL 转存的请求体并校验参数。
-// @Description: 档位省略时取全局默认;校验失败时已写出错误响应。
+// @Description: 校验顺序与表单上传一致:先 ttl,再 EXIF 档位(省略时取全局默认);校验失败时已写出错误响应。
 // @param set 配置快照
 // @return 解析后的参数
 // @return 是否通过校验
@@ -114,18 +114,18 @@ func (h *Handlers) parseURLUpload(w http.ResponseWriter, r *http.Request, set co
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLRequired)
 		return urlUpload{}, false
 	}
+	ttl, ttlSet, ok := parseTTL(rawTTLString(req.TTL))
+	if !ok {
+		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
+			"max", strconv.FormatInt(maxTTLSeconds, 10))
+		return urlUpload{}, false
+	}
 	policy := imaging.EXIFPolicy(req.EXIFPolicy)
 	if policy == "" {
 		policy = set.EXIFPolicy
 	}
 	if err := imaging.ValidatePolicy(policy); err != nil {
 		h.writeUploadError(w, set, err)
-		return urlUpload{}, false
-	}
-	ttl, ttlSet, ok := parseTTL(rawTTLString(req.TTL))
-	if !ok {
-		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
-			"max", strconv.FormatInt(maxTTLSeconds, 10))
 		return urlUpload{}, false
 	}
 	name := req.FileName
