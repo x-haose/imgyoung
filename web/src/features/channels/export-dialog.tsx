@@ -8,7 +8,7 @@ import {
   Server,
   TriangleAlert,
 } from 'lucide-react'
-import { isAbort, toastError } from '@/lib/errors'
+import { hasStatus, isAbort, toastError } from '@/lib/errors'
 import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -47,8 +47,9 @@ export function ExportConfigDialog({
       return downloadRcloneConfig(id, ctl.signal)
     },
     onSuccess: onClose,
+    // 中止不是故障;401 由会话失效处理跳登录页,同全局约定不再提示。
     onError: (err) => {
-      if (!isAbort(err)) toastError(err)
+      if (!isAbort(err) && !hasStatus(err, 401)) toastError(err)
     },
   })
   const close = () => {
