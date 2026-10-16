@@ -57,7 +57,7 @@ Logs and exit codes when the process exits on an error:
 | Situation | Log | Exit code |
 |---|---|---|
 | An error during startup, such as a malformed network list, an empty listen address or data directory, a failed database migration, or a master key that is missing or does not match the database | Error line `启动失败` (startup failed) | 1 |
-| Binding the listen address fails (port already in use or malformed address), the HTTP server exits abnormally, or the replication subsystem (the background jobs that copy images to the other channels) fails to start | Error line `运行失败` (run failed) | 1 |
+| Binding the listen address fails (port already in use or malformed address), the HTTP server exits abnormally, or the replication subsystem (the background jobs that copy images to the other channels) fails to start or fails its first recovery scan (the error starts with `补齐子系统恢复扫描:`) | Error line `运行失败` (run failed) | 1 |
 | An unknown flag or an extra argument on the command line; the server does not start | No log; an error message and the usage are printed to the terminal | 2 |
 
 ### Setting them per deployment

@@ -313,7 +313,7 @@ images(上传引用)──→ blobs(物理图)──→ blob_channels(各渠道�
 | 周期任务 | 各服务自带的 `Run(ctx, wait)` 循环 | 周期任务只需要「每隔多久执行一次」，间隔取自运营配置、修改后立即重新计时；不引入 cron 库 |
 | 依赖装配 | 在 `cmd/imgyoung/build.go` 里手工装配 | 组件集合固定、依赖关系静态，按顺序调用构造函数即可；能搜索、能跳转，没有反射与运行时容器。不用 DI 框架 |
 | 生命周期编排 | oklog/run | HTTP、River 与各后台循环各是一个 actor，任何一个退出即触发整组按序停机；比手写 `WaitGroup` 加通道更不容易出错 |
-| systemd 就绪通知 | coreos/go-systemd 的 `daemon` 包 | systemd 服务单元为 `Type=notify`，服务完成启动（数据库就绪、端口已监听、补齐子系统已启动）后发送 `READY=1`；rclone 本身已依赖这个模块，不多引入新的依赖 |
+| systemd 就绪通知 | coreos/go-systemd 的 `daemon` 包 | systemd 服务单元为 `Type=notify`，服务完成启动（数据库就绪、端口已监听、补齐子系统已启动）后发送 `READY=1`，随后才做恢复扫描，扫描耗时随待补副本数增长，不计入启动时限；rclone 本身已依赖这个模块，不多引入新的依赖 |
 | 架构守卫 | depguard（golangci-lint 内置）| 层间依赖方向写成 lint 规则，由 CI 强制检查，见[分层与依赖方向](#layers) |
 | 感知哈希 | goimagehash | 纯 Go，输入是解码后的 `image.Image`，直接接在上传的解码步骤后面 |
 | 图像编解码 | 标准库、`golang.org/x/image`、gen2brain/webp | 都不需要 cgo；WebP 编码由 gen2brain/webp 在纯 Go 的 WebAssembly 运行时里执行 libwebp |

@@ -9,7 +9,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-# 服务完成启动(数据库就绪、端口已监听、补齐子系统已启动)后通知 systemd;systemctl start / restart 等到这时才返回,起不来时报错
+# 服务完成启动(数据库就绪、端口已监听、补齐子系统已启动)后通知 systemd;systemctl start / restart 等到这时才返回,起不来时报错。
+# 就绪后的恢复扫描失败时进程退出、由 Restart= 拉起,systemctl 不报错,原因看 journalctl -u imgyoung
 Type=notify
 ExecStart=/usr/local/bin/imgyoung
 Environment=IMGYOUNG_DATA_DIR=%S/imgyoung

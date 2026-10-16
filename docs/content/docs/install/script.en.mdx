@@ -69,7 +69,7 @@ The main settings:
 | Setting | Effect |
 |---|---|
 | `IMGYOUNG_DATA_DIR=%S/imgyoung`, `StateDirectory=imgyoung` | The data directory is `/var/lib/imgyoung`, created by systemd and handed to the service user |
-| `Type=notify` | The service tells systemd it has started only once startup is complete (database ready, port listening, replication subsystem running); `systemctl start` / `restart` wait until then and report an error if the service cannot start |
+| `Type=notify` | The service tells systemd it has started only once startup is complete (database ready, port listening, replication subsystem running); `systemctl start` / `restart` wait until then and report an error if the service cannot start. A recovery scan then runs in the background; if it fails, the process exits with 1 and keeps being restarted while `systemctl` reports no error, so check `journalctl -u imgyoung` |
 | `DynamicUser=yes` | systemd allocates a transient system user on every start, so no user has to be created in advance |
 | `Restart=always` | The process is started again 3 seconds after it exits, including clean exits |
 | `TimeoutStopSec=15s` | Stopping the service waits at most 15 seconds |
