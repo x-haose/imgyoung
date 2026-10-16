@@ -25,23 +25,23 @@ export const server = {
     user_not_found: '用户不存在',
     user_protected: '内置管理员不可禁用、降级或删除',
     cannot_delete_self: '不能删除当前登录用户',
-    user_has_images: '用户名下仍有图片，请先删除或处置',
+    user_has_images: '该用户名下仍有图片，请先删除这些图片',
     user_ttl_invalid:
-      'default_ttl_hours 需为 0（永久）到 {max} 的整数，或 null 表示随全局',
+      'default_ttl_hours 须为 0（永久）到 {max} 的整数，或为 null（跟随全局默认）',
     token_request_invalid:
-      '请求体非法：名称必填且不超过 {max_name} 字节，有效期小时数需在 0 到 {max_hours} 之间',
+      '请求体非法：名称必填且不超过 {max_name} 个字符，有效期小时数需在 0 到 {max_hours} 之间',
     token_name_taken: '同名 Token 已存在',
     token_id_invalid: 'Token ID 非法',
     token_not_found: 'Token 不存在或已失效',
     token_active: 'Token 仍有效，请先吊销再删除',
     image_not_found: '图片不存在',
     image_patch_invalid:
-      '请求体非法：ttl_hours 需为 0（永久）或不超过 {max} 的正整数，至少携带一个修改项',
+      '请求体非法：ttl_hours 须为 0（永久）或不超过 {max} 的正整数，且至少包含一项修改',
     cleanup_exempt_admin_only: '清理豁免仅管理员可设置',
     batch_ids_invalid: '请求体非法：ids 需为 1 到 {max} 个图片 ID',
     candidate_id_invalid: '候选 ID 非法',
     candidate_not_found: '候选不存在或已裁决',
-    keeper_invalid: '保留对象必须是候选对中的一方',
+    keeper_invalid: '保留的图片必须是这对候选中的一张',
     candidate_stale: '候选涉及的图片已被删除，请刷新列表',
     referer_pattern_invalid:
       '规则格式非法，应为裸域（example.com）或子域通配（*.example.com）',
@@ -50,16 +50,16 @@ export const server = {
     referer_not_found: '规则不存在',
     backup_snapshot_failed: '生成数据库快照失败：{detail}',
     backup_store_failed:
-      '快照 {snapshot} 有 {failed}/{total} 个渠道未写成（{detail}）',
+      '快照 {snapshot} 有 {failed}/{total} 个渠道写入失败（{detail}）',
     backup_prune_failed:
-      '快照 {snapshot} 已写入，但有 {failed}/{total} 个渠道清理旧快照失败，保留份数没能生效（{detail}）',
+      '快照 {snapshot} 已写入，但有 {failed}/{total} 个渠道清理旧快照失败，保留份数未生效（{detail}）',
     snapshot_name_invalid: '快照名非法',
     snapshot_not_found: '快照不存在',
     snapshot_corrupt:
       '快照 {snapshot} 不是完整的数据库文件（可能写入途中被中断），请换一份快照恢复',
     settings_body_invalid: '请求体需为非空的 键→值 JSON 对象',
     setting_unknown: '未知配置键 {key}',
-    setting_type: '{key} 的取值类型不对',
+    setting_type: '{key} 的取值类型错误',
     setting_positive: '{key}={value} 非法：需要正整数',
     setting_non_negative: '{key}={value} 非法：不可为负',
     setting_too_large: '{key}={value} 非法：不可超过 {max}',
@@ -76,29 +76,28 @@ export const server = {
     channel_config_changed:
       '渠道配置在保存期间已被改动（另一次编辑，或服务商刷新了授权令牌），请重新保存',
     channel_encrypted_immutable:
-      '加密属性创建后不可变（变更会造成密文/明文混存且不可恢复）；如需调整请新建渠道并迁移数据',
+      '渠道创建后不能更改加密设置；如需更改，请新建渠道并迁移数据',
     channel_sole_replicas:
-      '该渠道持有 {count} 张图片的唯一副本，删除会丢数据；请先迁移或删除相关图片',
+      '该渠道上有 {count} 张图片的唯一副本，删除会丢失数据；请先迁移或删除这些图片',
     purge_param_invalid: 'purge 参数须为 true 或 false',
     channel_name_driver_required: '渠道参数非法：name 与 driver 必填',
     channel_name_too_long: '渠道参数非法：name 超过 {max} 字节',
-    channel_encrypted_direct_link:
-      '渠道参数非法：加密渠道不允许直链（密文无法直出）',
+    channel_encrypted_direct_link: '渠道参数非法：加密渠道不能开启 302 直链',
     channel_local_path_relative:
       '渠道参数非法：local 渠道的路径须为绝对路径，收到 {path}',
     channel_config_key_invalid:
-      '渠道参数非法：配置键 {key} 非法（仅允许字母数字下划线）',
+      '渠道参数非法：配置键 {key} 非法（只能包含字母、数字和下划线）',
     channel_keep_not_secret:
-      '渠道参数非法：字段 {field} 不是凭证，不能沿用已存值',
+      '渠道参数非法：字段 {field} 不是凭证，不能保留原值',
     channel_keep_no_value:
-      '渠道参数非法：字段 {field} 无已存原值可保留，请重新填写',
+      '渠道参数非法：字段 {field} 没有可保留的原值，请重新填写',
     channel_unknown_backend: '渠道参数非法：未知的后端 {driver}',
     channel_unknown_template: '渠道参数非法：未知的渠道模板',
     channel_field_required: '渠道参数非法：字段 {field} 必填',
     channel_param_invalid: '渠道参数非法：{detail}',
     channel_backend_failed: '渠道参数非法：后端初始化失败：{detail}',
     channel_bucket_failed:
-      '自动创建存储桶失败（请确认密钥具备建桶权限，或先在控制台建好桶并关闭此项）：{detail}',
+      '自动创建存储桶失败（请确认密钥有建桶权限，或在控制台建好存储桶后关闭自动创建）：{detail}',
     channel_unrepresentable:
       '参数值无法写进 rclone 配置文件：远端 {remote} 的参数 {key}',
     oauth_token_invalid: '渠道参数非法：授权令牌格式非法',
@@ -107,17 +106,17 @@ export const server = {
     oauth_not_required: '渠道参数非法：该后端无需 OAuth 授权',
     oauth_option_required: '渠道参数非法：后端 {driver} 要求先提供 {option}',
     oauth_base_url_required:
-      '一键授权需先在设置中填写对外站点地址；或改用粘贴令牌方式',
+      '一键授权需先在设置中填写对外站点地址，或改用粘贴令牌',
     oauth_session_not_found: '授权会话不存在或已过期',
     oauth_denied: '授权被拒绝或取消：{detail}',
     oauth_exchange_failed: '换取令牌失败，请核对应用凭证与回调地址',
     upload_token_invalid: '无效的上传 Token',
-    upload_token_scope: 'Token 无本操作权限',
+    upload_token_scope: 'Token 没有此操作的权限',
     upload_unauthenticated: '未认证的上传请求',
     upload_rate_limited: '上传过于频繁，请稍后重试',
-    upload_busy: '上传并发已满，请稍后重试',
+    upload_busy: '已达上传并发上限，请稍后重试',
     upload_unsupported_type: '仅支持图片文件（jpeg/png/gif/webp）',
-    upload_too_many_pixels: '图片分辨率超出限制（像素预算 {max} 百万像素）',
+    upload_too_many_pixels: '图片分辨率超过像素预算（{max} 百万像素）',
     upload_invalid_image: '图片内容无法解析',
     upload_exif_policy: 'exif_policy 取值非法（可选 strip / passthrough）',
     upload_quota_exceeded: '存储配额已满',
@@ -127,17 +126,17 @@ export const server = {
     upload_too_large: '文件超过大小上限（{max} MB）',
     upload_field_too_long: 'exif_policy 或 ttl 字段过长（上限 {max} 字节）',
     upload_no_file:
-      '无法读取 file 字段（需要 multipart/form-data 的 file 字段）',
+      '缺少 file 字段，或请求体不是合法的 multipart/form-data 表单',
     url_body_invalid:
       '请求体需为 JSON 对象，且只含 url/file_name/exif_policy/ttl 字段',
     url_required: 'url 不能为空',
     url_scheme: 'url 仅支持 http/https 地址',
-    url_blocked: '目标地址不可访问（仅允许公网地址）',
+    url_blocked: '目标地址不是公网地址，不允许抓取',
     url_too_many_redirects: '远端重定向次数过多',
     url_too_large: '远端文件超过大小上限（{max} MB）',
     url_bad_status: '远端返回错误状态，无法取回图片',
     url_fetch_failed: '无法从该地址取回图片',
-    variant_params_invalid: '非法的处理参数：宽度或格式不在允许档位',
+    variant_params_invalid: '处理参数非法：w 或 format 不在允许的档位内',
   } satisfies Record<Schemas['ErrorCode'], string>,
   /** 失败归类的说明。 */
   failureReasons: {
@@ -154,8 +153,8 @@ export const server = {
     tls: 'TLS 证书校验失败：检查端点证书或改用正确协议',
     timeout: '连接超时：检查端点地址与网络连通性',
     permission: '存储路径无写入权限：检查目录权限',
-    probe_mismatch: '探测对象读回内容不一致：存储端改写或截断了对象',
-    config_unreadable: '渠道配置无法解密：主密钥与写入配置时的不同',
+    probe_mismatch: '探测对象读回的内容与写入的不一致：存储端改写或截断了对象',
+    config_unreadable: '渠道配置无法解密：当前主密钥与保存配置时用的不同',
     no_source: '没有可读的源副本',
     channel_unavailable: '目标渠道未装载',
     object_missing: '对账发现渠道上缺少该对象',
@@ -179,5 +178,5 @@ export const server = {
     backup_failed: '{error}',
   } satisfies Record<Schemas['Alert']['kind'], string>,
   /** 渠道尚未探测过却不健康时的告警描述。 */
-  unhealthyUnprobed: '渠道探测不健康',
+  unhealthyUnprobed: '渠道不健康',
 }

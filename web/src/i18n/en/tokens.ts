@@ -36,7 +36,7 @@ export const tokens = {
     name: 'Purpose',
     namePlaceholder: 'picgo',
     nameHint:
-      'e.g. picgo or blog-script; an active token with the same name cannot exist twice',
+      'e.g. picgo or blog-script; must differ from the names of your other active tokens',
     nameRequired: 'Enter a purpose name',
     nameTooLong: 'At most {max} characters',
     expiry: 'Expiry',
@@ -57,7 +57,7 @@ export const tokens = {
   },
   rotate: {
     title: 'Rotate this token?',
-    desc: 'A new token with the same name replaces it; the old one stops working immediately and the new secret is shown only once.',
+    desc: 'A new token with the same name replaces it; the old token and its S3 credential stop working immediately, and the new secret is shown only once.',
     confirm: 'Rotate',
   },
   revoke: {
@@ -68,17 +68,17 @@ export const tokens = {
   },
   delete: {
     title: 'Delete this record?',
-    desc: 'The inactive record leaves the list; the audit trail is kept.',
+    desc: 'This inactive record is removed from the list; the audit log is unaffected.',
     confirm: 'Delete',
     done: 'Record deleted',
   },
   s3: {
     title: 'S3 client settings · {name}',
     intro:
-      'Pick the "AWS S3" uploader in PicList, or in PicGo after installing its S3 plugin (Typora uploads through PicGo), then fill in the fields below',
+      'In PicList, pick the "AWS S3" uploader; in PicGo, install the s3 plugin and pick "Amazon S3" (Typora uploads through PicGo). Then fill in the fields below.',
     note: 'The secret is derived from the master key and can be viewed here any time; revoking the token invalidates it.',
     pathStyle:
-      'Path-style addressing: a self-hosted server has no bucket subdomains, so enable "path style" if the client has such a switch.',
+      'Path-style addressing is required: turn on "path style", "ForcePathStyle" or a similar switch if the client has one.',
     copy: 'Copy',
     fields: {
       access_key_id: 'Access key ID',
@@ -93,8 +93,7 @@ export const tokens = {
       region: 'Regions are not distinguished; keep the default',
       endpoint:
         'The trailing /s3 is the path prefix of the S3-compatible API and must stay',
-      url_prefix:
-        'Clients build the final image URL from it; it includes the user id segment',
+      url_prefix: 'Clients build image links from it; it includes your user id',
     },
   },
 } satisfies typeof zh

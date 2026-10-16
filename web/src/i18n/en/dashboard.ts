@@ -8,21 +8,20 @@ export const dashboard = {
   users: 'Users',
   accesses: 'Accesses',
   accessesHint:
-    'Counted per activity flush cycle; repeated hits on one image within a cycle count once',
+    'Repeated hits on one image within one activity flush interval count once',
   trafficEstimate: 'Est. traffic {bytes}',
   pendingCleanup: 'Pending cleanup',
   pendingCleanupHint:
-    'Not accessed beyond the cold threshold, waiting for you to keep or delete',
+    'Images not accessed for a long time, waiting for you to keep or delete them',
   pendingDedup: 'Possible duplicates',
-  pendingDedupHint:
-    'Candidate pairs found by the similarity scan, waiting for a side-by-side decision',
+  pendingDedupHint: 'Similar-looking images waiting for a side-by-side review',
   used: 'Space used',
   quota: 'Quota',
   unlimited: 'Unlimited',
   quotaUsage: '{percent}% used',
   channels: 'Storage channels',
   channelsDesc:
-    'Health and stored bytes (replica basis) per channel; bars show the share of the site total',
+    "Health and stored data per channel; bars show each channel's share of the total",
   manageChannels: 'Manage channels',
   unhealthy: 'Unhealthy',
   noChannels: 'No storage channels yet',
@@ -49,19 +48,19 @@ export const dashboard = {
   },
   offsiteMissingTitle: 'Your data only lives on this host',
   offsiteMissingDesc:
-    'No healthy channel lives off this host’s disk, so image replicas and metadata snapshots exist only here; losing the host loses everything. Add an object storage or cloud drive channel to clear this, or find out why the one you have is unhealthy.',
+    'There is no healthy channel off this host’s disk, so image replicas and metadata snapshots exist only here; losing the host loses everything. Add an object storage or cloud drive channel, or find out why the one you added is unhealthy.',
   quickStartTitle: 'Quick start',
   quickStartDesc: 'No images yet. Three steps to get going',
   quickStartUserDesc:
     "You haven't uploaded any images yet. Two steps to get going",
   step1Title: 'Check storage channels',
   step1Desc:
-    'The built-in local channel works out of the box; add S3 / R2 and the like on the channels page.',
+    'The built-in local channel is ready to use; add S3, R2 or other cloud storage on the channels page.',
   step2Title: 'Issue an upload token',
   step2Desc:
-    'One named token for PicGo, one for scripts; the secret is shown only once.',
+    'Issue one token per client, such as PicGo or a script; the secret is shown only once.',
   step3Title: 'Start uploading',
   step3Desc:
-    'Upload with curl, PicGo or any S3 client using the token; the guide has copy-paste configs.',
+    'Upload with curl, PicGo or any S3 client; the guide has ready-made configuration examples.',
   readGuide: 'Read the guide',
 } satisfies typeof zh

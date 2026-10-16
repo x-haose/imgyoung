@@ -45,7 +45,9 @@ export function TemplateFieldInput({
   const masked = f.type === 'password' || kept
   const help =
     kept && f.type !== 'oauth'
-      ? [text.help, m.channels.secretKeepHint].filter(Boolean).join(';')
+      ? [text.help, m.channels.secretKeepHint]
+          .filter(Boolean)
+          .join(m.common.clauseSeparator)
       : text.help
   return (
     <FormField

@@ -25,7 +25,7 @@ export const channelTemplates = {
     },
     's3-compatible': {
       name: 'S3-compatible (generic)',
-      description: 'Any service that speaks the S3 protocol',
+      description: 'Any service with an S3-compatible API',
     },
     webdav: {
       name: 'WebDAV',
@@ -50,7 +50,7 @@ export const channelTemplates = {
     region: { label: 'Region' },
     bucket: {
       label: 'Bucket',
-      help: 'Bucket name, optionally followed by /prefix to keep objects in a subfolder',
+      help: 'Bucket name; write bucket/prefix to keep objects in a subfolder',
     },
     public_base_url: {
       label: 'Public URL',
@@ -79,7 +79,7 @@ export const channelTemplates = {
     },
     client_id: {
       label: 'App client ID',
-      help: "Required for one-click authorization: the ID of the app you registered on the provider's developer platform. Also fill it in when pasting a token obtained with your own app. Token renewal uses it, so it must match the app that issued the token",
+      help: "Required for one-click authorization: the ID of the app you created on the provider's developer platform. Also fill it in when the pasted token came from your own app. It must match the app that issued the token, or the token cannot be renewed",
     },
     client_secret: {
       label: 'App client secret',

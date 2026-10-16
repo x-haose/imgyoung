@@ -1,7 +1,7 @@
 /** 审计日志页:筛选、表格与动作标签。 */
 export const audit = {
   title: '审计日志',
-  subtitle: '管理操作只追加留痕，共 {total} 条',
+  subtitle: '管理操作记录，只追加、不修改，共 {total} 条',
   action: '动作',
   allActions: '全部动作',
   actor: '操作者',

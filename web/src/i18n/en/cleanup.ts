@@ -3,15 +3,15 @@ import type { cleanup as zh } from '../zh-CN/cleanup'
 export const cleanup = {
   title: 'Cleanup',
   subtitleEnabled:
-    'Images with no public access for over {days} days land here; {total} waiting. Nothing is deleted automatically',
+    'Images with no public access for over {days} days; {total} waiting. Nothing is deleted automatically; you decide whether to keep or delete each',
   subtitleDisabled:
-    'Cold images with no public access past the threshold; {total} waiting. Nothing is deleted automatically',
+    'Images with no public access for a long time; {total} waiting. Nothing is deleted automatically; you decide whether to keep or delete each',
   disabledNotice:
-    'Cold-image tagging is off (cold_cleanup_days is 0), so nothing new will appear here.',
+    'The cold image threshold (cold_cleanup_days) is 0, so no new images will appear here.',
   goSettings: 'Open settings',
   empty: 'No cold images waiting',
   emptyHint:
-    'Images nobody has viewed past the threshold wait here for your decision',
+    'Images nobody has viewed past the cold image threshold appear here',
   preview: 'Preview',
   image: 'Image',
   owner: 'Owner',
@@ -27,8 +27,8 @@ export const cleanup = {
   keep: 'Keep',
   keepTitle: 'Keep this cold image?',
   keepDesc:
-    'Exempt images are no longer tagged as cold; you can undo this from the image details.',
-  kept: 'Kept, no longer tagged as cold',
+    'The image gets a cleanup exemption and will not be marked for cleanup again; you can remove the exemption in the image details.',
+  kept: 'Kept and marked as cleanup exempt',
   keepSelected: 'Keep {count} selected',
   keepSelectedTitle: 'Keep the {count} selected images?',
   batchKeepDone: 'Kept {done} images',
@@ -36,9 +36,9 @@ export const cleanup = {
   delete: 'Delete',
   deleteTitle: 'Delete this cold image?',
   deleteDesc:
-    'Public links stop working immediately and this cannot be undone; files with no other references are removed in about {minutes} minutes.',
+    'Links stop working immediately and this cannot be undone; physical files with no other references are removed in about {minutes} minutes.',
   deleteDescNoGrace:
-    'Public links stop working immediately and this cannot be undone; files with no other references are removed shortly.',
+    'Links stop working immediately and this cannot be undone; physical files with no other references are removed in the next cleanup sweep.',
   deleted: 'Deleted',
   deleteSelected: 'Delete {count} selected',
   deleteSelectedTitle: 'Delete the {count} selected images?',

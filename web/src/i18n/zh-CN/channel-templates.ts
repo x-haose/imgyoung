@@ -23,7 +23,7 @@ export const channelTemplates = {
     minio: { name: 'MinIO / 自建', description: 'MinIO 或其他自建 S3 服务' },
     's3-compatible': {
       name: 'S3 兼容（通用）',
-      description: '任意兼容 S3 协议的服务',
+      description: '任意提供 S3 兼容接口的服务',
     },
     webdav: {
       name: 'WebDAV',
@@ -44,7 +44,10 @@ export const channelTemplates = {
     access_key_id: { label: 'Access Key' },
     secret_access_key: { label: 'Secret Key' },
     region: { label: '区域' },
-    bucket: { label: '存储桶', help: '存储桶名称，可加 / 前缀限定子目录' },
+    bucket: {
+      label: '存储桶',
+      help: '存储桶名称；写成「桶名/前缀」可把对象存到子目录',
+    },
     public_base_url: {
       label: '公开访问地址',
       placeholder: 'https://cdn.example.com',
@@ -63,7 +66,7 @@ export const channelTemplates = {
     },
     vendor: {
       label: '服务类型',
-      help: '选错会导致列目录或分片上传行为异常；拿不准选「其他」',
+      help: '选错可能导致列目录或分片上传异常；不确定时选「其他」',
     },
     user: { label: '用户名' },
     pass: {
@@ -72,7 +75,7 @@ export const channelTemplates = {
     },
     client_id: {
       label: '应用 Client ID',
-      help: '一键授权必填，填在服务商开放平台自建的应用标识；粘贴令牌时，若授权用的是自建应用也须填写。令牌续期用它，须与签发令牌的应用一致',
+      help: '一键授权必填，即你在服务商开放平台创建的应用 ID；粘贴的令牌来自自建应用时也要填写。须与签发令牌的应用一致，否则令牌无法续期',
     },
     client_secret: {
       label: '应用 Client Secret',

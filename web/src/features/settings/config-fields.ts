@@ -102,7 +102,7 @@ export const CONFIG_GROUPS: FieldGroup[] = [
     fields: [
       { key: 'health_check_seconds', kind: 'int', min: 1, unit: 'seconds' },
       { key: 'backup_interval_hours', kind: 'int', min: 1, unit: 'hours' },
-      { key: 'backup_keep', kind: 'int', min: 1, unit: 'count' },
+      { key: 'backup_keep', kind: 'int', min: 1, unit: 'copies' },
       { key: 'usage_report_seconds', kind: 'int', min: 1, unit: 'seconds' },
       { key: 'channel_quota_gb', kind: 'int', min: 0, unit: 'gb' },
     ],

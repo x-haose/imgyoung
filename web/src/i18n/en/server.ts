@@ -23,12 +23,11 @@ export const server = {
     user_protected:
       'The built-in administrator cannot be disabled, demoted or deleted',
     cannot_delete_self: 'You cannot delete the user you are signed in as',
-    user_has_images:
-      'This user still owns images. Delete or reassign them first',
+    user_has_images: 'This user still owns images. Delete them first',
     user_ttl_invalid:
       'default_ttl_hours must be an integer from 0 (permanent) to {max}, or null to follow the global setting',
     token_request_invalid:
-      'Invalid request: a name of at most {max_name} bytes is required, and the validity in hours must be between 0 and {max_hours}',
+      'Invalid request: a name of at most {max_name} characters is required, and the validity in hours must be between 0 and {max_hours}',
     token_name_taken: 'A token with this name already exists',
     token_id_invalid: 'Invalid token ID',
     token_not_found: 'Token not found, or no longer valid',
@@ -81,7 +80,7 @@ export const server = {
     channel_config_changed:
       'The channel configuration changed while saving (another edit, or the provider refreshed the authorization token). Save again',
     channel_encrypted_immutable:
-      'Encryption cannot change after creation (changing it would mix ciphertext and plaintext beyond recovery). Create a new channel and migrate the data instead',
+      'Encryption cannot be changed after the channel is created. To change it, create a new channel and migrate the data',
     channel_sole_replicas:
       'This channel holds the only replica of {count} images; deleting it would lose data. Migrate or delete those images first',
     purge_param_invalid: 'purge must be true or false',
@@ -90,7 +89,7 @@ export const server = {
     channel_name_too_long:
       'Invalid channel settings: name is longer than {max} bytes',
     channel_encrypted_direct_link:
-      'Invalid channel settings: encrypted channels cannot use direct links (ciphertext cannot be served directly)',
+      'Invalid channel settings: encrypted channels cannot allow 302 direct links',
     channel_local_path_relative:
       'Invalid channel settings: the path of a local channel must be absolute, got {path}',
     channel_config_key_invalid:
@@ -109,7 +108,7 @@ export const server = {
     channel_backend_failed:
       'Invalid channel settings: the backend failed to initialize: {detail}',
     channel_bucket_failed:
-      'Creating the bucket failed (check that the key may create buckets, or create the bucket in the console and turn this option off): {detail}',
+      'Creating the bucket failed (check that the key may create buckets, or create the bucket in the console first and turn off automatic creation): {detail}',
     channel_unrepresentable:
       'A parameter value cannot be written to an rclone config file: parameter {key} of remote {remote}',
     oauth_token_invalid:
@@ -121,7 +120,7 @@ export const server = {
     oauth_option_required:
       'Invalid channel settings: backend {driver} requires {option} first',
     oauth_base_url_required:
-      'One-click authorization needs the public site address in Settings first; or paste a token instead',
+      'One-click authorization requires the public site address in Settings; otherwise paste a token',
     oauth_session_not_found:
       'The authorization session does not exist or has expired',
     oauth_denied: 'Authorization was denied or canceled: {detail}',
@@ -131,11 +130,11 @@ export const server = {
     upload_token_scope: 'The token is not allowed to do this',
     upload_unauthenticated: 'Unauthenticated upload request',
     upload_rate_limited: 'Too many uploads. Try again later',
-    upload_busy: 'Too many uploads in progress. Try again later',
+    upload_busy: 'The upload concurrency limit is reached. Try again later',
     upload_unsupported_type:
       'Only image files are supported (jpeg/png/gif/webp)',
     upload_too_many_pixels:
-      'The image resolution exceeds the limit ({max} megapixels)',
+      'The image resolution exceeds the pixel budget ({max} megapixels)',
     upload_invalid_image: 'The image content cannot be decoded',
     upload_exif_policy: 'Invalid exif_policy (allowed: strip / passthrough)',
     upload_quota_exceeded: 'Storage quota is full',
@@ -146,19 +145,19 @@ export const server = {
     upload_too_large: 'The file exceeds the size limit ({max} MB)',
     upload_field_too_long: 'exif_policy or ttl is too long (limit {max} bytes)',
     upload_no_file:
-      'Cannot read the file field (a multipart/form-data file field is required)',
+      'The file field is missing, or the request body is not a valid multipart/form-data form',
     url_body_invalid:
       'The request body must be a JSON object with only url/file_name/exif_policy/ttl',
     url_required: 'url cannot be empty',
     url_scheme: 'url only supports http/https addresses',
-    url_blocked: 'The target address is not reachable (public addresses only)',
+    url_blocked: 'The target is not a public address and cannot be fetched',
     url_too_many_redirects: 'The remote server redirected too many times',
     url_too_large: 'The remote file exceeds the size limit ({max} MB)',
     url_bad_status:
       'The remote server returned an error status; the image could not be fetched',
     url_fetch_failed: 'Could not fetch the image from this address',
     variant_params_invalid:
-      'Invalid processing parameters: width or format is not an allowed option',
+      'Invalid processing parameters: w or format is not an allowed value',
   },
   failureReasons: {
     s3_auth:
@@ -182,9 +181,9 @@ export const server = {
     permission:
       'No write permission on the storage path: check the directory permissions',
     probe_mismatch:
-      'The probe object read back differently: the storage rewrote or truncated it',
+      'The probe object read back does not match what was written: the storage rewrote or truncated it',
     config_unreadable:
-      'The channel settings cannot be decrypted: the master key differs from the one they were written with',
+      'The channel settings cannot be decrypted: the current master key differs from the one used to save them',
     no_source: 'No readable source replica',
     channel_unavailable: 'The target channel is not loaded',
     object_missing: 'Reconciliation found the object missing from the channel',
@@ -206,5 +205,5 @@ export const server = {
     drain_failed: '{failure}',
     backup_failed: '{error}',
   },
-  unhealthyUnprobed: 'The channel probe is unhealthy',
+  unhealthyUnprobed: 'The channel is unhealthy',
 } satisfies typeof zh

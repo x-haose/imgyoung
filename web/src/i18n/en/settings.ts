@@ -3,7 +3,7 @@ import type { settings as zh } from '../zh-CN/settings'
 export const settings = {
   title: 'Settings',
   description:
-    'Runtime settings apply as soon as they are saved; hotlink protection, backups and alert history live here too.',
+    'Runtime settings take effect on save, no restart needed. Hotlink protection, backups and alert history are here too.',
   tabs: {
     config: 'Runtime settings',
     referer: 'Hotlink protection',
@@ -29,50 +29,53 @@ export const settings = {
     groups: {
       access: {
         title: 'Access & links',
-        hint: 'Public address and replica threshold',
+        hint: 'Access mode, public address, replicas and encryption',
       },
-      upload: { title: 'Upload limits', hint: 'Size, pixels and concurrency' },
+      upload: {
+        title: 'Upload limits',
+        hint: 'Size, pixels, concurrency and rate',
+      },
       lifecycle: {
         title: 'Lifecycle',
-        hint: 'Expiry, cold images and cleanup cadence',
+        hint: 'Expiry, cold images, deletion and background scans',
       },
       process: {
         title: 'On-demand processing',
-        hint: 'Requests with processing parameters are always proxied, even in redirect mode; whitelisted tiers keep arbitrary parameters from saturating the CPU',
+        hint: 'Resizing and format conversion accept only the values below; requests that need a variant are always served by this service, even in redirect mode',
       },
       dedup: {
         title: 'Deduplication',
-        hint: 'Exact duplicates merge automatically, similar images become candidates',
+        hint: 'Identical images merge automatically; similar ones go to Duplicates',
       },
       reliability: {
         title: 'Reliability & channels',
-        hint: 'Probes, backups and usage',
+        hint: 'Health checks, backups and usage',
       },
       cdn: {
         title: 'CDN cache purge',
-        hint: 'Cloudflare purge on delete; needs the Zone ID, API token and public site address together',
+        hint: 'Purges the Cloudflare cache when images are deleted or expire; needs the Zone ID, API token and public site address',
       },
       alerts: {
         title: 'Alerts & audit',
-        hint: 'Alert delivery and log retention',
+        hint: 'Alert webhook and audit log retention',
       },
     },
     fields: {
       access_mode: {
         label: 'Access mode',
-        hint: 'proxy serves through this service; redirect sends a 302 to channels that allow direct links, saving bandwidth, while requests with processing parameters, and images no direct-link channel holds, are still proxied',
+        hint: 'redirect sends original-image requests to a direct-link channel with a 302, saving bandwidth; requests that need processing, and images with no direct-link channel, are still served here',
       },
       base_url: {
         label: 'Public site address',
-        hint: 'Leave empty to derive from the request host; required when the public domain behind a proxy or CDN differs from the request host',
+        hint: 'Site root used in image links; empty derives it from the request. Required when a proxy or CDN changes the domain, for CDN cache purge and for one-click cloud drive authorization',
       },
       min_success: {
         label: 'Minimum synced replicas',
-        hint: 'Channels written before an upload is reported successful',
+        hint: 'Channels that must be written before an upload succeeds; uploads fail when too few channels are healthy',
       },
       encrypt_new_channels: {
         label: 'Encrypt new channels by default',
-        hint: 'Default when a new channel does not choose explicitly',
+        hint: 'Whether a new channel is encrypted when its server-side encryption is left at Inherit the global default',
       },
       max_upload_mb: {
         label: 'Max image size',
@@ -80,19 +83,19 @@ export const settings = {
       },
       max_pixels_mp: {
         label: 'Pixel budget',
-        hint: 'Width × height ceiling, keeps huge images from exhausting memory',
+        hint: 'Width × height limit per image; larger images are rejected',
       },
       max_concurrent_uploads: {
         label: 'Concurrent uploads',
-        hint: 'Shared globally, determines peak memory',
+        hint: 'Shared by every upload path; requests beyond it get 429',
       },
       upload_rate_per_min: {
         label: 'Upload rate limit',
-        hint: 'Per user; 0 disables',
+        hint: 'Uploads per user per minute; 0 means no limit',
       },
       default_ttl_hours: {
         label: 'Default lifetime',
-        hint: '0 means never expires; per-upload and per-user defaults override it',
+        hint: 'Used when neither the upload nor the user sets a lifetime; 0 means never expires',
       },
       ttl_renew_on_access: {
         label: 'Renew on access',
@@ -100,23 +103,23 @@ export const settings = {
       },
       cold_cleanup_days: {
         label: 'Cold image threshold',
-        hint: 'Images without public access for this long enter the cleanup queue; 0 disables',
+        hint: 'Images without public access for this many days go to Cleanup and are never deleted automatically; 0 disables',
       },
       delete_grace_minutes: {
         label: 'Delete grace period',
-        hint: 'Wait between the last reference going away and physical deletion; 0 means immediately',
+        hint: 'How long to wait after an image is no longer referenced before deleting its objects; 0 means at the next cleanup sweep',
       },
       cleanup_sweep_seconds: {
         label: 'Cleanup sweep interval',
-        hint: 'Cadence of expiry and cold-image scans',
+        hint: 'Interval for reclaiming expired images, deleting objects and flagging cold images',
       },
       activity_flush_seconds: {
         label: 'Activity flush interval',
-        hint: 'Batch write interval for access counts and last-access times',
+        hint: 'Access counts and last-access times are saved in batches at this interval',
       },
       idempotency_key_ttl_hours: {
         label: 'Idempotency key retention',
-        hint: 'Retry window for clients sending Idempotency-Key; expired keys are reclaimed',
+        hint: 'Uploads retried with the same Idempotency-Key within this window return the first result',
       },
       process_widths: {
         label: 'Width tiers',
@@ -124,17 +127,17 @@ export const settings = {
       },
       process_formats: {
         label: 'Target formats',
-        hint: 'Allowed ?format= values; gif is only passed through',
+        hint: 'Allowed ?format= values; GIF images are always served as is',
       },
       exif_policy: {
         label: 'Default EXIF policy',
-        hint: 'A per-upload form field can override it; S3 uploads are always stored byte for byte',
+        hint: 'Whether uploads keep or strip EXIF and other metadata; a per-upload form field can override it, and S3 uploads are always stored as is',
       },
       process_quality_webp: { label: 'WebP quality', hint: '1 to 100' },
       process_quality_jpeg: { label: 'JPEG quality', hint: '1 to 100' },
       process_webp_method: {
         label: 'WebP effort',
-        hint: '0 to 6; higher is slower and smaller',
+        hint: '0 to 6; higher encodes slower and smaller',
       },
       process_workers: {
         label: 'Processing concurrency',
@@ -142,15 +145,15 @@ export const settings = {
       },
       process_timeout_ms: {
         label: 'Processing timeout',
-        hint: 'Falls back to the original on timeout',
+        hint: 'The original is served on timeout',
       },
       variants_cache_mb: {
         label: 'Variant cache limit',
-        hint: 'Least recently used variants are evicted beyond this',
+        hint: 'Disk limit for the variant cache; the least recently accessed variants are evicted first',
       },
       dedup_scan_seconds: {
         label: 'Dedup scan interval',
-        hint: 'Background scan cadence',
+        hint: 'Each scan merges identical images first, then looks for similar ones',
       },
       dedup_phash_max_distance: {
         label: 'Similarity threshold',
@@ -158,7 +161,7 @@ export const settings = {
       },
       health_check_seconds: {
         label: 'Health check interval',
-        hint: 'Cadence of channel probes and alert evaluation',
+        hint: 'Interval for channel health probes and alert checks',
       },
       backup_interval_hours: {
         label: 'Backup interval',
@@ -166,15 +169,15 @@ export const settings = {
       },
       backup_keep: {
         label: 'Backups to keep',
-        hint: 'Losing the mapping makes everything untraceable, so keep more rather than fewer',
+        hint: 'Snapshots kept per channel; the oldest are deleted beyond this',
       },
       usage_report_seconds: {
         label: 'Usage report interval',
-        hint: 'Refresh cadence of channel usage metrics',
+        hint: 'Refresh interval of the channel usage metric',
       },
       channel_quota_gb: {
         label: 'Channel usage alert threshold',
-        hint: 'Opens an alert when exceeded; 0 reports without alerting',
+        hint: 'Opens an alert when a channel exceeds it, without blocking writes; 0 disables',
       },
       cdn_cloudflare_zone_id: {
         label: 'Cloudflare Zone ID',
@@ -182,15 +185,15 @@ export const settings = {
       },
       cdn_cloudflare_api_token: {
         label: 'Cloudflare API token',
-        hint: 'Needs the Zone.Cache Purge permission; stored encrypted and never shown again',
+        hint: 'Needs the Zone.Cache Purge permission; stored encrypted and never shown after saving',
       },
       alert_webhook_url: {
         label: 'Alert webhook URL',
-        hint: 'Receives a JSON POST when an alert opens or resolves; empty disables',
+        hint: 'Receives a JSON POST when an alert opens or resolves; empty sends nothing',
       },
       audit_retention_days: {
         label: 'Audit log retention',
-        hint: 'Older entries are reclaimed by the cleanup loop; 0 keeps them forever',
+        hint: 'Older entries are deleted by the cleanup sweep; 0 keeps them forever',
       },
     },
     placeholders: {
@@ -211,6 +214,7 @@ export const settings = {
       ms: 'ms',
       hamming: 'Hamming distance',
       replicas: 'replicas',
+      copies: 'copies',
     },
     options: {
       access_mode: {
@@ -224,8 +228,8 @@ export const settings = {
     },
     tokenSet: 'Configured; leave empty to keep',
     tokenUnset: 'Not configured',
-    purgeEnabled: 'Purge enabled',
-    purgeDisabled: 'Purge disabled',
+    purgeEnabled: 'Enabled',
+    purgeDisabled: 'Disabled',
     clearToken: 'Clear token',
     clearTokenTitle: 'Clear the configured API token?',
     clearTokenDesc:
@@ -233,7 +237,7 @@ export const settings = {
     tokenCleared: 'Cloudflare API token cleared',
     bootstrap: {
       title: 'Bootstrap configuration',
-      hint: 'IMGYOUNG_* environment variables; changes need a process restart',
+      hint: 'Read-only, from the IMGYOUNG_* environment variables; changes need a process restart',
       listen: 'Listen address',
       data_dir: 'Data directory',
       trusted_proxies: 'Trusted proxy networks',
@@ -252,10 +256,10 @@ export const settings = {
   },
   referer: {
     title: 'Hotlink protection',
-    desc: 'Only referers matching the whitelist can load public image links (/i/ and /o/); changes apply immediately.',
+    desc: 'Only requests whose Referer matches the allowlist can load public image links (/i/ and /o/); an empty allowlist turns hotlink protection off. Changes apply immediately.',
     allowEmpty: 'Allow empty referer',
     allowEmptyHint:
-      'With the whitelist enabled, whether direct requests without a Referer (address bar, download clients) are allowed',
+      'With a non-empty allowlist, whether requests without a Referer are allowed, such as opening a link in the address bar or using a download tool',
     allowEmptySaved: 'Empty referer policy updated',
     rules: 'Active rules',
     disabled: 'Hotlink protection is off; every referer is allowed.',
@@ -269,15 +273,15 @@ export const settings = {
     remove: 'Remove rule {pattern}',
     removeTitle: 'Remove rule {pattern}?',
     removeDesc:
-      'Takes effect immediately; matching referers are then judged by the remaining rules.',
+      'Takes effect immediately and the remaining rules apply; removing the last rule turns hotlink protection off.',
     removed: 'Removed {pattern}',
   },
   export: {
     title: 'Data export',
-    desc: 'Exports all metadata (users, channels, images, replica placement; credentials redacted). Even if you stop using ImgYoung, it lets you match the objects in your channels back to the original images.',
-    keyWarningTitle: 'Back up the master key file separately',
+    desc: 'Exports users, channels, images, replica placement and other metadata, without credentials. Even without ImgYoung, it lets you match the objects in your channels back to the original images; to restore an instance, use a snapshot.',
+    keyWarningTitle: 'Back up the master key separately',
     keyWarningDesc:
-      'The master key (master.key in the data directory) is not part of the export or remote snapshots; without it channel credentials and encrypted channel data are lost for good. Copy it to a separate safe place.',
+      'The master key (master.key in the data directory, or the value of IMGYOUNG_MASTER_KEY) is not in the export or the snapshots. Without it, channel credentials and the data on encrypted channels cannot be recovered. Copy it to a separate safe place.',
     download: 'Export JSON',
   },
   backup: {
@@ -286,7 +290,7 @@ export const settings = {
     createNow: 'Back up now',
     created: 'Backed up: {name}',
     createProxyTimeout:
-      'The reverse proxy timed out. If the request reached the server, the backup keeps running there and appears in the snapshot list when it finishes: refresh the list later, and click again only if no new snapshot shows up.',
+      'The reverse proxy timed out, but the backup may still be running on the server. Refresh the snapshot list later and back up again only if no new snapshot appears.',
     name: 'Snapshot',
     size: 'Size',
     takenAt: 'Taken',
@@ -296,21 +300,21 @@ export const settings = {
     empty: 'No snapshots yet',
     restoreTitle: 'Restore the metadata database from {name}?',
     restoreDesc:
-      'The snapshot is staged in the data directory and the service shuts down gracefully; a process manager such as systemd or Docker swaps it in when it restarts the service. Without one, start the service by hand. The current database is kept as imgyoung.db.pre-restore-<time>, nothing is lost.',
+      'Once the snapshot is downloaded and verified, the service stops, and the restore completes when a process manager such as systemd or Docker restarts it; without one, start the service by hand. Accounts and passwords also return to the snapshot, and the current database is kept as imgyoung.db.pre-restore-<time>.',
     restoreConfirm: 'Restore and restart',
     restoreProxyTimeout:
-      'The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again.',
+      'The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout), or bypass the proxy and restore again.',
     restoreCdnTimeout:
-      'Cloudflare timed out (524) before the restore returned. If Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own; otherwise it was aborted and nothing changed. For a snapshot that takes longer than 125 seconds to fetch, open the admin console on the origin directly and restore again.',
+      'Cloudflare timed out (524), so it is unknown whether the restore completed. If Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own; otherwise it was aborted. If the snapshot takes longer than 125 seconds to download, restore from the admin console on the origin directly.',
     restarting: 'Service restarting',
     restartingDesc:
-      'The snapshot is staged; waiting for the process to come back. The page reloads automatically once it does.',
+      'The snapshot passed verification; waiting for the service to restart. The page reloads automatically once it is back.',
     restartSlow:
       'Still down after a minute? Check the process manager or start the service by hand.',
   },
   alerts: {
     title: 'Alert history',
-    desc: 'Alerts are evaluated by the health check loop; both opening and resolving are recorded, and delivered to the webhook when one is configured.',
+    desc: 'Every alert opening and resolving is recorded here, and sent to the alert webhook when one is configured.',
     status: 'Status',
     open: 'Open',
     resolved: 'Resolved',

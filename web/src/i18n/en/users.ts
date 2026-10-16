@@ -3,7 +3,7 @@ import type { users as zh } from '../zh-CN/users'
 export const users = {
   title: 'Users',
   description:
-    'Accounts are created by administrators, there is no sign-up; quotas count every reference in full',
+    'Accounts are created by administrators; there is no sign-up. Quotas count each image at its full size, and dedup merges do not reduce usage',
   create: 'New user',
   searchPlaceholder: 'Filter by username or ID…',
   emptyFiltered: 'No matching users',
@@ -40,7 +40,7 @@ export const users = {
     ttl: 'Default TTL (hours)',
     ttlPlaceholder: 'Global default',
     ttlHint:
-      'Applies to uploads without an explicit ttl: empty = global default, 0 = never expires',
+      'Used when an upload does not set an expiry. Leave empty for the global default; 0 means never expires',
     ttlInvalid: 'Must be an integer from 0 to {max}',
     disabled: 'Disabled',
     disabledHint:
@@ -59,7 +59,7 @@ export const users = {
   },
   delete: {
     title: 'Delete user {name}?',
-    desc: 'Refused while they still own images; their tokens and sessions end with the deletion.',
+    desc: 'Not allowed while the user still owns images; their tokens and sessions are deleted with the account.',
     confirm: 'Delete',
     done: 'User deleted',
   },

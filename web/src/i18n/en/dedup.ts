@@ -3,9 +3,9 @@ import type { dedup as zh } from '../zh-CN/dedup'
 export const dedup = {
   title: 'Duplicates',
   subtitle:
-    'Image pairs with near-identical perceptual hashes, found by the background scan and decided by you; {total} pending',
+    'Image pairs with similar perceptual hashes; {total} pending. You decide whether to merge or dismiss each',
   empty: 'No suspected duplicates',
-  emptyHint: 'Pairs show up here once the background scan finds similar images',
+  emptyHint: 'Pairs appear here once the dedup scan finds similar images',
   candidate: 'Candidate #{id}',
   foundAt: 'Found {time}',
   distance: 'Distance {distance}',
@@ -16,8 +16,8 @@ export const dedup = {
   keepThis: 'Keep this one',
   refs: 'References: {count}',
   meta: '{mime} · {width}×{height} · {size}',
-  noPreview: 'No reference to preview',
-  openOriginal: 'Open in new tab',
+  noPreview: 'No image to preview',
+  openOriginal: 'Open the original in a new tab',
   selectCandidate: 'Select candidate #{id}',
   dismiss: 'Dismiss',
   dismissed: 'Dismissed, this pair will not be shown again',
@@ -30,7 +30,7 @@ export const dedup = {
   clearSelection: 'Clear selection',
   mergeTitle: 'Merge into the kept image?',
   mergeDesc:
-    'The other image’s {refs} references will point to the kept image and every public link keeps working; the merged file is removed after the grace period. This cannot be undone.',
+    'The other image’s {refs} references will point to the kept image. Existing links keep working but show the kept image; the merged file is removed after the delete grace period. This cannot be undone.',
   merge: 'Merge',
   merged: 'Merged',
 } satisfies typeof zh

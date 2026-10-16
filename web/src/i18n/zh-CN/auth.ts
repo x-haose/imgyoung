@@ -30,7 +30,7 @@ export const auth = {
   firstRunSubtitle: '首次登录 · 账号 {name}',
   firstRunWarningTitle: '当前使用出厂默认密码',
   firstRunWarningDesc:
-    '默认密码是公开的，任何人都能凭它登入。请立即改为只有你知道的密码。',
+    '出厂默认密码是公开的，任何人都能用它登录。请立即改为只有你知道的密码。',
   firstRunSubmit: '保存并重新登录',
   firstRunDone: '密码已设置，请用新密码重新登录',
 }

@@ -1,10 +1,9 @@
 /** 疑似重复页:候选对展示与合并 / 忽略裁决。 */
 export const dedup = {
   title: '疑似重复',
-  subtitle:
-    '感知哈希相近的图片对，由后台扫描找出、由人裁决；共 {total} 组待处理',
+  subtitle: '感知哈希相近的图片对，共 {total} 组待处理；由你决定合并或忽略',
   empty: '暂无疑似重复',
-  emptyHint: '后台扫描发现相似图片后会在这里成对列出',
+  emptyHint: '查重扫描发现相似图片后，会在这里成对列出',
   candidate: '候选 #{id}',
   foundAt: '发现于 {time}',
   distance: '距离 {distance}',
@@ -14,8 +13,8 @@ export const dedup = {
   keepThis: '保留这张',
   refs: '{count} 个引用',
   meta: '{mime} · {width}×{height} · {size}',
-  noPreview: '暂无引用可预览',
-  openOriginal: '新窗口查看',
+  noPreview: '没有可预览的图片',
+  openOriginal: '在新标签页查看原图',
   selectCandidate: '勾选候选 #{id}',
   dismiss: '忽略',
   dismissed: '已忽略，该组不再提示',
@@ -27,7 +26,7 @@ export const dedup = {
   clearSelection: '清除选择',
   mergeTitle: '合并为保留的这张？',
   mergeDesc:
-    '另一张的 {refs} 个引用会改指向保留的这张，所有对外链接继续可用；被合并的物理文件按宽限期清理。此操作不可撤销。',
+    '另一张的 {refs} 个引用将改为指向保留的这张，原有链接继续可用，但显示保留这张的内容；被合并的文件按删除宽限清理。此操作不可撤销。',
   merge: '合并',
   merged: '已合并',
 }

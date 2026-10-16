@@ -206,7 +206,9 @@ export function UploadDialog({
             />
           </div>
           <p className='text-xs text-muted-foreground'>
-            {ttlHint};{m.images.exifHint};{m.images.appliesLater}
+            {[ttlHint, m.images.exifHint, m.images.appliesLater].join(
+              m.common.clauseSeparator
+            )}
           </p>
         </div>
 

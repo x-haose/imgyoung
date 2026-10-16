@@ -100,7 +100,7 @@ export function CustomFields({ rows, isEdit }: CustomFieldsProps) {
         <p className='text-xs leading-relaxed text-muted-foreground'>
           {m.channels.configHint}
           {isEdit &&
-            `;${t(m.channels.configKeepHint, { placeholder: SECRET_PLACEHOLDER })}`}
+            `${m.common.clauseSeparator}${t(m.channels.configKeepHint, { placeholder: SECRET_PLACEHOLDER })}`}
         </p>
       </div>
     </>

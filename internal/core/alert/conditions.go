@@ -67,7 +67,7 @@ func channelConditions(channels []sqlc.Channel) []Condition {
 			continue
 		}
 		if f == nil {
-			out = append(out, Condition{Kind: KindChannelUnhealthy, Target: c.Name, Message: "渠道探测不健康"})
+			out = append(out, Condition{Kind: KindChannelUnhealthy, Target: c.Name, Message: "渠道不健康"})
 			continue
 		}
 		out = append(out, failureCondition(KindChannelUnhealthy, c.Name, *f))

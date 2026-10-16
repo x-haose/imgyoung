@@ -2,14 +2,14 @@
 export const cleanup = {
   title: '待清理',
   subtitleEnabled:
-    '超过 {days} 天无公开访问的图片进入此列表，共 {total} 张；不会自动删除，由你裁决',
+    '超过 {days} 天无公开访问的图片，共 {total} 张；不会自动删除，由你决定保留或删除',
   subtitleDisabled:
-    '超期无公开访问的冷图，共 {total} 张；不会自动删除，由你裁决',
+    '长期无公开访问的图片，共 {total} 张；不会自动删除，由你决定保留或删除',
   disabledNotice:
-    '冷图打标未启用（cold_cleanup_days 为 0），此列表不会有新条目。',
+    '冷图清理阈值（cold_cleanup_days）为 0，不会再有新的图片进入此列表。',
   goSettings: '去设置',
   empty: '暂无待清理的冷图',
-  emptyHint: '超过阈值仍无人访问的图片会在这里等你裁决',
+  emptyHint: '超过冷图清理阈值仍无人访问的图片会出现在这里',
   preview: '预览',
   image: '图片',
   owner: '归属',
@@ -24,8 +24,9 @@ export const cleanup = {
   clearSelection: '清除选择',
   keep: '保留',
   keepTitle: '保留这张冷图？',
-  keepDesc: '豁免后不再参与冷图打标，可在图片详情中取消。',
-  kept: '已保留，不再参与冷图打标',
+  keepDesc:
+    '将为图片设置清理豁免，之后不会再被标为待清理；可在图片详情中取消豁免。',
+  kept: '已保留，并设为清理豁免',
   keepSelected: '保留选中的 {count} 张',
   keepSelectedTitle: '保留选中的 {count} 张图片？',
   batchKeepDone: '已保留 {done} 张',
@@ -33,9 +34,9 @@ export const cleanup = {
   delete: '删除',
   deleteTitle: '删除这张冷图？',
   deleteDesc:
-    '删除后外链立即失效，该操作不可恢复；无其他引用的物理文件将在约 {minutes} 分钟后清理。',
+    '删除后链接立即失效，且无法恢复；没有其他引用的物理文件约 {minutes} 分钟后清理。',
   deleteDescNoGrace:
-    '删除后外链立即失效，该操作不可恢复；无其他引用的物理文件将很快清理。',
+    '删除后链接立即失效，且无法恢复；没有其他引用的物理文件将在下一轮清理扫描时删除。',
   deleted: '已删除',
   deleteSelected: '删除选中的 {count} 张',
   deleteSelectedTitle: '删除选中的 {count} 张图片？',

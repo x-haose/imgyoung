@@ -11,7 +11,7 @@ export const images = {
   filterToken: 'Upload token',
   filterRange: 'Uploaded',
   filterExempt: 'Exempt only',
-  filterExemptHint: 'Exempt images are never flagged as cold',
+  filterExemptHint: 'Exempt images are never marked for cleanup',
   allUsers: 'All users',
   allTokens: 'All sources',
   rangeAny: 'Any time',
@@ -29,9 +29,9 @@ export const images = {
   batchDelete: 'Delete selected',
   batchDeleteTitle: 'Delete the {count} selected images?',
   deleteWarning:
-    'Public links stop working immediately and this cannot be undone; files with no other reference are removed after about {minutes} minutes',
+    'Links stop working immediately and this cannot be undone; physical files with no other references are removed in about {minutes} minutes',
   deleteWarningImmediate:
-    'Public links stop working immediately and this cannot be undone; files with no other reference are removed shortly',
+    'Links stop working immediately and this cannot be undone; physical files with no other references are removed in the next cleanup sweep',
   deleted: 'Deleted',
   batchDeleted: 'Deleted {count} images',
   batchPartial: 'Deleted {deleted}, {failed} failed: {error}',
@@ -61,13 +61,13 @@ export const images = {
   sourceNone: 'Console upload / token removed',
   refCount: 'References',
   refCountHelp:
-    'How many references share this physical file (after dedup merges); the file is removed only when the last reference goes',
+    'Number of image records sharing this physical file; it can exceed 1 after dedup merges. The file is removed only after the last record is deleted',
   uploadedAt: 'Uploaded',
   lastAccess: 'Last access',
   neverAccessed: 'Never',
   accessCount: 'Accesses',
   accessCountHelp:
-    'Counted per activity flush window; repeated hits within one window count once, so this is not an exact page view count',
+    'Counts public link visits only, not admin UI browsing; repeated visits within one counting window count once, so this is not an exact view count',
   expiresAt: 'Expires',
   permanent: 'Never expires',
   editTtl: 'Change expiry',
@@ -80,16 +80,16 @@ export const images = {
   exemptOn: 'Exempt',
   exemptOff: 'Not exempt',
   exemptHelp:
-    'Exempt images are never flagged as cold; TTL expiry and access renewal are unaffected. Only administrators decide; after removing the exemption the next scan judges again',
+    'Exempt images are never marked for cleanup; expiry and access renewal are unaffected. Only administrators can change this; after the exemption is removed, the next cleanup sweep re-evaluates the image',
   exemptSet: 'Marked exempt',
   exemptUnset: 'Exemption removed',
   sha256: 'SHA-256',
   shareLink: 'Share link',
-  shareHint: 'Append ?w=width for a resized version; available widths:',
+  shareHint: 'Append ?w=width for a resized image; click to copy:',
   copyAs: 'Copy as',
   replicas: 'Replicas',
   replicasHelp:
-    'State of this file on each storage channel, ordered by channel priority',
+    'Replica state of this image on each channel, ordered by channel priority',
   replicaState: {
     pending: 'Pending',
     uploading: 'Uploading',
@@ -109,9 +109,10 @@ export const images = {
   tabUrl: 'Fetch from URL',
   dropTitle: 'Click or drop images here',
   dropHint:
-    'Multiple files and Ctrl / ⌘ + V paste are supported; jpeg · png · gif · webp, up to {max} MB each',
+    'Select multiple files or paste with Ctrl / ⌘ + V; JPEG · PNG · GIF · WebP, up to {max} MB each',
   urlPlaceholder: 'https://example.com/photo.png',
-  urlHint: 'The server fetches and stores it; public addresses only',
+  urlHint:
+    'The server downloads and stores it; public http / https addresses only',
   fetch: 'Fetch',
   ttl: 'Expiry',
   ttlDefault: 'Default',
@@ -119,9 +120,9 @@ export const images = {
   ttlCustom: 'Custom',
   hours: 'hours',
   ttlDefaultHint:
-    'Follows the default expiry (your account default, else the site default)',
+    'Uses your default expiry, or the global default if you have none',
   ttlNeverHint: 'Never expires',
-  ttlCustomHint: 'Removed automatically after it expires',
+  ttlCustomHint: 'Deleted automatically when it expires',
   appliesLater: 'Applies to files added from now on',
   ttlCustomRequired: 'Enter the custom expiry in hours first',
   exifPolicy: 'EXIF',
@@ -129,11 +130,10 @@ export const images = {
   exifStrip: 'Strip',
   exifPassthrough: 'Keep',
   exifHint:
-    'Stripping removes camera, GPS and similar metadata; the default follows the site setting',
+    'Stripping removes camera, GPS and similar metadata; the default follows the global setting',
   clipboardImage: 'Clipboard image',
   uploading: 'Uploading',
   uploadDone: 'Uploaded',
   uploadFailed: 'Upload failed',
-  fetchFailed: 'Fetch failed',
   clearList: 'Clear list',
 } satisfies typeof zh
