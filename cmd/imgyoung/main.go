@@ -6,15 +6,22 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/x-haose/imgyoung/internal/infra/version"
 )
 
-// main 进程入口:装配并启动服务,阻塞至优雅停机;失败退出码 1。
+// main 进程入口:装配并启动服务,阻塞至优雅停机;运行失败退出码 1,参数错误退出码 2。
 // @Description: 运行参数只有 -version:打印构建信息后退出。其余配置一律走环境变量与后台。
+// 带位置参数即参数错误,不启动服务:敲错的子命令不会误启动并初始化数据目录。
 func main() {
 	showVersion := flag.Bool("version", false, "打印版本信息并退出")
 	flag.Parse()
+	if flag.NArg() > 0 {
+		fmt.Fprintf(flag.CommandLine.Output(), "不接受参数 %s:命令行只有 -version\n", strings.Join(flag.Args(), " "))
+		flag.Usage()
+		os.Exit(2)
+	}
 	if *showVersion {
 		fmt.Println(version.Current())
 		return

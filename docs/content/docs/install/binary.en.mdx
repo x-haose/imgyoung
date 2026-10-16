@@ -124,7 +124,7 @@ Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first s
   ```
 
 - **Listening address**: `:8721` by default, i.e. every interface; set `IMGYOUNG_LISTEN=127.0.0.1:8721` when only a local reverse proxy should reach it. Other environment variables are listed in [Configuration](../configuration.mdx).
-- **Version**: `./imgyoung -version`. This is the only command-line flag; everything else is configured through environment variables and the console.
+- **Version**: `./imgyoung -version`. This is the only command-line flag; everything else is configured through environment variables and the console. Any other argument makes it exit with an error (exit code 2) without starting the server.
 
 On Windows the firewall may ask whether `imgyoung.exe` may access the network on first run; for local-only use you can decline.
 
