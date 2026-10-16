@@ -53,7 +53,7 @@ sudo sh install.sh --service
 3. **确定版本**：没有指定 `--version` 时，请求 `<发布页>/latest` 并跟随跳转，取最终地址的最后一段作为版本号，按与 `--version` 相同的格式校验。GitHub 的 latest 不会指向预发布版。
 4. **下载并校验**：把 `imgyoung_<版本号>_<系统>_<架构>.tar.gz` 与同版本的 `checksums.txt` 下载到临时目录，核对 sha256。不一致即中止，不安装任何东西。临时目录在脚本退出时删除。
 5. **安装二进制**：以 0755 权限装为目标目录下的 `imgyoung`，并打印它的版本信息。
-6. **安装服务**（仅 `--service`）：把发布包里的 `deploy/imgyoung.service` 写到 `/etc/systemd/system/imgyoung.service`，其中 `ExecStart` 换成实际安装路径；与原有文件内容不同时给出提示。然后执行 `systemctl daemon-reload` 并启用服务。服务已在运行就重启它以换上新版本，否则启动它。随后从服务这一次运行的日志里取出内置管理员的初始密码并打印出来；管理员已有密码时（如升级），提示沿用原来的密码。
+6. **安装服务**（仅 `--service`）：把发布包里的 `deploy/imgyoung.service` 写到 `/etc/systemd/system/imgyoung.service`，其中 `ExecStart` 换成实际安装路径；与原有文件内容不同时给出提示。然后执行 `systemctl daemon-reload` 并启用服务。服务已在运行就重启它以换上新版本，否则启动它。随后从服务这一次运行的日志里取出内置管理员的初始密码并打印出来；管理员已有密码（如升级）或读不到这次运行的日志时，给出在服务日志里查找初始密码的命令。
 7. **提示下一步**：目标目录不在 `PATH` 中时给出提醒，并打印登录地址；没加 `--service` 时，说明首次启动的日志里会打印初始密码。
 
 没加 `--service` 时，脚本只安装二进制，不会启动它。直接运行 `imgyoung` 即可，数据写在当前目录的 `data/`，可用 `IMGYOUNG_DATA_DIR` 指定。长期运行请交给进程管理器，原因见[安装方式](./index.mdx)。
