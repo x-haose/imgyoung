@@ -83,7 +83,7 @@ export const images = {
   exemptUnset: '已取消豁免',
   sha256: 'SHA-256',
   shareLink: '分享链接',
-  shareHint: '链接后加？w=宽度 取缩放版，可用档位：',
+  shareHint: '链接后加 ?w=宽度 取缩放版，可用档位：',
   copyAs: '复制为',
   replicas: '副本分布',
   replicasHelp: '物理图在各存储渠道的副本状态，按渠道优先级排列',

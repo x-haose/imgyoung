@@ -86,7 +86,7 @@ export const tokens = {
     hints: {
       bucket: '本服务无桶概念，填什么都收',
       region: '不区分区域，保持默认即可',
-      endpoint: '末尾的 /s3 是协议面前缀，不能省',
+      endpoint: '末尾的 /s3 是 S3 兼容接口的路径前缀，不能省略',
       url_prefix: '客户端据此拼最终图片地址，含用户 id 段',
     },
   },

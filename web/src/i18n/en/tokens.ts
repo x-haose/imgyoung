@@ -91,7 +91,8 @@ export const tokens = {
     hints: {
       bucket: 'This server has no buckets; any name is accepted',
       region: 'Regions are not distinguished; keep the default',
-      endpoint: 'The trailing /s3 is the protocol prefix and must stay',
+      endpoint:
+        'The trailing /s3 is the path prefix of the S3-compatible API and must stay',
       url_prefix:
         'Clients build the final image URL from it; it includes the user id segment',
     },

@@ -100,11 +100,11 @@ export const settings = {
       },
       process_widths: {
         label: '宽度档',
-        hint: '允许的？w= 取值（像素），逗号分隔；清空表示不允许缩放',
+        hint: '允许的 ?w= 取值（像素），逗号分隔；清空表示不允许缩放',
       },
       process_formats: {
         label: '目标格式',
-        hint: '允许的？format= 取值；gif 只收发原图不处理',
+        hint: '允许的 ?format= 取值；gif 只收发原图不处理',
       },
       exif_policy: {
         label: 'EXIF 默认档',
@@ -242,7 +242,7 @@ export const settings = {
   },
   export: {
     title: '数据导出',
-    desc: '导出全部元数据（用户、渠道、图片、副本分布，凭证脱敏）。图与账本都在渠道里，即便项目停更也能凭此自救。',
+    desc: '导出全部元数据（用户、渠道、图片、副本分布，凭证脱敏）。即使不再使用 ImgYoung，也能凭它把渠道里的对象对应回原来的图片。',
     keyWarningTitle: '主密钥文件须单独离线备份',
     keyWarningDesc:
       '主密钥（数据目录下的 master.key）不包含在数据导出与远端快照中；丢失后渠道凭证与加密渠道数据将永久不可恢复，请复制该文件到独立的安全位置。',

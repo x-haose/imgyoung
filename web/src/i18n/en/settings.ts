@@ -274,7 +274,7 @@ export const settings = {
   },
   export: {
     title: 'Data export',
-    desc: 'Exports all metadata (users, channels, images, replica placement; credentials redacted). Images and the ledger stay in your channels, so you can recover even if the project stops.',
+    desc: 'Exports all metadata (users, channels, images, replica placement; credentials redacted). Even if you stop using ImgYoung, it lets you match the objects in your channels back to the original images.',
     keyWarningTitle: 'Back up the master key file separately',
     keyWarningDesc:
       'The master key (master.key in the data directory) is not part of the export or remote snapshots; without it channel credentials and encrypted channel data are lost for good. Copy it to a separate safe place.',

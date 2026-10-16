@@ -84,10 +84,10 @@ export const guide = {
     aliasDesc: '/o/<用户 id>/<对象键>，S3 客户端贴出来的 Markdown 链接直接可用',
     width: '缩放',
     widthDesc:
-      '加？w=400 按宽度档缩放，档位由「设置 → 运行配置」的 process_widths 决定；不在档位内的宽度返回 400',
+      '加 ?w=400 按宽度档缩放，档位由「设置 → 运行配置」的 process_widths 决定；不在档位内的宽度返回 400',
     format: '格式',
     formatDesc:
-      '不带参数时按浏览器 Accept 自动给 WebP；？format=webp / jpeg / png 可显式指定',
+      '不带参数时按浏览器 Accept 自动给 WebP；?format=webp / jpeg / png 可显式指定',
   },
   errorCols: {
     code: '状态码',
