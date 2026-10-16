@@ -97,7 +97,8 @@ function BackupsCard() {
     onSuccess: (snap) => {
       toast.success(t(b.created, { name: snap.name }))
     },
-    // 备份不随请求中止:代理到点断开(Nginx 504、Cloudflare 524)时服务端照常写完,通用的「请求失败」会让人重点一次。
+    // 备份不随请求中止:请求已到达服务端时,代理到点断开(Nginx 504、Cloudflare 524)后备份照常写完,通用的「请求失败」
+    // 会让人重点一次;Nginx 连不上上游时同样是 504,所以提示先去快照列表确认。
     onError: (err) => {
       if (hasStatus(err, 401)) return
       toast.error(

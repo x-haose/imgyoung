@@ -286,7 +286,7 @@ export const settings = {
     createNow: 'Back up now',
     created: 'Backed up: {name}',
     createProxyTimeout:
-      'The reverse proxy timed out, but the backup keeps running on the server and will appear in the snapshot list when it finishes. No need to click again.',
+      'The reverse proxy timed out. If the request reached the server, the backup keeps running there and appears in the snapshot list when it finishes: refresh the list later, and click again only if no new snapshot shows up.',
     name: 'Snapshot',
     size: 'Size',
     takenAt: 'Taken',

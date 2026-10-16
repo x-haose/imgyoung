@@ -254,7 +254,7 @@ export const settings = {
     createNow: '立即备份',
     created: '已备份：{name}',
     createProxyTimeout:
-      '反向代理等待超时，但备份仍在服务端继续，完成后会出现在快照列表里，不必重新点击。',
+      '反向代理等待超时。请求若已到达服务端，备份会在后台继续，完成后出现在快照列表里：稍后刷新列表确认，没有新快照再重新点击。',
     name: '快照',
     size: '大小',
     takenAt: '时刻',
