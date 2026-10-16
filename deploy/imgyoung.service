@@ -9,7 +9,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-# 服务打开数据库、监听端口后通知 systemd;systemctl start / restart 等到这时才返回,起不来时报错
+# 服务完成启动(数据库就绪、端口已监听、补齐子系统已启动)后通知 systemd;systemctl start / restart 等到这时才返回,起不来时报错
 Type=notify
 ExecStart=/usr/local/bin/imgyoung
 Environment=IMGYOUNG_DATA_DIR=%S/imgyoung

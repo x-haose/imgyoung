@@ -49,9 +49,13 @@ func (a *app) serve() error {
 	a.addLoops(ctx, &g, shutdown)
 
 	// 补齐子系统(River):启动后阻塞至 ctx 取消;在途任务随 ctx 取消,由 shutdown 等其退出。
+	// 它是最后一个可能启动失败的组件,启动成功即整个服务就绪。
 	g.Add(func() error {
 		if serr := a.runner.Start(ctx); serr != nil {
 			return fmt.Errorf("启动补齐子系统: %w", serr)
+		}
+		if nerr := a.announceReady(ln.Addr()); nerr != nil {
+			return nerr
 		}
 		<-ctx.Done()
 		return nil
@@ -65,13 +69,6 @@ func (a *app) serve() error {
 		return nil
 	}, func(error) { shutdown() })
 
-	// 打印实际绑定地址:监听端口配 0 时由系统分配,配置值无法告知调用方真实端口。
-	build := version.Current()
-	a.logger.Info("ImgYoung 已启动", "version", build.Version, "commit", build.Commit,
-		"listen", ln.Addr().String(), "data_dir", a.boot.DataDir)
-	if err := notifyReady(); err != nil {
-		return errors.Join(err, ln.Close())
-	}
 	if rerr := g.Run(); rerr != nil && !errors.Is(rerr, run.ErrSignal) {
 		return rerr
 	}
@@ -79,11 +76,15 @@ func (a *app) serve() error {
 	return nil
 }
 
-// notifyReady 告知 systemd 服务已就绪:数据库已打开并迁移、端口已监听。
+// announceReady 打印启动信息并告知 systemd 服务已就绪:数据库已打开并迁移、端口已监听、补齐子系统已启动。
 // @Description: 服务单元为 Type=notify 时,systemctl start / restart 等到这一刻才返回,进程在此之前退出则报启动失败。
-// 不在 systemd 下运行(没有 NOTIFY_SOCKET)时什么也不做;通知随即从环境中移除,不传给子进程。
+// 不在 systemd 下运行(没有 NOTIFY_SOCKET)时只打印启动信息;通知随即从环境中移除,不传给子进程。
+// @param addr 实际绑定的地址;监听端口配 0 时由系统分配,配置值无法告知调用方真实端口
 // @return 通知写不进 systemd 的套接字时的错误
-func notifyReady() error {
+func (a *app) announceReady(addr net.Addr) error {
+	build := version.Current()
+	a.logger.Info("ImgYoung 已启动", "version", build.Version, "commit", build.Commit,
+		"listen", addr.String(), "data_dir", a.boot.DataDir)
 	if _, err := daemon.SdNotify(true, daemon.SdNotifyReady); err != nil {
 		return fmt.Errorf("通知 systemd 服务已就绪: %w", err)
 	}
