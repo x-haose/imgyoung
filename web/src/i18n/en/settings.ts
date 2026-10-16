@@ -285,6 +285,8 @@ export const settings = {
     desc: 'Backed up automatically to every healthy channel, each keeping its own most recent copies; take, download or restore a snapshot here.',
     createNow: 'Back up now',
     created: 'Backed up: {name}',
+    createProxyTimeout:
+      'The reverse proxy timed out, but the backup keeps running on the server and will appear in the snapshot list when it finishes. No need to click again.',
     name: 'Snapshot',
     size: 'Size',
     takenAt: 'Taken',
@@ -298,6 +300,8 @@ export const settings = {
     restoreConfirm: 'Restore and restart',
     restoreProxyTimeout:
       'The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again.',
+    restoreCdnTimeout:
+      'Cloudflare timed out (524) before the restore returned. If Cloudflare kept its connection to the origin open, the restore completes there and the service restarts on its own; otherwise it was aborted and nothing changed. For a snapshot that takes longer than 125 seconds to fetch, open the admin console on the origin directly and restore again.',
     restarting: 'Service restarting',
     restartingDesc:
       'The snapshot is staged; waiting for the process to come back. The page reloads automatically once it does.',

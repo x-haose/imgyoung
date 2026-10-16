@@ -253,6 +253,8 @@ export const settings = {
     desc: '按间隔自动备份到每个健康渠道，各渠道各自保留最近几份；这里可立即备份、下载或恢复。',
     createNow: '立即备份',
     created: '已备份：{name}',
+    createProxyTimeout:
+      '反向代理等待超时，但备份仍在服务端继续，完成后会出现在快照列表里，不必重新点击。',
     name: '快照',
     size: '大小',
     takenAt: '时刻',
@@ -266,6 +268,8 @@ export const settings = {
     restoreConfirm: '恢复并重启',
     restoreProxyTimeout:
       '反向代理等待超时，恢复已中止，没有生效。快照较大时请调大代理的读超时（如 Nginx 的 proxy_read_timeout），或直接访问后台再恢复。',
+    restoreCdnTimeout:
+      'Cloudflare 等待超时（524），没能拿到恢复的结果：Cloudflare 没有断开到源站的连接时，恢复会在源站完成后自动重启，否则已中止、没有生效。取回超过 125 秒的快照请直接访问源站后台再恢复。',
     restarting: '服务重启中',
     restartingDesc:
       '快照已暂存，正在等待进程被重新拉起；恢复后页面会自动刷新。',

@@ -44,9 +44,6 @@ import {
 } from './data'
 import { formatInstant } from './format'
 
-/** 反向代理等待上游超时的状态码:Nginx 504,Cloudflare 524。 */
-const PROXY_TIMEOUT_STATUSES = [504, 524]
-
 /** 备份与导出分区:快照表需要整行宽度,导出卡片排在其下。 */
 export function BackupTab() {
   return (
@@ -100,6 +97,15 @@ function BackupsCard() {
     onSuccess: (snap) => {
       toast.success(t(b.created, { name: snap.name }))
     },
+    // 备份不随请求中止:代理到点断开(Nginx 504、Cloudflare 524)时服务端照常写完,通用的「请求失败」会让人重点一次。
+    onError: (err) => {
+      if (hasStatus(err, 401)) return
+      toast.error(
+        hasStatus(err, 504) || hasStatus(err, 524)
+          ? b.createProxyTimeout
+          : errorMessage(err)
+      )
+    },
     onSettled: () =>
       queryClient.invalidateQueries({
         queryKey: backupsQueryOptions().queryKey,
@@ -111,13 +117,16 @@ function BackupsCard() {
       setRestoring(null)
       setRestarting(true)
     },
-    // 代理到点断开时服务端已中止并撤回恢复,通用的「请求失败(504)」看不出这一点;401 由会话失效处理。
+    // 通用的「请求失败(504)」看不出恢复是否生效:Nginx 读超时会断开到源站的连接,服务端随之中止并撤回;
+    // Cloudflare 524 时是否断开没有文档说明,结果不确定,如实告知。401 由会话失效处理。
     onError: (err) => {
       if (hasStatus(err, 401)) return
       toast.error(
-        PROXY_TIMEOUT_STATUSES.some((s) => hasStatus(err, s))
+        hasStatus(err, 504)
           ? b.restoreProxyTimeout
-          : errorMessage(err)
+          : hasStatus(err, 524)
+            ? b.restoreCdnTimeout
+            : errorMessage(err)
       )
     },
   })
