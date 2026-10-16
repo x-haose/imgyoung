@@ -47,7 +47,7 @@ export function TemplateFieldInput({
     kept && f.type !== 'oauth'
       ? [text.help, m.channels.secretKeepHint]
           .filter(Boolean)
-          .join(m.common.clauseSeparator)
+          .join(m.common.sentenceSeparator)
       : text.help
   return (
     <FormField

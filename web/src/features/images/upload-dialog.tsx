@@ -137,7 +137,9 @@ export function UploadDialog({
           <TabsContent value='files' className='pt-3'>
             <Dropzone
               onFiles={addFiles}
-              hint={t(m.images.dropHint, { max: config?.max_upload_mb ?? '' })}
+              limits={t(m.images.dropLimits, {
+                max: config?.max_upload_mb ?? '',
+              })}
             />
           </TabsContent>
           <TabsContent value='url' className='space-y-2 pt-3'>
@@ -165,49 +167,53 @@ export function UploadDialog({
         </Tabs>
 
         <div className='grid gap-3 rounded-lg border bg-muted/30 p-3'>
-          <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
-            <span className='w-10 text-sm'>{m.images.ttl}</span>
-            <Segmented
-              value={ttlMode}
-              onChange={setTtlMode}
-              options={[
-                { value: 'default', label: m.images.ttlDefault },
-                { value: 'never', label: m.images.ttlNever },
-                { value: 'custom', label: m.images.ttlCustom },
-              ]}
-            />
-            {ttlMode === 'custom' && (
-              <div className='flex items-center gap-1.5'>
-                <Input
-                  type='number'
-                  min={1}
-                  step={1}
-                  value={ttlHours}
-                  onChange={(e) => setTtlHours(e.target.value)}
-                  className='h-8 w-24'
-                  aria-label={m.images.hours}
-                />
-                <span className='text-xs text-muted-foreground'>
-                  {m.images.hours}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
-            <span className='w-10 text-sm'>{m.images.exifPolicy}</span>
-            <Segmented
-              value={exif}
-              onChange={setExif}
-              options={[
-                { value: 'default', label: m.images.exifDefault },
-                { value: 'strip', label: m.images.exifStrip },
-                { value: 'passthrough', label: m.images.exifPassthrough },
-              ]}
-            />
+          <div className='grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2'>
+            <span className='text-sm whitespace-nowrap'>{m.images.ttl}</span>
+            <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
+              <Segmented
+                value={ttlMode}
+                onChange={setTtlMode}
+                options={[
+                  { value: 'default', label: m.images.ttlDefault },
+                  { value: 'never', label: m.images.ttlNever },
+                  { value: 'custom', label: m.images.ttlCustom },
+                ]}
+              />
+              {ttlMode === 'custom' && (
+                <div className='flex items-center gap-1.5'>
+                  <Input
+                    type='number'
+                    min={1}
+                    step={1}
+                    value={ttlHours}
+                    onChange={(e) => setTtlHours(e.target.value)}
+                    className='h-8 w-24'
+                    aria-label={m.images.hours}
+                  />
+                  <span className='text-xs text-muted-foreground'>
+                    {m.images.hours}
+                  </span>
+                </div>
+              )}
+            </div>
+            <span className='text-sm whitespace-nowrap'>
+              {m.images.exifPolicy}
+            </span>
+            <div>
+              <Segmented
+                value={exif}
+                onChange={setExif}
+                options={[
+                  { value: 'default', label: m.images.exifDefault },
+                  { value: 'strip', label: m.images.exifStrip },
+                  { value: 'passthrough', label: m.images.exifPassthrough },
+                ]}
+              />
+            </div>
           </div>
           <p className='text-xs text-muted-foreground'>
             {[ttlHint, m.images.exifHint, m.images.appliesLater].join(
-              m.common.clauseSeparator
+              m.common.sentenceSeparator
             )}
           </p>
         </div>
@@ -223,10 +229,10 @@ export function UploadDialog({
 /** 拖放区:点击选文件、拖入或粘贴。 */
 function Dropzone({
   onFiles,
-  hint,
+  limits,
 }: {
   onFiles: (files: FileList) => void
-  hint: string
+  limits: string
 }) {
   const m = useMessages()
   const [dragging, setDragging] = useState(false)
@@ -265,7 +271,10 @@ function Dropzone({
         <ImagePlus className='size-6' />
       </span>
       <span className='text-sm font-medium'>{m.images.dropTitle}</span>
-      <span className='text-xs text-muted-foreground'>{hint}</span>
+      <span className='text-xs text-muted-foreground'>
+        <span className='block'>{m.images.dropHint}</span>
+        <span className='block'>{limits}</span>
+      </span>
     </label>
   )
 }

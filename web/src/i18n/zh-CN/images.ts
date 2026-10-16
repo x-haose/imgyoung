@@ -104,8 +104,8 @@ export const images = {
   tabFiles: '本地文件',
   tabUrl: '链接转存',
   dropTitle: '点击或拖拽图片到此处',
-  dropHint:
-    '可多选，也可按 Ctrl / ⌘ + V 粘贴图片；支持 JPEG · PNG · GIF · WebP，单张不超过 {max} MB',
+  dropHint: '可多选，也可按 Ctrl / ⌘ + V 粘贴图片',
+  dropLimits: '支持 JPEG · PNG · GIF · WebP，单张不超过 {max} MB',
   urlPlaceholder: 'https://example.com/photo.png',
   urlHint: '由服务端下载并保存，仅支持公网 http / https 地址',
   fetch: '转存',

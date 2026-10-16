@@ -24,7 +24,7 @@ export const common = {
   reset: '重置',
   empty: '暂无数据',
   none: '无',
-  clauseSeparator: '；',
+  sentenceSeparator: '；',
   unknownError: '未知错误',
   networkError: '网络连接失败，请确认服务在线后重试',
   requestFailed: '请求失败（{status}）',

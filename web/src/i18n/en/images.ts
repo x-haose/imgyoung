@@ -108,8 +108,8 @@ export const images = {
   tabFiles: 'Local files',
   tabUrl: 'Fetch from URL',
   dropTitle: 'Click or drop images here',
-  dropHint:
-    'Select multiple files or paste with Ctrl / ⌘ + V; JPEG · PNG · GIF · WebP, up to {max} MB each',
+  dropHint: 'Select multiple files or paste with Ctrl / ⌘ + V',
+  dropLimits: 'JPEG · PNG · GIF · WebP, up to {max} MB each',
   urlPlaceholder: 'https://example.com/photo.png',
   urlHint:
     'The server downloads and stores it; public http / https addresses only',

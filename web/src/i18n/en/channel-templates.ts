@@ -5,15 +5,15 @@ export const channelTemplates = {
     'aws-s3': { name: 'Amazon S3', description: 'Object storage from AWS' },
     r2: {
       name: 'Cloudflare R2',
-      description: 'Cloudflare object storage with no egress fees',
+      description: 'Object storage, no egress fees',
     },
     cos: {
       name: 'Tencent Cloud COS',
-      description: 'Tencent Cloud Object Storage',
+      description: 'Tencent Cloud object storage',
     },
     oss: {
       name: 'Alibaba Cloud OSS',
-      description: 'Alibaba Cloud Object Storage Service',
+      description: 'Alibaba Cloud object storage',
     },
     b2: {
       name: 'Backblaze B2',
@@ -21,15 +21,15 @@ export const channelTemplates = {
     },
     minio: {
       name: 'MinIO / self-hosted',
-      description: 'MinIO or another self-hosted S3 service',
+      description: 'MinIO or other self-hosted S3',
     },
     's3-compatible': {
       name: 'S3-compatible (generic)',
-      description: 'Any service with an S3-compatible API',
+      description: 'Any S3-compatible service',
     },
     webdav: {
       name: 'WebDAV',
-      description: 'Nutstore, Nextcloud, Synology, Alist and more',
+      description: 'Nextcloud, Synology, Nutstore, etc.',
     },
     onedrive: {
       name: 'OneDrive',

@@ -3,7 +3,7 @@ import type { common as zh } from '../zh-CN/common'
 export const common = {
   appName: 'ImgYoung',
   appTitle: 'ImgYoung Admin',
-  appSubtitle: 'Self-hosted multi-channel image host',
+  appSubtitle: 'Self-hosted image host',
   loading: 'Loading…',
   loadFailed: 'Failed to load',
   retry: 'Retry',
@@ -25,7 +25,7 @@ export const common = {
   reset: 'Reset',
   empty: 'No data',
   none: 'None',
-  clauseSeparator: '; ',
+  sentenceSeparator: '. ',
   unknownError: 'Unknown error',
   networkError: 'Network error, please check that the server is online',
   requestFailed: 'Request failed ({status})',
