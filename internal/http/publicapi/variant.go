@@ -43,8 +43,8 @@ type variantRequest struct {
 // parseVariantRequest 解析按需处理参数并做档位白名单校验。
 // @Description: 宽度取 ?w=(须在档位白名单)、格式取 ?format=(显式或 auto→Accept 协商);
 // 无处理诉求(无宽度且协商无更优格式,或目标即原格式)则不处理、走原图。参数先校验、与原图格式无关:
-// 非法取值一律 400;宽度只认十进制规范写法(无前导零、无符号),w 与 format 的每种合法取值只有一种写法。
-// 其他查询参数不参与处理,也不拒绝。源不可重编码(gif 动图等)一律走原图,不因显式 format 或协商被解码首帧
+// 非法取值一律 400;宽度只认十进制规范写法(无前导零、无符号),w 与 format 各至多出现一次,每个宽度档、
+// 每种目标格式只有一种写法。其他查询参数不参与处理,也不拒绝。源不可重编码(gif 动图等)一律走原图,不因显式 format 或协商被解码首帧
 // 转成静图、丢动画。
 // @param r 请求
 // @param mime 原图 MIME,用于"保持原格式"判定
@@ -52,6 +52,9 @@ type variantRequest struct {
 // @return 参数非法时为 errVariantParams
 func (h *Handlers) parseVariantRequest(r *http.Request, mime string) (variantRequest, error) {
 	q := r.URL.Query()
+	if len(q["w"]) > 1 || len(q["format"]) > 1 {
+		return variantRequest{}, errVariantParams
+	}
 	var width int
 	if widthStr := q.Get("w"); widthStr != "" {
 		n, err := strconv.Atoi(widthStr)

@@ -66,8 +66,9 @@ type BackupAdmin interface {
 	Backup() (reliability.Snapshot, error)
 	// Open 按优先级从持有快照的渠道打开它供下载,返回字节流与大小。
 	Open(ctx context.Context, name string) (io.ReadCloser, int64, error)
-	// Restore 把快照取回、核对完整后暂存到数据目录,等进程重启换入;执行归属同 Backup。
-	Restore(name string) (string, error)
+	// Restore 把快照取回、核对完整后暂存到数据目录,等进程重启换入;由备份服务执行,ctx(发起恢复的请求)
+	// 在暂存完成前结束即中止并撤回,停机时中止。
+	Restore(ctx context.Context, name string) (string, error)
 }
 
 // SettingsStore 运营配置存储口(由 config.Store 实现):读取当前快照、应用修改热生效。

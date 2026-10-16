@@ -136,6 +136,9 @@ func TestProcessBadParams(t *testing.T) {
 	if resp, _ := procGet(t, inst, url+"?w=0320", nil); resp.StatusCode != 400 {
 		t.Errorf("带前导零的宽度期望 400,得 %d", resp.StatusCode)
 	}
+	if resp, _ := procGet(t, inst, url+"?w=320&w=1", nil); resp.StatusCode != 400 {
+		t.Errorf("重复的宽度参数期望 400,得 %d", resp.StatusCode)
+	}
 }
 
 // procGet 带可选请求头的 GET,返回响应与正文;不自动跟随重定向。

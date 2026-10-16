@@ -70,11 +70,15 @@ func (h *Handlers) HandleBackupDownload(w http.ResponseWriter, r *http.Request) 
 }
 
 // HandleBackupRestore 用一份快照恢复元数据库:暂存后触发优雅停机,进程被拉起时换入(仅管理员路由)。
-// @Description: 响应 202 先于停机发出;没有进程管理器拉起时,暂存文件等到下次手动启动再换入。
-// 取回快照由备份服务执行,不随请求断开而中止,大快照取回超过反代超时也能暂存完成;快照不完整时拒绝(422)。
+// @Description: 响应 202 先于停机发出;没有进程管理器拉起时,暂存文件等到下次手动启动再换入。快照不完整时拒绝(422)。
+// 请求在暂存完成前断开(关掉页面、反代超时)即中止并撤回暂存,不停机:换库重启必须有人知情。
 func (h *Handlers) HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
-	path, err := h.cfg.Backups.Restore(name)
+	path, err := h.cfg.Backups.Restore(r.Context(), name)
+	if err != nil && r.Context().Err() != nil {
+		h.cfg.Logger.Info("发起恢复的请求已断开,暂存已撤回,不停机", "snapshot", name, "err", err)
+		return
+	}
 	if err != nil {
 		h.writeSnapshotError(w, name, err)
 		return

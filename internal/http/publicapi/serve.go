@@ -1,7 +1,6 @@
 package publicapi
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -228,7 +227,7 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 		return fmt.Errorf("查询渠道候选: %w", err)
 	}
 	if r.Method == http.MethodHead {
-		if err := statFirst(r.Context(), candidates, row.StorageKey); err != nil {
+		if err := h.cfg.Channels.StatFirst(r.Context(), candidates, row.StorageKey); err != nil {
 			return fmt.Errorf("%w: %w", ErrObjectUnavailable, err)
 		}
 		writeOriginalHeaders(w.Header(), row, opts)
@@ -249,23 +248,4 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 		h.cfg.Logger.Debug("输出对象中断", "id", row.ID, "err", err)
 	}
 	return nil
-}
-
-// statFirst 按优先级确认对象在某个候选渠道上读得到元数据。
-// @param candidates 候选渠道,按优先级降序
-// @param key 渠道内对象键
-// @return 没有候选或全部读不到时的错误,含各渠道的原因
-func statFirst(ctx context.Context, candidates []channel.Handle, key string) error {
-	if len(candidates) == 0 {
-		return errors.New("没有可服务的副本")
-	}
-	errs := make([]error, 0, len(candidates))
-	for _, c := range candidates {
-		if _, err := c.Driver.Stat(ctx, key); err != nil {
-			errs = append(errs, fmt.Errorf("渠道 %q: %w", c.Name, err))
-			continue
-		}
-		return nil
-	}
-	return errors.Join(errs...)
 }

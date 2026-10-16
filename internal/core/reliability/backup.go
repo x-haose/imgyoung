@@ -19,6 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/infra/errcode"
 	"github.com/x-haose/imgyoung/store/driver"
@@ -49,6 +51,7 @@ type Service struct {
 	mu          sync.Mutex                    // 串行化备份:各轮共用同一个快照临时文件,定时与手动备份不能交叠
 	lastFailure atomic.Pointer[errcode.Error] // 最近一次备份的失败原因;nil 表示最近一次成功或尚未运行
 	jobs        chan job                      // 手动备份与恢复,由 Run 逐项执行
+	manual      singleflight.Group            // 合并同时进行的手动备份请求
 	stopped     chan struct{}                 // Run 返回时关闭,此后的手动操作立即失败
 }
 

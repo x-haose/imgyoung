@@ -22,8 +22,8 @@ var errMasterKeyMismatch = errors.New("主密钥与数据库不符:该库是用�
 // @Description: 环境变量(hex)优先,否则读数据目录下的 master.key。库里有指纹时主密钥必须存在且相符,否则拒绝启动
 // ——用新生成或换错的主密钥继续运行,既有渠道配置全部解不开,此后写入的密文又与原有的混用两把密钥。库里没有指纹
 // (全新实例,或尚未记录指纹的旧版本写下的库,如从旧快照恢复)时看库里有没有依赖主密钥的数据(见 keyDependents):
-// 有就不生成新密钥,有密文时以能否解开任意一份核对主密钥,只有派生数据时无从核对、照用;都没有才是全新实例,
-// 没有主密钥就生成并落盘。最后记下指纹。
+// 有就不生成新密钥,有密文时以能否解开任意一份核对主密钥,只有派生数据时无从核对、照用且不记指纹;都没有才是
+// 全新实例,没有主密钥就生成并落盘。核对过的主密钥记下指纹。
 // @param boot 引导配置
 // @param queries 已完成迁移的库
 // @return 主密钥
@@ -48,6 +48,11 @@ func loadMasterKey(ctx context.Context, boot config.Bootstrap, queries *sqlc.Que
 		return nil, err
 	}
 	if stored != "" {
+		return key, nil
+	}
+	if len(deps.sealed) == 0 && deps.derived {
+		// 无从核对就不记指纹:记下的若是一把错钥,换回原来的那把反而被拒;库里有了密文后下次启动再核对、记录。
+		logger.Warn("库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把")
 		return key, nil
 	}
 	fp, err := key.Fingerprint()

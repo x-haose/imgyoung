@@ -89,6 +89,7 @@ type Manager struct {
 	channels   []managed               // 已加载渠道,按优先级降序
 	healthGen  map[int64]uint64        // 渠道主键 → setHealth 次数;Reload 据此识别装载期间翻转过的健康标记
 	reloadMu   sync.Mutex              // 串行化 Reload 与 Close:两者都要在"读取现状 → 构造/关闭 → 换入"之间保持现状不变
+	builds     pendingBuilds           // 到点放弃、仍在后台进行的后端构造(见 openBackend)
 	writeMu    sync.Mutex              // 保护 writeLocks
 	writeLocks map[int64]*sync.RWMutex // 渠道主键 → 写入租约锁(见 HoldWrites);按需创建,渠道删除后不回收
 }
@@ -477,6 +478,27 @@ func (m *Manager) OpenFirst(ctx context.Context, candidates []Handle, key string
 	return rc, err
 }
 
+// StatFirst 按候选顺序确认对象读得到元数据,不读内容;S3 的 HEAD 用它与 GET 保持同一可用性口径。
+// @Description: 读取失败的候选逐个告警后切到下一个。
+// @param candidates 候选渠道,按优先级降序(通常取自 CandidatesForBlob)
+// @param key 渠道内对象键
+// @return 候选为空时为 failover.ErrNoDrivers;全部读不到时为含各渠道原因的错误
+func (m *Manager) StatFirst(ctx context.Context, candidates []Handle, key string) error {
+	if len(candidates) == 0 {
+		return failover.ErrNoDrivers
+	}
+	errs := make([]error, 0, len(candidates))
+	for _, c := range candidates {
+		_, err := c.Driver.Stat(ctx, key)
+		if err == nil {
+			return nil
+		}
+		m.cfg.Logger.Warn("渠道读取元数据失败,切换下一候选", "channel", c.Name, "key", key, "err", err)
+		errs = append(errs, fmt.Errorf("渠道 %q: %w", c.Name, err))
+	}
+	return errors.Join(errs...)
+}
+
 // Get 按 ID 返回渠道句柄,含清理中的渠道(调用方按 PendingDelete 自行取舍)。
 // @param channelID 渠道主键
 // @return 句柄与是否存在
@@ -506,7 +528,7 @@ func (m *Manager) openDriver(ctx context.Context, row sqlc.Channel, params map[s
 	channelID := row.ID
 	live = newLiveParams(params)
 	opts.OnChange = func(key, value string) { m.persistOwn(channelID, live, key, value) }
-	drv, err = openBackend(ctx, opts)
+	drv, err = m.openBackend(ctx, opts)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -549,17 +571,7 @@ func (m *Manager) openTrial(ctx context.Context, driverName string, params map[s
 	onChange func(key, value string)) (*rclone.Driver, error) {
 	opts := m.driverOptions(driverName, params)
 	opts.OnChange = onChange
-	return openBackend(ctx, opts)
-}
-
-// openBackend 在 loadTimeout 内构造驱动;时限只管构造,构造好的驱动不受它影响。
-// @param opts 构造参数
-// @return 就绪的驱动
-// @return 后端初始化失败或超时的错误
-func openBackend(ctx context.Context, opts rclone.Options) (*rclone.Driver, error) {
-	ctx, cancel := context.WithTimeout(ctx, loadTimeout)
-	defer cancel()
-	return rclone.Open(ctx, opts)
+	return m.openBackend(ctx, opts)
 }
 
 // driverOptions 把渠道配置翻译成驱动构造参数:约定键拆出,内置 local 缺省落 dataDir/blobs。

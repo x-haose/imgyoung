@@ -20,6 +20,8 @@ type BlobChannels interface {
 	CandidatesForBlob(ctx context.Context, blobID int64) ([]channel.Handle, error)
 	// OpenFirst 按候选顺序容灾读取对象,返回第一个成功打开的读取流。
 	OpenFirst(ctx context.Context, candidates []channel.Handle, key string) (io.ReadCloser, error)
+	// StatFirst 按候选顺序确认对象读得到元数据,不读内容;全部读不到时返回错误。
+	StatFirst(ctx context.Context, candidates []channel.Handle, key string) error
 }
 
 // URLFetcher 按地址抓取远端内容(由 urlfetch.Fetcher 实现)。

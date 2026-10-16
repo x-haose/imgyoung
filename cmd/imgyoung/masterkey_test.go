@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -40,6 +41,21 @@ func TestLoadMasterKeyWithoutFingerprint(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(dir, secret.KeyFileName)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("缺钥时不应生成新密钥文件: %v", err)
+		}
+	})
+
+	t.Run("只有派生数据时照用但不记指纹", func(t *testing.T) {
+		conn, queries := dbtest.New(t)
+		if _, err := conn.ExecContext(t.Context(),
+			`INSERT INTO channels (name, driver, encrypted) VALUES ('enc', 'local', 1)`); err != nil {
+			t.Fatalf("写入加密渠道: %v", err)
+		}
+		boot := config.Bootstrap{DataDir: t.TempDir(), MasterKey: newKey(t).Hex()}
+		if _, err := loadMasterKey(t.Context(), boot, queries, logger); err != nil {
+			t.Fatalf("给出主密钥时应照用: %v", err)
+		}
+		if _, err := queries.GetMasterKeyFingerprint(t.Context()); !errors.Is(err, sql.ErrNoRows) {
+			t.Fatalf("无从核对时不应记下指纹: %v", err)
 		}
 	})
 

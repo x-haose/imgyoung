@@ -60,51 +60,28 @@ var _ driver.Driver = (*Driver)(nil)
 // @Description: 参数映射挂本包的 setter,后端刷新 OAuth 令牌等写回时经 OnChange 持久化,
 // 令牌不会只活在内存、重启即退回初始值。加密渠道的内层 Fs 以随机名登记进 rclone 的 fs
 // 缓存,crypt 层按该名取用。错误链不携带参数——其中含凭证,任何回显(日志、API 错误消息)
-// 都是泄露面。ctx 只管构造过程:构造完成后它的取消与截止时刻不影响驱动。ctx 结束时立即返回 ctx 的结束原因
-// (超时即包裹 context.DeadlineExceeded),不论后端构造是否理会 ctx。
+// 都是泄露面。ctx 只管构造过程:构造完成后它的取消与截止时刻不影响驱动。ctx 在构造期间结束时返回 ctx 的
+// 结束原因(超时即包裹 context.DeadlineExceeded);理会 ctx 的后端随即返回,构造时不理会 ctx 的后端(如 ftp)
+// 要等它按自身的超时结束——需要硬时限的调用方自行在协程里调用、到点放弃。
 // @param ctx 控制构造的超时与取消
 // @param opts 构造参数
 // @return 创建好的驱动实例,用毕须 Close
 // @return 后端不存在、初始化失败或 ctx 在构造期间结束时的错误
 func Open(ctx context.Context, opts Options) (*Driver, error) {
 	bctx, detach := constructContext(ctx)
-	done := make(chan built, 1)
-	go func() {
-		d, err := newDriver(bctx, opts)
-		done <- built{d: d, err: err}
-	}()
-	select {
-	case b := <-done:
-		if detach() {
-			return b.d, b.err
-		}
-		// ctx 在构造期间结束:后端此时报的错多是取消的后果,不是它的结论;构造成了的驱动留存的上下文已取消,不可用。
-		var closeErr error
-		if b.err == nil {
-			closeErr = b.d.Close(context.WithoutCancel(ctx))
-		}
-		return nil, errors.Join(fmt.Errorf("构造后端未在时限内完成: %w", context.Cause(ctx)), closeErr)
-	case <-ctx.Done():
-		// 有的后端(如 ftp)构造时不理会 ctx,只能等它按自己的超时结束;构造成了就关掉。
-		go discardLate(context.WithoutCancel(ctx), done)
-		return nil, fmt.Errorf("构造后端未在时限内完成: %w", context.Cause(ctx))
+	d, err := newDriver(bctx, opts)
+	if detach() {
+		return d, err
 	}
-}
-
-// built 一次后端构造的结果。
-type built struct {
-	d   *Driver // 驱动;err 非 nil 时为 nil
-	err error   // 构造失败的原因
-}
-
-// discardLate 等一次已被放弃的构造结束,构造成了就关掉驱动。
-// @Description: 退出条件是构造返回,时限由后端自身的连接与握手超时决定。没人等这个结果,关闭失败无处上报。
-// @param ctx 关闭驱动所用的上下文,不随调用方取消
-// @param done 构造结果
-func discardLate(ctx context.Context, done <-chan built) {
-	if b := <-done; b.err == nil {
-		_ = b.d.Close(ctx)
+	// ctx 在构造期间结束:后端此时报的错多是取消的后果,不是它的结论;构造成了的驱动留存的上下文已取消,不可用。
+	cause := fmt.Errorf("构造后端未在时限内完成: %w", context.Cause(ctx))
+	if err != nil {
+		return nil, cause
 	}
+	if cerr := d.Close(context.WithoutCancel(ctx)); cerr != nil {
+		return nil, errors.Join(cause, cerr)
+	}
+	return nil, cause
 }
 
 // constructContext 返回构造后端所用的上下文:构造期间随 ctx 取消,脱钩之后不再受 ctx 影响。
@@ -311,8 +288,10 @@ const sniffLen = 512
 // Put 将 r 中的 size 个字节流式写入 key。
 // @Description: 按内容开头嗅探 Content-Type(net/http.DetectContentType,WHATWG 嗅探算法)一并交给后端。
 // 对象键未必带扩展名,不给类型时对象存储会存成 application/octet-stream,浏览器直接打开公开链接就变成下载。
+// ctx 结束时写入中止:有的后端(如 local)拷贝时不看 ctx,数据流在 ctx 结束后读出错误,后端随之中止并删掉
+// 写了一半的对象。
 func (d *Driver) Put(ctx context.Context, key string, r io.Reader, size int64) error {
-	br := bufio.NewReaderSize(r, sniffLen)
+	br := bufio.NewReaderSize(ctxReader{ctx: ctx, r: r}, sniffLen)
 	head, err := br.Peek(sniffLen)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("读取对象 %q 开头: %w", key, err)
@@ -323,6 +302,23 @@ func (d *Driver) Put(ctx context.Context, key string, r io.Reader, size int64) e
 		return fmt.Errorf("写入对象 %q: %w", key, err)
 	}
 	return nil
+}
+
+// ctxReader 在 ctx 结束后读出 ctx 的结束原因,让不看 ctx 的拷贝也随之停下。
+type ctxReader struct {
+	ctx context.Context // 写入的上下文
+	r   io.Reader       // 数据源
+}
+
+// Read 先查 ctx 再读。
+// @param p 读缓冲
+// @return 读到的字节数
+// @return ctx 已结束时为其结束原因,否则为数据源的错误
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := context.Cause(c.ctx); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // Open 打开 key 对应对象的读取流。
