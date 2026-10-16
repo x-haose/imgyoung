@@ -183,7 +183,8 @@ install_service() {
 	show_initial_password
 }
 
-# invocation_logs 输出服务这一次运行(InvocationID)的日志,不含以前运行留下的;读不到时返回非零。
+# invocation_logs 输出服务这一次运行(InvocationID)的日志,不含以前运行留下的;命令失败时返回非零,
+# journal 里没有这次运行的条目时输出为空。
 # 服务单元是 Type=notify,start/restart 返回时服务早已写下初始密码,读之前用 --sync 让 journald 落盘。
 invocation_logs() {
 	invocation=$(systemctl show -p InvocationID --value imgyoung) || return 1
@@ -194,24 +195,26 @@ invocation_logs() {
 
 # show_initial_password 打印服务这一次启动时为内置管理员设置的初始密码;管理员已有密码时日志里没有这一行。
 show_initial_password() {
-	# 服务就绪前一定写过「ImgYoung 已启动」;日志里没有它,说明读到的不是这次运行的完整日志(如 journald 不落盘)。
+	# 服务就绪前一定写过「ImgYoung 已启动」;日志里没有它,说明这次运行的输出没进 journal
+	# (如 journald 配置了 Storage=none,或服务输出被改到别处)。
 	if ! logs=$(invocation_logs) || ! printf '%s\n' "$logs" | grep -q 'msg="ImgYoung 已启动"'; then
-		info "没能从服务日志里读到这次启动的记录;首次安装时用 journalctl -u imgyoung | grep 初始密码 查看管理员的初始密码"
-		return 0
+		info "没能从服务日志里读到这次启动的记录"
+	else
+		case "$logs" in
+		*已为内置管理员生成初始密码*)
+			password=$(printf '%s\n' "$logs" | sed -n 's/.*已为内置管理员生成初始密码.* password=\([^ ]*\).*/\1/p')
+			info "内置管理员(默认登录名 admin)的初始密码:$password,首次登录后需立即修改"
+			return 0
+			;;
+		*已按\ IMGYOUNG_ADMIN_PASSWORD\ 设置内置管理员的初始密码*)
+			info "内置管理员的初始密码为 IMGYOUNG_ADMIN_PASSWORD 指定的值,首次登录后需立即修改"
+			return 0
+			;;
+		esac
+		info "这次启动没有设置初始密码:内置管理员已经有密码"
 	fi
-	case "$logs" in
-	*已为内置管理员生成初始密码*)
-		password=$(printf '%s\n' "$logs" | sed -n 's/.*已为内置管理员生成初始密码.* password=\([^ ]*\).*/\1/p')
-		info "内置管理员(默认登录名 admin)的初始密码:$password,首次登录后需立即修改"
-		;;
-	*已按\ IMGYOUNG_ADMIN_PASSWORD\ 设置内置管理员的初始密码*)
-		info "内置管理员的初始密码为 IMGYOUNG_ADMIN_PASSWORD 指定的值,首次登录后需立即修改"
-		;;
-	*)
-		info "这次启动没有设置初始密码:内置管理员已经有密码。如果还没登录过,初始密码在之前某次启动的日志里,"
-		info "用 journalctl -u imgyoung | grep 初始密码 查看,取最后一行"
-		;;
-	esac
+	info "如果还没登录过,用 journalctl -u imgyoung | grep 初始密码 查看初始密码,取最后一行;"
+	info "日志里查不到时,按 https://imgyoung.x-haose.com/zh/docs/operations/password-reset 重设"
 }
 
 # next_steps 提示安装后的下一步。
