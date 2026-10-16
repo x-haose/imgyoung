@@ -142,4 +142,9 @@ When you raise the max image size in the admin console, raise the proxy limit to
 
 ## Leave enough read timeout for snapshot restores
 
-When you **Restore** a snapshot in the admin console, the request waits until the snapshot has been fetched from the channel and staged; if the request goes away before that, the restore stops and the service does not shut down; see [Backup & restore](./backup.mdx). Nginx's `proxy_read_timeout` defaults to 60 seconds, so raise it for large snapshots or slow channels, for example by adding `proxy_read_timeout 600s;` inside `location /`.
+When you **Restore** a snapshot in the admin console, the request waits until the snapshot has been fetched from the channel and staged; if the request goes away before that, the restore stops and the service does not shut down; see [Backup & restore](./backup.mdx). The proxy's read timeout must therefore exceed the time it takes to fetch the snapshot.
+
+- **Nginx**: `proxy_read_timeout` defaults to 60 seconds. The example above sets it to `600s` inside `location /`; adjust it to your snapshot size and channel speed.
+- **Cloudflare**: when proxied through Cloudflare, the wait for the origin's response is limited to 125 seconds (a timeout returns 524), and only Enterprise plans can raise it. If fetching the snapshot takes longer, you cannot restore through Cloudflare from the admin console: open the admin console on the origin directly and restore there, or put the snapshot in place by hand following [Disaster recovery](./backup.mdx#disaster-recovery-after-losing-the-host).
+
+When a restore is aborted by a proxy timeout (Nginx 504, Cloudflare 524), the admin console shows **The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again.**
