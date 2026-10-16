@@ -4,15 +4,20 @@ info:
   version: "1"
   summary: 自部署多渠道容灾图床的 HTTP 接口
   description: |
-    ImgYoung 的全部 JSON 接口：数据面（上传、URL 转存）、图片访问入口与管理后台。
-    S3 协议面（`/s3/…`，PutObject / HeadBucket / HeadObject / GetObject / DeleteObject 五个操作，XML 错误体）按 AWS S3 规范实现，不在本文档内；PutObject 一律按原字节保存，不应用 EXIF 档位。
+    ImgYoung 的 HTTP 接口，分为数据面（上传、URL 转存）、图片访问与管理后台三部分。
 
-    认证面只有两个：数据面用具名上传 Token（`Authorization: Bearer <token>`，在后台签发）；
-    管理后台用会话 cookie，状态变更请求须以 `X-CSRF-Token` 头回传登录或 `GET /api/admin/me` 下发的 CSRF 令牌。
-    错误响应一律为 `{"code": "<错误码>", "error": "<中文文案>", "params": {…}}` 信封（见 Error）；图片访问入口的 403 / 404 / 500 / 503 例外，为纯文本。
-    时刻字段除特别说明外均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`。
+    S3 兼容接口（`/s3/…`）不在本文档内。它按 AWS S3 规范实现 PutObject、HeadBucket、HeadObject、GetObject、DeleteObject 五个操作，错误体为 XML。PutObject 一律按原字节保存，不应用 EXIF 档位。
 
-    本文档随二进制内嵌，运行中的实例在 `GET /api/openapi.yaml` 提供与自身版本一致的副本。
+    认证方式有两种：
+
+    - 数据面：具名上传 Token，在后台签发，以 `Authorization: Bearer <token>` 传入。
+    - 管理后台：会话 cookie。状态变更请求还须带 `X-CSRF-Token` 头，值为登录或 `GET /api/admin/me` 返回的 CSRF 令牌。
+
+    错误响应统一为 `{"code": "<错误码>", "error": "<中文文案>", "params": {…}}`，见 Error。图片访问接口的 403、404、500、503 例外，为纯文本。
+
+    时刻字段除另有说明外，均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`。
+
+    本文档内嵌在二进制里，运行中的实例在 `GET /api/openapi.yaml` 提供与其版本一致的副本。
   license:
     name: MIT
     url: https://github.com/x-haose/imgyoung/blob/main/LICENSE
@@ -44,7 +49,7 @@ tags:
     x-slug: admin-overview
   - name: Admin · Upload
     x-displayName: 后台·上传
-    description: 会话认证的后台上传，与数据面同一管道
+    description: 会话认证的后台上传，处理流程与数据面相同
     x-description-en: Session-authenticated uploads through the same pipeline as the data plane
     x-slug: admin-upload
   - name: Admin · Images
@@ -64,7 +69,7 @@ tags:
     x-slug: admin-channels
   - name: Admin · Users
     x-displayName: 后台·用户
-    description: 多用户建号、配额与密码重置（仅管理员）
+    description: 用户的创建、配额与密码重置（仅管理员）
     x-description-en: User accounts, quotas and password resets (admins only)
     x-slug: admin-users
   - name: Admin · Hotlink protection
@@ -110,7 +115,7 @@ paths:
       security: []
       tags: [System]
       summary: 接口文档
-      description: 返回与运行中二进制一致的本文档。
+      description: 返回本文档，内容与运行中的版本一致。
       responses:
         '200':
           description: OpenAPI 文档
@@ -125,8 +130,9 @@ paths:
       tags: [Data plane]
       summary: 上传图片
       description: |
-        multipart 表单上传。格式以 magic bytes 判定（jpeg / png / gif / webp），超过单图上限或像素预算即拒绝。
-        带 `Idempotency-Key` 头时，保留期内同一键重试返回同一张图。
+        以 multipart 表单上传一张图片。格式按文件内容（magic bytes）判定，支持 JPEG、PNG、GIF、WebP。超过单图大小上限或像素预算时拒绝。
+
+        带 `Idempotency-Key` 头时，保留期内用同一个键重试，返回同一张图。
       security:
         - bearerToken: []
       parameters:
@@ -163,7 +169,7 @@ paths:
       operationId: uploadFromURL
       tags: [Data plane]
       summary: URL 转存
-      description: 服务端抓取远端图片后走与直传相同的管道；仅允许公网 http/https 地址，远端声明的类型不参与判定。
+      description: 服务端下载远端图片，之后的处理与直传相同。只允许公网的 http / https 地址；格式按下载到的内容判定，不看远端声明的类型。
       security:
         - bearerToken: []
       parameters:
@@ -209,10 +215,14 @@ paths:
       tags: [Image access]
       summary: 按短 ID 输出图片
       description: |
-        计公开访问活跃度。带 `w` / `format` 参数时按需处理（宽度与格式须在后台允许的档位内）；
-        `format` 缺省或为 `auto` 时按 `Accept` 协商，浏览器支持且档位允许则输出 WebP。
-        访问模式为 `redirect` 且有允许直链的渠道时 302 到渠道公开地址；处理失败降级输出原图并 `Cache-Control: no-store`。
-        已到期、尚待清理回收的图返回 404。参数非法（400）的请求不计访问。
+        输出图片，并计一次公开访问。
+
+        - 带 `w` 或 `format` 时按需缩放或转换格式，取值须在运营配置允许的档位内。
+        - `format` 缺省或为 `auto` 时按 `Accept` 协商：浏览器支持且档位允许时输出 WebP。
+        - 访问模式为 `redirect` 且有允许直链的渠道时，302 重定向到渠道的公开地址。需要缩放或转换格式的请求不重定向。
+        - 处理失败时输出原图，并带 `Cache-Control: no-store`。
+
+        已到期的图即使尚未被清理，也返回 404。参数非法（400）的请求不计访问。
       parameters:
         - $ref: '#/components/parameters/imageID'
         - $ref: '#/components/parameters/variantWidth'
@@ -241,8 +251,8 @@ paths:
       tags: [Image access]
       summary: 按短 ID 查询图片响应头
       description: >-
-        与 GET 同一处理，只返回响应头，不计访问。输出原图时不打开渠道对象；需要按需处理时与 GET 一样取或生成衍生图
-        （缓存未命中即读原图处理），响应头与 GET 相同。
+        响应头与 GET 相同，但不返回响应体，也不计访问。输出原图时不读取渠道上的对象；需要缩放或转换格式时，与 GET
+        一样取出或生成衍生图，缓存未命中时会读取原图处理。
       parameters:
         - $ref: '#/components/parameters/imageID'
         - $ref: '#/components/parameters/variantWidth'
@@ -276,7 +286,7 @@ paths:
       - name: object_key
         in: path
         required: true
-        description: 客户端自取的对象键
+        description: 通过 S3 兼容接口上传时客户端指定的对象键，可含斜杠
         schema:
           type: string
     get:
@@ -285,8 +295,8 @@ paths:
       tags: [Image access]
       summary: 按 S3 对象键输出图片
       description: >-
-        S3 协议面上传时客户端自取的对象键是访问别名；解析到短 ID 后与 `/i/{id}` 同一管线。对象键可含斜杠。
-        同键重传会让别名改指新图，故响应为 `Cache-Control: public, no-cache`，缓存方每次带 ETag 确认。
+        通过 S3 兼容接口上传的图片，也可以用上传时的对象键访问，行为与 `/i/{id}` 相同。同一个键重新上传后会指向新图，因此响应为
+        `Cache-Control: public, no-cache`，缓存每次须用 ETag 确认。
       parameters:
         - $ref: '#/components/parameters/variantWidth'
         - $ref: '#/components/parameters/variantFormat'
@@ -314,8 +324,8 @@ paths:
       tags: [Image access]
       summary: 按 S3 对象键查询图片响应头
       description: >-
-        与 GET 同一处理，只返回响应头，不计访问。输出原图时不打开渠道对象；需要按需处理时与 GET 一样取或生成衍生图
-        （缓存未命中即读原图处理），响应头与 GET 相同。
+        响应头与 GET 相同，但不返回响应体，也不计访问。输出原图时不读取渠道上的对象；需要缩放或转换格式时，与 GET
+        一样取出或生成衍生图，缓存未命中时会读取原图处理。
       parameters:
         - $ref: '#/components/parameters/variantWidth'
         - $ref: '#/components/parameters/variantFormat'
@@ -343,7 +353,7 @@ paths:
       operationId: login
       tags: [Admin · Session]
       summary: 登录
-      description: 校验凭证并下发会话 cookie（`imgyoung_session`，HttpOnly，SameSite=Lax，HTTPS 时带 Secure）；响应体携带后续写请求要回传的 CSRF 令牌。按客户端地址与用户名限速。
+      description: 校验用户名与密码，成功后设置会话 cookie `imgyoung_session`（HttpOnly、SameSite=Lax，HTTPS 下带 Secure）。响应体里的 CSRF 令牌用于之后的状态变更请求。按客户端地址与用户名限速。
       security: []
       requestBody:
         required: true
@@ -396,7 +406,7 @@ paths:
       operationId: me
       tags: [Admin · Session]
       summary: 当前会话
-      description: 返回会话主体与 CSRF 令牌，前端刷新后据此恢复登录态。
+      description: 返回当前登录用户与 CSRF 令牌，可用于页面刷新后恢复登录状态。
       security:
         - session: []
       responses:
@@ -411,7 +421,7 @@ paths:
       operationId: changePassword
       tags: [Admin · Session]
       summary: 修改当前用户密码
-      description: 校验旧密码；成功后该用户全部会话失效，须重新登录。新密码至少 8 个字符。
+      description: 校验旧密码后修改，成功后该用户的全部会话失效，须重新登录。新密码至少 8 个字符。
       security:
         - session: []
       parameters:
@@ -443,7 +453,7 @@ paths:
       operationId: dashboard
       tags: [Admin · Overview and settings]
       summary: 仪表盘
-      description: 管理员得到全站概览，普通用户得到本人用量；以响应里是否有 `channels` 区分。
+      description: 管理员得到全站概览，普通用户得到本人用量。两者以响应里有无 `channels` 区分。
       security:
         - session: []
       responses:
@@ -463,13 +473,13 @@ paths:
     get:
       operationId: runtimeConfig
       tags: [Admin · Overview and settings]
-      summary: 运行配置只读切面
-      description: 全部登录用户可读：界面呈现阈值文案与档位所需的键，以及服务端构建信息；不含任何凭证。
+      summary: 运行配置（只读）
+      description: 返回运营配置中界面展示所需的子集（阈值、档位等）与服务端构建信息，不含任何凭证。所有登录用户可读。
       security:
         - session: []
       responses:
         '200':
-          description: 运行配置切面
+          description: 运行配置的只读子集
           content:
             application/json:
               schema:
@@ -485,10 +495,13 @@ paths:
       tags: [Admin · Overview and settings]
       summary: 修改运营配置
       description: |
-        请求体为「配置键 → 新值」对象，只动出现的键，保存即热生效；未知键或任一取值非法整体拒绝，不做部分生效。
-        以时长为单位的配置项（间隔、宽限、有效期、保留期、超时）上限为 100 年的折算值：876000 小时 / 36500 天 /
-        52560000 分钟 / 3153600000 秒 / 3153600000000 毫秒。
-        `cdn_cloudflare_api_token` 传空串表示清除、不传表示不动。仅管理员。
+        请求体为「配置键 → 新值」对象，只修改出现的键，保存后立即生效。有未知键或任一取值非法时整体拒绝，不会只改一部分。
+
+        时长类配置项（间隔、宽限、有效期、保留期、超时）的上限都是 100 年，按配置项的单位折算：876000 小时、36500 天、52560000 分钟、3153600000 秒、3153600000000 毫秒。
+
+        `cdn_cloudflare_api_token` 传空串表示清除，不传表示保持不变。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -515,7 +528,7 @@ paths:
       operationId: fullConfig
       tags: [Admin · Overview and settings]
       summary: 全量生效配置
-      description: 引导配置只读展示、运营配置当前值（凭证字段抹空）与派生状态；仅管理员。
+      description: 返回引导配置（环境变量，只读）、运营配置（后台设置）的当前值与派生状态；运营配置里的凭证字段为空串。仅管理员。
       security:
         - session: []
       responses:
@@ -533,7 +546,7 @@ paths:
       operationId: sessionUpload
       tags: [Admin · Upload]
       summary: 后台上传图片
-      description: 与 `POST /api/upload` 同一管道与防护闸，归属为会话用户，来源 Token 记空。
+      description: 处理与限制和 `POST /api/upload` 相同，包括大小、格式、像素、上传并发上限、上传频率与配额。图片归属当前会话用户，不记来源 Token。
       security:
         - session: []
       parameters:
@@ -571,7 +584,7 @@ paths:
       operationId: sessionUploadFromURL
       tags: [Admin · Upload]
       summary: 后台 URL 转存
-      description: 与 `POST /api/upload/url` 同一管道，归属为会话用户。
+      description: 处理与限制和 `POST /api/upload/url` 相同，图片归属当前会话用户。
       security:
         - session: []
       parameters:
@@ -616,7 +629,7 @@ paths:
       operationId: listImages
       tags: [Admin · Images]
       summary: 图片列表
-      description: 分页；普通用户只见自己的，管理员可按用户、Token、时间与关键词过滤。
+      description: 分页返回图片，可按 Token、时间与文件名关键词过滤。普通用户只看得到自己的图；管理员看到全部，并可用 `user_id` 只看指定用户的。
       security:
         - session: []
       parameters:
@@ -664,7 +677,7 @@ paths:
       operationId: batchDeleteImages
       tags: [Admin · Images]
       summary: 批量删除图片
-      description: 逐张按单删的权限与级联语义处理，单张失败不中断其余；他人图按不存在处理。单次至多 100 个 ID。
+      description: 每张图按 `DELETE /api/admin/images/{id}` 的规则处理，某张失败不影响其余。普通用户删除他人的图按不存在处理。单次最多 100 个 ID。
       security:
         - session: []
       parameters:
@@ -697,7 +710,7 @@ paths:
       operationId: getImage
       tags: [Admin · Images]
       summary: 图片详情
-      description: 列表项字段之外附带各渠道的副本状态；普通用户查他人图一律 404，不泄露存在性。
+      description: 在列表项字段之外，附带各渠道的副本状态。普通用户查询他人的图返回 404。
       security:
         - session: []
       responses:
@@ -715,7 +728,7 @@ paths:
       operationId: patchImage
       tags: [Admin · Images]
       summary: 修改有效期或清理豁免
-      description: 至少携带一个修改项。`ttl_hours` 对属主开放；`cleanup_exempt` 是冷图裁决的「保留」语义，仅管理员，普通用户携带即 403。
+      description: 至少带一个修改项。`ttl_hours` 图片属主即可修改。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
       security:
         - session: []
       parameters:
@@ -743,7 +756,7 @@ paths:
       operationId: deleteImage
       tags: [Admin · Images]
       summary: 删除图片
-      description: 立即删除引用，渠道副本、衍生图与 CDN 缓存由清理任务级联；他人图一律 404。
+      description: 立即删除这条图片引用；已启用 CDN 缓存清除（`derived.cdn_purge_enabled`）时，同时清除它在 CDN 上的缓存。内容相同的图片共用一份物理图，物理图不再被任何图片引用时，经过删除宽限（`delete_grace_minutes`）后，后台删除它在各渠道上的副本与衍生图。普通用户删除他人的图返回 404。
       security:
         - session: []
       parameters:
@@ -764,7 +777,7 @@ paths:
       operationId: adminImageBytes
       tags: [Admin · Images]
       summary: 后台预览图
-      description: 与 `/i/{id}` 同一处理管线，但走会话鉴权、不计公开访问活跃度、不受防盗链约束。
+      description: 处理与 `/i/{id}` 相同，区别是用会话认证、不计公开访问、不受防盗链限制。
       security:
         - session: []
       parameters:
@@ -788,7 +801,7 @@ paths:
         '404':
           $ref: '#/components/responses/ImageNotFound'
         '500':
-          description: 服务端故障，可稍后重试：会话校验时读数据库失败为错误信封；查询图片元数据失败为纯文本
+          description: 服务端故障，可稍后重试。会话校验时读数据库失败返回错误信封，查询图片元数据失败返回纯文本
           content:
             application/json:
               schema:
@@ -804,7 +817,7 @@ paths:
       operationId: listTokens
       tags: [Admin · Upload tokens]
       summary: Token 列表
-      description: 分页，缺省列本人的；管理员可带 `user_id` 查看指定用户的。只含识别前缀，无哈希无明文。
+      description: 分页返回 Token，缺省为本人的；管理员可用 `user_id` 查看指定用户的。只返回明文前缀，不含哈希与完整明文。
       security:
         - session: []
       parameters:
@@ -832,7 +845,7 @@ paths:
       operationId: issueToken
       tags: [Admin · Upload tokens]
       summary: 签发 Token
-      description: 为当前用户签发具名 Token；明文仅在本响应返回一次。
+      description: 为当前用户签发具名 Token。明文只在本响应里返回一次。
       security:
         - session: []
       parameters:
@@ -865,7 +878,7 @@ paths:
       operationId: deleteToken
       tags: [Admin · Upload tokens]
       summary: 删除已失效的 Token 记录
-      description: 本人可删自己的，管理员可删任何人的；仍有效的 Token 返回 409，须先吊销。
+      description: 用户可删除自己的 Token 记录，管理员可删除任何人的。仍有效的 Token 返回 409，须先吊销。
       security:
         - session: []
       parameters:
@@ -895,7 +908,7 @@ paths:
       operationId: revokeToken
       tags: [Admin · Upload tokens]
       summary: 吊销 Token
-      description: 本人可吊销自己的，管理员可吊销任何人的；S3 协议面的同一凭证随之失效。
+      description: 用户可吊销自己的 Token，管理员可吊销任何人的。该 Token 的 S3 凭证同时失效。
       security:
         - session: []
       parameters:
@@ -919,7 +932,7 @@ paths:
       operationId: rotateToken
       tags: [Admin · Upload tokens]
       summary: 轮转 Token
-      description: 同名新 Token 原子替换旧 Token，新明文仅此一次返回；仅限本人的有效 Token。
+      description: 签发一个同名的新 Token，同时作废旧 Token；新明文只在本响应里返回一次。只能轮转本人名下仍有效的 Token。
       security:
         - session: []
       parameters:
@@ -942,8 +955,8 @@ paths:
     post:
       operationId: tokenS3Credential
       tags: [Admin · Upload tokens]
-      summary: Token 的 S3 协议凭证
-      description: 密钥由主密钥按 Token 派生、不落库，可随时重看；仅限本人的 Token。用 POST 是为了让凭证下发也过 CSRF 闸。
+      summary: Token 的 S3 凭证
+      description: 返回 Token 用于 S3 兼容接口的凭证与端点配置。密钥由主密钥按 Token 派生，不存储，可随时再次获取。只能获取本人 Token 的凭证。与其他 POST 请求一样须带 `X-CSRF-Token`。
       security:
         - session: []
       parameters:
@@ -972,7 +985,7 @@ paths:
       operationId: channelTemplates
       tags: [Admin · Storage channels]
       summary: 渠道模板清单
-      description: 内置厂商模板：预填 rclone 后端与固定参数，只暴露必要字段；只下发结构（模板 id、字段 key 与类型、选项值），模板名、字段标签、说明与选项显示名由前端词典按这些键提供。仅管理员。
+      description: 返回内置的服务商模板。模板预填了 rclone 后端与固定参数，只需填写必要字段。响应只含结构（模板 id、字段 key 与类型、选项值），不含模板名、字段标签、说明与选项显示名。仅管理员。
       security:
         - session: []
       responses:
@@ -993,7 +1006,7 @@ paths:
       operationId: listChannels
       tags: [Admin · Storage channels]
       summary: 渠道列表
-      description: 按优先级降序，含探测结果与副本水位，不含配置与凭证。仅管理员。
+      description: 按优先级从高到低返回全部渠道，含探测结果与副本统计，不含配置与凭证。仅管理员。
       security:
         - session: []
       responses:
@@ -1013,7 +1026,14 @@ paths:
       operationId: createChannel
       tags: [Admin · Storage channels]
       summary: 创建渠道
-      description: 模板模式给 `template` + `inputs`，自定义模式给 `driver` + `config`。需授权的模板会先按后端配置流程补齐授权带出的参数（如 OneDrive 选定用户默认驱动器），向服务商查询失败返回 400。创建即深探测并落库，随后唤醒补齐管道回填存量；`encrypted` 创建时固化。仅管理员。
+      description: |
+        模板模式传 `template` 与 `inputs`，自定义模式传 `driver` 与 `config`。
+
+        需要授权的模板，保存前会向服务商查询授权后才能确定的参数（如 OneDrive 选用该用户的默认驱动器），查询失败返回 400。
+
+        保存成功后立即做一次深探测：向渠道写入一个临时小对象，读回核对后删除。装载或探测失败都不撤销创建，渠道标为不健康，原因见响应的 `failure`。随后后台把已有图片补齐到新渠道。
+
+        `encrypted` 创建后不可更改。仅管理员。
       security:
         - session: []
       parameters:
@@ -1028,7 +1048,7 @@ paths:
         '201':
           $ref: '#/components/responses/ChannelResponse'
         '400':
-          description: 参数非法，或后端初始化、建桶失败；保存过程中服务商刷新了令牌时带 `token`
+          description: 参数非法，或后端初始化、建桶失败。保存过程中服务商刷新了令牌时，响应带 `token`
           content:
             application/json:
               schema:
@@ -1044,7 +1064,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ChannelSaveError'
         '500':
-          description: 服务内部错误；保存过程中服务商刷新了令牌时同样带 `token`
+          description: 服务内部错误。保存过程中服务商刷新了令牌时，响应同样带 `token`
           content:
             application/json:
               schema:
@@ -1054,7 +1074,17 @@ paths:
       operationId: testChannel
       tags: [Admin · Storage channels]
       summary: 测试连接
-      description: 按创建同构的请求体深探测，不落库；探测成败以 `{ok, failure}` 返回，补齐授权带出的参数时向服务商查询失败也在其中。授权令牌已过期时测试期间会被刷新：提交的是新令牌（创建表单，或编辑时新粘贴 / 新授权的令牌）时，刷新后的令牌随 `token` 返回；沿用已存令牌（哨兵）时直接写回该渠道，不返回。编辑场景带 `channel_id`，配置里的哨兵值还原为该渠道原凭证后再探测。仅管理员。
+      description: |
+        用与创建相同的请求体做一次深探测，不保存。探测结果以 `ok` 与 `failure` 返回，向服务商查询授权参数失败也在其中。
+
+        测试已有渠道时带 `channel_id`，配置里的哨兵值 `__imgyoung_secret_keep__` 先换回该渠道已存的值再探测。
+
+        授权令牌已过期时，测试过程中会刷新令牌：
+
+        - 请求里提交的是新令牌（新建渠道，或编辑时新粘贴、新授权的令牌）：刷新后的令牌在 `token` 中返回。
+        - 沿用渠道已存的令牌（哨兵值）：刷新后的令牌直接保存到该渠道，不返回。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -1089,7 +1119,14 @@ paths:
       operationId: updateChannel
       tags: [Admin · Storage channels]
       summary: 编辑渠道
-      description: 配置整体替换；配置里原样回传的哨兵值表示保留原凭证，只在回读时掩码过的敏感参数上有效，落在其他键上返回 400。`encrypted` 不可变，试图变更返回 409；清理中的渠道不可编辑（409）；保存期间渠道配置被另一次编辑或令牌写回改动的，不落库并返回 409，重新保存即可。编辑失败而服务商已刷新了令牌时：沿用已存令牌的，新令牌写回渠道；表单提交的新令牌随错误的 `token` 交还。仅管理员。
+      description: |
+        整体替换渠道配置。配置里原样传回的哨兵值 `__imgyoung_secret_keep__` 表示沿用原来的值，只能用在读取配置时被掩码的敏感参数上，用在其他键上返回 400。
+
+        以下情况返回 409，不保存：试图修改 `encrypted`；渠道正在清理中；保存期间渠道配置被另一次编辑或令牌刷新改动，此时重新保存即可。
+
+        保存失败但服务商已刷新了令牌时：沿用已存令牌的，新令牌保存到渠道；请求里提交的新令牌，在错误响应的 `token` 中返回。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -1105,7 +1142,7 @@ paths:
         '200':
           $ref: '#/components/responses/ChannelResponse'
         '400':
-          description: 参数非法，或后端初始化失败；保存过程中服务商刷新了表单提交的令牌时带 `token`
+          description: 参数非法，或后端初始化失败。保存过程中服务商刷新了请求里提交的令牌时，响应带 `token`
           content:
             application/json:
               schema:
@@ -1127,7 +1164,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ChannelSaveError'
         '500':
-          description: 服务内部错误；保存过程中服务商刷新了表单提交的令牌时同样带 `token`
+          description: 服务内部错误。保存过程中服务商刷新了请求里提交的令牌时，响应同样带 `token`
           content:
             application/json:
               schema:
@@ -1136,7 +1173,13 @@ paths:
       operationId: deleteChannel
       tags: [Admin · Storage channels]
       summary: 删除渠道
-      description: 持有任何图唯一副本的渠道拒绝删除（409）。`purge` 缺省为 true：只打清理中标记并入队排空任务，排空任务删除本服务写在该渠道上的对象——图片副本、`_imgyoung/` 下的系统对象（含元数据库快照）与深探测残留，别的程序写的对象不动——删完后渠道才消失（202）；`purge=false` 立即删行，远端对象（含快照）保留（204）。仅管理员。
+      description: |
+        渠道持有任何图片的唯一副本时拒绝删除（409）。
+
+        - `purge=true`（缺省）：渠道标为清理中，返回 202。后台随后排空渠道，删除 ImgYoung 写在上面的对象：图片副本、`_imgyoung/` 下的系统对象（含元数据库快照）与深探测残留；其他程序写入的对象不动。删完后渠道才消失。
+        - `purge=false`：立即删除渠道，返回 204，渠道上的对象（含快照）原样保留。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -1144,7 +1187,7 @@ paths:
         - $ref: '#/components/parameters/csrfToken'
         - name: purge
           in: query
-          description: 是否清理本服务写在渠道上的对象；缺省 true
+          description: 是否删除 ImgYoung 写在渠道上的对象；缺省 true
           schema:
             type: boolean
       responses:
@@ -1173,7 +1216,7 @@ paths:
       operationId: channelConfig
       tags: [Admin · Storage channels]
       summary: 渠道配置的编辑视图
-      description: 后端声明为密码或敏感信息的参数（rclone 选项元数据的 IsPassword / Sensitive，含访问密钥 ID、账号名、OAuth 应用凭证与令牌）以哨兵 `__imgyoung_secret_keep__` 掩码，明文永不下发；模板渠道附带还原出的表单字段值，同一口径掩码。仅管理员。
+      description: 返回编辑渠道所需的配置。rclone 后端标为密码或敏感信息的参数（选项元数据里的 `IsPassword` 或 `Sensitive`，包括访问密钥 ID、账号名、OAuth 应用凭证与令牌）一律以哨兵值 `__imgyoung_secret_keep__` 代替，从不返回明文。模板渠道另外返回从配置还原出的模板字段值，按同样规则掩码。仅管理员。
       security:
         - session: []
       parameters:
@@ -1200,13 +1243,15 @@ paths:
       operationId: channelRcloneConfig
       tags: [Admin · Storage channels]
       summary: 导出 rclone 配置
-      description: >-
-        以附件输出一份标准 rclone 可直接使用的配置文件（rclone.conf），凭它可脱离 ImgYoung 读写渠道数据。
-        远端 `imgyoung-<渠道 id>` 的参数与渠道后端所用完全一致，含凭证与授权令牌，密码类参数按 rclone 规则以 obscure 形式写出；
-        加密渠道另有远端 `imgyoung-<渠道 id>-crypt`，指向渠道存储路径，参数与服务端的 crypt 层一致（`password` / `password2`
-        为 obscure 形式，`filename_encryption = standard`）。文件头的 `#` 注释说明各远端与用法，语言取查询参数 `lang`，
-        缺省按 `Accept-Language`（没有该头时用中文）。
-        文件里的凭证与解密密码与主密钥同等敏感；响应不缓存，每次下载记一条 `channel.export` 审计日志。仅管理员。
+      description: |
+        以附件形式下载一份 rclone 配置文件（rclone.conf），用标准 rclone 即可在 ImgYoung 之外读写渠道数据。
+
+        - 远端 `imgyoung-<渠道 id>`：参数与渠道后端完全一致，含凭证与授权令牌；密码类参数按 rclone 规则以 obscure 形式写出。
+        - 远端 `imgyoung-<渠道 id>-crypt`：只有加密渠道有，指向渠道存储路径，参数与服务端使用的 crypt 配置一致（`password`、`password2` 为 obscure 形式，`filename_encryption = standard`）。
+
+        文件开头的 `#` 注释说明各远端及用法。注释语言由查询参数 `lang` 指定，缺省按 `Accept-Language`，没有该头时用中文。
+
+        文件里的凭证与解密密码和主密钥同等敏感。响应不缓存，每次下载记一条 `channel.export` 审计日志。仅管理员。
       security:
         - session: []
       parameters:
@@ -1246,7 +1291,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          description: 渠道配置里有 rclone 配置文件无法表达的参数值（含换行、首尾空白等）；消息指出远端与参数名，不含参数值
+          description: 渠道配置里有 rclone 配置文件无法表示的参数值（如含换行或首尾空白）。错误信息指出远端与参数名，不含参数值
           content:
             application/json:
               schema:
@@ -1258,7 +1303,7 @@ paths:
       operationId: checkChannel
       tags: [Admin · Storage channels]
       summary: 手动重检
-      description: 对已有渠道执行深探测并返回探测后的完整描述；此前装载失败的渠道先重试装载，仍装不上则以装载失败作为结论。探测可能持续数十秒。清理中的渠道不探测（409）。仅管理员。
+      description: 对渠道做一次深探测，返回探测后的渠道信息。渠道此前装载失败时先重新装载，仍失败则以装载失败作为结论。探测可能持续数十秒。清理中的渠道返回 409。仅管理员。
       security:
         - session: []
       parameters:
@@ -1284,7 +1329,14 @@ paths:
       operationId: startChannelOAuth
       tags: [Admin · Storage channels]
       summary: 发起网盘授权
-      description: 返回引导用户前往的授权地址与领取结果用的一次性 `state`。需先配置对外站点地址 `base_url`，回调地址由它拼出并须与开放平台登记值逐字符一致；自建应用的 Client ID / Secret 是模板字段，随 `inputs` 提交并随渠道保存。编辑场景带 `channel_id`，字段里的哨兵还原为该渠道已存值后再发起。仅管理员。
+      description: |
+        返回授权地址，以及之后领取结果用的一次性 `state`。
+
+        须先配置对外站点地址 `base_url`。回调地址为 `<base_url>/api/admin/channel-oauth/callback`，必须与在服务商开放平台登记的回调地址逐字符一致。
+
+        自建应用的 Client ID 与 Client Secret 是模板字段，随 `inputs` 提交，并随渠道保存。为已有渠道重新授权时带 `channel_id`，字段里的哨兵值先换回该渠道已存的值。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -1319,7 +1371,7 @@ paths:
       operationId: channelOAuthCallback
       tags: [Admin · Storage channels]
       summary: 授权回调
-      description: 由授权服务器把浏览器顶层跳转打回，换取令牌后交前端凭 `state` 领取；本端点返回提示页而非 JSON，令牌不写进页面。提示页按浏览器的 `Accept-Language` 用中文或英文。仅管理员会话。
+      description: 用户在服务商完成授权后，浏览器被重定向到这里。服务端用授权码换取令牌并暂存，调用方再凭 `state` 从领取接口取得。本接口返回 HTML 提示页而非 JSON，页面里不含令牌；提示页按 `Accept-Language` 显示中文或英文。须管理员会话。
       security:
         - session: []
       parameters:
@@ -1363,7 +1415,7 @@ paths:
       operationId: channelOAuthResult
       tags: [Admin · Storage channels]
       summary: 领取授权结果
-      description: 结果只可领取一次；用户尚未完成授权时 `pending` 为 true。仅管理员。
+      description: 结果只能领取一次。用户尚未完成授权时 `pending` 为 true。仅管理员。
       security:
         - session: []
       parameters:
@@ -1398,7 +1450,7 @@ paths:
       operationId: listUsers
       tags: [Admin · Users]
       summary: 用户列表
-      description: 全部用户及其用量，不分页。仅管理员。
+      description: 返回全部用户及其用量，不分页。仅管理员。
       security:
         - session: []
       responses:
@@ -1418,7 +1470,7 @@ paths:
       operationId: createUser
       tags: [Admin · Users]
       summary: 创建用户
-      description: 密码至少 8 个字符；`role` 缺省为 user。仅管理员。
+      description: 密码至少 8 个字符，`role` 缺省为 `user`。仅管理员。
       security:
         - session: []
       parameters:
@@ -1457,7 +1509,7 @@ paths:
       operationId: updateUser
       tags: [Admin · Users]
       summary: 更新用户
-      description: 全量语义，须给出全部键；内置管理员不可禁用或降级（403）。仅管理员。
+      description: 整体替换，须给出全部字段。内置管理员不能禁用，也不能改为普通用户（403）。仅管理员。
       security:
         - session: []
       parameters:
@@ -1491,7 +1543,7 @@ paths:
       operationId: deleteUser
       tags: [Admin · Users]
       summary: 删除用户
-      description: 名下仍有图片（409）、内置管理员（403）或当前登录用户（400）拒绝删除。仅管理员。
+      description: 以下用户不能删除：名下仍有图片的（409）、内置管理员（403）、当前登录的用户自己（400）。仅管理员。
       security:
         - session: []
       parameters:
@@ -1520,7 +1572,7 @@ paths:
       operationId: resetUserPassword
       tags: [Admin · Users]
       summary: 重置用户密码
-      description: 该用户全部会话失效；新密码至少 8 个字符。仅管理员。
+      description: 重置后该用户的全部会话失效。新密码至少 8 个字符。仅管理员。
       security:
         - session: []
       parameters:
@@ -1571,7 +1623,7 @@ paths:
       operationId: addRefererRule
       tags: [Admin · Hotlink protection]
       summary: 添加规则
-      description: 裸域（`example.com`，精确匹配）或子域通配（`*.example.com`，只匹配子域）；添加即时生效。仅管理员。
+      description: 规则为裸域（`example.com`，精确匹配）或子域通配（`*.example.com`，只匹配子域）。添加后立即生效。仅管理员。
       security:
         - session: []
       parameters:
@@ -1608,14 +1660,14 @@ paths:
       operationId: deleteRefererRule
       tags: [Admin · Hotlink protection]
       summary: 删除规则
-      description: 删除即时生效。仅管理员。
+      description: 删除后立即生效。仅管理员。
       security:
         - session: []
       parameters:
         - name: id
           in: path
           required: true
-          description: 规则行 id
+          description: 规则 id
           schema:
             type: integer
             format: int64
@@ -1639,7 +1691,7 @@ paths:
       operationId: listDedupCandidates
       tags: [Admin · Review]
       summary: 疑似重复候选
-      description: 后台相似扫描（pHash 汉明距离）发现的待裁决候选对，分页。仅管理员。
+      description: 分页返回后台相似扫描发现的待裁决候选对，相似程度按 pHash 汉明距离判定。仅管理员。
       security:
         - session: []
       parameters:
@@ -1663,7 +1715,7 @@ paths:
       operationId: mergeDedupCandidate
       tags: [Admin · Review]
       summary: 合并候选
-      description: 保留指定的一方，另一方的引用并入；保留方必须是候选对中的一方。仅管理员。
+      description: 保留指定的一方，另一方的引用并入保留方。保留方必须是候选对中的一方。仅管理员。
       security:
         - session: []
       parameters:
@@ -1723,7 +1775,7 @@ paths:
       operationId: listCleanup
       tags: [Admin · Review]
       summary: 冷图待清理列表
-      description: 超过冷图阈值未被公开访问的引用，分页。裁决走图片接口：保留为 `PATCH /api/admin/images/{id}` 置清理豁免，删除为 `DELETE /api/admin/images/{id}`。仅管理员。
+      description: 分页返回超过冷图阈值仍未被公开访问的图片。裁决用图片接口：保留即 `PATCH /api/admin/images/{id}` 设置 `cleanup_exempt`，删除即 `DELETE /api/admin/images/{id}`。仅管理员。
       security:
         - session: []
       parameters:
@@ -1748,7 +1800,7 @@ paths:
       operationId: listAudit
       tags: [Admin · Operations]
       summary: 审计日志
-      description: 分页，可按操作者、动作、目标与时间范围过滤；`target` 精确匹配。仅管理员。
+      description: 分页返回审计日志，可按操作者、动作、目标与时间范围过滤，`target` 精确匹配。仅管理员。
       security:
         - session: []
       parameters:
@@ -1789,13 +1841,13 @@ paths:
       operationId: listAlerts
       tags: [Admin · Operations]
       summary: 告警
-      description: 缺省返回全部未恢复的告警（不分页）；`status=all` 时分页返回全部历史，最新在前。仅管理员。
+      description: 缺省返回全部未恢复的告警，不分页。`status=all` 时分页返回全部告警，包括已恢复的，最新的在前。仅管理员。
       security:
         - session: []
       parameters:
         - name: status
           in: query
-          description: 为 `all` 时含已恢复的历史
+          description: 为 `all` 时包括已恢复的告警
           schema:
             type: string
             enum: [all]
@@ -1819,7 +1871,7 @@ paths:
       operationId: listBackups
       tags: [Admin · Operations]
       summary: 备份快照列表
-      description: 各健康渠道（不含清理中的渠道）上元数据库快照的并集，最新在前；每份快照列出持有它的渠道。仅管理员。
+      description: 列出所有健康渠道（不含清理中的渠道）上的元数据库快照，最新的在前，每份快照附带存放它的渠道。仅管理员。
       security:
         - session: []
       responses:
@@ -1834,7 +1886,7 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '500':
-          description: 任一健康渠道列举快照失败
+          description: 有健康渠道列举快照失败
           content:
             application/json:
               schema:
@@ -1849,7 +1901,12 @@ paths:
       operationId: createBackup
       tags: [Admin · Operations]
       summary: 立即备份
-      description: 立即做一次元数据库快照，同一份快照写到每个健康渠道（不含清理中的渠道），各渠道各自按保留份数清理旧快照。仅管理员。
+      description: |
+        立即做一次元数据库快照，写到每个健康渠道（不含清理中的渠道），各渠道再按保留份数清理旧快照。
+
+        请求在备份完成后返回。备份在服务端执行，请求断开不会中断它。已有立即备份在进行时，新请求会在它结束后再备份一次，同时等待的请求共用这一次的结果，因此返回的快照总是晚于请求时刻。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -1867,8 +1924,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           description: >-
-            备份失败：生成快照失败（`backup_snapshot_failed`）、有渠道没写成快照（`backup_store_failed`），或快照都写成、
-            有渠道清理旧快照失败（`backup_prune_failed`）；错误里列出失败的渠道与根因，已写成的渠道保留该快照
+            备份失败，错误码为 `backup_snapshot_failed`（生成快照失败）、`backup_store_failed`（有渠道没写成）或
+            `backup_prune_failed`（快照都已写成，但有渠道清理旧快照失败）。错误信息列出失败的渠道与原因，已写成的渠道保留这份快照
           content:
             application/json:
               schema:
@@ -1884,7 +1941,7 @@ paths:
       operationId: downloadBackup
       tags: [Admin · Operations]
       summary: 下载快照
-      description: 以附件形式输出 SQLite 快照文件；按优先级从持有该快照的健康渠道读取，读取失败的渠道换下一个，各健康渠道都没有该快照时 404。仅管理员。
+      description: 以附件形式下载快照文件，它本身是一个 SQLite 数据库。按优先级从存放它的健康渠道读取，一个渠道读取失败就换下一个。健康渠道上都没有这份快照时返回 404。仅管理员。
       security:
         - session: []
       parameters:
@@ -1911,7 +1968,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
-          description: 持有该快照的渠道都读取失败
+          description: 存放该快照的渠道都读取失败
           content:
             application/json:
               schema:
@@ -1927,7 +1984,16 @@ paths:
       operationId: restoreBackup
       tags: [Admin · Operations]
       summary: 从快照恢复
-      description: 按优先级从持有该快照的健康渠道取回（读取失败的渠道换下一个，各健康渠道都没有该快照时 404），核对是完整的数据库文件后暂存到数据目录，再触发优雅停机，进程被拉起时换入，原库改名保留；没有进程管理器拉起时，暂存文件等到下次启动再换入。请求在暂存完成前断开即中止并撤回暂存、不停机，经反向代理时读超时须长过取回快照所需的时间。仅管理员。
+      description: |
+        用这份快照替换当前的元数据库，全部元数据退回到快照时刻。
+
+        1. 按优先级从存放快照的健康渠道下载，一个渠道读取失败就换下一个；健康渠道上都没有这份快照时返回 404。
+        2. 检查快照是完整的 ImgYoung 元数据库，通过后暂存到数据目录，返回 202，服务随即停止。
+        3. 进程管理器重新拉起服务时，用快照替换当前数据库，原数据库改名保留。没有进程管理器时，在下次手动启动时替换。
+
+        请求在暂存完成前断开时，恢复取消，暂存撤回，服务不停止。经反向代理时，代理的读超时须长于下载快照所需的时间。
+
+        仅管理员。
       security:
         - session: []
       parameters:
@@ -1935,7 +2001,7 @@ paths:
         - $ref: '#/components/parameters/csrfToken'
       responses:
         '202':
-          description: 已暂存，服务即将停机
+          description: 已暂存，服务即将停止
           content:
             application/json:
               schema:
@@ -1949,13 +2015,13 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '422':
-          description: 快照不是完整的数据库文件（写入途中被中断、对象损坏），不暂存
+          description: 快照不完整（如写入途中被中断、对象损坏），或不是 ImgYoung 的元数据库。不暂存，服务照常运行
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
         '500':
-          description: 持有该快照的渠道都读取失败，或暂存到数据目录失败
+          description: 存放该快照的渠道都读取失败，或写入数据目录失败
           content:
             application/json:
               schema:
@@ -1971,15 +2037,15 @@ paths:
       operationId: exportMetadata
       tags: [Admin · Operations]
       summary: 导出全部元数据
-      description: 图在哪些渠道、对象键与哈希全部在内，渠道带 `id` 与 `created_at`（加密渠道的密钥派生输入），渠道凭证与密码哈希不在内；以附件形式输出。仅管理员。
+      description: 以附件形式下载全部元数据，包括每张图存放在哪些渠道、对象键与哈希。渠道带 `id` 与 `created_at`，加密渠道的密钥由它们参与派生。不含渠道凭证与密码哈希。仅管理员。
       security:
         - session: []
       responses:
         '200':
-          description: 元数据全量
+          description: 全部元数据
           headers:
             Content-Disposition:
-              description: 附件文件名 imgyoung-export.json
+              description: 附件文件名 `imgyoung-export.json`
               schema:
                 type: string
           content:
@@ -1998,18 +2064,18 @@ components:
     bearerToken:
       type: http
       scheme: bearer
-      description: 后台签发的具名上传 Token，仅授权数据面；管理后台不接受它。
+      description: 后台签发的具名上传 Token，只能用于数据面，管理后台不接受。
     session:
       type: apiKey
       in: cookie
       name: imgyoung_session
-      description: 登录下发的会话 cookie；状态变更请求须另以 `X-CSRF-Token` 头回传会话绑定的 CSRF 令牌。
+      description: 登录时设置的会话 cookie。状态变更请求还须带 `X-CSRF-Token` 头，值为该会话的 CSRF 令牌。
 
   parameters:
     idempotencyKey:
       name: Idempotency-Key
       in: header
-      description: 客户端幂等键；保留期（运营配置 `idempotency_key_ttl_hours`）内同一用户同一键的重试返回同一张图
+      description: 客户端生成的幂等键。保留期（运营配置 `idempotency_key_ttl_hours`）内，同一用户用同一个键重试，返回同一张图
       schema:
         type: string
     csrfToken:
@@ -2037,13 +2103,13 @@ components:
     since:
       name: since
       in: query
-      description: 时间范围下界（闭），UTC 文本 `YYYY-MM-DD HH:MM:SS`
+      description: 时间范围起点（含），UTC 文本 `YYYY-MM-DD HH:MM:SS`
       schema:
         type: string
     until:
       name: until
       in: query
-      description: 时间范围上界（开），UTC 文本 `YYYY-MM-DD HH:MM:SS`
+      description: 时间范围终点（不含），UTC 文本 `YYYY-MM-DD HH:MM:SS`
       schema:
         type: string
     imageID:
@@ -2057,7 +2123,7 @@ components:
       name: id
       in: path
       required: true
-      description: Token 记录 id
+      description: Token id
       schema:
         type: integer
         format: int64
@@ -2080,7 +2146,7 @@ components:
       name: id
       in: path
       required: true
-      description: 候选行 id
+      description: 候选对 id
       schema:
         type: integer
         format: int64
@@ -2094,13 +2160,13 @@ components:
     variantWidth:
       name: w
       in: query
-      description: 目标宽度（像素），须在运营配置 `process_widths` 的档位内；缺省不缩放
+      description: 目标宽度（像素），须是运营配置 `process_widths` 中的档位；缺省不缩放
       schema:
         type: integer
     variantFormat:
       name: format
       in: query
-      description: 目标格式，须在运营配置 `process_formats` 内；缺省或 `auto` 按 `Accept` 协商
+      description: 目标格式，须是运营配置 `process_formats` 中的格式；缺省或 `auto` 时按 `Accept` 协商
       schema:
         type: string
     ifNoneMatch:
@@ -2122,14 +2188,14 @@ components:
               file:
                 type: string
                 contentMediaType: image/*
-                description: 图片文件；文件名作元数据展示
+                description: 图片文件；其文件名记为图片的原始文件名（`file_name`）
               exif_policy:
                 type: string
                 enum: [strip, passthrough]
                 description: 本次 EXIF 档位；缺省用运营配置的全局默认
               ttl:
                 type: string
-                description: 有效期秒数（0 到 3153600000 的整数）或 `never` 表示永久；缺省按「用户默认 > 全局默认」回退
+                description: 有效期秒数（0 到 3153600000 的整数），或 `never` 表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
     UploadURL:
       required: true
       content:
@@ -2139,7 +2205,7 @@ components:
 
   responses:
     Uploaded:
-      description: 已入库
+      description: 已保存
       content:
         application/json:
           schema:
@@ -2157,7 +2223,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: 无权限：CSRF 校验失败、仍为出厂默认密码（改密前只放行退出、查看自己与改密）、需要管理员，或该操作不对当前角色开放
+      description: 无权限。可能是 CSRF 校验失败；仍在使用出厂默认密码（改密前只能登出、查看当前会话与修改密码）；需要管理员；或该操作不对当前角色开放
       content:
         application/json:
           schema:
@@ -2169,7 +2235,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     InternalError:
-      description: 服务端故障（数据库读写失败等），原因记在服务端日志；可稍后重试
+      description: 服务端故障（如数据库读写失败），原因记在服务端日志，可稍后重试
       content:
         application/json:
           schema:
@@ -2193,7 +2259,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     TooManyRequests:
-      description: 上传并发已满或该用户上传过于频繁；登录接口为尝试过于频繁
+      description: 已达上传并发上限，或该用户上传过于频繁；登录接口为登录尝试过于频繁
       headers:
         Retry-After:
           description: 建议等待的秒数
@@ -2204,19 +2270,19 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     ChannelDeleting:
-      description: 渠道正在清理中，不再编辑、测试或探测
+      description: 渠道正在清理中，不能编辑、测试或探测
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     ChannelsUnavailable:
-      description: 没有健康渠道可写，或同步副本数不足
+      description: 没有可写入的健康渠道，或同步写成的副本数少于运营配置 `min_success`
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     SessionResponse:
-      description: 会话主体与 CSRF 令牌
+      description: 当前登录用户与 CSRF 令牌
       content:
         application/json:
           schema:
@@ -2234,22 +2300,25 @@ components:
           schema:
             $ref: '#/components/schemas/ImageDetail'
     IssuedTokenResponse:
-      description: 新 Token；`token` 为明文，仅此一次下发
+      description: 新 Token；`token` 为明文，只返回这一次
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/IssuedToken'
     ChannelResponse:
-      description: 渠道的完整描述（含探测结果与副本水位）
+      description: 渠道信息（含探测结果与副本统计）
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Channel'
     ImageBytes:
-      description: >-
-        图片字节（HEAD 只有响应头），带强 ETag。短 ID 下内容不可变，缓存一年（`immutable`）；对象键别名可被同键重传
-        改指，为 `Cache-Control: public, no-cache`，每次带 ETag 确认、未变即 304。同一 URL 的输出格式随 `Accept`
-        协商时（未显式指定 `format`），原图与衍生图响应都带 `Vary: Accept`；处理失败降级输出原图时为 `Cache-Control: no-store`
+      description: |
+        图片内容（HEAD 只有响应头），带强 ETag。
+
+        - 短 ID 路径：内容不可变，缓存一年（`immutable`）。
+        - 对象键路径：同一个键重新上传后会指向新图，因此为 `Cache-Control: public, no-cache`，每次用 ETag 确认，未变时返回 304。
+        - 未指定 `format`、输出格式按 `Accept` 协商时，原图与衍生图的响应都带 `Vary: Accept`。
+        - 处理失败、改为输出原图时，为 `Cache-Control: no-store`。
       headers:
         ETag:
           description: 强 ETag；原图为内容哈希，衍生图为哈希加处理参数
@@ -2265,8 +2334,8 @@ components:
         image/*: {}
     DirectLink:
       description: >-
-        访问模式为 `redirect` 且有允许直链的渠道时重定向到渠道公开地址。重定向目标随渠道健康与配置变化，
-        响应为 `Cache-Control: no-store`，不进 CDN 与浏览器缓存
+        访问模式为 `redirect` 且有允许直链的渠道时，重定向到渠道的公开地址。目标地址随渠道的健康状态与配置变化，因此响应为
+        `Cache-Control: no-store`，CDN 与浏览器都不缓存
       headers:
         Location:
           required: true
@@ -2297,7 +2366,7 @@ components:
           schema:
             type: string
     ImageUnavailable:
-      description: 引用存在但当前没有健康渠道能读出对象；纯文本
+      description: 图片存在，但没有健康渠道能读出它；纯文本
       content:
         text/plain:
           schema:
@@ -2440,7 +2509,7 @@ components:
         - variant_params_invalid
     FailureReason:
       type: string
-      description: 失败归类，按底层错误的特征判定；`unclassified` 表示未能归类，排障看原文
+      description: 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
       enum:
         - s3_auth
         - app_credentials
@@ -2469,7 +2538,7 @@ components:
           $ref: '#/components/schemas/FailureReason'
         detail:
           type: string
-          description: 根因原文，已抹除凭证、截断到 200 个字符；多为服务商或网络库的英文原文，归类已足以说明时可能为空
+          description: 原始错误信息，已去除凭证，最长 200 个字符，多为服务商或网络库的英文原文；分类已足以说明问题时可能为空
     ChannelFailure:
       type: object
       description: 渠道最近一次失败的结论
@@ -2483,7 +2552,7 @@ components:
           $ref: '#/components/schemas/FailureReason'
         detail:
           type: string
-          description: 根因原文，已抹除凭证、截断到 200 个字符
+          description: 原始错误信息，已去除凭证，最长 200 个字符
     UploadResult:
       type: object
       required: [id, url]
@@ -2494,7 +2563,7 @@ components:
         url:
           type: string
           format: uri
-          description: 图片绝对访问地址；配置了 `base_url` 用配置，否则按请求推导
+          description: 图片的完整访问地址；配置了 `base_url` 时以它为前缀，否则按请求推导
     UploadURLRequest:
       type: object
       required: [url]
@@ -2505,13 +2574,13 @@ components:
           description: 待转存的图片地址，仅 http / https 的公网地址
         file_name:
           type: string
-          description: 覆盖由地址末段推断的文件名
+          description: 文件名；缺省取地址的最后一段
         exif_policy:
           type: string
           enum: [strip, passthrough]
-          description: 本次 EXIF 档位；缺省用全局默认
+          description: 本次 EXIF 档位；缺省用运营配置的全局默认
         ttl:
-          description: 有效期秒数（数字或数字字符串）或 `never`；缺省按「用户默认 > 全局默认」回退
+          description: 有效期秒数（数字或数字字符串），或 `never` 表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
           oneOf:
             - type: integer
             - type: string
@@ -2550,7 +2619,7 @@ components:
           $ref: '#/components/schemas/Role'
         must_change_password:
           type: boolean
-          description: 仍为出厂默认密码；为 true 时前端强制先改密
+          description: 仍在使用出厂默认密码；为 true 时，除登出、`GET /api/admin/me` 与 `PUT /api/admin/me/password` 外，其余后台接口一律返回 403（`must_change_password`）
     Role:
       type: string
       enum: [admin, user]
@@ -2563,7 +2632,7 @@ components:
           $ref: '#/components/schemas/SessionUser'
         csrf_token:
           type: string
-          description: 状态变更请求须以 `X-CSRF-Token` 头回传的令牌
+          description: CSRF 令牌，状态变更请求须放在 `X-CSRF-Token` 头中
     BuildInfo:
       type: object
       description: 服务端二进制的构建信息
@@ -2571,16 +2640,16 @@ components:
       properties:
         version:
           type: string
-          description: 版本号：发布版为 git 标签；源码构建为 Go 推导的模块版本；无从得知时为 `devel`
+          description: 版本号：发布版为 git 标签，源码构建为 Go 记录的模块版本，无法确定时为 `devel`
         commit:
           type: string
           description: 构建所在提交的哈希，工作区有未提交改动时带 `-dirty` 后缀；未知为空串
         built_at:
           type: string
-          description: 构建时刻，RFC 3339；只有发布流水线注入，源码构建为空串
+          description: 构建时刻，RFC 3339；发布版二进制带此值，源码构建为空串
     RuntimeConfig:
       type: object
-      description: 运营配置的只读切面，全部登录用户可读；不含凭证
+      description: 运营配置的只读子集，所有登录用户可读；不含凭证
       required:
         - cold_cleanup_days
         - delete_grace_minutes
@@ -2596,10 +2665,10 @@ components:
       properties:
         cold_cleanup_days:
           type: integer
-          description: 冷图待清理阈值（天）；0 表示未启用
+          description: 冷图待清理阈值（天）；0 表示不启用
         delete_grace_minutes:
           type: integer
-          description: 引用归零到物理删的宽限（分钟）；0 表示立即
+          description: 物理图不再被任何图片引用后，到删除其渠道副本之间的宽限（分钟）；0 表示立即删除
         process_widths:
           type: [array, 'null']
           items:
@@ -2628,12 +2697,12 @@ components:
           description: 全局默认 EXIF 档位；S3 PutObject 不适用
         encrypt_new_channels:
           type: boolean
-          description: 新建渠道未显式指定时的加密默认值；为 true 时继承默认的新渠道不能开 302 直链
+          description: 新建渠道未指定 `encrypted` 时的默认值；为 true 时，按默认加密的新渠道不能开启 302 直链
         build:
           $ref: '#/components/schemas/BuildInfo'
     Settings:
       type: object
-      description: 运营配置；属性名即配置键，真相在 settings 表，后台修改即热生效
+      description: 运营配置，属性名即配置键。保存在元数据库中，经后台或 `PUT /api/admin/config` 修改后立即生效
       required:
         - max_upload_mb
         - max_pixels_mp
@@ -2682,7 +2751,7 @@ components:
           description: 像素预算（百万像素）
         max_concurrent_uploads:
           type: integer
-          description: 上传并发上限，满载返回 429
+          description: 上传并发上限，数据面上传、后台上传与 S3 兼容接口的全部请求共用；达到上限时返回 429
         upload_rate_per_min:
           type: integer
           description: 每用户每分钟上传次数上限；0 表示不启用
@@ -2694,24 +2763,24 @@ components:
           description: Cloudflare Zone ID
         cdn_cloudflare_api_token:
           type: string
-          description: Cloudflare API Token；响应里恒为空串（脱敏），是否已配置看 `derived.cdn_api_token_set`
+          description: Cloudflare API Token；响应中始终为空串，是否已配置见 `derived.cdn_api_token_set`
         allow_empty_referer:
           type: boolean
           description: 空 Referer 是否放行
         exif_policy:
           type: string
           enum: [passthrough, strip]
-          description: 全局默认 EXIF 档位，上传接口的单次表单字段可覆盖；S3 PutObject 不适用，一律按原字节保存
+          description: 全局默认 EXIF 档位，上传时可用 `exif_policy` 字段覆盖；不适用于 S3 PutObject，后者一律按原字节保存
         min_success:
           type: integer
           description: 上传返回成功所需的最少同步副本数
         access_mode:
           type: string
           enum: [proxy, redirect]
-          description: proxy 经服务代理回源；redirect 对允许直链的渠道 302
+          description: '`proxy`：由服务读取渠道并输出图片；`redirect`：对允许直链的渠道 302 重定向'
         encrypt_new_channels:
           type: boolean
-          description: 新建渠道未显式指定时的加密默认值
+          description: 新建渠道未指定 `encrypted` 时的默认值
         health_check_seconds:
           type: integer
           description: 渠道健康检查间隔（秒）
@@ -2726,7 +2795,7 @@ components:
           description: 生命周期清理扫描间隔（秒）
         delete_grace_minutes:
           type: integer
-          description: 引用归零到物理删的宽限（分钟）；0 表示立即
+          description: 物理图不再被任何图片引用后，到删除其渠道副本之间的宽限（分钟）；0 表示立即删除
         default_ttl_hours:
           type: integer
           description: 全局默认有效期（小时）；0 表示永不过期
@@ -2735,7 +2804,7 @@ components:
           description: 公开访问是否顺延带有效期图片的到期时刻
         activity_flush_seconds:
           type: integer
-          description: 访问活跃度批量落库间隔（秒）
+          description: 访问统计批量写入数据库的间隔（秒）；同一张图在一个间隔内的多次访问只计一次
         cold_cleanup_days:
           type: integer
           description: 冷图待清理阈值（天）；0 表示不启用
@@ -2775,11 +2844,11 @@ components:
           description: 处理并发上限
         process_timeout_ms:
           type: integer
-          description: 单请求处理超时（毫秒），超时回退原图
+          description: 单次处理的超时（毫秒），超时则输出原图
         variants_cache_mb:
           type: integer
           format: int64
-          description: 衍生图磁盘缓存上限（MB）
+          description: 衍生图（缩放与格式转换结果）的磁盘缓存上限（MB）
         idempotency_key_ttl_hours:
           type: integer
           description: 上传幂等键保留期（小时）
@@ -2795,7 +2864,7 @@ components:
       additionalProperties: true
     BootstrapConfig:
       type: object
-      description: 引导配置的只读展示；密钥类引导项不出现
+      description: 引导配置（只读），不含密钥类配置项
       required: [listen, data_dir, trusted_proxies, metrics_allow]
       properties:
         listen:
@@ -2806,10 +2875,10 @@ components:
           description: 数据目录
         trusted_proxies:
           type: string
-          description: 信任其转发头的反向代理网段，逗号分隔；空串表示一概不信转发头
+          description: 信任其转发头的反向代理网段，逗号分隔；空串表示不信任任何转发头
         metrics_allow:
           type: string
-          description: 允许抓取 /metrics 的网段，逗号分隔；空串表示对谁都不开放
+          description: 允许访问 `/metrics` 的网段，逗号分隔；空串表示不对任何地址开放
     DerivedConfig:
       type: object
       description: 派生状态与内置策略
@@ -2822,7 +2891,7 @@ components:
       properties:
         cdn_purge_enabled:
           type: boolean
-          description: 删除级联的 CDN purge 是否生效（zone、token 与 base_url 三者齐备）
+          description: 删除图片时是否清除 CDN 缓存；Zone ID、API Token 与 `base_url` 都已配置时为 true
         cdn_api_token_set:
           type: boolean
           description: Cloudflare API Token 是否已配置
@@ -2863,7 +2932,7 @@ components:
         bytes:
           type: integer
           format: int64
-          description: 已存字节，副本口径
+          description: 该渠道上已就绪副本的原图字节之和
     TopImage:
       type: object
       description: 热门图，按累计访问次数降序
@@ -2879,14 +2948,14 @@ components:
         access_count:
           type: integer
           format: int64
-          description: 累计访问次数，活跃度落库周期粒度
+          description: 累计公开访问次数；同一张图在一个 `activity_flush_seconds` 间隔内的多次访问只计一次，不是精确访问量
         size:
           type: integer
           format: int64
           description: 存储字节
     AdminDashboard:
       type: object
-      description: 管理员视图：全站计数、待办、访问与流量估算、热门图与渠道水位
+      description: 管理员视图：全站计数、待裁决数、访问量与流量估算、热门图与各渠道用量
       required:
         - offsite_missing
         - images
@@ -2901,7 +2970,7 @@ components:
       properties:
         offsite_missing:
           type: boolean
-          description: 缺少健康的异地渠道：健康且不在清理中的渠道里没有本机磁盘（local 驱动）以外的，一个健康渠道都没有时同样为 true；此时图片副本与元数据库快照在本机以外都没有可用的一份
+          description: 是否缺少本机以外的健康渠道：健康且不在清理中的渠道全是本机磁盘（local 驱动），或一个都没有时为 true。此时图片副本与元数据库快照只存在本机上
         images:
           type: integer
           format: int64
@@ -2914,18 +2983,18 @@ components:
         pending_cleanup:
           type: integer
           format: int64
-          description: 待清理裁决数
+          description: 待裁决的冷图数
         pending_dedup:
           type: integer
           format: int64
-          description: 待裁决相似候选数
+          description: 待裁决的相似候选对数
         total_accesses:
           type: integer
           format: int64
         traffic_estimate_bytes:
           type: integer
           format: int64
-          description: 访问数 × 原图字节的粗略估算
+          description: 按「访问次数 × 原图字节」粗略估算的流量
         top_images:
           type: array
           items:
@@ -2955,7 +3024,7 @@ components:
         - $ref: '#/components/schemas/UserDashboard'
     Token:
       type: object
-      description: Token 列表项；只有识别前缀，无哈希无明文
+      description: Token 列表项；只含明文前缀，不含哈希与完整明文
       required: [id, name, prefix, scopes, expires_at, last_used_at, revoked_at, created_at]
       properties:
         id:
@@ -2966,7 +3035,7 @@ components:
           description: 用途名
         prefix:
           type: string
-          description: 明文前缀，识别用
+          description: 明文前缀，用于辨认 Token
         scopes:
           type: string
           description: 授权范围，逗号分隔
@@ -3021,32 +3090,32 @@ components:
           type: string
         token:
           type: string
-          description: Token 明文，仅此一次下发
+          description: Token 明文，只返回这一次
     S3Credential:
       type: object
-      description: 一枚 Token 的 S3 协议凭证与端点配置
+      description: 一个 Token 用于 S3 兼容接口的凭证与端点配置
       required: [access_key_id, secret_access_key, endpoint, region, bucket, url_prefix]
       properties:
         access_key_id:
           type: string
-          description: 即 Token 明文前缀
+          description: 即 Token 的明文前缀
         secret_access_key:
           type: string
-          description: 由主密钥派生，可随时重看
+          description: 由主密钥派生，可随时再次获取
         endpoint:
           type: string
           format: uri
-          description: 客户端填的 S3 端点，末尾 /s3 是协议面前缀
+          description: 客户端填写的 S3 端点；末尾的 `/s3` 是 S3 兼容接口的路径前缀，不能省略
         region:
           type: string
-          description: 本服务不区分区域，给一个客户端普遍接受的值
+          description: 服务端不区分区域，返回一个客户端普遍接受的值
         bucket:
           type: string
-          description: 无桶概念，占位名供客户端填
+          description: 服务端没有桶的概念，返回一个占位名供客户端填写
         url_prefix:
           type: string
           format: uri
-          description: 客户端据此拼最终访问地址，含用户 id 段
+          description: 图片访问地址的前缀，形如 `<站点地址>/o/<用户 id>`；客户端在其后接上 `/<对象键>` 得到访问地址
     Image:
       type: object
       description: 图片列表项
@@ -3086,13 +3155,13 @@ components:
           description: 上传来源 Token；null 表示后台上传或来源 Token 记录已删除
         token_name:
           type: [string, 'null']
-          description: 来源 Token 用途名；null 同 token_id
+          description: 来源 Token 的用途名；为 null 的情况同 `token_id`
         file_name:
           type: string
           description: 原始文件名
         mime:
           type: string
-          description: 真实 MIME
+          description: 按文件内容判定的 MIME 类型
         size:
           type: integer
           format: int64
@@ -3115,24 +3184,24 @@ components:
           description: 有效时长（秒），访问续期按此顺延；null 表示永久
         last_access_at:
           type: [string, 'null']
-          description: 最近公开访问；null 表示从未
+          description: 最近一次公开访问的时刻；null 表示从未被访问
         access_count:
           type: integer
           format: int64
-          description: 累计公开访问次数，活跃度落库周期粒度
+          description: 累计公开访问次数；同一张图在一个 `activity_flush_seconds` 间隔内的多次访问只计一次，不是精确访问量
         pending_cleanup:
           type: boolean
           description: 是否在待清理列表
         cleanup_exempt:
           type: boolean
-          description: 是否清理豁免
+          description: 是否已豁免冷图清理
         created_at:
           type: string
           description: 上传时刻
         ref_count:
           type: integer
           format: int64
-          description: 物理图引用计数（同图去重共享）
+          description: 物理图的引用数；内容相同的图片共用一份物理图
     Replica:
       type: object
       description: 单图在一个渠道上的副本状态
@@ -3186,17 +3255,17 @@ components:
           description: 过滤后的总条数
     ImagePatch:
       type: object
-      description: 修改项；缺省的项不动，至少携带一项
+      description: 要修改的项；未带的项保持不变，至少带一项
       properties:
         ttl_hours:
           type: integer
           format: int64
           minimum: 0
           maximum: 876000
-          description: 大于 0 从现在起算新的到期时刻并更新时长；0 改为永久
+          description: 大于 0 时，从现在起按该时长重新计算到期时刻；0 表示改为永久
         cleanup_exempt:
           type: boolean
-          description: 预设或取消清理豁免；仅管理员。取消时顺带摘掉待清理标记，由下轮扫描重判
+          description: 设置或取消冷图清理豁免，仅管理员。设置与取消都会清除待清理标记，取消后由下一轮扫描重新判定
     BatchDeleteRequest:
       type: object
       required: [ids]
@@ -3219,7 +3288,7 @@ components:
           type: array
           description: 失败明细；全部成功时为空数组
           items:
-            description: 单张失败的明细：短 ID 加与错误信封同形的失败原因
+            description: 一张图的失败明细：短 ID，加上与错误信封格式相同的失败原因
             allOf:
               - $ref: '#/components/schemas/Error'
               - type: object
@@ -3229,7 +3298,7 @@ components:
                     type: string
     ChannelTemplateID:
       type: string
-      description: 内置渠道模板的标识；模板名与说明由前端按它查词典
+      description: 内置渠道模板的标识；接口不返回模板名与说明
       enum:
         - aws-s3
         - r2
@@ -3247,7 +3316,7 @@ components:
         - yandex
     TemplateFieldKey:
       type: string
-      description: 模板字段的标识，即请求里 `inputs` 的键；字段标签、占位示例与帮助说明由前端按模板 id 与它查词典
+      description: 模板字段的标识，即请求里 `inputs` 的键；接口不返回字段标签、占位示例与帮助说明
       enum:
         - access_key_id
         - secret_access_key
@@ -3267,7 +3336,7 @@ components:
         - hostname
     TemplateOptionValue:
       type: string
-      description: select 字段的可选值，即写入渠道配置的值（rclone 参数取值）；显示名由前端按它查词典，各字段的取值互不重复
+      description: select 字段的可选值，即写入渠道配置的 rclone 参数值，各字段的取值互不重复；接口不返回显示名
       enum:
         - us-east-1
         - us-east-2
@@ -3316,7 +3385,7 @@ components:
         - eapi.pcloud.com
     TemplateField:
       type: object
-      description: 模板的一个用户输入字段，只含结构；显示文案由前端词典提供
+      description: 模板里需要用户填写的一个字段，只含结构，不含显示文案
       required: [key, type, required]
       properties:
         key:
@@ -3364,7 +3433,7 @@ components:
           format: int64
     ReplicaStats:
       type: object
-      description: 渠道的副本补齐水位
+      description: 渠道的副本统计
       required: [done, pending, failed]
       properties:
         done:
@@ -3381,7 +3450,7 @@ components:
           description: 补齐失败副本数
     Channel:
       type: object
-      description: 渠道的对外描述，不含配置与凭证
+      description: 渠道信息，不含配置与凭证
       required:
         - id
         - name
@@ -3424,12 +3493,12 @@ components:
             - type: 'null'
         deleting:
           type: boolean
-          description: 清理中：排空任务正在删除渠道上的对象，清完即消失
+          description: 是否正在清理中：后台正在删除渠道上的对象，删完后渠道消失
         replicas:
           $ref: '#/components/schemas/ReplicaStats'
         created_at:
           type: string
-          description: 创建时刻；与 `id` 一起参与加密渠道 crypt 密码与盐的派生
+          description: 创建时刻；加密渠道的 crypt 密码与盐由它和 `id` 参与派生
     ChannelList:
       type: object
       required: [items, total]
@@ -3443,12 +3512,12 @@ components:
           format: int64
     ChannelCreateRequest:
       type: object
-      description: 配置来源二选一：模板模式给 `template` + `inputs`；自定义模式 `template` 为空或 `custom`，给 `driver` + `config`。未知字段整体拒绝
+      description: 两种配置方式二选一：模板模式传 `template` 与 `inputs`；自定义模式 `template` 为空或 `custom`，传 `driver` 与 `config`。含未知字段时整体拒绝
       required: [name]
       properties:
         template:
           type: string
-          description: 模板 id；空或 `custom` 走自定义
+          description: 模板 id；空或 `custom` 表示自定义模式
         inputs:
           type: object
           additionalProperties:
@@ -3461,7 +3530,7 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: 自定义模式的后端参数，含约定键 `path`（后端内路径）与 `public_base_url`（302 直链前缀）
+          description: 自定义模式的 rclone 后端参数；另有两个由 ImgYoung 使用、不传给 rclone 的键：`path`（后端内路径，即桶名或目录）与 `public_base_url`（302 直链的地址前缀）
         name:
           type: string
           description: 渠道名，唯一
@@ -3471,16 +3540,16 @@ components:
           description: 越大越优先；缺省 0
         encrypted:
           type: boolean
-          description: 是否加密渠道；缺省用全局默认，创建时固化
+          description: 是否加密；缺省取运营配置 `encrypt_new_channels`，创建后不可更改
         allow_direct_link:
           type: boolean
           description: 是否允许 302 直链；缺省 false
         auto_create_bucket:
           type: boolean
-          description: 创建时主动建桶，需凭证有建桶权限；缺省 false
+          description: 创建时自动建桶，凭证须有建桶权限；缺省 false
     ChannelUpdateRequest:
       type: object
-      description: 与创建同构，PUT 为全量语义，须给出全部键；配置里原样回传的哨兵值表示保留原凭证
+      description: 结构与创建相同。PUT 整体替换，须给出全部字段；配置里原样传回的哨兵值表示沿用原值
       required: [name, priority, allow_direct_link]
       properties:
         template:
@@ -3502,7 +3571,7 @@ components:
           format: int64
         encrypted:
           type: boolean
-          description: 可回传但必须与现状一致
+          description: 可以传，但必须与当前值一致
         allow_direct_link:
           type: boolean
     ChannelTestRequest:
@@ -3513,7 +3582,7 @@ components:
             channel_id:
               type: integer
               format: int64
-              description: 编辑场景传渠道 id，配置中的哨兵值还原为原凭证后再探测；0 或缺省为创建场景
+              description: 测试已有渠道时传它的 id，配置里的哨兵值先换回该渠道已存的值再探测；0 或缺省表示测试新渠道
     ChannelTestResult:
       type: object
       required: [ok]
@@ -3527,9 +3596,9 @@ components:
         token:
           type: string
           description: >-
-            测试期间服务商刷新了提交的授权令牌时出现，值为刷新后的令牌 JSON（与 rclone 的 `token` 参数同格式）；
-            探测失败时也可能出现。存在时前端须用它替换表单里的令牌再保存——刷新令牌只能用一次的服务商（如 Box），
-            原令牌已被作废。模板模式替换授权字段（`inputs.token`），自定义模式替换 `config.token`。只回传令牌，不回传其他凭证
+            测试过程中服务商刷新了请求里提交的授权令牌时出现，探测失败时也可能出现。值为刷新后的令牌 JSON，格式与 rclone 的
+            `token` 参数相同。出现时，调用方须用它替换请求里的令牌再保存：刷新令牌只能用一次的服务商（如 Box）已作废原令牌。模板模式替换
+            `inputs.token`，自定义模式替换 `config.token`。只返回令牌，不返回其他凭证
     ChannelSaveError:
       description: 创建、编辑渠道失败的响应：错误信封，外加保存过程中服务商刷新出的令牌
       allOf:
@@ -3539,11 +3608,11 @@ components:
             token:
               type: string
               description: >-
-                保存过程中服务商刷新了表单提交的授权令牌时出现，值为刷新后的令牌 JSON。前端须换用它再提交——刷新令牌只能用一次的服务商
-                （如 Box）原令牌已被作废。沿用渠道已存令牌的编辑不会出现它：刷新出的令牌已写回渠道
+                保存过程中服务商刷新了请求里提交的授权令牌时出现，值为刷新后的令牌 JSON。调用方须换用它再提交：刷新令牌只能用一次的服务商（如
+                Box）已作废原令牌。编辑时沿用渠道已存令牌的，不会出现此字段，刷新后的令牌已保存到渠道
     ChannelEditConfig:
       type: object
-      description: 渠道配置的编辑视图，敏感值以哨兵掩码
+      description: 编辑渠道用的配置，敏感参数以哨兵值代替
       required: [template, driver, config]
       properties:
         template:
@@ -3560,7 +3629,7 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: 模板表单字段值，落在敏感参数上的字段同样以哨兵掩码；仅模板渠道
+          description: 模板字段的值，对应敏感参数的字段同样以哨兵值代替；只有模板渠道有
     OAuthStartRequest:
       type: object
       required: [template]
@@ -3572,11 +3641,11 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: 已填字段值：区域等影响端点的参数与自建应用的 `client_id` / `client_secret`；授权令牌字段不参与
+          description: 已填写的模板字段：影响端点的参数（如区域）与自建应用的 `client_id`、`client_secret`；授权令牌字段不使用
         channel_id:
           type: integer
           format: int64
-          description: 编辑场景传渠道 id，字段中的哨兵还原为该渠道已存值；0 或缺省为创建场景
+          description: 为已有渠道重新授权时传它的 id，字段里的哨兵值先换回该渠道已存的值；0 或缺省表示新建渠道
     OAuthStartResponse:
       type: object
       required: [auth_url, state]
@@ -3584,7 +3653,7 @@ components:
         auth_url:
           type: string
           format: uri
-          description: 引导用户前往的授权地址
+          description: 让用户在浏览器中打开的授权地址
         state:
           type: string
           description: 领取结果用的一次性标识
@@ -3597,7 +3666,7 @@ components:
           description: 用户尚未完成授权
         token:
           type: string
-          description: 授权令牌，填入渠道表单后随渠道提交
+          description: 授权令牌；在创建或编辑渠道的请求里作为 `inputs.token` 提交
         code:
           $ref: '#/components/schemas/ErrorCode'
         error:
@@ -3610,7 +3679,7 @@ components:
           description: 授权失败时的文案参数
     User:
       type: object
-      description: 用户列表项，不含任何凭证材料
+      description: 用户信息，不含密码等任何凭证
       required:
         - id
         - name
@@ -3636,7 +3705,7 @@ components:
         default_ttl_hours:
           type: [integer, 'null']
           format: int64
-          description: 上传默认有效期（小时）；null 随全局，0 永久
+          description: 上传的默认有效期（小时）；null 表示使用全局默认，0 表示永久
         disabled:
           type: boolean
         created_at:
@@ -3644,7 +3713,7 @@ components:
         used_bytes:
           type: integer
           format: int64
-          description: 已用字节，按引用计全额
+          description: 已用字节；每条图片引用都按图片大小全额计入，内容相同的图片也各算一次
         image_count:
           type: integer
           format: int64
@@ -3661,7 +3730,7 @@ components:
           format: int64
     UserCreateRequest:
       type: object
-      description: 建号请求；未知字段整体拒绝
+      description: 创建用户的请求；含未知字段时整体拒绝
       required: [name, password]
       properties:
         name:
@@ -3682,10 +3751,10 @@ components:
           format: int64
           minimum: 0
           maximum: 876000
-          description: 上传默认有效期（小时）；缺省或 null 随全局，0 永久
+          description: 上传的默认有效期（小时）；缺省或 null 表示使用全局默认，0 表示永久
     UserUpdateRequest:
       type: object
-      description: 更新请求，PUT 为全量语义，须给出全部键；未知字段整体拒绝
+      description: PUT 整体替换，须给出全部字段；含未知字段时整体拒绝
       required: [name, role, quota_bytes, default_ttl_hours, disabled]
       properties:
         name:
@@ -3702,7 +3771,7 @@ components:
           format: int64
           minimum: 0
           maximum: 876000
-          description: 上传默认有效期（小时）；null 随全局，0 永久
+          description: 上传的默认有效期（小时）；null 表示使用全局默认，0 表示永久
         disabled:
           type: boolean
           description: 是否禁用；内置管理员不可禁用
@@ -3752,10 +3821,10 @@ components:
         blob_id:
           type: integer
           format: int64
-          description: 物理图 id，裁决保留方的标识
+          description: 物理图 id；合并时用它指定保留方
         image_id:
           type: string
-          description: 该物理图任一引用的短 ID，预览用；空串表示暂无引用
+          description: 引用该物理图的任一图片的短 ID，用于预览；空串表示暂无引用
         mime:
           type: string
         size:
@@ -3770,7 +3839,7 @@ components:
         refs:
           type: integer
           format: int64
-          description: 引用数，合并后并入保留方
+          description: 引用数；合并后这些引用并入保留方
     DedupCandidate:
       type: object
       required: [id, distance, created_at, a, b]
@@ -3810,7 +3879,7 @@ components:
           description: 保留的物理图 id，须是候选对中的一方
     CleanupItem:
       type: object
-      description: 冷图待清理引用
+      description: 待清理的冷图
       required: [id, url, user_id, file_name, mime, size, width, height, last_access_at, created_at]
       properties:
         id:
@@ -3835,7 +3904,7 @@ components:
           format: int64
         last_access_at:
           type: [string, 'null']
-          description: 最近公开访问；null 表示从未
+          description: 最近一次公开访问的时刻；null 表示从未被访问
         created_at:
           type: string
     CleanupList:
@@ -3861,7 +3930,7 @@ components:
           description: 操作者用户 id
         actor_name:
           type: string
-          description: 操作者用户名；账号已删除时回退为原始 id
+          description: 操作者的登录名；账号已删除时取 `actor` 的值
         action:
           type: string
           description: 动作标识，形如 `channel.create`
@@ -3897,7 +3966,7 @@ components:
           description: 告警类型
         target:
           type: string
-          description: 告警对象，渠道名等；无对象为空串
+          description: 告警对象，如渠道名；没有对象时为空串
         message:
           type: string
           description: 中文描述
@@ -3905,10 +3974,13 @@ components:
           type: [object, 'null']
           additionalProperties:
             type: string
-          description: >-
-            描述参数，管理后台按 `kind` 与它渲染当前语言的描述。`channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail`
-            （同 ChannelFailure；渠道尚未探测过时为空对象）；`replication_failed`：`failed`；`channel_quota_exceeded`：`bytes`、`quota`；
-            `backup_failed`：`code`（ErrorCode）加该错误码的文案参数。null 表示该告警只有中文 `message`，没有描述参数
+          description: |
+            描述参数，管理后台按 `kind` 与它显示当前语言的描述。各类型的键：
+
+            - `channel_unhealthy`、`drain_failed`：`stage`、`reason`、`detail`，含义同 ChannelFailure；渠道尚未探测过时为空对象。
+            - `replication_failed`：`failed`。
+            - `channel_quota_exceeded`：`bytes`、`quota`。
+            - `backup_failed`：`code`（ErrorCode），加上该错误码的文案参数。
         opened_at:
           type: string
         resolved_at:
@@ -3927,12 +3999,12 @@ components:
           format: int64
     Snapshot:
       type: object
-      description: 一份元数据库快照及持有它的渠道
+      description: 一份元数据库快照及存放它的渠道
       required: [name, size, taken_at, channels]
       properties:
         name:
           type: string
-          description: 对象文件名，形如 `imgyoung-20060102-150405.000.db`
+          description: 文件名，形如 `imgyoung-20060102-150405.000.db`（UTC 时间）
         size:
           type: integer
           format: int64
@@ -3943,7 +4015,7 @@ components:
           description: 快照时刻，RFC 3339，毫秒精度
         channels:
           type: array
-          description: 持有该快照的健康渠道名，按优先级降序；立即备份的响应里即写入的全部渠道
+          description: 存放该快照的健康渠道名，按优先级从高到低；在立即备份的响应里，为写入了这份快照的全部渠道
           items:
             type: string
     SnapshotList:
@@ -3969,7 +4041,7 @@ components:
           description: 暂存文件路径
     TokenExport:
       type: object
-      description: 导出的 Token 元数据，无哈希
+      description: 导出的 Token，不含哈希
       required: [id, user_id, name, prefix, scopes, revoked_at, created_at]
       properties:
         id:
@@ -3990,7 +4062,7 @@ components:
           type: string
     ImageExport:
       type: object
-      description: 导出的上传引用
+      description: 导出的图片引用
       required:
         - id
         - blob_id
@@ -4020,7 +4092,7 @@ components:
           type: string
         object_key:
           type: [string, 'null']
-          description: S3 客户端自取的对象键；null 表示无别名
+          description: 通过 S3 兼容接口上传时客户端指定的对象键；null 表示没有
         expire_at:
           type: [string, 'null']
         ttl_seconds:
@@ -4084,12 +4156,12 @@ components:
           description: 是否已进入物理删除流程
         delete_after:
           type: [string, 'null']
-          description: 物理删除不早于该时刻；null 表示未排程
+          description: 最早可物理删除的时刻；null 表示尚未安排删除
         created_at:
           type: string
     BlobChannelExport:
       type: object
-      description: 导出的副本分布行
+      description: 导出的副本记录：一个物理图在一个渠道上的副本
       required: [blob_id, channel_id, state, attempts, last_error_reason, last_error, updated_at]
       properties:
         blob_id:
@@ -4108,12 +4180,12 @@ components:
           description: 最近一次失败的归类（FailureReason）；空串表示没有失败
         last_error:
           type: string
-          description: 最近一次失败的根因原文；空串表示没有失败
+          description: 最近一次失败的原始错误信息；空串表示没有失败
         updated_at:
           type: string
     Export:
       type: object
-      description: 元数据全量导出；渠道凭证与密码哈希不在内
+      description: 全部元数据；不含渠道凭证与密码哈希
       required: [users, channels, tokens, images, blobs, blob_channels]
       properties:
         users:
