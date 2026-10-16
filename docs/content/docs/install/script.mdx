@@ -38,7 +38,7 @@ sudo sh install.sh --service
 | `--service` | 不安装服务 | 同时安装并启动 systemd 服务 `imgyoung`，数据在 `/var/lib/imgyoung`。仅 Linux，需要 root |
 
 - `--version` 须形如 `1.2.3` 或 `1.2.3-rc.1`，前缀 `v` 可带可不带。
-- `--dir` 不存在时会创建，且必须可写。与 `--service` 同用时，须为绝对路径，且不能在 `/home`、`/root`、`/run/user` 下，原因见下文「systemd 服务」。
+- `--dir` 不存在时会创建，且必须可写。与 `--service` 同用时，须为绝对路径，只能由字母、数字与 `.`、`_`、`-`、`/` 组成，且不能在 `/home`、`/root`、`/run/user` 下，原因见下文「systemd 服务」。
 
 | 环境变量 | 默认 | 说明 |
 |---|---|---|
@@ -48,7 +48,7 @@ sudo sh install.sh --service
 
 ## 脚本做了什么
 
-1. **检查前提**：确认 `curl`、`tar`、`install` 存在。带 `--service` 时，还确认系统是 Linux、以 root 运行、有 `systemctl`，以及指定的 `--dir` 是家目录之外的绝对路径。不满足就在下载之前退出，不改动系统。
+1. **检查前提**：确认 `curl`、`tar`、`install` 存在。带 `--service` 时，还确认系统是 Linux、以 root 运行、有 `systemctl`，以及指定的 `--dir` 是家目录之外、不含特殊字符的绝对路径。不满足就在下载之前退出，不改动系统。
 2. **识别平台**：`uname -s` 须为 `Linux` 或 `Darwin`，`uname -m` 须为 `x86_64`、`amd64`、`aarch64` 或 `arm64`，其他系统或架构直接报错。Windows 请用[发布包](./binary.mdx)。
 3. **确定版本**：没有指定 `--version` 时，请求 `<发布页>/latest` 并跟随跳转，取最终地址的最后一段作为版本号，按与 `--version` 相同的格式校验。GitHub 的 latest 不会指向预发布版。
 4. **下载并校验**：把 `imgyoung_<版本号>_<系统>_<架构>.tar.gz` 与同版本的 `checksums.txt` 下载到临时目录，核对 sha256。不一致即中止，不安装任何东西。临时目录在脚本退出时删除。
@@ -69,6 +69,7 @@ sudo sh install.sh --service
 | 设置 | 作用 |
 |---|---|
 | `IMGYOUNG_DATA_DIR=%S/imgyoung`、`StateDirectory=imgyoung` | 数据目录为 `/var/lib/imgyoung`，由 systemd 创建并交给运行用户 |
+| `Type=notify` | 服务打开数据库、监听端口后才通知 systemd 已启动；`systemctl start` / `restart` 等到这时才返回，服务起不来时报错 |
 | `DynamicUser=yes` | 每次启动由 systemd 分配一个临时系统用户来运行，不需要预先创建用户 |
 | `Restart=always` | 进程退出后 3 秒重新启动，包括正常退出 |
 | `TimeoutStopSec=15s` | 停止服务时最多等待 15 秒 |
@@ -169,6 +170,7 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 | `错误:无法从 <最终地址> 解析出版本号;可用 --version 指定` | 没有指定 `--version`，而 `<发布页>/latest` 没有跳转到以 `vX.Y.Z` 结尾的地址 |
 | `错误:<文件名> 的 sha256 不符(期望 …,实际 …),已中止` | 下载的文件与 `checksums.txt` 不一致 |
 | `错误:--service 的二进制不能装在 <目录>:服务启用了 ProtectHome,进程看不到家目录` | 加了 `--service`，而 `--dir` 在家目录下 |
+| `错误:--service 的 --dir 只能由字母、数字与 . _ - / 组成,…` | 加了 `--service`，而 `--dir` 含空格、`&` 等其他字符 |
 | `错误:<目录> 不可写;用 sudo 执行,或用 --dir 指定一个可写目录` | 安装目录没有写权限 |
 | `错误:解包 <文件名> 失败` | 下载的发布包无法解开 |
 
@@ -180,4 +182,4 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 | `错误:<目录>/imgyoung 无法运行,检查系统与架构是否与发布包一致` | 装好的二进制无法执行，如架构不符或目录所在分区禁止执行 |
 | `错误:生成服务文件失败` / `错误:无法写入 /etc/systemd/system/imgyoung.service` | 服务文件生成或写入失败 |
 | `错误:systemctl daemon-reload 失败` / `错误:无法设置服务 imgyoung 开机启动` | systemd 重新加载或设置开机启动失败 |
-| `错误:服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因` / `错误:服务 imgyoung 重启失败,…` | 服务没能启动，原因见 `journalctl -u imgyoung` |
+| `错误:服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因` / `错误:服务 imgyoung 重启失败,…` | 服务没能启动，如端口已被占用，原因见 `journalctl -u imgyoung` |

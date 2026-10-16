@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/oklog/run"
 
 	"github.com/x-haose/imgyoung/internal/infra/config"
@@ -68,10 +69,24 @@ func (a *app) serve() error {
 	build := version.Current()
 	a.logger.Info("ImgYoung 已启动", "version", build.Version, "commit", build.Commit,
 		"listen", ln.Addr().String(), "data_dir", a.boot.DataDir)
+	if err := notifyReady(); err != nil {
+		return errors.Join(err, ln.Close())
+	}
 	if rerr := g.Run(); rerr != nil && !errors.Is(rerr, run.ErrSignal) {
 		return rerr
 	}
 	a.logger.Info("已优雅停机")
+	return nil
+}
+
+// notifyReady 告知 systemd 服务已就绪:数据库已打开并迁移、端口已监听。
+// @Description: 服务单元为 Type=notify 时,systemctl start / restart 等到这一刻才返回,进程在此之前退出则报启动失败。
+// 不在 systemd 下运行(没有 NOTIFY_SOCKET)时什么也不做;通知随即从环境中移除,不传给子进程。
+// @return 通知写不进 systemd 的套接字时的错误
+func notifyReady() error {
+	if _, err := daemon.SdNotify(true, daemon.SdNotifyReady); err != nil {
+		return fmt.Errorf("通知 systemd 服务已就绪: %w", err)
+	}
 	return nil
 }
 

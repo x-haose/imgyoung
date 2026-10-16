@@ -9,6 +9,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+# 服务打开数据库、监听端口后通知 systemd;systemctl start / restart 等到这时才返回,起不来时报错
+Type=notify
 ExecStart=/usr/local/bin/imgyoung
 Environment=IMGYOUNG_DATA_DIR=%S/imgyoung
 # 渠道参数直接交给 rclone,不用 rclone 的配置文件;置空让 rclone 启动时不去寻找家目录下的配置

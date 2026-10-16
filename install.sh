@@ -120,15 +120,19 @@ download_and_verify() {
 	tar -xzf "$tmp/$archive" -C "$tmp" || fail "解包 $archive 失败"
 }
 
+# resolve_dir 未指定 --dir 时确定默认安装目录:root 为 /usr/local/bin,其他用户为 ~/.local/bin。
+resolve_dir() {
+	[ -z "$dir" ] || return 0
+	if [ "$(id -u)" -eq 0 ]; then
+		dir=/usr/local/bin
+	else
+		[ -n "${HOME:-}" ] || fail "未设置 HOME,无法确定默认安装目录;用 --dir 指定"
+		dir="$HOME/.local/bin"
+	fi
+}
+
 # install_binary 把二进制装入目标目录。
 install_binary() {
-	if [ -z "$dir" ]; then
-		if [ "$(id -u)" -eq 0 ]; then
-			dir=/usr/local/bin
-		else
-			dir="$HOME/.local/bin"
-		fi
-	fi
 	mkdir -p "$dir" || fail "无法创建 $dir"
 	[ -w "$dir" ] || fail "$dir 不可写;用 sudo 执行,或用 --dir 指定一个可写目录"
 	install -m 0755 "$tmp/imgyoung" "$dir/imgyoung" || fail "无法写入 $dir/imgyoung"
@@ -142,12 +146,14 @@ check_service() {
 	[ "$(id -u)" -eq 0 ] || fail "--service 需要 root 权限"
 	need systemctl
 	case "$dir" in
-	"") ;;
 	/home | /home/* | /root | /root/* | /run/user | /run/user/*)
 		fail "--service 的二进制不能装在 $dir:服务启用了 ProtectHome,进程看不到家目录"
 		;;
 	/*) ;;
 	*) fail "--service 的 --dir 须为绝对路径,systemd 不接受相对路径" ;;
+	esac
+	case "$dir" in
+	*[!A-Za-z0-9._/-]*) fail "--service 的 --dir 只能由字母、数字与 . _ - / 组成,其他字符写进 ExecStart 会被 systemd 另行解析" ;;
 	esac
 }
 
@@ -157,10 +163,14 @@ install_service() {
 	unit="$tmp/imgyoung.service"
 	sed "s|^ExecStart=.*|ExecStart=$dir/imgyoung|" "$tmp/deploy/imgyoung.service" >"$unit" ||
 		fail "生成服务文件失败"
+	rewritten=0
 	if [ -f "$UNIT_PATH" ] && [ "$(cat "$unit")" != "$(cat "$UNIT_PATH")" ]; then
-		info "已按发布包重写 $UNIT_PATH;本机定制请用 systemctl edit imgyoung 写成 drop-in,升级不会覆盖"
+		rewritten=1
 	fi
 	install -m 0644 "$unit" "$UNIT_PATH" || fail "无法写入 $UNIT_PATH"
+	if [ "$rewritten" -eq 1 ]; then
+		info "已按发布包重写 $UNIT_PATH;本机定制请用 systemctl edit imgyoung 写成 drop-in,升级不会覆盖"
+	fi
 	systemctl daemon-reload || fail "systemctl daemon-reload 失败"
 	systemctl enable --quiet imgyoung || fail "无法设置服务 imgyoung 开机启动"
 	if systemctl is-active --quiet imgyoung; then
@@ -187,6 +197,7 @@ next_steps() {
 
 main() {
 	parse_args "$@"
+	resolve_dir
 	need curl
 	need tar
 	need install
@@ -195,7 +206,7 @@ main() {
 	fi
 	platform=$(detect_platform)
 	resolve_version
-	tmp=$(mktemp -d)
+	tmp=$(mktemp -d) || fail "无法创建临时目录"
 	trap 'rm -rf "$tmp"' EXIT
 	trap 'exit 130' INT TERM
 	download_and_verify "$platform"

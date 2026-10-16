@@ -38,7 +38,7 @@ The script needs `curl`, `tar`, `install`, and either `sha256sum` or `shasum`. W
 | `--service` | No service | Also install and start the systemd service `imgyoung`, with data in `/var/lib/imgyoung`. Linux only, needs root |
 
 - `--version` takes the form `1.2.3` or `1.2.3-rc.1`; the `v` prefix is optional.
-- `--dir` is created if missing and must be writable. With `--service` it must be an absolute path outside `/home`, `/root` and `/run/user`; "The systemd service" below explains why.
+- `--dir` is created if missing and must be writable. With `--service` it must be an absolute path made up only of letters, digits and `.`, `_`, `-`, `/`, outside `/home`, `/root` and `/run/user`; "The systemd service" below explains why.
 
 | Environment variable | Default | Description |
 |---|---|---|
@@ -48,7 +48,7 @@ An unknown option or a malformed version makes the script exit with an error rig
 
 ## What the script does
 
-1. **Checks prerequisites.** Confirms that `curl`, `tar` and `install` exist. With `--service` it also checks for Linux, root and `systemctl`, and that any `--dir` given is an absolute path outside the home directories. If anything is missing, it exits before downloading and leaves the system untouched.
+1. **Checks prerequisites.** Confirms that `curl`, `tar` and `install` exist. With `--service` it also checks for Linux, root and `systemctl`, and that any `--dir` given is an absolute path outside the home directories with no special characters. If anything is missing, it exits before downloading and leaves the system untouched.
 2. **Detects the platform.** `uname -s` must be `Linux` or `Darwin`, and `uname -m` must be `x86_64`, `amd64`, `aarch64` or `arm64`; anything else is an error. On Windows, use a [release archive](./binary.mdx).
 3. **Picks the version.** Without `--version` it requests `<releases>/latest`, follows the redirect, and takes the last path segment of the final URL as the version, checked against the same format as `--version`. GitHub's latest release never points at a pre-release.
 4. **Downloads and verifies.** Downloads `imgyoung_<version>_<os>_<arch>.tar.gz` and that release's `checksums.txt` into a temporary directory and checks the sha256. On a mismatch it aborts without installing anything. The temporary directory is removed when the script exits.
@@ -69,6 +69,7 @@ The main settings:
 | Setting | Effect |
 |---|---|
 | `IMGYOUNG_DATA_DIR=%S/imgyoung`, `StateDirectory=imgyoung` | The data directory is `/var/lib/imgyoung`, created by systemd and handed to the service user |
+| `Type=notify` | The service tells systemd it has started only after it has opened the database and is listening; `systemctl start` / `restart` wait until then and report an error if the service cannot start |
 | `DynamicUser=yes` | systemd allocates a transient system user on every start, so no user has to be created in advance |
 | `Restart=always` | The process is started again 3 seconds after it exits, including clean exits |
 | `TimeoutStopSec=15s` | Stopping the service waits at most 15 seconds |
@@ -169,6 +170,7 @@ On an error, the script prints one line starting with `错误:` ("error:") and e
 | `错误:无法从 <final URL> 解析出版本号;可用 --version 指定` | No `--version` was given, and `<releases>/latest` did not redirect to a URL ending in `vX.Y.Z` ("could not parse a version from the URL; pass --version") |
 | `错误:<file> 的 sha256 不符(期望 …,实际 …),已中止` | The download does not match `checksums.txt` ("sha256 mismatch, aborted") |
 | `错误:--service 的二进制不能装在 <dir>:服务启用了 ProtectHome,进程看不到家目录` | `--service` was given with a `--dir` under a home directory ("the service uses ProtectHome and cannot see home directories") |
+| `错误:--service 的 --dir 只能由字母、数字与 . _ - / 组成,…` | `--service` was given with a `--dir` containing spaces, `&` or other characters ("--dir may contain only letters, digits and . _ - /") |
 | `错误:<dir> 不可写;用 sudo 执行,或用 --dir 指定一个可写目录` | The install directory is not writable ("run with sudo, or pass a writable --dir") |
 | `错误:解包 <file> 失败` | The downloaded archive cannot be unpacked |
 
@@ -180,4 +182,4 @@ The ones below happen during installation, so the binary or the service may alre
 | `错误:<dir>/imgyoung 无法运行,检查系统与架构是否与发布包一致` | The installed binary cannot run, for example because of an architecture mismatch or a `noexec` mount ("check that the system and architecture match the release archive") |
 | `错误:生成服务文件失败` / `错误:无法写入 /etc/systemd/system/imgyoung.service` | Generating or writing the service file failed |
 | `错误:systemctl daemon-reload 失败` / `错误:无法设置服务 imgyoung 开机启动` | Reloading systemd or enabling the service at boot failed |
-| `错误:服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因` / `错误:服务 imgyoung 重启失败,…` | The service failed to start; see `journalctl -u imgyoung` |
+| `错误:服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因` / `错误:服务 imgyoung 重启失败,…` | The service failed to start, for example because the port is already in use; see `journalctl -u imgyoung` |
