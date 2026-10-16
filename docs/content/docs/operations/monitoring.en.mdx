@@ -95,7 +95,7 @@ When you delete a channel with **Delete and purge**, ImgYoung deletes the image 
 
 `drain_failed` opens in two cases:
 
-- **Deleting objects fails**: the alert opens when the same drain job is still failing on its 4th attempt, about 98 seconds after the first failure with the default retry intervals. Until then the channel only shows as **Draining**.
+- **Deleting objects fails**: the alert opens when the same drain job is still failing on its 4th attempt, about 98 seconds after the first failure with the default retry intervals when each attempt fails quickly. Until then the channel only shows as **Draining**.
 - **The channel fails to load**: the alert opens immediately, since a channel that cannot be loaded cannot be drained. Once the channel loads, this alert resolves; whether it opens again then depends on how the drain itself goes.
 
 Draining keeps retrying automatically, and the alert stays open until the channel is empty. The channel is then removed automatically and the alert resolves.

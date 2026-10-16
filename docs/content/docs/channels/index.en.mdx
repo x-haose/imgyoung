@@ -253,7 +253,7 @@ Files other programs wrote are left alone. Also:
 
 Failed deletions are retried with backoff until the drain completes, and it finishes on its own once the channel is reachable again.
 
-- Only when the 4th attempt of the same drain job still fails (about 98 seconds after the first failure with the default backoff) does the Status column show the reason and a **Channel drain failed** alert open. Until then the column just shows **Draining**, so a brief network glitch leaves neither a reason nor an alert.
+- Only when the 4th attempt of the same drain job still fails (with the default backoff, about 98 seconds after the first failure when each attempt fails quickly) does the Status column show the reason and a **Channel drain failed** alert open. Until then the column just shows **Draining**, so a brief network glitch leaves neither a reason nor an alert.
 - The failure stage of a drain failure is `drain`, and the console prefixes the classification with "Deleting the channel’s objects failed; this is retried automatically. If the credentials no longer work or the bucket is gone, remove the channel directly (remote objects are kept):".
 - If a draining channel fails to load (stage `load`), the reason shows right away and a **Channel drain failed** alert opens, because a channel that cannot be loaded cannot be drained. As soon as the channel loads, that reason is cleared and the alert resolves; whether it opens again depends on the drain's own failures.
 - When a channel turns **Draining**, its previous failure reason is cleared. From then on the reason in the Status column comes only from drain failures and load failures.

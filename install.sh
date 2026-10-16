@@ -153,7 +153,7 @@ check_service() {
 	*) fail "--service 的 --dir 须为绝对路径,systemd 不接受相对路径" ;;
 	esac
 	case "$dir" in
-	*[!A-Za-z0-9._/-]*) fail "--service 的 --dir 只能由字母、数字与 . _ - / 组成,其他字符写进 ExecStart 会被 systemd 另行解析" ;;
+	*[!A-Za-z0-9._/-]*) fail "--service 的 --dir 只能由字母、数字与 . _ - / 组成,其他字符会破坏服务文件的生成,或被 systemd 另行解析" ;;
 	esac
 }
 

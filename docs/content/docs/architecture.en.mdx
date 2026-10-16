@@ -304,8 +304,8 @@ the remaining remote objects are left as they are.
 
 When a drain fails:
 
-- Only when the same drain job still fails on its 4th attempt (about 98 seconds after the first failure with River's
-  default backoff) does it write the failure conclusion into the channel and raise a `drain_failed` alert. Before that
+- Only when the same drain job still fails on its 4th attempt (with River's default backoff, about 98 seconds after the
+  first failure when each attempt fails quickly) does it write the failure conclusion into the channel and raise a `drain_failed` alert. Before that
   the channel just shows as **Draining**, so a single network blip does not produce an open/resolve pair of alerts.
 - A draining channel that fails to load records the conclusion and raises the alert immediately, since a channel that
   cannot be loaded cannot be drained.

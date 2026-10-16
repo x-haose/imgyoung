@@ -22,7 +22,8 @@ const drainBatch = 200
 const drainJobTimeout = time.Hour
 
 // drainFailureReportAttempt 排空任务第几次尝试失败时起才把原因写进渠道、开启告警。
-// 按 River 默认退避(第 n 次失败后等 n⁴ 秒),第 4 次尝试在首次失败约 98 秒后开始;它仍失败才算持续故障,
+// 按 River 默认退避(第 n 次失败后等 n⁴ 秒),各次尝试都很快失败时,第 4 次尝试在首次失败约 98 秒后开始(超时失败的
+// 每次另需 drainJobTimeout);它仍失败才算持续故障,
 // 一次网络抖动在前几次重试里就过去了,不留原因也不开告警。
 const drainFailureReportAttempt = 4
 
