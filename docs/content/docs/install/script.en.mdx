@@ -160,7 +160,7 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 
 ## Error messages
 
-Errors the script detects itself are printed as one line starting with `错误:` ("error:"), and the script exits; when a command such as `tar`, `install` or `systemctl` fails, you see that command's own error instead. The ones below all happen before anything is installed, so the system is left untouched:
+On an error, the script prints one line starting with `错误:` ("error:") and exits; when a command such as `tar` or `systemctl` fails, its own error is printed first. The ones below all happen before anything is installed, so the system is left untouched:
 
 | Message | Meaning |
 |---|---|
@@ -170,3 +170,14 @@ Errors the script detects itself are printed as one line starting with `错误:`
 | `错误:<file> 的 sha256 不符(期望 …,实际 …),已中止` | The download does not match `checksums.txt` ("sha256 mismatch, aborted") |
 | `错误:--service 的二进制不能装在 <dir>:服务启用了 ProtectHome,进程看不到家目录` | `--service` was given with a `--dir` under a home directory ("the service uses ProtectHome and cannot see home directories") |
 | `错误:<dir> 不可写;用 sudo 执行,或用 --dir 指定一个可写目录` | The install directory is not writable ("run with sudo, or pass a writable --dir") |
+| `错误:解包 <file> 失败` | The downloaded archive cannot be unpacked |
+
+The ones below happen during installation, so the binary or the service may already be partly updated. Fix the cause and run the script again:
+
+| Message | Meaning |
+|---|---|
+| `错误:无法写入 <dir>/imgyoung` | The binary cannot be written to the install directory, for example because the disk is full |
+| `错误:<dir>/imgyoung 无法运行,检查系统与架构是否与发布包一致` | The installed binary cannot run, for example because of an architecture mismatch or a `noexec` mount ("check that the system and architecture match the release archive") |
+| `错误:生成服务文件失败` / `错误:无法写入 /etc/systemd/system/imgyoung.service` | Generating or writing the service file failed |
+| `错误:systemctl daemon-reload 失败` / `错误:无法设置服务 imgyoung 开机启动` | Reloading systemd or enabling the service at boot failed |
+| `错误:服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因` / `错误:服务 imgyoung 重启失败,…` | The service failed to start; see `journalctl -u imgyoung` |

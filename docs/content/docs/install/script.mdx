@@ -160,7 +160,7 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 
 ## 报错信息
 
-脚本自身检查到的错误会打印一行以 `错误:` 开头的信息并退出；`tar`、`install`、`systemctl` 等命令失败时，打印的是命令自己的报错。下表这几种都发生在安装之前，系统不会被改动：
+出错时，脚本打印一行以 `错误:` 开头的信息并退出；`tar`、`systemctl` 这类命令失败时，它们自己的报错会先打印出来。下表这几种都发生在安装之前，系统不会被改动：
 
 | 报错 | 原因 |
 |---|---|
@@ -170,3 +170,14 @@ curl -fsSL https://mirror.example.com/imgyoung/install.sh \
 | `错误:<文件名> 的 sha256 不符(期望 …,实际 …),已中止` | 下载的文件与 `checksums.txt` 不一致 |
 | `错误:--service 的二进制不能装在 <目录>:服务启用了 ProtectHome,进程看不到家目录` | 加了 `--service`，而 `--dir` 在家目录下 |
 | `错误:<目录> 不可写;用 sudo 执行,或用 --dir 指定一个可写目录` | 安装目录没有写权限 |
+| `错误:解包 <文件名> 失败` | 下载的发布包无法解开 |
+
+下表这几种发生在安装过程中，二进制或服务可能已经部分更新。排除原因后重新运行脚本即可：
+
+| 报错 | 原因 |
+|---|---|
+| `错误:无法写入 <目录>/imgyoung` | 二进制写不进安装目录，如磁盘已满 |
+| `错误:<目录>/imgyoung 无法运行,检查系统与架构是否与发布包一致` | 装好的二进制无法执行，如架构不符或目录所在分区禁止执行 |
+| `错误:生成服务文件失败` / `错误:无法写入 /etc/systemd/system/imgyoung.service` | 服务文件生成或写入失败 |
+| `错误:systemctl daemon-reload 失败` / `错误:无法设置服务 imgyoung 开机启动` | systemd 重新加载或设置开机启动失败 |
+| `错误:服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因` / `错误:服务 imgyoung 重启失败,…` | 服务没能启动，原因见 `journalctl -u imgyoung` |

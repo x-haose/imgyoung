@@ -117,7 +117,7 @@ download_and_verify() {
 	[ -n "$expected" ] || fail "校验和清单里没有 $archive"
 	actual=$(sha256_of "$tmp/$archive")
 	[ "$expected" = "$actual" ] || fail "$archive 的 sha256 不符(期望 $expected,实际 $actual),已中止"
-	tar -xzf "$tmp/$archive" -C "$tmp"
+	tar -xzf "$tmp/$archive" -C "$tmp" || fail "解包 $archive 失败"
 }
 
 # install_binary 把二进制装入目标目录。
@@ -131,8 +131,9 @@ install_binary() {
 	fi
 	mkdir -p "$dir" || fail "无法创建 $dir"
 	[ -w "$dir" ] || fail "$dir 不可写;用 sudo 执行,或用 --dir 指定一个可写目录"
-	install -m 0755 "$tmp/imgyoung" "$dir/imgyoung"
-	info "已安装 $dir/imgyoung($("$dir/imgyoung" -version | head -n 1))"
+	install -m 0755 "$tmp/imgyoung" "$dir/imgyoung" || fail "无法写入 $dir/imgyoung"
+	installed=$("$dir/imgyoung" -version) || fail "$dir/imgyoung 无法运行,检查系统与架构是否与发布包一致"
+	info "已安装 $dir/imgyoung($installed)"
 }
 
 # check_service 下载前确认 --service 的前提,不满足时不动系统。
@@ -154,18 +155,19 @@ check_service() {
 # 服务文件按发布包重写,与现有内容不同时提示,本机改动不会悄无声息地丢掉。
 install_service() {
 	unit="$tmp/imgyoung.service"
-	sed "s|^ExecStart=.*|ExecStart=$dir/imgyoung|" "$tmp/deploy/imgyoung.service" >"$unit"
+	sed "s|^ExecStart=.*|ExecStart=$dir/imgyoung|" "$tmp/deploy/imgyoung.service" >"$unit" ||
+		fail "生成服务文件失败"
 	if [ -f "$UNIT_PATH" ] && [ "$(cat "$unit")" != "$(cat "$UNIT_PATH")" ]; then
 		info "已按发布包重写 $UNIT_PATH;本机定制请用 systemctl edit imgyoung 写成 drop-in,升级不会覆盖"
 	fi
-	install -m 0644 "$unit" "$UNIT_PATH"
-	systemctl daemon-reload
-	systemctl enable imgyoung >/dev/null 2>&1
+	install -m 0644 "$unit" "$UNIT_PATH" || fail "无法写入 $UNIT_PATH"
+	systemctl daemon-reload || fail "systemctl daemon-reload 失败"
+	systemctl enable --quiet imgyoung || fail "无法设置服务 imgyoung 开机启动"
 	if systemctl is-active --quiet imgyoung; then
-		systemctl restart imgyoung
+		systemctl restart imgyoung || fail "服务 imgyoung 重启失败,用 journalctl -u imgyoung 查看原因"
 		info "服务 imgyoung 已重启为新版本"
 	else
-		systemctl start imgyoung
+		systemctl start imgyoung || fail "服务 imgyoung 启动失败,用 journalctl -u imgyoung 查看原因"
 		info "服务 imgyoung 已启动,数据目录 /var/lib/imgyoung"
 	fi
 }
