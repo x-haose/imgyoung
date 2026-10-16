@@ -99,7 +99,7 @@ The remaining tables:
 | `idempotency_keys` | Upload idempotency keys, scoped per user |
 | `dedup_candidates` | Near-duplicate candidate pairs, the work queue for manual decisions |
 | `referer_whitelist`, `audit_log`, `alerts` | The hotlink protection allowlist, audit log of admin actions, and alert records (kind, target, Chinese description, and description parameters) |
-| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. When there is no fingerprint yet (a database written by an older version, or restored from an older snapshot), it looks for data that depends on the master key: ciphertext (channel configurations, the CDN token) or derived data (upload tokens' S3 credentials, encrypted channels' crypt keys). If either exists, no new key is generated and a missing key refuses to start; with ciphertext present, decrypting any one piece counts as a match and failing on all of it refuses to start; with only derived data there is nothing to check against and the given key is used. The fingerprint is recorded once the check passes. See [Master key](./configuration.mdx#master-key) |
+| `master_key_fingerprint` | A single row holding a fingerprint derived from the master key (it cannot be reversed into the key); the master key is checked against it at every start, and a missing or mismatched key refuses to start. When there is no fingerprint yet (a database written by an older version, or restored from an older snapshot), it looks for data that depends on the master key: ciphertext (channel configurations, the CDN token) or derived data (upload tokens' S3 credentials, encrypted channels' crypt keys). If either exists, no new key is generated and a missing key refuses to start; with ciphertext present, decrypting any one piece counts as a match and failing on all of it refuses to start; with only derived data there is nothing to check against, so the given key is used without recording a fingerprint (the log reads `库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把`), and the next start after the database holds ciphertext checks it and records it. Only a key that passed the check gets its fingerprint recorded. See [Master key](./configuration.mdx#master-key) |
 
 The schema is defined by declarative SQL under `internal/infra/db/schema/`, one file per table, with a comment on every
 table and every column. Versioned migrations are generated from it by Atlas, embedded in the binary, and applied in
@@ -191,7 +191,9 @@ limit, decoded memory at the pixel budget)", so lowering these settings adapts I
 upload is not recorded — it fails before enough copies are written, recording fails (including the shortfall above), or it
 loses an idempotency-key race to another request — the objects it wrote to channels are deleted; the object key carries
 this upload's short ID, so no other upload's objects are touched. Objects left behind because deletion failed or the
-process stopped midway are reclaimed by reconciliation GC as orphans.
+process stopped midway are reclaimed by reconciliation GC as orphans on active channels (after the 48-hour grace
+period); on a channel marked as draining during the upload they stay with the provider, since reconciliation does not
+scan draining channels and the drain only deletes objects it has records for.
 
 ## Access data flow
 

@@ -139,3 +139,7 @@ ImgYoung 的单图上限（`max_upload_mb`，出厂 50 MB）只约束文件本�
 - Caddy 示例没有限制请求体；如果你用 `request_body` 设置了 `max_size`，不要小于单图上限加 64 KiB。
 
 在后台调大单图上限后，记得同步调大反代的限制，否则大图会在反代处直接被 413 拒掉，请求到不了 ImgYoung。
+
+## 从快照恢复要留够读超时
+
+后台「恢复」快照时，请求要一直等到快照从渠道取回、暂存完成才返回；请求在此之前断开，恢复即中止、不停机，见[备份与恢复](./backup.mdx)。Nginx 的 `proxy_read_timeout` 默认 60 秒，快照大或渠道慢时要调大，例如在 `location /` 里加一行 `proxy_read_timeout 600s;`。

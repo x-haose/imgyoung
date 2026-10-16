@@ -248,9 +248,14 @@ against the **master key fingerprint** recorded in the database. The fingerprint
     with two different keys accepts both); if it decrypts none, startup is refused with
     `主密钥与数据库不符:…(库里已有的 N 份加密数据都解不开: …)` (the master key does not match the database; none of
     the N encrypted values could be decrypted).
-  - With only derived data, there is nothing to check against, and the given key is used as is.
+  - With only derived data, there is nothing to check against: the given key is used as is, but its fingerprint is
+    not stored, so a wrong key can never become the recorded fingerprint, and a warning is logged:
+    `库里没有可核对的加密数据,暂不记录主密钥指纹;上传 Token 的 S3 凭证若在客户端失效,说明主密钥不是原来那把`
+    (no encrypted data to check against, so the fingerprint is not recorded yet; if the S3 credentials of upload
+    tokens stop working in clients, the master key is not the original one). Once ciphertext exists (a new channel
+    or a Cloudflare API token), the next start checks the key against it.
 
-  After the check passes, the key's fingerprint is written to the database.
+  Once the key passes the ciphertext check, its fingerprint is written to the database.
 - **A fingerprint is already recorded**: the master key must be present and must match. If `IMGYOUNG_MASTER_KEY` is
   unset or empty and there is no `master.key` in the data directory, or the key does not match the fingerprint,
   startup is refused with an explanation, and no new key is generated. Only a brand-new database ever gets a generated `master.key`.
@@ -301,7 +306,7 @@ sudo cp /var/lib/imgyoung/master.key ./imgyoung-master.key
 
 ### Losing it, or starting with the wrong one
 
-The master key cannot be rotated. Once the database has recorded the fingerprint, both a wrong key and a missing key are stopped at startup (an older database without a fingerprint is checked as described above: a missing key is stopped too, while a wrong key is caught only by failing to decrypt existing ciphertext, and goes unnoticed when there is only derived data):
+The master key cannot be rotated. Once the database has recorded the fingerprint, both a wrong key and a missing key are stopped at startup (an older database without a fingerprint is checked as described above: a missing key is stopped too, while a wrong key is caught only by failing to decrypt existing ciphertext; with only derived data it goes unnoticed and shows up as upload tokens' S3 credentials failing in clients, and since no fingerprint has been recorded yet, switching back to the original key fixes it):
 
 - A different master key (for example a mistyped `IMGYOUNG_MASTER_KEY`): startup is refused and the error tells you to
   switch back to the original key; with the original key back, the process starts normally.

@@ -100,12 +100,14 @@ defer func() { _ = d.Close(ctx) }()
 
 `Open` 返回的错误不携带参数映射，参数里的凭证不会经错误消息泄露到日志。
 
-`ctx` 只管构造过程。构造结束前它被取消或到期，`Open` 立即返回错误，不等后端构造完，构造时不理会 `ctx` 的后端（如 `ftp`）也一样；
-错误包裹 `context.Cause(ctx)`，到期时 `errors.Is(err, context.DeadlineExceeded)` 成立，文本如 `构造后端未在时限内完成: context deadline exceeded`。
-被放弃的构造在后台按后端自己的超时结束，建好的驱动随即关闭。构造完成后，`ctx` 的取消与截止时刻不再影响驱动：
+`ctx` 只管构造过程。构造期间它被取消或到期，`Open` 返回包裹 `context.Cause(ctx)` 的错误，已建好的驱动随即关闭；
+到期时 `errors.Is(err, context.DeadlineExceeded)` 成立，文本如 `构造后端未在时限内完成: context deadline exceeded`。
+理会 `ctx` 的后端随即返回；构造时不理会 `ctx` 的后端（如 `ftp`）要等它按自身的超时结束，`Open` 才返回。
+需要硬时限时，用带这个时限的 `ctx` 在单独的 goroutine 里调用 `Open`，到点放弃等待；那次 `Open` 结束时照样返回错误，并自行关闭建好的驱动。
+构造完成后，`ctx` 的取消与截止时刻不再影响驱动：
 rclone 后端会留存构造时的上下文，之后的请求（如 OAuth 令牌刷新）沿用它，因此传入属于一次请求或一次任务的 `ctx` 也安全；上下文里的值照常传给后端。
 
-### 写入时的 Content-Type
+### 写入
 
 `Put` 流式写入，驱动本身不缓存整个对象。它先读出数据开头的最多 512 字节，用 `net/http.DetectContentType`（WHATWG 内容嗅探算法）
 判定 Content-Type，随对象一并交给后端，再接着写完其余字节。对象键不必带扩展名：S3 等对象存储里的对象带上真实类型（如 `image/png`），
@@ -113,6 +115,9 @@ rclone 后端会留存构造时的上下文，之后的请求（如 OAuth 令牌
 
 - 加密驱动不把类型交给存储：rclone 的 crypt 层有意不暴露明文的类型，存储里的对象是密文。
 - 不记录 Content-Type 的后端（如 `local`）忽略这一信息。
+
+写入随 `ctx` 中止，拷贝时不看 `ctx` 的后端（如 `local`）也一样：`ctx` 结束后，`Put` 下一次从 `r` 读取即得到 `context.Cause(ctx)`，
+后端随之中止写入并删掉写了一半的对象。`r` 的单次 `Read` 阻塞时，要等这次读取返回才会停下。
 
 ### s3 默认跳过桶检查
 
