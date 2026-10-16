@@ -46,12 +46,12 @@ type Driver interface {
 	Delete(ctx context.Context, key string) error
 
 	// List 递归列举 dir 目录下的全部对象(dir 为空表示整个渠道)。
-	// @Description: 返回键为相对渠道根的完整路径;目录不存在视为空。
-	// 供备份保留与对账 GC 使用,属低频操作。
+	// @Description: 返回键为相对渠道根的完整路径;目录不存在(包括该路径上是对象而不是目录)视为空。
+	// 列举量随 dir 下的全部对象数增长,只关心某一层时用 ListShallow。
 	List(ctx context.Context, dir string) ([]ObjectInfo, error)
 
 	// ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根)。
-	// @Description: 返回键为相对渠道根的完整路径;目录不存在视为空。列举量不随子目录里的对象数增长,
-	// 适合只关心某一层的场合。
+	// @Description: 返回键为相对渠道根的完整路径;目录不存在(包括该路径上是对象而不是目录)视为空。
+	// 列举量不随子目录里的对象数增长。
 	ListShallow(ctx context.Context, dir string) ([]ObjectInfo, error)
 }

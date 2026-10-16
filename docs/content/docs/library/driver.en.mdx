@@ -404,7 +404,8 @@ Without rclone, implement `driver.Driver` yourself and it works with `store/fail
 2. **`Put` reads exactly `size` bytes**: return an error if it gets fewer, and do not close `r`. After a failure the
    caller may retry with the same key, and the new `Put` should completely replace whatever was left behind.
 3. **`List` is recursive, `ListShallow` lists one level**: an empty `dir` means the root; keys are full paths relative
-   to the root; a missing directory returns an empty result and nil.
+   to the root; a missing directory (including a path that is an object rather than a directory) returns an empty
+   result and nil.
 4. **Fill `ModTime` with the write time the store records**: callers use it to judge how old an object is. The
    application's reconciliation, for example, only reclaims unknown objects written longer ago than its grace period.
 5. **Be safe for concurrent use and honor `ctx`**: check that the implementation is complete with a compile-time

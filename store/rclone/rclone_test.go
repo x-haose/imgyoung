@@ -161,6 +161,21 @@ func TestRcloneDriverListShallow(t *testing.T) {
 	}
 }
 
+// TestRcloneDriverListFileAsDir 验证列举的路径上是对象而不是目录时,两种列举都视为空目录、不报错。
+func TestRcloneDriverListFileAsDir(t *testing.T) {
+	ctx := t.Context()
+	d := openLocal(t, t.TempDir())
+	if err := d.Put(ctx, "_imgyoung", bytes.NewReader([]byte("x")), 1); err != nil {
+		t.Fatalf("写入同名对象: %v", err)
+	}
+	if objs, err := d.List(ctx, "_imgyoung"); err != nil || len(objs) != 0 {
+		t.Fatalf("List = %v, %v, 期望空且无错误", objs, err)
+	}
+	if objs, err := d.ListShallow(ctx, "_imgyoung"); err != nil || len(objs) != 0 {
+		t.Fatalf("ListShallow = %v, %v, 期望空且无错误", objs, err)
+	}
+}
+
 // TestRcloneDriverOpenMissing 验证读取不存在的对象返回 driver.ErrNotFound 哨兵错误。
 func TestRcloneDriverOpenMissing(t *testing.T) {
 	ctx := t.Context()

@@ -229,7 +229,7 @@ Editing never triggers replication. After changing the bucket, prefix or endpoin
 | | Delete and purge (checked, default) | Remove only (unchecked) |
 |---|---|---|
 | Immediately | The channel turns **Draining** and leaves upload routing, replication and health checks | The channel and its replica records are deleted |
-| Remote objects | Objects this service has on record are deleted one by one by a background drain job, then the channel is removed; nothing else in the channel is scanned or deleted | Image replicas and metadata snapshots are left as they are; clean them up at the provider if needed |
+| Remote objects | Objects this service has on record are deleted one by one by a background drain job, then the channel is removed; nothing else in the channel is deleted | Image replicas and metadata snapshots are left as they are; clean them up at the provider if needed |
 | Use it when | Retiring a channel normally | Credentials are revoked, the bucket is gone, or draining is stuck |
 
 **Only-replica protection**: if any image has no ready replica on another channel (draining channels do not count), both kinds of delete are refused with 409 (error code `channel_sole_replicas`). Replicas that are pending or failed on other channels do not count; wait until they are ready. The check also holds when you delete two channels one after the other, so no image ever loses its last copy.

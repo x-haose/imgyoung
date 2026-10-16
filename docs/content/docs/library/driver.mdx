@@ -335,7 +335,7 @@ case err != nil:
 
 1. **对象缺失返回 `ErrNotFound`**：`Open`、`Stat`、`Delete` 找不到对象时，返回能被 `errors.Is(err, driver.ErrNotFound)` 命中的错误。`failover.Open` 靠它区分「对象不存在」与「存储故障」，`failover.Probe` 把 `Stat` 返回的 `ErrNotFound` 视为存储可达。
 2. **`Put` 读满 `size` 个字节**：读不够时返回错误；不要关闭 `r`。失败后调用方可能以同一个键重试，再次 `Put` 应整体覆盖之前留下的内容。
-3. **`List` 递归列举，`ListShallow` 只列一层**：`dir` 为空表示根；返回相对根的完整键；目录不存在时返回空结果与 nil。
+3. **`List` 递归列举，`ListShallow` 只列一层**：`dir` 为空表示根；返回相对根的完整键；目录不存在（包括该路径上是一个对象而不是目录）时返回空结果与 nil。
 4. **`ModTime` 填存储记下的写入时刻**：调用方据此判断对象新旧，例如应用的对账只回收写入已超过宽限期的未知对象。
 5. **并发安全、尊重 `ctx`**：用编译期断言确认实现完整：`var _ driver.Driver = (*MemDriver)(nil)`。
 

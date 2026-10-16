@@ -15,6 +15,7 @@ import (
 	"maps"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/rclone/rclone/fs"
@@ -364,7 +365,7 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 	var listErr error
 	err := walk.Walk(ctx, d.f, dir, false, -1, func(path string, entries fs.DirEntries, err error) error {
 		if err != nil {
-			if !errors.Is(err, fs.ErrorDirNotFound) && listErr == nil {
+			if !isMissingDir(err) && listErr == nil {
 				listErr = fmt.Errorf("列举目录 %q: %w", path, err)
 			}
 			return walk.ErrorSkipDir
@@ -386,7 +387,7 @@ func (d *Driver) List(ctx context.Context, dir string) ([]driver.ObjectInfo, err
 // ListShallow 只列举 dir 这一层的对象,不进入子目录(dir 为空表示渠道根);目录不存在视为空。
 func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectInfo, error) {
 	entries, err := d.f.List(ctx, dir)
-	if errors.Is(err, fs.ErrorDirNotFound) {
+	if isMissingDir(err) {
 		return nil, nil
 	}
 	if err != nil {
@@ -397,6 +398,15 @@ func (d *Driver) ListShallow(ctx context.Context, dir string) ([]driver.ObjectIn
 		out = append(out, driver.ObjectInfo{Key: o.Remote(), Size: o.Size(), ModTime: o.ModTime(ctx)})
 	})
 	return out, nil
+}
+
+// isMissingDir 判断列举失败是否只因目录不存在:路径不存在,或者该路径上是一个对象而不是目录。
+// @Description: 两种情况下目录下都没有任何对象,按「目录不存在视为空」处理。rclone 的 local 后端对后者
+// 返回包裹 ENOTDIR 的错误,dropbox、yandex 等后端返回 fs.ErrorIsFile。
+// @param err 列举返回的错误
+// @return 属于目录不存在为 true
+func isMissingDir(err error) bool {
+	return errors.Is(err, fs.ErrorDirNotFound) || errors.Is(err, fs.ErrorIsFile) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // object 查找 key 对应的 rclone 对象,并把"不存在"统一映射为 driver.ErrNotFound。
