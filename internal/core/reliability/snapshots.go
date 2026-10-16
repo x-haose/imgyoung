@@ -160,7 +160,7 @@ func (s *Service) stage(ctx context.Context, name string) (string, error) {
 		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("关闭暂存文件: %w", err)
 	}
-	if err := db.QuickCheck(ctx, tmpName); err != nil {
+	if err := db.CheckSnapshot(ctx, tmpName); err != nil {
 		_ = os.Remove(tmpName)
 		if errors.Is(err, db.ErrCorrupt) {
 			return "", fmt.Errorf("%w: %s: %w", ErrSnapshotCorrupt, name, err)

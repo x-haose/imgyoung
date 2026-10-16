@@ -264,6 +264,8 @@ export const settings = {
     restoreDesc:
       '快照会先暂存到数据目录，随后服务优雅停机；由 systemd / Docker 等进程管理器重新拉起时换入。没有进程管理器则需手动启动。恢复后现库会以 imgyoung.db.pre-restore-<时刻> 留存，不会丢失。',
     restoreConfirm: '恢复并重启',
+    restoreProxyTimeout:
+      '反向代理等待超时，恢复已中止，没有生效。快照较大时请调大代理的读超时（如 Nginx 的 proxy_read_timeout），或直接访问后台再恢复。',
     restarting: '服务重启中',
     restartingDesc:
       '快照已暂存，正在等待进程被重新拉起；恢复后页面会自动刷新。',

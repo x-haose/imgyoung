@@ -3,7 +3,6 @@ package reliability
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 )
 
@@ -18,29 +17,54 @@ type job struct {
 
 // Backup 立即备份一次(见 RunOnce),由 Run 执行。
 // @Description: 手动备份归备份服务所有、不归发起它的请求:客户端断开不中止它,停机时随服务的生命周期上下文取消,
-// 写了一半的快照由后端删除,Run 等它结束才返回。本方法一直等到备份结束。一份手动备份进行中时再次请求,
-// 不另排一轮而是等同一份的结果:反代超时后连点重试,不会一连排上几轮、按保留份数挤掉更早的快照。
+// 写了一半的快照由后端删除,Run 等它结束才返回。本方法一直等到备份结束。返回的快照一定在本次请求之后生成:
+// 没有进行中的手动备份就开一轮;有就并入它之后的下一轮,下一轮至多一个——反代超时后连点重试,不会一连排上
+// 几轮、按保留份数挤掉更早的快照。
 // @return 新快照;失败时为零值
 // @return RunOnce 的错误;服务已停止时为 ErrStopped
 func (s *Service) Backup() (Snapshot, error) {
-	v, err, _ := s.manual.Do("backup", func() (any, error) {
-		var (
-			snap Snapshot
-			err  error
-		)
-		if serr := s.submit(func(ctx context.Context) { snap, err = s.RunOnce(ctx) }); serr != nil {
-			return Snapshot{}, serr
+	r := s.joinRound()
+	<-r.done
+	return r.snap, r.err
+}
+
+// backupRound 一轮手动备份,同一轮的请求共享结果。
+type backupRound struct {
+	done chan struct{} // 这一轮结束时关闭
+	snap Snapshot      // 新快照;失败时为零值
+	err  error         // 这一轮的错误
+}
+
+// joinRound 返回本次请求要等的那一轮:没有进行中的就新开一轮并开始执行,有就并入下一轮。
+// @return 要等的那一轮
+func (s *Service) joinRound() *backupRound {
+	s.roundMu.Lock()
+	defer s.roundMu.Unlock()
+	if s.running == nil {
+		s.running = &backupRound{done: make(chan struct{})}
+		go s.driveRounds(s.running)
+		return s.running
+	}
+	if s.next == nil {
+		s.next = &backupRound{done: make(chan struct{})}
+	}
+	return s.next
+}
+
+// driveRounds 依次执行手动备份的各轮,直到没有排着的下一轮。
+// @Description: 每一轮都经 Run 执行(见 submit);服务停止后各轮立即以 ErrStopped 结束,所以总会退出。
+// @param r 要执行的第一轮
+func (s *Service) driveRounds(r *backupRound) {
+	for r != nil {
+		if serr := s.submit(func(ctx context.Context) { r.snap, r.err = s.RunOnce(ctx) }); serr != nil {
+			r.err = serr
 		}
-		return snap, err
-	})
-	if err != nil {
-		return Snapshot{}, err
+		close(r.done)
+		s.roundMu.Lock()
+		r, s.next = s.next, nil
+		s.running = r
+		s.roundMu.Unlock()
 	}
-	snap, ok := v.(Snapshot)
-	if !ok {
-		return Snapshot{}, fmt.Errorf("备份结果类型异常: %T", v)
-	}
-	return snap, nil
 }
 
 // Restore 把一份快照暂存到数据目录(见 stage),由 Run 执行。

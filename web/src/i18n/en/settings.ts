@@ -296,6 +296,8 @@ export const settings = {
     restoreDesc:
       'The snapshot is staged in the data directory and the service shuts down gracefully; a process manager such as systemd or Docker swaps it in when it restarts the service. Without one, start the service by hand. The current database is kept as imgyoung.db.pre-restore-<time>, nothing is lost.',
     restoreConfirm: 'Restore and restart',
+    restoreProxyTimeout:
+      'The reverse proxy timed out, so the restore was aborted and nothing changed. For a large snapshot, raise the proxy read timeout (such as Nginx proxy_read_timeout) or open the admin console directly and restore again.',
     restarting: 'Service restarting',
     restartingDesc:
       'The snapshot is staged; waiting for the process to come back. The page reloads automatically once it does.',

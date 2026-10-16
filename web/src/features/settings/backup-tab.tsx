@@ -9,6 +9,7 @@ import {
   TriangleAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { errorMessage, hasStatus } from '@/lib/errors'
 import { formatBytes } from '@/lib/format'
 import { useMessages } from '@/context/locale-provider'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -42,6 +43,9 @@ import {
   restoreBackup,
 } from './data'
 import { formatInstant } from './format'
+
+/** 反向代理等待上游超时的状态码:Nginx 504,Cloudflare 524。 */
+const PROXY_TIMEOUT_STATUSES = [504, 524]
 
 /** 备份与导出分区:快照表需要整行宽度,导出卡片排在其下。 */
 export function BackupTab() {
@@ -106,6 +110,15 @@ function BackupsCard() {
     onSuccess: () => {
       setRestoring(null)
       setRestarting(true)
+    },
+    // 代理到点断开时服务端已中止并撤回恢复,通用的「请求失败(504)」看不出这一点;401 由会话失效处理。
+    onError: (err) => {
+      if (hasStatus(err, 401)) return
+      toast.error(
+        PROXY_TIMEOUT_STATUSES.some((s) => hasStatus(err, s))
+          ? b.restoreProxyTimeout
+          : errorMessage(err)
+      )
     },
   })
 
