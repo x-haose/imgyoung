@@ -168,8 +168,9 @@ The group pages list the status codes each endpoint can actually return.
   backup snapshots, which are RFC 3339, with `taken_at` at millisecond precision.
 - **Lists**: list endpoints return `{"items": […], "total": N}`, where `total` counts all items after filtering.
 - **Pagination**: the image, upload token, duplicate, cleanup, and audit log lists, as well as the alert list with
-  `status=all`, accept `page` and `page_size`. `page` starts at 1 and defaults to 1; `page_size` defaults to 20, with
-  a maximum of 100 (larger values are treated as 100).
+  `status=all`, accept `page` and `page_size`. `page` starts at 1 and defaults to 1; `page_size` ranges from 1 to 100
+  and defaults to 20. An invalid pagination, time range or filter parameter gets 400 with error code
+  `query_param_invalid`, and `params.name` names the parameter.
 - **Time ranges**: the image list and the audit log accept `since` (inclusive) and `until` (exclusive), in the same format.
 - **IDs**: images use a 10-character short ID string; user IDs are strings, and the built-in administrator is
   `default`; tokens, channels, duplicate candidates, and similar records use integers; backup snapshots are identified by file name.

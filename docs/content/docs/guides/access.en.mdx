@@ -76,7 +76,7 @@ When processing fails (no slot within the timeout, a decoding error and so on), 
 
 ## Caching and conditional requests [#caching]
 
-The image behind an `/i/` short link never changes and can be cached for a long time. An `/o/` alias can be overwritten to point at a new image, so caches must check with this server before each use.
+The original behind an `/i/` short link never changes (merging duplicates is the one exception, see below) and can be cached for a long time. An `/o/` alias can be overwritten to point at a new image, so caches must check with this server before each use.
 
 | Header | Short link `/i/` | Alias `/o/` |
 |---|---|---|

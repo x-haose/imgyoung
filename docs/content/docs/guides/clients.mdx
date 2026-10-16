@@ -229,7 +229,7 @@ https://img.example.com/o/<用户 id>/<对象键>
 - 旧图不会被删除。它的短 ID 可能已经分享出去，短链继续可用，也继续占用存储与配额。不需要时，到后台「图片」页手动删除。
 - DeleteObject 只删除对象键当前指向的那张图。
 
-因为对象键可以被覆盖，`/o/` 链接与 S3 GetObject 的响应是 `Cache-Control: public, no-cache` 加强 `ETag`。浏览器与 CDN 可以缓存，但每次使用前都要带 `ETag` 向本服务确认，内容没变时得到 304；覆盖后，下一次确认就拿到新图。短链 `/i/<短ID>` 始终指向同一张图，按一年不可变缓存。见[访问图片](./access.mdx#caching)。
+因为对象键可以被覆盖，`/o/` 链接与 S3 GetObject 的响应是 `Cache-Control: public, no-cache` 加强 `ETag`。浏览器与 CDN 可以缓存，但每次使用前都要带 `ETag` 向本服务确认，内容没变时得到 304；覆盖后，下一次确认就拿到新图。短链 `/i/<短ID>` 不会被同键上传改指，按一年不可变缓存。见[访问图片](./access.mdx#caching)。
 
 ## Typora
 

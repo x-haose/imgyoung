@@ -219,7 +219,7 @@ The **binding time** is when the channel started using its current storage locat
 Restoring a snapshot resets the binding time of every channel as well; the full rules are under [Reconciliation GC](../operations/backup.mdx#reconciliation-gc).
 
 <Callout type="warn" title="Do not move storage by editing">
-Editing never triggers replication. After changing the bucket, prefix or endpoint, the channel's existing replicas are still recorded as ready; reads from it fail and fall through to other channels until the daily reconciliation notices the missing objects and replicates them again. To move storage, create a new channel, wait until the **Pending** count in its **Replicas** column reaches zero, then delete the old one.
+Editing never triggers replication. After changing the bucket, prefix or endpoint, the channel's existing replicas are still recorded as ready; reads from it fail and fall through to other channels until the daily reconciliation notices the missing objects and replicates them again. To move storage, create a new channel, wait until its **Replicas** column shows no pending and no failed replicas, then delete the old one.
 </Callout>
 
 ## Deleting a channel
@@ -232,7 +232,7 @@ Editing never triggers replication. After changing the bucket, prefix or endpoin
 | Remote objects | Objects this service has on record are deleted one by one by a background drain job, then the channel is removed; nothing else in the channel is scanned or deleted | Image replicas and metadata snapshots are left as they are; clean them up at the provider if needed |
 | Use it when | Retiring a channel normally | Credentials are revoked, the bucket is gone, or draining is stuck |
 
-**Only-replica protection**: if any image has no ready replica on another channel (draining channels do not count), both kinds of delete are refused with 409 (error code `channel_sole_replicas`). Replicas still pending on other channels do not count; wait until they are ready. The check also holds when you delete two channels one after the other, so no image ever loses its last copy.
+**Only-replica protection**: if any image has no ready replica on another channel (draining channels do not count), both kinds of delete are refused with 409 (error code `channel_sole_replicas`). Replicas that are pending or failed on other channels do not count; wait until they are ready. The check also holds when you delete two channels one after the other, so no image ever loses its last copy.
 
 ### How draining works
 
@@ -246,7 +246,7 @@ Files other programs wrote are left alone. Also:
 
 - Once the channel turns **Draining**, new writes are refused immediately. The drain waits for writes already in progress to finish before it starts, so every object this service wrote and recorded is deleted.
 - The drain deletes only these recorded objects, and the daily reconciliation does not scan draining channels. Orphans that failed uploads could not delete and reconciliation has not reclaimed yet stay at the provider after the purge.
-- One drain run lasts at most an hour. After a timeout or a shutdown, the next run continues with what is left; neither counts as a failure or as an attempt.
+- One drain run lasts at most an hour. After a shutdown, or a timeout in a run that deleted something, the next run continues with what is left; neither counts as a failure or as an attempt. A run that times out without deleting a single object counts as a failure.
 - A draining channel, even one that failed to load, cannot be edited, tested, probed again or re-authorized. Its row menu offers only **Remove now**, and the API answers 409 (error code `channel_deleting`).
 
 ### When draining fails

@@ -136,7 +136,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 
 - **时刻**：除特别说明外，均为 UTC 文本 `YYYY-MM-DD HH:MM:SS`（如 `2026-10-15 08:30:00`），不带时区后缀。例外是构建信息的 `built_at` 与备份快照的 `taken_at`，为 RFC 3339 格式，其中 `taken_at` 精确到毫秒。
 - **列表**：列表接口返回 `{"items": […], "total": N}`，`total` 是过滤后的总条数。
-- **分页**：图片、上传 Token、疑似重复、待清理、审计日志列表，以及告警列表（`status=all` 时）支持 `page` 与 `page_size`。`page` 从 1 起，默认 1；`page_size` 默认 20，最大 100，超出按 100 处理。
+- **分页**：图片、上传 Token、疑似重复、待清理、审计日志列表，以及告警列表（`status=all` 时）支持 `page` 与 `page_size`。`page` 从 1 起，默认 1；`page_size` 取 1 到 100，默认 20。分页、时间范围与过滤参数给出非法值时返回 400，错误码 `query_param_invalid`，`params.name` 为参数名。
 - **时间范围**：图片列表与审计日志支持 `since`（含）与 `until`（不含），格式同上。
 - **ID**：图片为 10 位短 ID 字符串；用户 ID 为字符串，内置管理员为 `default`；Token、渠道、疑似重复候选等记录为整数；备份快照以文件名标识。
 - **幂等上传**：上传请求可带 `Idempotency-Key` 头。在保留期内，同一用户用同一个键重试，返回同一张图。保留期由运营配置 `idempotency_key_ttl_hours` 决定，默认 24 小时。键按用户隔离。

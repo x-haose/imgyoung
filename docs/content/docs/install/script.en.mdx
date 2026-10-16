@@ -69,7 +69,7 @@ The main settings:
 | Setting | Effect |
 |---|---|
 | `IMGYOUNG_DATA_DIR=%S/imgyoung`, `StateDirectory=imgyoung` | The data directory is `/var/lib/imgyoung`, created by systemd and handed to the service user |
-| `Type=notify` | The service tells systemd it has started only after it has opened the database and is listening; `systemctl start` / `restart` wait until then and report an error if the service cannot start |
+| `Type=notify` | The service tells systemd it has started only once startup is complete (database ready, port listening, replication subsystem running); `systemctl start` / `restart` wait until then and report an error if the service cannot start |
 | `DynamicUser=yes` | systemd allocates a transient system user on every start, so no user has to be created in advance |
 | `Restart=always` | The process is started again 3 seconds after it exits, including clean exits |
 | `TimeoutStopSec=15s` | Stopping the service waits at most 15 seconds |
@@ -80,7 +80,7 @@ The main settings:
 Things to keep in mind:
 
 - **Where the data actually lives.** With `DynamicUser`, the real directory is `/var/lib/private/imgyoung`, and `/var/lib/imgyoung` is a symlink to it. It holds `imgyoung.db`, `master.key`, the local channel's `blobs/` and the variant cache `variants/`.
-- **Sandbox limits.** If you point the local channel outside the data directory, open that directory with `ReadWritePaths=`. The binary must not live under `/home` or `/root`, or the service cannot start, which is why the script rejects such a `--dir`.
+- **Sandbox limits.** If you point the local channel outside the data directory, open that directory with `ReadWritePaths=`. The binary must not live under `/home` or `/root`, or the service cannot start, which is why the script rejects such a `--dir`. The `--dir` is written into `ExecStart` as is, where spaces, `&` and similar characters would be split into separate arguments or interpreted, so only letters, digits and `.`, `_`, `-`, `/` are accepted.
 - **Why `Restart=always`.** Restoring a snapshot in the console makes the service exit cleanly, and the snapshot is swapped in when systemd starts it again. `Restart=on-failure` does not restart a clean exit, so the restore would only complete once someone starts the service by hand.
 - **Stop time.** On stop, the service stops accepting new requests and waits for in-flight ones, then stops background work and closes the database. This takes about 8 seconds at most, so 15 seconds leaves headroom. Replication jobs (background jobs that copy images to the other channels) interrupted by the stop are queued again after the next start.
 

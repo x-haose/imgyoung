@@ -69,7 +69,7 @@ sudo sh install.sh --service
 | 设置 | 作用 |
 |---|---|
 | `IMGYOUNG_DATA_DIR=%S/imgyoung`、`StateDirectory=imgyoung` | 数据目录为 `/var/lib/imgyoung`，由 systemd 创建并交给运行用户 |
-| `Type=notify` | 服务打开数据库、监听端口后才通知 systemd 已启动；`systemctl start` / `restart` 等到这时才返回，服务起不来时报错 |
+| `Type=notify` | 服务完成启动（数据库就绪、端口已监听、补齐子系统已启动）后才通知 systemd；`systemctl start` / `restart` 等到这时才返回，服务起不来时报错 |
 | `DynamicUser=yes` | 每次启动由 systemd 分配一个临时系统用户来运行，不需要预先创建用户 |
 | `Restart=always` | 进程退出后 3 秒重新启动，包括正常退出 |
 | `TimeoutStopSec=15s` | 停止服务时最多等待 15 秒 |
@@ -80,7 +80,7 @@ sudo sh install.sh --service
 需要注意的几点：
 
 - **数据目录的实际位置**：启用 `DynamicUser` 时，实际目录是 `/var/lib/private/imgyoung`，`/var/lib/imgyoung` 是指向它的符号链接。里面是 `imgyoung.db`、`master.key`、local 渠道的 `blobs/` 与衍生图缓存 `variants/`。
-- **沙箱限制**：local 渠道的路径改到数据目录之外时，要用 `ReadWritePaths=` 放开那个目录。二进制不能装在 `/home` 或 `/root` 下，否则服务无法启动，所以脚本会拒绝这样的 `--dir`。
+- **沙箱限制**：local 渠道的路径改到数据目录之外时，要用 `ReadWritePaths=` 放开那个目录。二进制不能装在 `/home` 或 `/root` 下，否则服务无法启动，所以脚本会拒绝这样的 `--dir`。`--dir` 会原样写进 `ExecStart`，空格、`&` 等字符会被拆成多个参数或另行解析，所以只接受字母、数字与 `.`、`_`、`-`、`/`。
 - **为什么是 `Restart=always`**：在后台恢复快照时，服务会正常退出，systemd 重新启动它时才换入快照。`Restart=on-failure` 不会重启正常退出的进程，恢复要等有人手动启动服务才能完成。
 - **停止时间**：停止时，服务先停止接收新请求并等在途请求结束，再停下后台任务、关闭数据库，全程最多约 8 秒，15 秒留有余量。停止时中断的补齐任务（把图片复制到其他渠道的后台任务）会在下次启动后重新排队。
 

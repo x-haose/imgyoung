@@ -242,7 +242,7 @@ Caching depends on the endpoint:
 
 | Endpoint | Cache-Control | Why |
 |---|---|---|
-| `/i/{id}` | `public, max-age=31536000, immutable` | Content behind a short ID never changes; the URL is the version |
+| `/i/{id}` | `public, max-age=31536000, immutable` | The original behind a short ID never changes (merging duplicates is the one exception); the URL is the version |
 | `/o/{user_id}/{key}` | `public, no-cache` | Re-uploading the same key repoints the alias at a new image; caches may store the response but must revalidate with the ETag before each use, getting 304 when unchanged |
 
 On both endpoints, originals and variants carry a strong ETag: the content hash for originals, the hash plus
@@ -307,12 +307,12 @@ When a drain fails:
 - Only when the same drain job still fails on its 4th attempt (about 98 seconds after the first failure with River's
   default backoff) does it write the failure conclusion into the channel and raise a `drain_failed` alert. Before that
   the channel just shows as **Draining**, so a single network blip does not produce an open/resolve pair of alerts.
-  A run interrupted by its timeout or a shutdown is requeued at once and does not count as an attempt.
 - A draining channel that fails to load records the conclusion and raises the alert immediately, since a channel that
   cannot be loaded cannot be drained.
 - The job keeps retrying with backoff. Once its attempts run out, reconciliation queues a new job that counts from
-  attempt 1 again, while the recorded conclusion and alert stay until the channel is cleaned out. The job's own timeout
-  or a shutdown cancellation writes no failure conclusion and raises no alert.
+  attempt 1 again, while the recorded conclusion and alert stay until the channel is cleaned out. A run interrupted by a
+  shutdown, or one that times out after deleting some objects, is requeued at once, does not count as an attempt, writes
+  no failure conclusion and raises no alert; a run that times out without deleting a single object counts as a failure.
 - Retries never stop. To end a drain, choose **Remove now** on the channel in the admin console; the remote objects are kept.
 
 ## Error codes and failure conclusions [#errors]
@@ -456,7 +456,7 @@ deploy apart from the storage channels. Exact dependency versions are whatever t
 | Periodic tasks | A `Run(ctx, wait)` loop owned by each service | Periodic tasks only need "run every so often", with the interval taken from runtime settings and rescheduled the moment it changes; no cron library |
 | Wiring | Assembled by hand in `cmd/imgyoung/build.go` | The set of components is fixed and their dependencies are static, so calling constructors in order is enough: searchable, navigable, with no reflection or runtime container. No DI framework |
 | Lifecycle | oklog/run | HTTP, River, and each background loop are actors; when any of them exits, the whole group shuts down in order. Harder to get wrong than hand-rolled `WaitGroup`s and channels |
-| systemd readiness | the `daemon` package of coreos/go-systemd | The systemd unit is `Type=notify`; the service sends `READY=1` once it has opened the database and is listening. rclone already depends on this module, so it adds no new dependency |
+| systemd readiness | the `daemon` package of coreos/go-systemd | The systemd unit is `Type=notify`; the service sends `READY=1` once startup is complete (database ready, port listening, replication subsystem running). rclone already depends on this module, so it adds no new dependency |
 | Architecture guard | depguard (built into golangci-lint) | The direction of dependencies between layers is a lint rule enforced in CI; see [Layers and dependency direction](#layers) |
 | Perceptual hash | goimagehash | Pure Go; takes the decoded `image.Image`, so it plugs straight into the upload's decode step |
 | Image codecs | Standard library, `golang.org/x/image`, gen2brain/webp | None needs cgo; gen2brain/webp encodes WebP by running libwebp in a pure-Go WebAssembly runtime |
