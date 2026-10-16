@@ -174,6 +174,21 @@ func TestTokenRevokeStopsUpload(t *testing.T) {
 	}
 }
 
+// TestTokenNameLimitCountsCharacters 验收:用途名上限按字符计,64 个汉字可签发,65 个返回 400。
+func TestTokenNameLimitCountsCharacters(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, nil)
+	admin, csrf := adminSession(t, inst)
+	issueToken(t, inst, admin, csrf, strings.Repeat("图", 64))
+
+	resp := adminReq(t, admin, csrf, http.MethodPost, inst.baseURL+"/api/admin/tokens",
+		fmt.Sprintf(`{"name":%q}`, strings.Repeat("图", 65)))
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("65 个字符的用途名状态码 = %d, 期望 400", resp.StatusCode)
+	}
+}
+
 // TestQuotaEnforced 验收:配额用尽后上传 403,删除图片释放账面后恢复。
 func TestQuotaEnforced(t *testing.T) {
 	t.Parallel()

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -19,7 +20,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/errcode"
 )
 
-// tokenNameMaxLen Token 用途名长度上限。
+// tokenNameMaxLen Token 用途名长度上限,按 Unicode 码点计,与接口契约的 maxLength 一致。
 const tokenNameMaxLen = 64
 
 // tokenItem 面向前端的 Token 列表项(仅识别前缀,无哈希无明文)。
@@ -84,7 +85,7 @@ func (h *Handlers) HandleTokenCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-		req.Name == "" || len(req.Name) > tokenNameMaxLen ||
+		req.Name == "" || utf8.RuneCountInString(req.Name) > tokenNameMaxLen ||
 		req.ExpiresInHours < 0 || req.ExpiresInHours > config.MaxDurationHours {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.TokenRequestInvalid,
 			"max_name", strconv.Itoa(tokenNameMaxLen), "max_hours", strconv.Itoa(config.MaxDurationHours))

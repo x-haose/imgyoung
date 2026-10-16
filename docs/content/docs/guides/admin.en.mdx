@@ -249,7 +249,7 @@ A leaked token can do no more than upload as its user. Issue one token per clien
 
 On the **Upload tokens** page, click **Issue token** and fill in:
 
-- **Purpose**: for example `picgo` or `blog-script`, at most 64 bytes. A user cannot have two active tokens with the same name; if the old token of that name has expired, issuing a new one revokes the expired record automatically.
+- **Purpose**: for example `picgo` or `blog-script`, at most 64 characters. A user cannot have two active tokens with the same name; if the old token of that name has expired, issuing a new one revokes the expired record automatically.
 - **Expiry**: Never, 7, 30, 90 or 365 days. An expired token stops working exactly as if it were revoked.
 
 After issuing, a dialog shows the token secret (`imgy_` followed by 43 characters). **It is shown this one time only**; once the dialog is closed it can never be shown again. The database keeps only its SHA-256 and a 12-character identifying prefix.
