@@ -7,7 +7,7 @@ var (
 	Unauthenticated    = define("unauthenticated", "未登录或会话已过期")
 	CSRFRejected       = define("csrf_rejected", "CSRF 校验失败")
 	AdminRequired      = define("admin_required", "需要管理员权限")
-	MustChangePassword = define("must_change_password", "须先修改出厂默认密码")
+	MustChangePassword = define("must_change_password", "须先修改初始密码")
 	SourceNotAllowed   = define("source_not_allowed", "来源地址不在放行网段内")
 	NoHealthyChannel   = define("no_healthy_channel", "没有健康的渠道可用")
 	LangInvalid        = define("lang_invalid", "lang 取值非法(可选 zh-CN / en)")

@@ -192,7 +192,12 @@ next_steps() {
 		info "运行 imgyoung 启动服务(数据写在当前目录的 data/,可用 IMGYOUNG_DATA_DIR 指定);"
 		info "长期运行建议交给 systemd(加 --service)或 Docker 托管。"
 	fi
-	info "浏览器打开 http://<主机>:8721/,用 admin / imgyoung123 登录,首次登录会要求改密。"
+	if [ "$service" -eq 1 ]; then
+		info "首次安装时,管理员 admin 的初始密码打印在服务日志里:journalctl -u imgyoung | grep 初始密码"
+	else
+		info "首次启动时,日志里会打印管理员 admin 的初始密码;也可以先用环境变量 IMGYOUNG_ADMIN_PASSWORD 指定。"
+	fi
+	info "浏览器打开 http://<主机>:8721/ 登录,首次登录会要求改密。"
 }
 
 main() {

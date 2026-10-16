@@ -12,7 +12,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   ghcr.io/x-haose/imgyoung:latest
 ```
 
-Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away.
+Open `http://<host>:8721/` and sign in with `admin` and the initial password; the first sign-in asks you to change the password right away. The initial password is printed in the log of the first start (`docker logs imgyoung 2>&1 | grep 初始密码`), or you can set it with `IMGYOUNG_ADMIN_PASSWORD`.
 
 | Flag | Purpose |
 |---|---|
@@ -92,6 +92,7 @@ These are all bootstrap settings. Pass them with `-e`; changes take effect only 
 | `IMGYOUNG_DATA_DIR` | `/data` (set by the image) | Leave it alone |
 | `IMGYOUNG_LISTEN` | `:8721` | Listening address inside the container; rarely needs changing |
 | `IMGYOUNG_MASTER_KEY` | Empty, meaning `/data/master.key` is used | A 64-character hex master key |
+| `IMGYOUNG_ADMIN_PASSWORD` | Empty, meaning one is generated at the first start | The built-in administrator's initial password, at least 8 characters |
 | `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Reverse proxy networks whose forwarding headers are trusted; see "Behind a reverse proxy" below |
 | `IMGYOUNG_METRICS_ALLOW` | Loopback and private ranges | Networks allowed to read `/metrics` |
 
@@ -103,6 +104,7 @@ A variable that is not set takes its default. Setting it to an empty string (or 
 |---|---|
 | `IMGYOUNG_DATA_DIR`, `IMGYOUNG_LISTEN` | Startup fails, and the error names the variable |
 | `IMGYOUNG_MASTER_KEY` | Same as not set |
+| `IMGYOUNG_ADMIN_PASSWORD` | Same as not set; one is generated |
 | `IMGYOUNG_TRUSTED_PROXIES` | Forwarding headers are never trusted |
 | `IMGYOUNG_METRICS_ALLOW` | `/metrics` is closed to every address |
 

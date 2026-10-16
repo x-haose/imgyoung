@@ -3,11 +3,9 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
-import { t } from '@/i18n'
 import { Loader2, LogIn } from 'lucide-react'
 import { errorMessage } from '@/lib/errors'
 import {
-  DEFAULT_ADMIN_PASSWORD,
   FIRST_RUN_PATH,
   login,
   safeRedirect,
@@ -109,7 +107,7 @@ export function Login() {
         </form>
       </Form>
       <p className='mt-5 text-center text-xs leading-relaxed text-muted-foreground'>
-        {t(m.auth.loginHint, { password: DEFAULT_ADMIN_PASSWORD })}
+        {m.auth.loginHint}
         <br />
         {m.auth.forgotHint}{' '}
         <a

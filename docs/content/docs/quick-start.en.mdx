@@ -26,20 +26,22 @@ Check that it started:
 docker logs imgyoung
 ```
 
-Look for a line with `msg="ImgYoung 已启动"` (log messages are in Chinese). The first start also prints two `level=WARN` lines, `已生成主密钥文件,请立即备份——丢失将导致渠道配置与加密渠道数据永久不可恢复` (a master key file was generated; back it up now) and `已初始化默认管理员密码,请登录后立即在后台修改` (the default admin password was initialized; change it after signing in). Both are expected.
+Look for a line with `msg="ImgYoung 已启动"` (log messages are in Chinese). The first start also prints two `level=WARN` lines, `已生成主密钥文件,请立即备份——丢失将导致渠道配置与加密渠道数据永久不可恢复` (a master key file was generated; back it up now) and `已为内置管理员生成初始密码,请用它登录并立即修改` (an initial password was generated for the built-in administrator; sign in with it and change it right away), whose `password=` field at the end is the initial password. Both are expected.
 
 </Step>
 <Step>
 
 ### Sign in and change the password
 
-Open `http://<server address>:8721/` in a browser (`http://localhost:8721/` on the same machine) and sign in with the factory account:
+Open `http://<server address>:8721/` in a browser (`http://localhost:8721/` on the same machine) and sign in as the built-in administrator: username `admin`, and the initial password that was generated at the first start and printed in the log:
 
-| Username | Password |
-|---|---|
-| `admin` | `imgyoung123` |
+```bash title="Terminal"
+docker logs imgyoung 2>&1 | grep 初始密码
+```
 
-The factory password is public. The first sign-in takes you straight to the **Set the admin password** page. Until the password is changed, no other console page opens, and the server rejects every other console API call with 403; only signing out, reading your own account and changing the password are allowed.
+The initial password follows `password=`. To choose it yourself, add `-e IMGYOUNG_ADMIN_PASSWORD=your-initial-password` (at least 8 characters) to `docker run`; it is then not printed in the log.
+
+The first sign-in takes you straight to the **Set the admin password** page. Until the password is changed, no other console page opens, and the server rejects every other console API call with 403; only signing out, reading your own account and changing the password are allowed.
 
 The new password needs at least 8 characters, and each Chinese character counts as one. Click **Save and sign in again**, then sign in with the new password.
 

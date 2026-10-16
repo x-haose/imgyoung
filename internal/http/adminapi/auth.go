@@ -33,7 +33,7 @@ type userInfo struct {
 	ID                 string `json:"id"`                   // 用户 id
 	Name               string `json:"name"`                 // 登录名
 	Role               string `json:"role"`                 // 角色:admin / user
-	MustChangePassword bool   `json:"must_change_password"` // 仍为出厂默认密码:前端强制跳改密页,服务端只放行退出、查看自己与改密
+	MustChangePassword bool   `json:"must_change_password"` // 仍为初始密码:前端强制跳改密页,服务端只放行退出、查看自己与改密
 }
 
 // toUserInfo 把认证主体投影成前端概要,登录与 /me 共用一处避免字段漏填。

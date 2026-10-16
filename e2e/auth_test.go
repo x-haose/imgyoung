@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -45,34 +46,74 @@ func postLogin(t *testing.T, client *http.Client, baseURL, name, password string
 	return resp.StatusCode
 }
 
-// TestDefaultAdminPassword 零配置首启:出厂默认密码可直接登录,且响应标记须改密;错误密码 401。
-func TestDefaultAdminPassword(t *testing.T) {
+// TestInitialAdminPassword 经 IMGYOUNG_ADMIN_PASSWORD 指定的初始密码可直接登录,且响应标记须改密;
+// 错误密码与旧版本的固定密码都是 401。
+func TestInitialAdminPassword(t *testing.T) {
 	t.Parallel()
 	inst := bootInstance(t)
 
-	code, mustChange := loginMustChange(t, inst.baseURL, "admin", defaultAdminPass)
+	code, mustChange := loginMustChange(t, inst.baseURL, "admin", initialAdminPass)
 	if code != http.StatusOK {
-		t.Fatalf("默认密码登录状态码 = %d, 期望 200", code)
+		t.Fatalf("初始密码登录状态码 = %d, 期望 200", code)
 	}
 	if !mustChange {
-		t.Fatal("默认密码登录应返回 must_change_password=true")
+		t.Fatal("初始密码登录应返回 must_change_password=true")
 	}
-	// 反面:随意密码仍应被拒,确认不是"任意密码放行"。
-	code = postLogin(t, newClient(t), inst.baseURL, "admin", "not-the-password")
-	if code != http.StatusUnauthorized {
-		t.Fatalf("错误密码状态码 = %d, 期望 401", code)
+	for _, wrong := range []string{"not-the-password", "imgyoung123"} {
+		if code := postLogin(t, newClient(t), inst.baseURL, "admin", wrong); code != http.StatusUnauthorized {
+			t.Fatalf("密码 %q 登录状态码 = %d, 期望 401", wrong, code)
+		}
+	}
+	if !strings.Contains(logTail(inst.logPath), "已按 IMGYOUNG_ADMIN_PASSWORD 设置内置管理员的初始密码") {
+		t.Fatal("启动日志未说明已按环境变量设置初始密码")
+	}
+	if strings.Contains(logTail(inst.logPath), initialAdminPass) {
+		t.Fatal("启动日志不应打印经环境变量指定的初始密码")
 	}
 }
 
-// TestFirstRunPasswordChange 强制改密闭环:默认密码改掉后,新密码登录不再须改密,旧默认密码失效。
+// generatedPasswordPattern 首次启动日志里随机生成的初始密码字段。
+var generatedPasswordPattern = regexp.MustCompile(`已为内置管理员生成初始密码.* password=(\S+)`)
+
+// TestGeneratedAdminPassword 没有指定初始密码时随机生成一个,只打印在首次启动的日志里,可登录且须改密。
+func TestGeneratedAdminPassword(t *testing.T) {
+	t.Parallel()
+	inst := bootInstanceWithEnv(t, "IMGYOUNG_ADMIN_PASSWORD=")
+
+	m := generatedPasswordPattern.FindStringSubmatch(logTail(inst.logPath))
+	if m == nil {
+		t.Fatalf("启动日志里没有生成的初始密码:\n%s", logTail(inst.logPath))
+	}
+	code, mustChange := loginMustChange(t, inst.baseURL, "admin", m[1])
+	if code != http.StatusOK || !mustChange {
+		t.Fatalf("生成的初始密码登录: 状态码 %d must_change=%v, 期望 200 且须改密", code, mustChange)
+	}
+	if code := postLogin(t, newClient(t), inst.baseURL, "admin", "imgyoung123"); code != http.StatusUnauthorized {
+		t.Fatalf("旧版本的固定密码登录状态码 = %d, 期望 401", code)
+	}
+}
+
+// TestInitialAdminPasswordTooShort 指定的初始密码不满足长度要求时拒绝启动,并点名环境变量。
+func TestInitialAdminPasswordTooShort(t *testing.T) {
+	t.Parallel()
+	if setupErr != nil {
+		t.Fatalf("测试前置失败: %v", setupErr)
+	}
+	out := runUntilExit(t, t.TempDir(), "IMGYOUNG_ADMIN_PASSWORD=short")
+	if !strings.Contains(out, "IMGYOUNG_ADMIN_PASSWORD") {
+		t.Fatalf("初始密码过短时的输出未点名环境变量:\n%s", out)
+	}
+}
+
+// TestFirstRunPasswordChange 强制改密闭环:初始密码改掉后,新密码登录不再须改密,初始密码失效。
 func TestFirstRunPasswordChange(t *testing.T) {
 	t.Parallel()
 	inst := bootInstance(t)
-	client, csrf := loginSession(t, inst, "admin", defaultAdminPass)
+	client, csrf := loginSession(t, inst, "admin", initialAdminPass)
 
 	const newPass = "brand-new-admin-pass"
 	resp := adminReq(t, client, csrf, http.MethodPut, inst.baseURL+"/api/admin/me/password",
-		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, defaultAdminPass, newPass))
+		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, initialAdminPass, newPass))
 	code := resp.StatusCode
 	_ = resp.Body.Close()
 	if code != http.StatusNoContent {
@@ -86,17 +127,16 @@ func TestFirstRunPasswordChange(t *testing.T) {
 	if mustChange {
 		t.Fatal("改密后 must_change_password 应为 false")
 	}
-	// 旧默认密码改后即失效。
-	if c := postLogin(t, newClient(t), inst.baseURL, "admin", defaultAdminPass); c != http.StatusUnauthorized {
-		t.Fatalf("改密后旧默认密码状态码 = %d, 期望 401", c)
+	if c := postLogin(t, newClient(t), inst.baseURL, "admin", initialAdminPass); c != http.StatusUnauthorized {
+		t.Fatalf("改密后初始密码状态码 = %d, 期望 401", c)
 	}
 }
 
-// TestDefaultPasswordGate 仍为出厂默认密码的会话只能退出、查看自己与改密,其余接口一律 403;改密后放行。
-func TestDefaultPasswordGate(t *testing.T) {
+// TestInitialPasswordGate 仍为初始密码的会话只能退出、查看自己与改密,其余接口一律 403;改密后放行。
+func TestInitialPasswordGate(t *testing.T) {
 	t.Parallel()
 	inst := bootInstance(t)
-	client, csrf := loginSession(t, inst, "admin", defaultAdminPass)
+	client, csrf := loginSession(t, inst, "admin", initialAdminPass)
 	status := func(c *http.Client, token, method, path, body string) int {
 		t.Helper()
 		resp := adminReq(t, c, token, method, inst.baseURL+path, body)
@@ -109,14 +149,14 @@ func TestDefaultPasswordGate(t *testing.T) {
 		{http.MethodGet, "/api/admin/channels", ""},
 	} {
 		if code := status(client, csrf, c.method, c.path, c.body); code != http.StatusForbidden {
-			t.Errorf("默认密码会话 %s %s = %d, 期望 403", c.method, c.path, code)
+			t.Errorf("初始密码会话 %s %s = %d, 期望 403", c.method, c.path, code)
 		}
 	}
 	if code := status(client, csrf, http.MethodGet, "/api/admin/me", ""); code != http.StatusOK {
-		t.Fatalf("默认密码会话 GET /me = %d, 期望 200", code)
+		t.Fatalf("初始密码会话 GET /me = %d, 期望 200", code)
 	}
 
-	retireDefaultPassword(t, inst)
+	retireInitialPassword(t, inst)
 	admin, adminCSRF := adminSession(t, inst)
 	if code := status(admin, adminCSRF, http.MethodGet, "/api/admin/dashboard", ""); code != http.StatusOK {
 		t.Fatalf("改密后 GET /dashboard = %d, 期望 200", code)

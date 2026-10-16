@@ -32,7 +32,7 @@ There are two authentication methods, and their credentials are not interchangea
 | Credential | An upload token in the `Authorization: Bearer <token>` header | The session cookie `imgyoung_session`; state-changing requests also send an `X-CSRF-Token` header |
 | How to obtain | Issue one on the admin console's **Upload tokens** page; the plaintext is shown only once | `POST /api/admin/auth/login` |
 | Not authenticated | 401: the token is invalid, expired, or revoked, or its owner is disabled | 401: not logged in, or the session expired |
-| Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; still on the factory default password; administrator required |
+| Not permitted | 403: the token lacks upload permission | 403: CSRF token missing or wrong; still on the initial password; administrator required |
 
 A 401 only ever means a credential problem. If reading the database fails while checking a token or session, the
 response is 500 (error code `internal`) and can be retried later; it is never reported as an invalid credential.
@@ -84,7 +84,7 @@ Session details:
 - A session lasts 30 days from login and is not extended by use; after that you must log in again.
 - Changing a user's password invalidates all of that user's sessions.
 - Too many login attempts return 429.
-- While an account still has the factory default password, its session can use only three endpoints: log out
+- While an account still has the initial password, its session can use only three endpoints: log out
   (`POST /api/admin/auth/logout`), view itself (`GET /api/admin/me`, where `must_change_password` is true), and change
   the password (`PUT /api/admin/me/password`). Every other admin endpoint, including admin console uploads and issuing
   tokens, returns 403 with the error code `must_change_password`. Everything works normally once the password is
@@ -149,7 +149,7 @@ redirect target changes with channel health and configuration, so it stays out o
 |---|---|
 | 400 | Invalid request body or parameters |
 | 401 | Not authenticated: invalid token, or not logged in / session expired; only ever a credential problem |
-| 403 | Not permitted: CSRF check failed, still on the factory default password, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
+| 403 | Not permitted: CSRF check failed, still on the initial password, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
 | 404 | The target does not exist or is not visible to the current user |
 | 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, or a channel configuration that changed while saving |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |

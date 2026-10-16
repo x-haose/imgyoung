@@ -61,9 +61,9 @@ func TestValidatePassword(t *testing.T) {
 		{"恰好八个汉字", "八个汉字的密码值", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validatePassword(tt.password)
+			err := ValidatePassword(tt.password)
 			if (err != nil) != tt.wantErr {
-				t.Fatalf("validatePassword(%q) = %v, 期望拒绝=%v", tt.password, err, tt.wantErr)
+				t.Fatalf("ValidatePassword(%q) = %v, 期望拒绝=%v", tt.password, err, tt.wantErr)
 			}
 			if err != nil && !errors.Is(err, ErrPasswordTooShort) {
 				t.Fatalf("错误未归入 ErrPasswordTooShort: %v", err)

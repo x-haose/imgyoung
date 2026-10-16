@@ -119,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 
 Then:
 
-1. Open `http://localhost:8721/`, sign in as `admin` / `imgyoung123`, and change the password when prompted.
+1. Open `http://localhost:8721/`, sign in as `admin` with the initial password, and change the password when prompted. The initial password is printed in the log of the first start (with Docker: `docker logs imgyoung 2>&1 | grep 初始密码`), or you can set it with the `IMGYOUNG_ADMIN_PASSWORD` environment variable.
 2. On the **Storage channels** page, add at least one off-site channel. A new instance has only the local disk as a channel; failover takes effect once an off-site channel is in place.
 3. On the **Upload tokens** page, issue a token for PicGo / PicList, or upload directly:
 

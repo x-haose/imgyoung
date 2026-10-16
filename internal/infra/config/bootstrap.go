@@ -18,6 +18,7 @@ const (
 	envMasterKey      = envPrefix + "MASTER_KEY"      // 主密钥(64 位 hex)
 	envTrustedProxies = envPrefix + "TRUSTED_PROXIES" // 信任其转发头的反向代理网段,逗号分隔
 	envMetricsAllow   = envPrefix + "METRICS_ALLOW"   // 允许抓取 /metrics 的网段,逗号分隔
+	envAdminPassword  = envPrefix + "ADMIN_PASSWORD"  // 内置管理员的初始密码
 )
 
 // 引导配置默认值。
@@ -37,6 +38,7 @@ type Bootstrap struct {
 	MasterKey      string         // 主密钥(64 位 hex);空则用数据目录下的 master.key 文件
 	TrustedProxies []netip.Prefix // 连接对端落在这些网段时才采信 X-Forwarded-For / X-Forwarded-Proto / X-Forwarded-Host;空表示一概不信
 	MetricsAllow   []netip.Prefix // 客户端地址落在这些网段时才放行 /metrics;空表示对谁都不开放
+	AdminPassword  string         // 内置管理员还没有密码时用作初始密码,首尾空白已去掉;空表示随机生成
 }
 
 // LoadBootstrap 从环境变量装配引导配置:未设置的变量取默认值,设为空串(或只有空白)即为空值。
@@ -72,6 +74,7 @@ func LoadBootstrap() (Bootstrap, error) {
 		MasterKey:      envOrDefault(envMasterKey, ""),
 		TrustedProxies: trusted,
 		MetricsAllow:   metrics,
+		AdminPassword:  envOrDefault(envAdminPassword, ""),
 	}, nil
 }
 

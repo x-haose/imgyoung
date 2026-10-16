@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log/slog"
 	"math"
@@ -155,9 +156,9 @@ func build(logger *slog.Logger) (*app, func(), error) {
 // @return 数据库清理函数(仅成功时非 nil)
 // @return 装配失败时的错误
 func buildInfra(logger *slog.Logger) (infra, func(), error) {
-	boot, err := config.LoadBootstrap()
+	boot, err := loadBootstrap()
 	if err != nil {
-		return infra{}, nil, fmt.Errorf("引导配置非法: %w", err)
+		return infra{}, nil, err
 	}
 	if err := os.MkdirAll(boot.DataDir, 0o750); err != nil {
 		return infra{}, nil, fmt.Errorf("创建数据目录 %q: %w", boot.DataDir, err)
@@ -206,7 +207,7 @@ func buildInfra(logger *slog.Logger) (infra, func(), error) {
 
 // buildServices 装配全部业务服务:先建被复用且可失败的图内节点(认证/渠道/补齐/防盗链/指标/审计/
 // 衍生图缓存),再拼出依赖它们的数据面服务与后台循环。
-// @Description: 首启在此播种管理员密码;metrics 挂在 manager 上、供 reporter 与 router 共用。
+// @Description: 内置管理员还没有密码时在此设置初始密码;metrics 挂在 manager 上、供 reporter 与 router 共用。
 // @param in 基础设施构件
 // @param logger 结构化日志
 // @return 业务服务集
@@ -217,7 +218,7 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 		auth:  auth.New(auth.Config{Conn: writer, Queries: in.queries, Master: in.master, Logger: logger}),
 		audit: audit.New(in.queries),
 	}
-	if err := seedAdminPassword(in.queries, logger); err != nil {
+	if err := seedAdminPassword(in.queries, in.boot.AdminPassword, logger); err != nil {
 		return services{}, err
 	}
 	manager, err := channel.NewManager(context.Background(), channel.ManagerConfig{
@@ -370,13 +371,32 @@ func loadSettings(conn *db.DB, queries *sqlc.Queries, master *secret.MasterKey,
 	return store, nil
 }
 
-// seedAdminPassword 首启把内置管理员播种为出厂默认密码,幂等。
-// @Description: 仅当管理员尚未设密时播种 auth.DefaultAdminPassword 并置强制改密标记,
-// 保证零配置开箱可登录;已设密的库不触碰。失败即启动失败,不以半初始化状态对外。
+// loadBootstrap 读取引导配置,并按建号与改密的同一规则校验管理员初始密码。
+// @Description: 初始密码写错即启动失败,不等到用上它的那一次。
+// @return 引导配置
+// @return 引导配置非法时的错误
+func loadBootstrap() (config.Bootstrap, error) {
+	boot, err := config.LoadBootstrap()
+	if err != nil {
+		return config.Bootstrap{}, fmt.Errorf("引导配置非法: %w", err)
+	}
+	if boot.AdminPassword != "" {
+		if err := auth.ValidatePassword(boot.AdminPassword); err != nil {
+			return config.Bootstrap{}, fmt.Errorf("引导配置非法: IMGYOUNG_ADMIN_PASSWORD: %w", err)
+		}
+	}
+	return boot, nil
+}
+
+// seedAdminPassword 内置管理员还没有密码时为它设置初始密码,幂等。
+// @Description: 首次启动,或按找回密码的步骤清空密码哈希之后执行;已有密码的库不触碰。初始密码取引导配置里
+// 指定的值,未指定时随机生成并只在这一次的日志里打印;两种情况都置强制改密标记。失败即启动失败,不以半初始化
+// 状态对外。
 // @param queries 查询集
+// @param initial 引导配置指定的初始密码,已校验;空串表示随机生成
 // @param logger 结构化日志
-// @return 播种失败时的错误
-func seedAdminPassword(queries *sqlc.Queries, logger *slog.Logger) error {
+// @return 设置失败时的错误
+func seedAdminPassword(queries *sqlc.Queries, initial string, logger *slog.Logger) error {
 	ctx := context.Background()
 	admin, err := queries.GetUser(ctx, sqlc.DefaultUserID)
 	if err != nil {
@@ -385,17 +405,24 @@ func seedAdminPassword(queries *sqlc.Queries, logger *slog.Logger) error {
 	if admin.PasswordHash != "" {
 		return nil
 	}
-	phc, err := auth.HashPassword(auth.DefaultAdminPassword)
+	password := initial
+	if password == "" {
+		password = rand.Text()
+	}
+	phc, err := auth.HashPassword(password)
 	if err != nil {
-		return fmt.Errorf("哈希默认管理员密码: %w", err)
+		return fmt.Errorf("哈希管理员初始密码: %w", err)
 	}
 	if _, err := queries.SeedAdminPassword(ctx, sqlc.SeedAdminPasswordParams{
 		PasswordHash: phc, ID: sqlc.DefaultUserID,
 	}); err != nil {
-		return fmt.Errorf("播种默认管理员密码: %w", err)
+		return fmt.Errorf("设置管理员初始密码: %w", err)
 	}
-	logger.Warn("已初始化默认管理员密码,请登录后立即在后台修改",
-		"user", "admin", "password", auth.DefaultAdminPassword)
+	if initial == "" {
+		logger.Warn("已为内置管理员生成初始密码,请用它登录并立即修改", "user", admin.Name, "password", password)
+	} else {
+		logger.Warn("已按 IMGYOUNG_ADMIN_PASSWORD 设置内置管理员的初始密码,请登录后立即修改", "user", admin.Name)
+	}
 	return nil
 }
 

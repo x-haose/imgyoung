@@ -35,10 +35,10 @@ import (
 	"github.com/x-haose/imgyoung/internal/http/apitest"
 )
 
-// defaultAdminPass 管理员出厂默认密码(首启自动播种,须与 auth.DefaultAdminPassword 一致)。
-const defaultAdminPass = "imgyoung123"
+// initialAdminPass bootInstance 起的实例经 IMGYOUNG_ADMIN_PASSWORD 指定的管理员初始密码。
+const initialAdminPass = "e2e-initial-admin-pass"
 
-// testAdminPass 实例就绪后管理员改成的密码:仍为出厂默认密码的会话只能退出、查看自己与改密,
+// testAdminPass 实例就绪后管理员改成的密码:仍为初始密码的会话只能退出、查看自己与改密,
 // 其余用例都要先过这一步。
 const testAdminPass = "imgyoung456"
 
@@ -86,6 +86,7 @@ type instance struct {
 	dataDir string    // 数据目录
 	cmd     *exec.Cmd // 进程句柄
 	logPath string    // 服务日志文件路径
+	env     []string  // 追加给服务进程的环境变量(KEY=VALUE),重启时沿用
 	token   string    // 就绪后经管理 API 签发的管理员上传 Token 明文,数据面测试统一用它
 }
 
@@ -127,7 +128,7 @@ func configure(t *testing.T, inst *instance, settings map[string]any) {
 func startInstance(t *testing.T, settings map[string]any) *instance {
 	t.Helper()
 	inst := bootInstance(t)
-	retireDefaultPassword(t, inst)
+	retireInitialPassword(t, inst)
 	seedToken(t, inst)
 	// 健康检查间隔全实例压到 1 秒:用例等渠道状态翻转,出厂间隔太长会把每个用例拖成分钟级。
 	patch := map[string]any{"health_check_seconds": 1}
@@ -138,30 +139,37 @@ func startInstance(t *testing.T, settings map[string]any) *instance {
 	return inst
 }
 
-// bootInstance 以独立数据目录与系统分配的端口启动一个全新实例并等其就绪;管理员仍为出厂默认密码。
+// bootInstance 以独立数据目录与系统分配的端口启动一个全新实例并等其就绪;管理员仍为初始密码 initialAdminPass。
 func bootInstance(t *testing.T) *instance {
+	t.Helper()
+	return bootInstanceWithEnv(t, "IMGYOUNG_ADMIN_PASSWORD="+initialAdminPass)
+}
+
+// bootInstanceWithEnv 同 bootInstance,服务进程另带给定的环境变量。
+// @param env 追加的环境变量(KEY=VALUE)
+func bootInstanceWithEnv(t *testing.T, env ...string) *instance {
 	t.Helper()
 	if setupErr != nil {
 		t.Fatalf("测试前置失败: %v", setupErr)
 	}
 	dataDir := t.TempDir()
-	inst := &instance{dataDir: dataDir, logPath: filepath.Join(dataDir, "server.log")}
+	inst := &instance{dataDir: dataDir, logPath: filepath.Join(dataDir, "server.log"), env: env}
 	spawn(t, inst, "127.0.0.1:0")
 	inst.baseURL = "http://" + listenAddr(t, inst.logPath)
 	waitReady(t, inst)
 	return inst
 }
 
-// retireDefaultPassword 以出厂默认密码登录管理员并改成 testAdminPass。
-func retireDefaultPassword(t *testing.T, inst *instance) {
+// retireInitialPassword 以初始密码登录管理员并改成 testAdminPass。
+func retireInitialPassword(t *testing.T, inst *instance) {
 	t.Helper()
-	client, csrf := loginSession(t, inst, "admin", defaultAdminPass)
+	client, csrf := loginSession(t, inst, "admin", initialAdminPass)
 	resp := adminReq(t, client, csrf, http.MethodPut, inst.baseURL+"/api/admin/me/password",
-		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, defaultAdminPass, testAdminPass))
+		fmt.Sprintf(`{"old_password":%q,"new_password":%q}`, initialAdminPass, testAdminPass))
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("改掉出厂默认密码状态码 = %d, 期望 204; body=%s", resp.StatusCode, raw)
+		t.Fatalf("改掉初始密码状态码 = %d, 期望 204; body=%s", resp.StatusCode, raw)
 	}
 }
 
@@ -177,6 +185,7 @@ func spawn(t *testing.T, inst *instance, listen string) {
 	}
 	cmd := exec.Command(binPath)
 	cmd.Env = append(os.Environ(), "IMGYOUNG_DATA_DIR="+inst.dataDir, "IMGYOUNG_LISTEN="+listen)
+	cmd.Env = append(cmd.Env, inst.env...)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {

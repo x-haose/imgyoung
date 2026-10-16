@@ -1196,7 +1196,7 @@ export interface components {
             /** @description 登录名 */
             name: string;
             role: components["schemas"]["Role"];
-            /** @description 仍在使用出厂默认密码；为 true 时，除登出、`GET /api/admin/me` 与 `PUT /api/admin/me/password` 外，其余后台接口一律返回 403（`must_change_password`） */
+            /** @description 仍在使用初始密码；为 true 时，除登出、`GET /api/admin/me` 与 `PUT /api/admin/me/password` 外，其余后台接口一律返回 403（`must_change_password`） */
             must_change_password: boolean;
         };
         /**
@@ -2181,7 +2181,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description 无权限。可能是 CSRF 校验失败；仍在使用出厂默认密码（改密前只能登出、查看当前会话与修改密码）；需要管理员；或该操作不对当前角色开放 */
+        /** @description 无权限。可能是 CSRF 校验失败；仍在使用初始密码（改密前只能登出、查看当前会话与修改密码）；需要管理员；或该操作不对当前角色开放 */
         Forbidden: {
             headers: {
                 [name: string]: unknown;

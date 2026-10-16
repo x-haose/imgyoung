@@ -7,7 +7,7 @@ export const auth = {
   usernameRequired: '请输入用户名',
   passwordRequired: '请输入密码',
   loginHint:
-    '首次登录：用户名 admin，默认密码 {password}，登录后会要求你立即修改。',
+    '首次登录：用户名 admin，初始密码见首次启动的日志（或部署时设置的 IMGYOUNG_ADMIN_PASSWORD），登录后需立即修改。',
   forgotHint: '忘记密码？',
   forgotLink: '查看重置步骤',
   forgotUrl: 'https://imgyoung.x-haose.com/zh/docs/operations/password-reset',
@@ -20,6 +20,8 @@ export const auth = {
   newPassword: '新密码',
   confirmPassword: '确认新密码',
   oldPasswordRequired: '请输入旧密码',
+  initialPassword: '初始密码',
+  initialPasswordRequired: '请输入初始密码',
   newPasswordRequired: '请输入新密码',
   confirmRequired: '请再次输入新密码',
   passwordTooShort: '至少 {min} 位',
@@ -28,9 +30,9 @@ export const auth = {
   passwordChanged: '密码已修改，请重新登录',
   firstRunTitle: '设置管理员密码',
   firstRunSubtitle: '首次登录 · 账号 {name}',
-  firstRunWarningTitle: '当前使用出厂默认密码',
+  firstRunWarningTitle: '当前使用初始密码',
   firstRunWarningDesc:
-    '出厂默认密码是公开的，任何人都能用它登录。请立即改为只有你知道的密码。',
+    '初始密码记录在启动日志或部署配置里，能看到它们的人都能登录。请改为只有你知道的密码。',
   firstRunSubmit: '保存并重新登录',
   firstRunDone: '密码已设置，请用新密码重新登录',
 }

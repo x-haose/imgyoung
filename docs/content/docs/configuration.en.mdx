@@ -25,12 +25,14 @@ Runtime settings live in the metadata database, so they are included in metadata
 | `IMGYOUNG_LISTEN` | `:8721` | HTTP listen address |
 | `IMGYOUNG_DATA_DIR` | `data` | Data directory |
 | `IMGYOUNG_MASTER_KEY` | Empty, meaning `master.key` in the data directory is used | Master key |
+| `IMGYOUNG_ADMIN_PASSWORD` | Empty, meaning one is generated at the first start | The built-in administrator's initial password |
 | `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | Reverse proxy networks whose forwarding headers are trusted |
 | `IMGYOUNG_METRICS_ALLOW` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | Networks allowed to read `/metrics` |
 
 - **`IMGYOUNG_LISTEN`**: `host:port`, e.g. `127.0.0.1:8721` or `[::1]:8721`; port `0` lets the OS pick one. ImgYoung only speaks plain HTTP; HTTPS is the job of the reverse proxy in front of it.
 - **`IMGYOUNG_DATA_DIR`**: holds the metadata database `imgyoung.db`, the master key file `master.key`, the built-in local channel's `blobs/` and the variant cache `variants/`. A relative path is resolved against the working directory at startup; the directory is created with mode `0750` if missing. The **Bootstrap configuration** card and exported local channel rclone configs show the resolved absolute path. The Docker image sets it to `/data`, and `deploy/imgyoung.service` sets it to `/var/lib/imgyoung`.
 - **`IMGYOUNG_MASTER_KEY`**: 64 hex characters (32 bytes). It is checked against the master key fingerprint recorded in the database at every start, and startup is refused if the key is missing or does not match. See [Master key](#master-key) below.
+- **`IMGYOUNG_ADMIN_PASSWORD`**: the built-in administrator's initial password, at least 8 characters (each Chinese character counts as one); startup fails otherwise. It is used only while the built-in administrator has no password: on the first start, or after clearing the password as described in [Forgotten password](./operations/password-reset.mdx). When it is not set, a random password is generated and printed once, in that start's log. Either way, signing in with the initial password requires changing it right away. It is not shown on the **Bootstrap configuration** card.
 - **`IMGYOUNG_TRUSTED_PROXIES`**: comma-separated CIDRs or single IPs; a single IP means a network containing only that address. `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` are honored only when the connecting peer is in one of these networks. See [Reverse proxy & HTTPS](./operations/reverse-proxy.mdx).
 - **`IMGYOUNG_METRICS_ALLOW`**: same format. Only clients in these networks can read `/metrics`; everyone else gets 403. See [Monitoring & alerts](./operations/monitoring.mdx).
 
@@ -42,6 +44,7 @@ An unset variable takes its default. A variable set to an empty string (or white
 |---|---|
 | `IMGYOUNG_LISTEN`, `IMGYOUNG_DATA_DIR` | Not accepted: startup fails, and the error names the variable |
 | `IMGYOUNG_MASTER_KEY` | Same as unset; `master.key` in the data directory is used |
+| `IMGYOUNG_ADMIN_PASSWORD` | Same as unset; one is generated |
 | `IMGYOUNG_TRUSTED_PROXIES` | Forwarding headers are never trusted. The **Bootstrap configuration** card shows "Empty: forwarded headers are never trusted" |
 | `IMGYOUNG_METRICS_ALLOW` | `/metrics` returns 403 to every address. The **Bootstrap configuration** card shows "Empty: open to no one" |
 

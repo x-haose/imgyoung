@@ -17,7 +17,7 @@ curl -fsSLO https://raw.githubusercontent.com/x-haose/imgyoung/main/deploy/compo
 docker compose up -d
 ```
 
-Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away.
+Open `http://<host>:8721/` and sign in with `admin` and the initial password; the first sign-in asks you to change the password right away. The initial password is printed in the log of the first start (`docker compose logs imgyoung | grep 初始密码`), or you can set it with `IMGYOUNG_ADMIN_PASSWORD` under `environment` in `compose.yaml`.
 
 Image tags, the contents of the data volume, environment variables and the restart policy are covered on [Docker image](./docker.mdx) and not repeated here. Before referencing host variables with `${VAR}` under `environment:`, read the warning in the "Environment variables" section there: a variable the host does not set is substituted as an empty string.
 

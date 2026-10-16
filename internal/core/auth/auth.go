@@ -61,7 +61,7 @@ type Principal struct {
 	UserID             string // 用户 id
 	Name               string // 登录名
 	Role               string // 角色:admin / user
-	MustChangePassword bool   // 当前仍为出厂默认密码:前端强制跳改密页,服务端只放行退出、查看自己与改密
+	MustChangePassword bool   // 当前仍为初始密码:前端强制跳改密页,服务端只放行退出、查看自己与改密
 }
 
 // IsAdmin 判定主体是否具备管理员角色。
@@ -225,7 +225,7 @@ func (s *Service) Logout(ctx context.Context, sessionID string) error {
 // @param password 新明文密码
 // @return ErrPasswordTooShort 或基础设施错误
 func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
-	if err := validatePassword(password); err != nil {
+	if err := ValidatePassword(password); err != nil {
 		return err
 	}
 	phc, err := HashPassword(password)

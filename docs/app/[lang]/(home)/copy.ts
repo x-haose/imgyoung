@@ -113,7 +113,8 @@ export const COPY: Record<Language, HomeCopy> = {
     ],
     backendsMore: '以及 rclone 支持的其他后端',
     installTitle: '一条命令装好',
-    installLede: '首次启动无需任何配置：浏览器打开 8721 端口，用 admin / imgyoung123 登录并改密。',
+    installLede:
+      '首次启动无需任何配置：浏览器打开 8721 端口，用 admin 和启动日志里打印的初始密码登录并改密。',
     installTabs: [
       { label: '一行脚本', lang: 'bash', code: COMMANDS.script },
       { label: 'Docker', lang: 'bash', code: COMMANDS.docker },
@@ -207,7 +208,7 @@ export const COPY: Record<Language, HomeCopy> = {
     backendsMore: 'and any other backend rclone supports',
     installTitle: 'Install with one command',
     installLede:
-      'No configuration on first start: open port 8721, sign in as admin / imgyoung123 and set a new password.',
+      'No configuration on first start: open port 8721, sign in as admin with the initial password printed in the startup log, and set a new password.',
     installTabs: [
       { label: 'Script', lang: 'bash', code: COMMANDS.script },
       { label: 'Docker', lang: 'bash', code: COMMANDS.docker },

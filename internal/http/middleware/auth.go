@@ -158,8 +158,8 @@ func RequireAdmin(l *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// RequirePasswordChanged 出厂默认密码门槛:仍用出厂默认密码的会话一律 403。
-// @Description: 须挂在 SessionAuth 之后。出厂默认密码是公开值,改掉它之前会话只该能退出、查看自己与改密;
+// RequirePasswordChanged 初始密码门槛:仍用初始密码的会话一律 403。
+// @Description: 须挂在 SessionAuth 之后。初始密码写在日志或部署配置里,改掉它之前会话只该能退出、查看自己与改密;
 // 签发 Token、建渠道、上传等接口一概不放行,不论请求来自后台页面还是脚本。
 // @param l 结构化日志
 // @return 中间件

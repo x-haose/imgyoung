@@ -26,7 +26,7 @@ task build
 
 `task build` 先构建前端：在 `web/` 里执行 `pnpm install --frozen-lockfile` 与 `pnpm build`，产物输出到 `web/dist`。然后在仓库根目录编译出 `imgyoung`。`task run` 构建后直接运行。
 
-浏览器打开 `http://localhost:8721/`，用 `admin` / `imgyoung123` 登录。数据写在当前目录的 `data/`，与[发布包](./binary.mdx)相同，托管与升级方式也一样。
+浏览器打开 `http://localhost:8721/`，用 `admin` 和启动日志里打印的初始密码登录。数据写在当前目录的 `data/`，与[发布包](./binary.mdx)相同，托管与升级方式也一样。
 
 `./imgyoung -version` 显示的版本号由 Go 工具链根据 Git 信息推导：
 

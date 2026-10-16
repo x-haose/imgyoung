@@ -1,6 +1,6 @@
 # ImgYoung 的 Docker Compose 示例。
 # 用法:把本文件放进一个空目录,执行 docker compose up -d,浏览器打开 http://<主机>:8721/,
-# 用 admin / imgyoung123 登录(首次登录强制改密)。
+# 用 admin 和 docker compose logs 里打印的初始密码登录(首次登录强制改密)。
 services:
   imgyoung:
     image: ghcr.io/x-haose/imgyoung:latest # 生产环境建议固定主次版本(如 0.1)或具体版本
@@ -14,6 +14,8 @@ services:
       # 数据库、本地存储渠道与自动生成的 master.key 都在这里;丢了 master.key,渠道凭证与加密数据不可恢复
       - imgyoung-data:/data
     # environment:
+    #   # 管理员 admin 的初始密码,至少 8 个字符;不设置时首次启动随机生成并打印在日志里
+    #   IMGYOUNG_ADMIN_PASSWORD: 换成你的初始密码
     #   # 前面有反向代理时,不论代理在宿主机还是另一个容器,ImgYoung 看到的对端都是 Docker 网络里的地址,
     #   # 填该网络的网段(docker network inspect 查看);否则登录限速与 /metrics 放行会把所有请求都当成来自代理本身
     #   IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12

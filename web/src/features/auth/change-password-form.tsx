@@ -21,12 +21,12 @@ import {
 } from '@/components/ui/form'
 import { PasswordInput } from '@/components/password-input'
 
-function buildSchema(m: Messages['auth'], fixedOldPassword: boolean) {
+function buildSchema(m: Messages['auth'], firstRun: boolean) {
   return z
     .object({
-      old_password: fixedOldPassword
-        ? z.string()
-        : z.string().min(1, m.oldPasswordRequired),
+      old_password: z
+        .string()
+        .min(1, firstRun ? m.initialPasswordRequired : m.oldPasswordRequired),
       new_password: passwordSchema(m, m.newPasswordRequired),
       confirm: z.string().min(1, m.confirmRequired),
     })
@@ -39,14 +39,14 @@ function buildSchema(m: Messages['auth'], fixedOldPassword: boolean) {
 type Values = z.infer<ReturnType<typeof buildSchema>>
 
 type ChangePasswordFormProps = {
-  fixedOldPassword?: string // 给定时不显示旧密码框,按此值提交(首次改密用出厂默认密码)
+  firstRun?: boolean // 首次改密:旧密码一栏标为「初始密码」
   submitText: string
   successMessage: string
 }
 
 /** 改密表单:成功后服务端已让全部会话失效,前端清缓存并回登录页。 */
 export function ChangePasswordForm({
-  fixedOldPassword,
+  firstRun = false,
   submitText,
   successMessage,
 }: ChangePasswordFormProps) {
@@ -54,9 +54,9 @@ export function ChangePasswordForm({
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const form = useForm<Values>({
-    resolver: zodResolver(buildSchema(m.auth, fixedOldPassword !== undefined)),
+    resolver: zodResolver(buildSchema(m.auth, firstRun)),
     defaultValues: {
-      old_password: fixedOldPassword ?? '',
+      old_password: '',
       new_password: '',
       confirm: '',
     },
@@ -83,25 +83,25 @@ export function ChangePasswordForm({
         onSubmit={form.handleSubmit((v) => change.mutate(v))}
         className='grid gap-4'
       >
-        {fixedOldPassword === undefined && (
-          <FormField
-            control={form.control}
-            name='old_password'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{m.auth.oldPassword}</FormLabel>
-                <FormControl>
-                  <PasswordInput
-                    autoComplete='current-password'
-                    autoFocus
-                    {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        )}
+        <FormField
+          control={form.control}
+          name='old_password'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                {firstRun ? m.auth.initialPassword : m.auth.oldPassword}
+              </FormLabel>
+              <FormControl>
+                <PasswordInput
+                  autoComplete='current-password'
+                  autoFocus
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
         <FormField
           control={form.control}
           name='new_password'
@@ -109,11 +109,7 @@ export function ChangePasswordForm({
             <FormItem>
               <FormLabel>{m.auth.newPassword}</FormLabel>
               <FormControl>
-                <PasswordInput
-                  autoComplete='new-password'
-                  autoFocus={fixedOldPassword !== undefined}
-                  {...field}
-                />
+                <PasswordInput autoComplete='new-password' {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>

@@ -22,7 +22,7 @@ Not sure? If you have Docker, use [Docker Compose](./compose.mdx). On a Linux ho
 ## What all methods share
 
 - **Listening address**: `:8721` by default, which is port 8721 on every interface. Change it with the `IMGYOUNG_LISTEN` environment variable.
-- **First sign-in**: open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`. The console asks you to change the password right away.
+- **First sign-in**: open `http://<host>:8721/` and sign in with `admin` and the initial password printed in the log of the first start. The console asks you to change the password right away. You can also set the initial password with the `IMGYOUNG_ADMIN_PASSWORD` environment variable.
 - **Data directory**: holds the metadata database `imgyoung.db`, the master key `master.key`, the built-in local channel's `blobs/` and the variant cache `variants/`. Back up the whole directory, and keep a separate backup of `master.key`.
 - **Configuration**: a handful of bootstrap settings come from `IMGYOUNG_*` environment variables; all runtime settings are edited in the console and apply on save. There is no config file. See [Configuration](../configuration.mdx).
 - **Process supervisor**: for long-running use, run it under something that restarts the process after it exits, such as systemd (`Restart=always`) or Docker (`--restart unless-stopped`). **Restore** under **Settings → Backups & export** makes the service exit cleanly, and the snapshot is swapped in when the supervisor starts it again. The samples under `deploy/` in the repository are already set up this way.

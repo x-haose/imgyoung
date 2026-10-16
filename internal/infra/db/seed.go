@@ -10,7 +10,7 @@ import (
 
 // seedDefaults 播种系统开箱运行所需的基线数据:内置管理员与内置 local 渠道。
 // @Description: 每次迁移后执行,重复执行无副作用。内置管理员按固定 id 幂等插入,
-// 登录名为 admin,密码留空即禁止登录,首启由 seedAdminPassword 播种出厂默认密码。
+// 登录名为 admin,密码留空即禁止登录,首启由 seedAdminPassword 设置初始密码。
 // local 渠道只在全新库播种(取得 id=1),与内置管理员同一事务:内置管理员不可删除,本次插入了它才是全新库。
 // 被删除或改名的 local 不会在重启时复活,渠道表被删空也不会。
 // @param ctx 控制写入超时与取消

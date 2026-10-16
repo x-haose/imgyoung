@@ -13,11 +13,8 @@ export type SessionUser = Schema<'SessionUser'>
 /** 登录与 /me 的响应:主体与状态变更请求须回传的 CSRF 令牌。 */
 export type Session = Schema<'Session'>
 
-/** 首次强制改密页路由;仍用默认密码时所有已认证页都重定向到此。 */
+/** 首次强制改密页路由;仍用初始密码时所有已认证页都重定向到此。 */
 export const FIRST_RUN_PATH = '/first-run-password'
-
-/** 出厂默认密码;与后端 auth.DefaultAdminPassword 一致,公开值,仅首次改密页作旧密码提交。 */
-export const DEFAULT_ADMIN_PASSWORD = 'imgyoung123'
 
 export const sessionQueryKey = ['session'] as const
 

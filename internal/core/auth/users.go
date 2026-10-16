@@ -31,10 +31,10 @@ var (
 	ErrPasswordTooShort = fmt.Errorf("auth: 密码至少 %d 位", MinPasswordLength)
 )
 
-// validatePassword 校验新密码满足最小长度。
+// ValidatePassword 校验新密码满足最小长度。
 // @param password 明文密码
 // @return 过短时的 ErrPasswordTooShort
-func validatePassword(password string) error {
+func ValidatePassword(password string) error {
 	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return ErrPasswordTooShort
 	}
@@ -59,7 +59,7 @@ func (s *Service) CreateUser(ctx context.Context, p CreateUserParams) (sqlc.User
 	if p.Role != RoleAdmin && p.Role != RoleUser {
 		return sqlc.User{}, ErrInvalidRole
 	}
-	if err := validatePassword(p.Password); err != nil {
+	if err := ValidatePassword(p.Password); err != nil {
 		return sqlc.User{}, err
 	}
 	phc, err := HashPassword(p.Password)
@@ -186,7 +186,7 @@ func (s *Service) DeleteUser(ctx context.Context, userID string) error {
 // @param newPassword 新明文密码
 // @return ErrInvalidCredentials / ErrPasswordTooShort / ErrUserNotFound 或基础设施错误
 func (s *Service) ChangePassword(ctx context.Context, userID, oldPassword, newPassword string) error {
-	if err := validatePassword(newPassword); err != nil {
+	if err := ValidatePassword(newPassword); err != nil {
 		return err
 	}
 	user, err := s.getUser(ctx, userID)

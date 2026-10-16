@@ -113,7 +113,7 @@ cd imgyoung
 </Tab>
 </Tabs>
 
-Open `http://<host>:8721/` and sign in with `admin` / `imgyoung123`; the first sign-in asks you to change the password right away. Press `Ctrl+C` to stop the server cleanly.
+Open `http://<host>:8721/` and sign in with `admin` and the initial password; the first sign-in asks you to change the password right away. The initial password is printed in the log of the first start, after `password=` on the line `已为内置管理员生成初始密码`; you can also set it before the first start with the `IMGYOUNG_ADMIN_PASSWORD` environment variable. Press `Ctrl+C` to stop the server cleanly.
 
 On Windows the firewall may ask on first run whether `imgyoung.exe` may access the network. For local-only use you can decline.
 

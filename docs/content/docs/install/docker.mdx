@@ -12,7 +12,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   ghcr.io/x-haose/imgyoung:latest
 ```
 
-浏览器打开 `http://<主机>:8721/`，用 `admin` / `imgyoung123` 登录，首次登录会要求立即修改密码。
+浏览器打开 `http://<主机>:8721/`，用 `admin` 和初始密码登录，首次登录会要求立即修改密码。初始密码打印在首次启动的日志里（`docker logs imgyoung 2>&1 | grep 初始密码`），也可以用 `IMGYOUNG_ADMIN_PASSWORD` 自己指定。
 
 | 参数 | 作用 |
 |---|---|
@@ -92,6 +92,7 @@ docker run -d --name imgyoung --restart unless-stopped \
 | `IMGYOUNG_DATA_DIR` | `/data`（镜像已设置）| 保持不变 |
 | `IMGYOUNG_LISTEN` | `:8721` | 容器内的监听地址，一般不用改 |
 | `IMGYOUNG_MASTER_KEY` | 空，即使用 `/data/master.key` | 64 位十六进制的主密钥 |
+| `IMGYOUNG_ADMIN_PASSWORD` | 空，即首次启动时随机生成 | 内置管理员的初始密码，至少 8 个字符 |
 | `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | 信任其转发头的反向代理网段，见下文「前面有反向代理」 |
 | `IMGYOUNG_METRICS_ALLOW` | 回环与私网网段 | 允许访问 `/metrics` 的网段 |
 
@@ -103,6 +104,7 @@ docker run -d --name imgyoung --restart unless-stopped \
 |---|---|
 | `IMGYOUNG_DATA_DIR`、`IMGYOUNG_LISTEN` | 启动失败，错误信息指出变量名 |
 | `IMGYOUNG_MASTER_KEY` | 与不设置相同 |
+| `IMGYOUNG_ADMIN_PASSWORD` | 与不设置相同，随机生成 |
 | `IMGYOUNG_TRUSTED_PROXIES` | 不采信任何转发头 |
 | `IMGYOUNG_METRICS_ALLOW` | `/metrics` 对所有地址关闭 |
 

@@ -94,8 +94,8 @@ func New(cfg Config) http.Handler {
 	return r
 }
 
-// mountAdmin 挂管理面:登录端点在会话门外,其余经会话 + CSRF;仍为出厂默认密码的会话只放行退出、
-// 查看自己与改密,其余接口另套默认密码门槛,全站资源再套管理员门。
+// mountAdmin 挂管理面:登录端点在会话门外,其余经会话 + CSRF;仍为初始密码的会话只放行退出、
+// 查看自己与改密,其余接口另套初始密码门槛,全站资源再套管理员门。
 // @param a /api/admin 下的子路由
 // @param cfg 路由依赖
 // @param guards 上传防护闸
@@ -105,7 +105,7 @@ func mountAdmin(a chi.Router, cfg Config, guards uploadGuards) {
 	a.Group(func(g chi.Router) {
 		g.Use(middleware.SessionAuth(cfg.Auth, cfg.Logger))
 		g.Use(middleware.CSRF(cfg.Logger))
-		// 仍为出厂默认密码的会话只能用这三个:退出、查看自己(含改密标记)、改密。
+		// 仍为初始密码的会话只能用这三个:退出、查看自己(含改密标记)、改密。
 		g.Post("/auth/logout", cfg.Admin.HandleLogout)
 		g.Get("/me", cfg.Admin.HandleMe)
 		g.Put("/me/password", cfg.Admin.HandleChangePassword)
@@ -116,8 +116,8 @@ func mountAdmin(a chi.Router, cfg Config, guards uploadGuards) {
 	})
 }
 
-// mountSession 挂改过出厂默认密码的会话可用的接口:登录用户共用的部分,再套管理员门挂全站资源。
-// @param g 已套会话、CSRF 与默认密码门槛的子路由
+// mountSession 挂改过初始密码的会话可用的接口:登录用户共用的部分,再套管理员门挂全站资源。
+// @param g 已套会话、CSRF 与初始密码门槛的子路由
 // @param cfg 路由依赖
 // @param guards 上传入口共用的频控与并发闸
 func mountSession(g chi.Router, cfg Config, guards uploadGuards) {

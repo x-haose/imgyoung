@@ -25,12 +25,14 @@ ImgYoung 的配置分为两类，没有配置文件。命令行参数只有 `-ve
 | `IMGYOUNG_LISTEN` | `:8721` | HTTP 监听地址 |
 | `IMGYOUNG_DATA_DIR` | `data` | 数据目录 |
 | `IMGYOUNG_MASTER_KEY` | 空，即使用数据目录下的 `master.key` | 主密钥 |
+| `IMGYOUNG_ADMIN_PASSWORD` | 空，即首次启动时随机生成 | 内置管理员的初始密码 |
 | `IMGYOUNG_TRUSTED_PROXIES` | `127.0.0.0/8,::1/128` | 信任其转发头的反向代理网段 |
 | `IMGYOUNG_METRICS_ALLOW` | `127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7` | 允许访问 `/metrics` 的网段 |
 
 - **`IMGYOUNG_LISTEN`**：格式为 `host:port`，如 `127.0.0.1:8721`、`[::1]:8721`；端口为 `0` 时由系统分配。ImgYoung 只提供明文 HTTP，HTTPS 由前面的反向代理负责。
 - **`IMGYOUNG_DATA_DIR`**：存放元数据库 `imgyoung.db`、主密钥文件 `master.key`、内置 local 渠道的 `blobs/` 与衍生图缓存 `variants/`。相对路径在启动时按当时的工作目录解析成绝对路径；目录不存在时以 `0750` 权限创建。「引导配置」卡片和导出的 local 渠道 rclone 配置里显示的都是解析后的绝对路径。Docker 镜像把它设为 `/data`，`deploy/imgyoung.service` 把它设为 `/var/lib/imgyoung`。
 - **`IMGYOUNG_MASTER_KEY`**：64 个十六进制字符（32 字节）。每次启动都会与库里记录的主密钥指纹核对，缺失或不符即拒绝启动，见下文[主密钥](#主密钥)。
+- **`IMGYOUNG_ADMIN_PASSWORD`**：内置管理员的初始密码，至少 8 个字符，一个汉字算一个字符，不满足时启动失败。只在内置管理员还没有密码时使用：首次启动，或按[忘记密码](./operations/password-reset.mdx)的步骤清空密码之后。不设置时随机生成一个，只在那一次的日志里打印。两种情况下，用初始密码登录后都要求立即修改。它不在「引导配置」卡片里显示。
 - **`IMGYOUNG_TRUSTED_PROXIES`**：逗号分隔的 CIDR 或单个 IP，单个 IP 视为只含该地址的网段。连接对端在这些网段内时，才采信 `X-Forwarded-For`、`X-Forwarded-Proto` 与 `X-Forwarded-Host`。见[反向代理与 HTTPS](./operations/reverse-proxy.mdx)。
 - **`IMGYOUNG_METRICS_ALLOW`**：格式同上。客户端地址在这些网段内时才能访问 `/metrics`，其他地址一律返回 403。见[监控与告警](./operations/monitoring.mdx)。
 
@@ -42,6 +44,7 @@ ImgYoung 的配置分为两类，没有配置文件。命令行参数只有 `-ve
 |---|---|
 | `IMGYOUNG_LISTEN`、`IMGYOUNG_DATA_DIR` | 不接受空值：启动失败，错误信息指出变量名 |
 | `IMGYOUNG_MASTER_KEY` | 与未设置相同，使用数据目录下的 `master.key` |
+| `IMGYOUNG_ADMIN_PASSWORD` | 与未设置相同，随机生成 |
 | `IMGYOUNG_TRUSTED_PROXIES` | 不采信任何转发头。「引导配置」卡片显示「空：不采信任何转发头」 |
 | `IMGYOUNG_METRICS_ALLOW` | `/metrics` 对所有地址返回 403。「引导配置」卡片显示「空：不对任何地址开放」 |
 

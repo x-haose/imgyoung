@@ -8,7 +8,7 @@ export const server = {
     unauthenticated: 'Not signed in, or the session has expired',
     csrf_rejected: 'CSRF check failed',
     admin_required: 'Administrator permission required',
-    must_change_password: 'Change the factory default password first',
+    must_change_password: 'Change the initial password first',
     source_not_allowed: 'The source address is not in an allowed network',
     no_healthy_channel: 'No healthy channel is available',
     lang_invalid: 'Invalid lang (allowed: zh-CN / en)',

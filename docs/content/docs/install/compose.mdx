@@ -17,7 +17,7 @@ curl -fsSLO https://raw.githubusercontent.com/x-haose/imgyoung/main/deploy/compo
 docker compose up -d
 ```
 
-浏览器打开 `http://<主机>:8721/`，用 `admin` / `imgyoung123` 登录，首次登录会要求立即修改密码。
+浏览器打开 `http://<主机>:8721/`，用 `admin` 和初始密码登录，首次登录会要求立即修改密码。初始密码打印在首次启动的日志里（`docker compose logs imgyoung | grep 初始密码`），也可以在 `compose.yaml` 的 `environment` 里用 `IMGYOUNG_ADMIN_PASSWORD` 指定。
 
 镜像标签、数据卷内容、环境变量与重启策略的说明见 [Docker 镜像](./docker.mdx)，这里不重复。在 `environment:` 里用 `${VAR}` 引用宿主机变量之前，先读那一页「环境变量」一节的提醒：宿主机没有设置的变量会被代入空串。
 

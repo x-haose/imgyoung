@@ -7,13 +7,13 @@ description: What each page of the admin console is for, how administrators and 
 
 The admin console lives at the site root, for example `https://img.example.com/`.
 
-After the first start, sign in as the built-in administrator: username `admin`, factory password `imgyoung123`. The console then takes you straight to **Set the admin password**.
+After the first start, sign in as the built-in administrator: username `admin`, and the initial password, that is, the one generated at the first start and printed in the log, or the value set with `IMGYOUNG_ADMIN_PASSWORD` at deployment. The console then takes you straight to **Set the admin password**.
 
-<Callout type="warn" title="Change the factory password first">
-The factory password is public, so change it before the instance is reachable from the internet. Until you do, this account can only change the password, sign out and read the current account; every other console action (including console uploads, issuing tokens and managing channels) returns 403, whether the request comes from the console or a script.
+<Callout type="warn" title="Change the initial password first">
+The initial password is written in the log or the deployment settings, and anyone who can see them can sign in, so change it soon. Until you do, this account can only change the password, sign out and read the current account; every other console action (including console uploads, issuing tokens and managing channels) returns 403, whether the request comes from the console or a script.
 </Callout>
 
-The initial password cannot be set through an environment variable, and no token can be provisioned through one either. On a headless deployment, too, sign in to the console, change the password, then issue an upload token.
+Upload tokens cannot be provisioned through environment variables. On a headless deployment, too, sign in to the console, change the initial password, then issue an upload token.
 
 If you forget the password, see [Password reset](../operations/password-reset.mdx).
 
@@ -294,7 +294,7 @@ Administrators can use **View by user** to switch to any user's token list and *
 | Username enumeration | An unknown username and a wrong password return the same error and take about the same time to check |
 | Sessions | Signing in issues a 256-bit random session ID in the cookie `imgyoung_session`, marked `HttpOnly` and `SameSite=Lax`, plus `Secure` when the client reaches the site over HTTPS. The server stores only a hash of the session ID, so a leaked database cannot be used to hijack sessions. Sessions last a fixed 30 days and are not extended by use |
 | CSRF check | Each session is bound to a CSRF token that every state-changing request must send in the `X-CSRF-Token` header; the console does this automatically |
-| Factory password | While the built-in administrator still uses the factory password, the server only allows changing the password, signing out and reading the current account; every other console API returns 403 |
+| Initial password | While the built-in administrator still uses the initial password, the server only allows changing the password, signing out and reading the current account; every other console API returns 403 |
 | Changing passwords | **Change password** asks for the current password; afterwards every device of that user is signed out and must sign in again |
 | Disabling and password resets | Disabling a user or resetting their password ends all of their sessions at once; a disabled user cannot sign in, and all of their tokens stop working |
 | Page hardening | Every response carries `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff`. Console pages also carry a Content Security Policy that allows scripts and API calls only from this site and forbids embedding in other pages |
@@ -316,7 +316,7 @@ Common error codes for console actions are listed below; the complete list is th
 
 | Action | Status | Error code | Meaning |
 |---|---|---|---|
-| Any console action other than changing the password, signing out and reading the current account | 403 | `must_change_password` | The built-in administrator still uses the factory password; change it first |
+| Any console action other than changing the password, signing out and reading the current account | 403 | `must_change_password` | The built-in administrator still uses the initial password; change it first |
 | Saving a channel | 409 | `channel_config_changed` | Another edit changed the configuration while saving, or the provider refreshed the authorization token; save again |
 | Deleting a channel | 409 | `channel_sole_replicas` | This channel holds the only ready replica of some images; the message gives the number of images |
 | Editing, test connection, probing, re-authorizing | 409 | `channel_deleting` | The channel is draining; the only action left is **Remove now** |

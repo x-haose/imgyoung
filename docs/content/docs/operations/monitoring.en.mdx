@@ -186,7 +186,7 @@ Credentials never appear in the logs:
 - audit entries for configuration changes record only `(已配置)` (set) or `(空)` (empty);
 - upload tokens and sessions are stored only as hashes.
 
-The only password that ever appears in the logs is the public factory password `imgyoung123`: the service prints it when it sets the factory password, on first start or on the restart after a [password reset](./password-reset.mdx).
+The only password that ever appears in the logs is a generated initial password: on the first start, or on the restart after a [password reset](./password-reset.mdx), the service generates one and prints it once, unless `IMGYOUNG_ADMIN_PASSWORD` sets it. Until it is changed, anyone who can read the logs can sign in with it. An initial password set through the environment variable is never written to the logs.
 
 The tables below list the log lines most useful when troubleshooting, grouped by area.
 

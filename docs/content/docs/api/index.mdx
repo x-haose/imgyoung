@@ -25,7 +25,7 @@ S3 兼容接口（`/s3/…`）按 AWS S3 规范实现，不在本参考内，用
 | 凭证 | 上传 Token，放在 `Authorization: Bearer <token>` 头 | 会话 cookie `imgyoung_session`；状态变更请求另带 `X-CSRF-Token` 头 |
 | 获取方式 | 在管理后台「上传 Token」页签发，明文只显示一次 | `POST /api/admin/auth/login` |
 | 认证失败 | 401：Token 无效、已过期或已吊销，或所属用户被禁用 | 401：未登录或会话已过期 |
-| 权限不足 | 403：Token 没有上传权限 | 403：CSRF 令牌缺失或不匹配；仍为出厂默认密码；需要管理员权限 |
+| 权限不足 | 403：Token 没有上传权限 | 403：CSRF 令牌缺失或不匹配；仍为初始密码；需要管理员权限 |
 
 401 只表示凭证本身有问题。校验 Token 或会话时读数据库失败，返回 500（错误码 `internal`），可以稍后重试，不会被当成凭证无效。
 
@@ -72,7 +72,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 - 会话有效期 30 天，从登录时刻算起，不随使用顺延；到期后须重新登录。
 - 修改密码后，该用户的全部会话失效。
 - 登录尝试过于频繁时返回 429。
-- 账号仍是出厂默认密码时，会话只能调用三个接口：退出（`POST /api/admin/auth/logout`）、查看自己（`GET /api/admin/me`，其中 `must_change_password` 为 true）与改密（`PUT /api/admin/me/password`）。其余后台接口（包括后台上传、签发 Token）一律返回 403，错误码 `must_change_password`。改密并重新登录后即可正常使用。
+- 账号仍是初始密码时，会话只能调用三个接口：退出（`POST /api/admin/auth/logout`）、查看自己（`GET /api/admin/me`，其中 `must_change_password` 为 true）与改密（`PUT /api/admin/me/password`）。其余后台接口（包括后台上传、签发 Token）一律返回 403，错误码 `must_change_password`。改密并重新登录后即可正常使用。
 
 渠道、用户、防盗链、审计、告警、备份、导出与裁决接口，以及运营配置的完整读取与修改，仅管理员可用，普通用户调用返回 403。
 
@@ -120,7 +120,7 @@ curl -b jar.txt -X POST -H 'X-CSRF-Token: <csrf_token>' \
 |---|---|
 | 400 | 请求体或参数非法 |
 | 401 | 未认证：Token 无效，或未登录、会话已过期；只表示凭证问题 |
-| 403 | 无权限：CSRF 校验失败、仍为出厂默认密码、需要管理员、Token 无上传权限；上传时也表示存储配额已满 |
+| 403 | 无权限：CSRF 校验失败、仍为初始密码、需要管理员、Token 无上传权限；上传时也表示存储配额已满 |
 | 404 | 目标不存在，或对当前用户不可见 |
 | 409 | 与现有状态冲突，如重名、渠道持有部分图片的唯一副本、渠道正在清理中，或渠道配置在保存期间已被改动 |
 | 413 | 超过单图大小上限（运营配置 `max_upload_mb`）|

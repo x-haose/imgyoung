@@ -8,7 +8,7 @@ export const auth = {
   usernameRequired: 'Enter your username',
   passwordRequired: 'Enter your password',
   loginHint:
-    'First sign-in: username admin, default password {password}. You will be asked to change it right away.',
+    'First sign-in: username admin; the initial password is in the log of the first start (or is the IMGYOUNG_ADMIN_PASSWORD you set). You will be asked to change it right away.',
   forgotHint: 'Forgot the password?',
   forgotLink: 'See how to reset it',
   forgotUrl: 'https://imgyoung.x-haose.com/en/docs/operations/password-reset',
@@ -21,6 +21,8 @@ export const auth = {
   newPassword: 'New password',
   confirmPassword: 'Confirm new password',
   oldPasswordRequired: 'Enter your current password',
+  initialPassword: 'Initial password',
+  initialPasswordRequired: 'Enter the initial password',
   newPasswordRequired: 'Enter a new password',
   confirmRequired: 'Enter the new password again',
   passwordTooShort: 'At least {min} characters',
@@ -30,9 +32,9 @@ export const auth = {
   passwordChanged: 'Password changed, please sign in again',
   firstRunTitle: 'Set the admin password',
   firstRunSubtitle: 'First sign-in · account {name}',
-  firstRunWarningTitle: 'The factory default password is in use',
+  firstRunWarningTitle: 'You are using the initial password',
   firstRunWarningDesc:
-    'The default password is public; anyone can sign in with it. Change it now to one only you know.',
+    'The initial password is written in the start-up log or the deployment settings, so anyone who can read them can sign in. Change it to one only you know.',
   firstRunSubmit: 'Save and sign in again',
   firstRunDone: 'Password set, please sign in with the new password',
 } satisfies typeof zh

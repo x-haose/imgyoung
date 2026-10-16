@@ -26,7 +26,7 @@ task build
 
 `task build` first builds the front end by running `pnpm install --frozen-lockfile` and `pnpm build` in `web/`, with the output in `web/dist`. It then compiles `imgyoung` into the repository root. `task run` builds and then runs it.
 
-Open `http://localhost:8721/` and sign in with `admin` / `imgyoung123`. Data goes to `data/` under the current directory, just like with a [release archive](./binary.mdx), and supervising and upgrading work the same way.
+Open `http://localhost:8721/` and sign in with `admin` and the initial password printed in the startup log. Data goes to `data/` under the current directory, just like with a [release archive](./binary.mdx), and supervising and upgrading work the same way.
 
 The version shown by `./imgyoung -version` is derived from Git by the Go toolchain:
 

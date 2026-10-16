@@ -119,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 
 然后：
 
-1. 浏览器打开 `http://localhost:8721/`，用 `admin` / `imgyoung123` 登录，按提示修改密码。
+1. 浏览器打开 `http://localhost:8721/`，用 `admin` 和初始密码登录，按提示修改密码。初始密码打印在首次启动的日志里（Docker 用 `docker logs imgyoung 2>&1 | grep 初始密码` 查看），也可以用环境变量 `IMGYOUNG_ADMIN_PASSWORD` 指定。
 2. 在「存储渠道」页接入至少一个异地渠道。新实例只有本机磁盘一个渠道，接入异地渠道后，容灾才真正生效。
 3. 在「上传 Token」页签发 Token，填进 PicGo / PicList，或者直接上传：
 
