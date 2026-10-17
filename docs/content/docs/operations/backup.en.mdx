@@ -29,6 +29,7 @@ ImgYoung takes snapshots of the metadata database on a schedule and writes the s
 - **Schedule**: one snapshot every **Backup interval** (`backup_interval_hours`, 1 hour by default), counted from service start; changing the interval restarts the countdown. At startup, if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately.
 - **Location**: `_imgyoung/backup/` under the channel's path, with names like `imgyoung-20261015-083000.123.db` (UTC). On the built-in local channel that is `<data dir>/blobs/_imgyoung/backup/`. Snapshots on encrypted channels are encrypted too.
 - **Retention**: each channel keeps only its newest **Backups to keep** (`backup_keep`, 24 by default) snapshots; older ones are deleted automatically.
+- **Defaults apply to new installs only**: existing instances keep the interval and count they already saved, which you can change in the admin console.
 - **Disk space**: the snapshot is first written to a temporary file `backup-snapshot.tmp` in the data directory, which needs free space of roughly the database size.
 - **Failure**: if the snapshot cannot be taken, there is no healthy channel, a channel was not written, or a channel could not prune old snapshots down to the retention count, the backup counts as failed and opens a `backup_failed` alert, which resolves after the next success. Channels that were written keep the snapshot. See [Monitoring & alerts](./monitoring.mdx).
 
@@ -104,11 +105,13 @@ See [Reverse proxy & HTTPS](./reverse-proxy.mdx).
 
 When the metadata database goes back to an earlier state (restored from a snapshot, or recent writes had not been replicated yet), images uploaded afterwards are still in the channels but have no record in the database. **Settings → Backups & export → Recover image records** registers those objects as images again, and their original links work again.
 
+If the database was overwritten or lost without putting the snapshot in as a restore, objects without a record are deleted by the reconciliation GC once 48 hours old, so run the recovery quickly; see "Disaster recovery after losing the host" below for details.
+
 A run does the following:
 
 1. Lists all healthy channels and finds the objects whose key has the form `<short ID>_<first 8 hex digits of SHA-256>` and that have no record in the database.
-2. Reads each object from the channels holding it, in priority order, and checks the format, the pixel budget and the hash prefix.
-3. Registers an image under the short ID in the object key. Channels holding the object are marked completed, the other channels pending, and replication fills them in the background.
+2. Reads the copy on every channel holding the object, checks the hash prefix, takes the intact copy with the highest priority, then checks the format and the pixel budget. A channel whose copy fails the hash check does not count as a holder.
+3. Registers an image under the short ID in the object key. Channels holding an intact copy are marked completed, the other channels (including those with a damaged copy) pending, and replication fills them in the background.
 
 When it finishes, the page shows the number of image objects in the channels, how many already had records, how many were recovered, and the objects that were not recovered with the reason.
 
@@ -116,9 +119,9 @@ When it finishes, the page shows the number of image objects in the channels, ho
 |---|---|---|
 | `read_failed` | Every channel holding the object failed to read it | Run again once the channels are back |
 | `too_large` | The object exceeds the current per-image size limit | Raise the per-image limit and run again |
-| `invalid_image` | The content is not a decodable jpeg, png, gif or webp, or exceeds the pixel budget | The object is damaged or not an image; it is not registered |
-| `key_mismatch` | The content's hash does not match the hash prefix in the object key | The object is damaged; it is not registered |
-| `id_taken` | The short ID in the object key already belongs to another image record | It is not registered; remove the object by hand if needed |
+| `invalid_image` | The content is not a decodable jpeg, png, gif or webp, or exceeds the pixel budget | An object that is not an image is not registered; if it exceeds the pixel budget, raise the pixel budget and run again |
+| `key_mismatch` | The copy on every channel has a hash that does not match the hash prefix in the object key | The object is damaged; it is not registered |
+| `id_taken` | The short ID in the object key already belongs to an image record that points to another object, usually a leftover object after deduplication merged images | It is not registered; remove the object by hand if needed |
 | `register_failed` | Registering failed while writing to the database | Check the cause in the service log and run again |
 
 Limits to be aware of:
@@ -126,6 +129,7 @@ Limits to be aware of:
 - Recovered images belong to the account that runs the recovery and never expire. File names, source tokens and lifetimes are not stored in the object and cannot be recovered.
 - Images with identical content that were merged by deduplication share one object, whose key carries only the first image's short ID; the links of the other images cannot be recovered.
 - Images deleted after the restore point whose objects have not been physically deleted yet (still within the deletion grace period) reappear together with their objects; delete them in the admin console.
+- The recovery registers every object whose key is well formed and that has no record, and cannot tell "the record was lost" from "the image was deleted". Objects of deleted images that a channel failure kept from being removed, and leftovers of failed uploads that could not be cleaned up, are registered as images; delete them in the admin console. If an object-deletion task is still queued when the recovery runs, the image returns 404 afterwards; once the task has finished, delete that record in the admin console.
 - Encrypted channels are decrypted by ImgYoung before reading, so they behave like unencrypted ones.
 
 You can run it repeatedly: objects already registered count as recorded the next time. Only one run happens at a time; closing the page or dropping the request stops it, and what has been registered stays. Each run is written to the audit log as **Recover image records**.
