@@ -151,17 +151,17 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 	return err
 }
 
-const deleteImage = `-- name: DeleteImage :execrows
+const deleteImage = `-- name: DeleteImage :one
 DELETE FROM images
 WHERE id = ?
+RETURNING blob_id
 `
 
 func (q *Queries) DeleteImage(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteImage, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	row := q.db.QueryRowContext(ctx, deleteImage, id)
+	var blob_id int64
+	err := row.Scan(&blob_id)
+	return blob_id, err
 }
 
 const getImageAdmin = `-- name: GetImageAdmin :one

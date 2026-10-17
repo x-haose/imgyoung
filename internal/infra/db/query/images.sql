@@ -31,9 +31,10 @@ WHERE expire_at IS NOT NULL AND expire_at < ?
 ORDER BY expire_at
 LIMIT ?;
 
--- name: DeleteImage :execrows
+-- name: DeleteImage :one
 DELETE FROM images
-WHERE id = ?;
+WHERE id = ?
+RETURNING blob_id;
 
 -- name: TouchImageAccess :exec
 UPDATE images
