@@ -42,20 +42,34 @@ func (h *Handlers) HandleImageRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := h.cfg.Recovery.Recover(r.Context(), req.UserID)
 	if err != nil {
-		h.writeRecoveryError(w, r, res, err)
+		h.writeRecoveryError(w, r, req.UserID, res, err)
 		return
 	}
-	h.recordAudit(r.Context(), audit.ActionImageRecover, req.UserID,
-		"recovered="+strconv.Itoa(res.Recovered)+" failed="+strconv.Itoa(res.Failed))
+	h.recordRecovery(r, req.UserID, res, false)
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, res)
 }
 
-// writeRecoveryError 把找回的错误翻译为状态码;请求已断开时只记日志,无人接收响应。
+// recordRecovery 把一轮找回写入审计;中止的一轮同样记录,库里已登记的图片要留痕。
+// @param r 请求
+// @param userID 找回的图片归属的用户 id
+// @param res 本轮已完成部分的统计
+// @param aborted 请求断开致中止为 true
+func (h *Handlers) recordRecovery(r *http.Request, userID string, res recovery.Result, aborted bool) {
+	detail := "recovered=" + strconv.Itoa(res.Recovered) + " failed=" + strconv.Itoa(res.Failed)
+	if aborted {
+		detail += " aborted=true"
+	}
+	h.recordAudit(r.Context(), audit.ActionImageRecover, userID, detail)
+}
+
+// writeRecoveryError 把找回的错误翻译为状态码;请求已断开时只记日志与审计,无人接收响应。
 // @param w 响应写入器
 // @param r 请求
+// @param userID 找回的图片归属的用户 id
 // @param res 找回中止时已完成部分的统计
 // @param err Recover 返回的错误
-func (h *Handlers) writeRecoveryError(w http.ResponseWriter, r *http.Request, res recovery.Result, err error) {
+func (h *Handlers) writeRecoveryError(w http.ResponseWriter, r *http.Request, userID string,
+	res recovery.Result, err error) {
 	switch {
 	case errors.Is(err, recovery.ErrBusy):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.RecoveryBusy)
@@ -65,6 +79,9 @@ func (h *Handlers) writeRecoveryError(w http.ResponseWriter, r *http.Request, re
 		httpx.WriteError(h.cfg.Logger, w, http.StatusServiceUnavailable, errcode.NoHealthyChannel)
 	case r.Context().Err() != nil:
 		h.cfg.Logger.Info("发起找回的请求已断开,找回中止", "recovered", res.Recovered, "err", err)
+		if res.Recovered > 0 {
+			h.recordRecovery(r, userID, res, true)
+		}
 	default:
 		h.cfg.Logger.Error("找回图片记录失败", "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)

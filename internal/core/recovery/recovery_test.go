@@ -2,6 +2,8 @@ package recovery_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"image"
 	"image/png"
@@ -163,15 +165,17 @@ func TestRecoverReplicaStates(t *testing.T) {
 	}
 }
 
-// TestRecoverReportsUnusableObjects 内容与键不符、不是图片的对象计入失败并给出原因,不影响其余对象;非本服务键名的对象不计。
+// TestRecoverReportsUnusableObjects 内容与键不符、哈希相符但不是图片的对象计入失败并给出原因,不影响其余对象;非本服务键名的对象不计。
 func TestRecoverReportsUnusableObjects(t *testing.T) {
 	r := newRig(t)
 	good := r.uploadImage(t, 2, 2)
 	r.forget(t, good)
 	mismatch := id.New() + "_00000000"
 	r.put(t, mismatch, pngBytes(t, 2, 2))
-	garbage := id.New() + "_deadbeef"
-	r.put(t, garbage, []byte("not an image"))
+	notImage := []byte("not an image")
+	notImageSum := sha256.Sum256(notImage)
+	garbage := id.StorageKey(id.New(), hex.EncodeToString(notImageSum[:]))
+	r.put(t, garbage, notImage)
 	r.put(t, "photos.jpg", []byte("foreign"))
 
 	res, err := r.recovery.Recover(t.Context(), sqlc.DefaultUserID)
@@ -187,6 +191,49 @@ func TestRecoverReportsUnusableObjects(t *testing.T) {
 	}
 	if reasons[mismatch] != recovery.ReasonKeyMismatch || reasons[garbage] != recovery.ReasonInvalidImage {
 		t.Fatalf("失败原因 = %v", reasons)
+	}
+}
+
+// TestRecoverUsesIntactCopy 优先级最高的渠道上副本损坏、低优先级渠道上完好时,用完好副本登记,
+// 损坏副本所在的渠道记为待补齐,不记为持有者。
+func TestRecoverUsesIntactCopy(t *testing.T) {
+	r := newRig(t)
+	otherID, _ := r.AddLocalChannel(t, "second", 50, false)
+	data := pngBytes(t, 2, 2)
+	sum := sha256.Sum256(data)
+	key := id.StorageKey(id.New(), hex.EncodeToString(sum[:]))
+	r.put(t, key, []byte("truncated"))
+	for _, h := range r.Manager.All() {
+		if h.ID == otherID {
+			if err := h.Driver.Put(t.Context(), key, bytes.NewReader(data), int64(len(data))); err != nil {
+				t.Fatalf("写入完好副本: %v", err)
+			}
+		}
+	}
+
+	res, err := r.recovery.Recover(t.Context(), sqlc.DefaultUserID)
+	if err != nil {
+		t.Fatalf("找回: %v", err)
+	}
+	if res.Recovered != 1 || res.Failed != 0 {
+		t.Fatalf("统计 = %+v, 期望用完好副本找回 1 张且无失败", res)
+	}
+	blobID, err := r.Queries.GetImageBlobID(t.Context(), key[:id.Length])
+	if err != nil {
+		t.Fatalf("找回的图没有记录: %v", err)
+	}
+	var local, second string
+	row := func(channelID int64) string {
+		var st string
+		q := `SELECT state FROM blob_channels WHERE blob_id = ? AND channel_id = ?`
+		if err := r.Conn.QueryRowContext(t.Context(), q, blobID, channelID).Scan(&st); err != nil {
+			t.Fatalf("查询副本状态: %v", err)
+		}
+		return st
+	}
+	local, second = row(r.Local(t).ID), row(otherID)
+	if local != "pending" || second != "done" {
+		t.Fatalf("副本状态 local=%s second=%s, 期望损坏副本所在的 local 为 pending、second 为 done", local, second)
 	}
 }
 

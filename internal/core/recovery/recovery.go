@@ -6,7 +6,9 @@ package recovery
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -92,7 +94,7 @@ type held []channel.Handle
 // Recover 找回健康渠道上缺少记录的图片。
 // @Description: 每个对象的登记是一个独立事务,失败的对象不影响其余对象;整轮可重复执行,已登记的对象下一轮被识别为
 // 已有记录。ctx 取消即中止,已登记的保留。找回的图片永不过期,没有文件名与来源 Token。
-// 同一对象存在于多个渠道时,按优先级从第一个读得出的渠道取字节。
+// 同一对象存在于多个渠道时,逐个渠道读出并核对内容哈希,取优先级最高的完好副本登记;内容与键名不符的渠道不记为持有者。
 // @param ctx 控制超时与取消
 // @param userID 找回的图片归属的用户 id
 // @return 统计;ctx 取消时为已完成部分
@@ -221,15 +223,17 @@ func (s *Service) recoverOne(ctx context.Context, userID, key string, holders he
 	}
 	ctx, cancel := context.WithTimeout(ctx, objectTimeout)
 	defer cancel()
-	data, err := readFirst(ctx, holders, key, s.cfg.Settings().MaxUploadBytes())
+	data, intact, err := readIntact(ctx, holders, key, s.cfg.Settings().MaxUploadBytes())
 	switch {
 	case errors.Is(err, errTooLarge):
 		return fail(ReasonTooLarge, err)
+	case errors.Is(err, upload.ErrKeyMismatch):
+		return fail(ReasonKeyMismatch, err)
 	case err != nil:
 		return fail(ReasonReadFailed, err)
 	}
-	ids := make([]int64, len(holders))
-	for i, h := range holders {
+	ids := make([]int64, len(intact))
+	for i, h := range intact {
 		ids[i] = h.ID
 	}
 	_, err = s.cfg.Upload.Adopt(ctx, upload.AdoptParams{Key: key, Data: data, UserID: userID, Holders: ids})
@@ -276,22 +280,58 @@ func (s *Service) hasRecord(ctx context.Context, key string) (bool, error) {
 // errTooLarge 读取途中发现对象超过字节上限。
 var errTooLarge = errors.New("对象超过单图字节上限")
 
-// readFirst 按优先级从持有对象的渠道读出完整字节,读取失败的渠道换下一个。
+// readIntact 读出持有对象的各渠道上的副本,核对内容哈希,返回优先级最高的完好副本字节与全部完好副本所在的渠道。
 // @param holders 持有对象的渠道,按优先级降序
 // @param key 对象键
 // @param limit 字节上限
-// @return 对象字节
-// @return 超过上限时包裹 errTooLarge;各渠道都读取失败时列出各渠道原因
-func readFirst(ctx context.Context, holders held, key string, limit int64) ([]byte, error) {
-	var failures []error
+// @return 完好副本的字节
+// @return 内容哈希与键名相符的渠道,按优先级降序
+// @return 没有完好副本时的错误:有副本的哈希与键名不符时包裹 upload.ErrKeyMismatch,否则有副本超过上限时包裹
+// errTooLarge,否则列出各渠道的读取失败原因
+func readIntact(ctx context.Context, holders held, key string, limit int64) ([]byte, held, error) {
+	var (
+		data     []byte
+		intact   held
+		failures []error
+		mismatch bool
+		tooLarge bool
+	)
 	for _, h := range holders {
-		data, err := readAll(ctx, h.Driver, key, limit)
-		if err == nil || errors.Is(err, errTooLarge) {
-			return data, err
+		copyData, err := readAll(ctx, h.Driver, key, limit)
+		switch {
+		case errors.Is(err, errTooLarge):
+			tooLarge = true
+		case err != nil:
+			failures = append(failures, fmt.Errorf("渠道 %q: %w", h.Name, err))
+		case !matchesKey(key, copyData):
+			mismatch = true
+			failures = append(failures, fmt.Errorf("渠道 %q: %w", h.Name, upload.ErrKeyMismatch))
+		default:
+			if data == nil {
+				data = copyData
+			}
+			intact = append(intact, h)
 		}
-		failures = append(failures, fmt.Errorf("渠道 %q: %w", h.Name, err))
 	}
-	return nil, errors.Join(failures...)
+	switch {
+	case len(intact) > 0:
+		return data, intact, nil
+	case mismatch:
+		return nil, nil, fmt.Errorf("%w: %w", upload.ErrKeyMismatch, errors.Join(failures...))
+	case tooLarge:
+		return nil, nil, errTooLarge
+	default:
+		return nil, nil, errors.Join(failures...)
+	}
+}
+
+// matchesKey 判断字节的 SHA-256 前缀是否与对象键里的哈希段相符。
+// @param key 对象键,须符合 id.IsStorageKey
+// @param data 对象字节
+// @return 相符为 true
+func matchesKey(key string, data []byte) bool {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:len(key)-id.Length-1] == key[id.Length+1:]
 }
 
 // readAll 从单个渠道读出对象的完整字节。
