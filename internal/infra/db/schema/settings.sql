@@ -16,8 +16,8 @@ CREATE TABLE settings (
     access_mode TEXT NOT NULL DEFAULT 'proxy', -- 访问模式:proxy(代理)/ redirect(302 省流量)
     encrypt_new_channels INTEGER NOT NULL DEFAULT 0, -- 新建渠道未显式指定时是否加密(布尔 0/1)
     health_check_seconds INTEGER NOT NULL DEFAULT 60, -- 渠道健康检查间隔(秒)
-    backup_interval_hours INTEGER NOT NULL DEFAULT 24, -- 元数据库自动备份间隔(小时)
-    backup_keep INTEGER NOT NULL DEFAULT 7, -- 备份保留份数;丢失映射即全部不可反查,宁多勿少
+    backup_interval_hours INTEGER NOT NULL DEFAULT 1, -- 元数据库自动备份间隔(小时)
+    backup_keep INTEGER NOT NULL DEFAULT 24, -- 备份保留份数;丢失映射即全部不可反查,宁多勿少
     cleanup_sweep_seconds INTEGER NOT NULL DEFAULT 60, -- 生命周期清理扫描间隔(秒)
     delete_grace_minutes INTEGER NOT NULL DEFAULT 0, -- 引用归零到物理删的宽限(分钟),可为 0
     default_ttl_hours INTEGER NOT NULL DEFAULT 0, -- 全局默认 TTL(小时),0=永不过期

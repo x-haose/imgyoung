@@ -212,8 +212,8 @@ Each round first merges byte-identical images automatically, then scans for simi
 | Key | UI label | Default | Valid values | Notes |
 |---|---|---|---|---|
 | `health_check_seconds` | Health check interval | `60` | ≥ 1, seconds | How often channel health checks and alert evaluation run |
-| `backup_interval_hours` | Backup interval | `24` | ≥ 1, hours | Interval between automatic metadata snapshots |
-| `backup_keep` | Backups to keep | `7` | ≥ 1 | Snapshots kept on each channel |
+| `backup_interval_hours` | Backup interval | `1` | ≥ 1, hours | Interval between automatic metadata snapshots |
+| `backup_keep` | Backups to keep | `24` | ≥ 1 | Snapshots kept on each channel |
 | `usage_report_seconds` | Usage report interval | `300` | ≥ 1, seconds | How often the `imgyoung_channel_storage_bytes` metric is refreshed |
 | `channel_quota_gb` | Channel usage alert threshold | `0` | ≥ 0, GB | Alert when a channel's usage exceeds this; `0` disables the alert |
 
