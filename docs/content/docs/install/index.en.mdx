@@ -19,6 +19,14 @@ All five methods install the same program. They differ only in how you get it an
 
 Not sure? If you have Docker, use [Docker Compose](./compose.mdx). On a Linux host without Docker, use the [install script](./script.mdx) with `--service`. On a system with a graphical interface such as Synology, 1Panel, BT Panel, CasaOS or Unraid, see [NAS and server panels](./nas-panel.mdx).
 
+## Environments that do not fit
+
+ImgYoung is a long-running process that keeps its data on a local disk. Two kinds of environment cannot run it or do not suit it:
+
+- **Platforms that only host static pages or run functions per request**, such as Cloudflare Workers and Pages: they cannot run this Go binary.
+- **Platforms with no persistent disk, or that put idle apps to sleep**, which is the case on the free tier of many hosting platforms: data is lost on restart, and the first request after a sleep waits for a cold start, so image links tend to time out.
+
+
 ## What all methods share
 
 - **Listening address**: `:8721` by default, which is port 8721 on every interface. Change it with the `IMGYOUNG_LISTEN` environment variable.
