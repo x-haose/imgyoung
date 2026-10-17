@@ -247,6 +247,25 @@ func TestBackupListDownloadRestore(t *testing.T) {
 	if goneCode != http.StatusNotFound {
 		t.Fatalf("快照后上传的引用恢复后状态码 = %d, 期望 404", goneCode)
 	}
+
+	// 快照之后上传的图,对象还在渠道上:找回图片记录后原链接恢复。
+	admin2, csrf2 := adminSession(t, inst2)
+	rec := adminReq(t, admin2, csrf2, http.MethodPost, inst2.baseURL+"/api/admin/image-recovery", "")
+	recRaw, err := io.ReadAll(rec.Body)
+	_ = rec.Body.Close()
+	var outcome struct {
+		Recovered int `json:"recovered"`
+		Failed    int `json:"failed"`
+	}
+	if err == nil {
+		err = json.Unmarshal(recRaw, &outcome)
+	}
+	if err != nil || rec.StatusCode != http.StatusOK || outcome.Recovered != 1 || outcome.Failed != 0 {
+		t.Fatalf("找回图片记录: 状态码 %d err=%v body=%s, 期望 200 且找回 1 张", rec.StatusCode, err, recRaw)
+	}
+	if got := fetchBytes(t, inst2, after); len(got) == 0 {
+		t.Fatal("找回后原链接仍不可访问")
+	}
 }
 
 // TestBackupReportsFailedChannel 有渠道写不进快照时立即备份如实失败:错误点名该渠道,其余渠道照常写成,

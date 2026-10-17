@@ -48,6 +48,11 @@ var (
 	BatchIDsInvalid        = define("batch_ids_invalid", "请求体非法:ids 需为 1 到 {max} 个图片 ID")
 )
 
+// 图片记录找回。
+var (
+	RecoveryBusy = define("recovery_busy", "已有一轮找回在进行,请等它结束后再试")
+)
+
 // 相似图裁决。
 var (
 	CandidateIDInvalid = define("candidate_id_invalid", "候选 ID 非法")

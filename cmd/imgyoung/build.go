@@ -20,6 +20,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/dedup"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/recovery"
 	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
@@ -101,6 +102,7 @@ type services struct {
 	merger   *dedup.Merger          // 后台查重执行器
 	reporter *usage.Reporter        // 渠道用量上报器
 	backup   *reliability.Service   // 元数据库备份服务
+	recovery *recovery.Service      // 图片记录找回服务
 }
 
 // newLogger 构造进程级结构化日志,并设为 slog 默认。
@@ -281,6 +283,9 @@ func (s *services) buildDataServices(in infra, logger *slog.Logger) {
 		Interval: func() time.Duration { return time.Duration(in.store.Current().BackupIntervalHours) * time.Hour },
 		Logger:   logger,
 	})
+	s.recovery = recovery.New(recovery.Config{
+		Queries: in.queries, Channels: s.manager, Upload: s.upload, Settings: in.store.Current, Logger: logger,
+	})
 	s.alerts = alert.New(alert.Config{
 		Queries:    in.queries,
 		QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
@@ -335,7 +340,7 @@ func buildHTTP(in infra, s services, shutdown func(), logger *slog.Logger) *http
 		Admin: s.manager, OAuth: channel.NewOAuthSessions(),
 		Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot,
-		Backups: s.backup, Shutdown: shutdown, Logger: logger,
+		Backups: s.backup, Recovery: s.recovery, Shutdown: shutdown, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{
 		Auth: s.auth, Upload: s.upload, Queries: in.queries, Objects: pub, Images: s.sweeper, Audit: s.audit,

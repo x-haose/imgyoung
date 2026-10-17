@@ -13,6 +13,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/recovery"
 	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
@@ -73,6 +74,12 @@ type BackupAdmin interface {
 	Restore(ctx context.Context, name string) (string, error)
 }
 
+// RecoveryAdmin 按渠道里的对象找回图片记录的管理入口(由 recovery.Service 实现)。
+type RecoveryAdmin interface {
+	// Recover 找回健康渠道上缺少记录的图片,归属 userID;ctx 取消即中止,已登记的保留。
+	Recover(ctx context.Context, userID string) (recovery.Result, error)
+}
+
 // SettingsStore 运营配置存储口(由 config.Store 实现):读取当前快照、应用修改热生效。
 type SettingsStore interface {
 	// Current 返回当前生效配置快照(切片字段只读)。
@@ -95,6 +102,7 @@ type Config struct {
 	Settings   SettingsStore          // 运营配置存储:读取快照供各请求取值,PUT /config 经它落库热生效
 	Boot       config.Bootstrap       // 引导配置(只读展示用;密钥与密码不进任何响应)
 	Backups    BackupAdmin            // 备份管理入口
+	Recovery   RecoveryAdmin          // 图片记录找回入口
 	Shutdown   func()                 // 触发整个进程优雅停机;恢复快照后调用,由进程管理器拉起时换入
 	Logger     *slog.Logger           // 结构化日志
 }

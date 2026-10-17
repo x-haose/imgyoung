@@ -13,6 +13,7 @@ export const AUDIT_ACTIONS = [
   'user.delete',
   'image.update',
   'image.delete',
+  'image.recover',
   'data.export',
   'backup.create',
   'backup.restore',

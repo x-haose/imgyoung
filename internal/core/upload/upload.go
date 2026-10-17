@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -131,7 +132,8 @@ type Options struct {
 
 // Service 上传编排服务,无可变状态、并发安全。
 type Service struct {
-	cfg Config
+	cfg      Config
+	inflight sync.Map // 正在上传的对象键 → struct{}:从写入渠道之前到落库或清理结束
 }
 
 // Result 一次上传的结果。
@@ -235,6 +237,8 @@ func (s *Service) store(ctx context.Context, set config.Settings, win idemWindow
 	meta imageMeta, prep prepared) (Result, error) {
 	shortID := id.New()
 	key := id.StorageKey(shortID, prep.sha256)
+	s.inflight.Store(key, struct{}{})
+	defer s.inflight.Delete(key)
 	targets, release := s.holdTargets()
 	defer release()
 	doneIDs, err := s.writeReplicas(ctx, targets, key, prep.data, minSuccess(set))
@@ -267,6 +271,14 @@ func (s *Service) store(ctx context.Context, set config.Settings, win idemWindow
 	}
 	s.enqueuePending(ctx, blobID, shortID, all, doneIDs)
 	return Result{ImageID: shortID}, nil
+}
+
+// Uploading 判断对象键是否属于正在进行的上传:对象可能已写进渠道、记录还没落库,此时它不是缺记录的对象。
+// @param key 渠道内对象键
+// @return 正在上传为 true
+func (s *Service) Uploading(key string) bool {
+	_, ok := s.inflight.Load(key)
+	return ok
 }
 
 // ExistingUpload 查本用户带同一幂等键的既有上传:键在保留期内且所指的图未到期才算命中;幂等键为空视为未命中。

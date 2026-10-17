@@ -55,6 +55,7 @@ export const server = {
       '快照 {snapshot} 有 {failed}/{total} 个渠道写入失败（{detail}）',
     backup_prune_failed:
       '快照 {snapshot} 已写入，但有 {failed}/{total} 个渠道清理旧快照失败，保留份数未生效（{detail}）',
+    recovery_busy: '已有一轮找回在进行，请等它结束后再试',
     snapshot_name_invalid: '快照名非法',
     snapshot_not_found: '快照不存在',
     snapshot_corrupt:

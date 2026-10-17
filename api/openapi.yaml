@@ -2051,6 +2051,70 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /api/admin/image-recovery:
+    post:
+      operationId: recoverImages
+      tags: [Admin · Operations]
+      summary: 按渠道里的对象找回图片记录
+      description: |
+        元数据库退回到较早的状态后（从快照恢复，或最近的写入还没来得及复制出去），之后上传的图片对象仍在渠道里，库里却没有记录，链接返回 404。本接口把这些对象重新登记为图片，原链接随之恢复。
+
+        1. 列举所有健康渠道，找出对象键形如 `<短 ID>_<SHA-256 前 8 位>`、库里没有记录的对象。
+        2. 按优先级从持有对象的渠道读取内容，校验格式、尺寸与哈希前缀。
+        3. 以对象键里的短 ID 登记图片，永不过期；持有对象的渠道记为已就绪，其余渠道记为待补齐并自动补齐。
+
+        文件名、来源 Token 与有效期无法找回。多张图因查重合并而共用的物理图只保留第一张图的对象，其余图的链接无法找回。恢复点之后删除、但对象尚未被物理删除的图片，会随对象一起重新出现。
+
+        接口可重复调用，已登记的对象下一次计为已有记录。请求断开时中止，已登记的保留。同一时刻只进行一轮。
+
+        仅管理员。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageRecoveryRequest'
+      responses:
+        '200':
+          description: 本轮结果。个别对象没有找回不影响状态码，逐条原因见 `failures`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageRecoveryResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 指定的用户不存在
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: 已有一轮找回在进行，错误码 `recovery_busy`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: 列举渠道失败，或读取已有记录失败
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: 没有健康渠道
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /api/admin/export:
     get:
       operationId: exportMetadata
@@ -2461,6 +2525,7 @@ components:
         - backup_snapshot_failed
         - backup_store_failed
         - backup_prune_failed
+        - recovery_busy
         - snapshot_name_invalid
         - snapshot_not_found
         - snapshot_corrupt
@@ -4055,6 +4120,55 @@ components:
         total:
           type: integer
           format: int64
+    ImageRecoveryRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          description: 找回的图片归属的用户 ID，缺省为当前管理员
+    ImageRecoveryResult:
+      type: object
+      required: [scanned, recorded, recovered, failed, failures]
+      properties:
+        scanned:
+          type: integer
+          description: 健康渠道上对象键合规的对象数，同一对象在多个渠道上只计一次
+        recorded:
+          type: integer
+          description: 其中库里已有记录的对象数，含正在上传、即将落库的
+        recovered:
+          type: integer
+          description: 重新登记的图片数
+        failed:
+          type: integer
+          description: 没有找回的对象数
+        failures:
+          type: array
+          description: 没有找回的对象，按对象键升序，至多 100 条
+          items:
+            $ref: '#/components/schemas/ImageRecoveryFailure'
+    ImageRecoveryFailure:
+      type: object
+      required: [key, reason, detail]
+      properties:
+        key:
+          type: string
+          description: 渠道内对象键
+        reason:
+          type: string
+          description: |
+            失败原因：
+            - `read_failed`：持有对象的渠道都读取失败，渠道恢复后重试
+            - `too_large`：对象超过当前的单图字节上限
+            - `invalid_image`：内容不是可解析的 jpeg、png、gif 或 webp，或超出像素预算
+            - `key_mismatch`：内容的哈希与对象键里的哈希前缀不符
+            - `id_taken`：对象键里的短 ID 已属于另一条图片记录
+            - `register_failed`：登记时落库失败
+          enum: [read_failed, too_large, invalid_image, key_mismatch, id_taken, register_failed]
+        detail:
+          type: string
+          description: 根因原文，供排障
     RestoreAccepted:
       type: object
       required: [snapshot, staged]

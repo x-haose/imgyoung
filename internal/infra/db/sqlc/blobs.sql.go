@@ -145,6 +145,34 @@ func (q *Queries) ListBlobPhashes(ctx context.Context, id int64) ([]ListBlobPhas
 	return items, nil
 }
 
+const listBlobStorageKeys = `-- name: ListBlobStorageKeys :many
+SELECT storage_key
+FROM blobs
+`
+
+func (q *Queries) ListBlobStorageKeys(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listBlobStorageKeys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var storage_key string
+		if err := rows.Scan(&storage_key); err != nil {
+			return nil, err
+		}
+		items = append(items, storage_key)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBlobsBySha256 = `-- name: ListBlobsBySha256 :many
 SELECT id, ref_count
 FROM blobs

@@ -63,3 +63,7 @@ SELECT id, sha256, phash, storage_key, mime, size, width, height,
        ref_count, pending_delete, delete_after, created_at
 FROM blobs
 ORDER BY id;
+
+-- name: ListBlobStorageKeys :many
+SELECT storage_key
+FROM blobs;

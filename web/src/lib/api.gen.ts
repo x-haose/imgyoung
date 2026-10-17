@@ -1089,6 +1089,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/image-recovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 按渠道里的对象找回图片记录
+         * @description 元数据库退回到较早的状态后（从快照恢复，或最近的写入还没来得及复制出去），之后上传的图片对象仍在渠道里，库里却没有记录，链接返回 404。本接口把这些对象重新登记为图片，原链接随之恢复。
+         *
+         *     1. 列举所有健康渠道，找出对象键形如 `<短 ID>_<SHA-256 前 8 位>`、库里没有记录的对象。
+         *     2. 按优先级从持有对象的渠道读取内容，校验格式、尺寸与哈希前缀。
+         *     3. 以对象键里的短 ID 登记图片，永不过期；持有对象的渠道记为已就绪，其余渠道记为待补齐并自动补齐。
+         *
+         *     文件名、来源 Token 与有效期无法找回。多张图因查重合并而共用的物理图只保留第一张图的对象，其余图的链接无法找回。恢复点之后删除、但对象尚未被物理删除的图片，会随对象一起重新出现。
+         *
+         *     接口可重复调用，已登记的对象下一次计为已有记录。请求断开时中止，已登记的保留。同一时刻只进行一轮。
+         *
+         *     仅管理员。
+         */
+        post: operations["recoverImages"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/export": {
         parameters: {
             query?: never;
@@ -1127,7 +1157,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -2064,6 +2094,39 @@ export interface components {
             items: components["schemas"]["Snapshot"][];
             /** Format: int64 */
             total: number;
+        };
+        ImageRecoveryRequest: {
+            /** @description 找回的图片归属的用户 ID，缺省为当前管理员 */
+            user_id?: string;
+        };
+        ImageRecoveryResult: {
+            /** @description 健康渠道上对象键合规的对象数，同一对象在多个渠道上只计一次 */
+            scanned: number;
+            /** @description 其中库里已有记录的对象数，含正在上传、即将落库的 */
+            recorded: number;
+            /** @description 重新登记的图片数 */
+            recovered: number;
+            /** @description 没有找回的对象数 */
+            failed: number;
+            /** @description 没有找回的对象，按对象键升序，至多 100 条 */
+            failures: components["schemas"]["ImageRecoveryFailure"][];
+        };
+        ImageRecoveryFailure: {
+            /** @description 渠道内对象键 */
+            key: string;
+            /**
+             * @description 失败原因：
+             *     - `read_failed`：持有对象的渠道都读取失败，渠道恢复后重试
+             *     - `too_large`：对象超过当前的单图字节上限
+             *     - `invalid_image`：内容不是可解析的 jpeg、png、gif 或 webp，或超出像素预算
+             *     - `key_mismatch`：内容的哈希与对象键里的哈希前缀不符
+             *     - `id_taken`：对象键里的短 ID 已属于另一条图片记录
+             *     - `register_failed`：登记时落库失败
+             * @enum {string}
+             */
+            reason: "read_failed" | "too_large" | "invalid_image" | "key_mismatch" | "id_taken" | "register_failed";
+            /** @description 根因原文，供排障 */
+            detail: string;
         };
         RestoreAccepted: {
             /** @description 快照名 */
@@ -4406,6 +4469,72 @@ export interface operations {
                 };
             };
             /** @description 存放该快照的渠道都读取失败，或写入数据目录失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 没有健康渠道 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    recoverImages: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ImageRecoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description 本轮结果。个别对象没有找回不影响状态码，逐条原因见 `failures` */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageRecoveryResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description 指定的用户不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 已有一轮找回在进行，错误码 `recovery_busy` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description 列举渠道失败，或读取已有记录失败 */
             500: {
                 headers: {
                     [name: string]: unknown;

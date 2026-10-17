@@ -30,6 +30,7 @@ export const audit = {
     'user.delete': '删除用户',
     'image.update': '修改图片',
     'image.delete': '删除图片',
+    'image.recover': '找回图片记录',
     'data.export': '导出数据',
     'backup.create': '立即备份',
     'backup.restore': '恢复备份',

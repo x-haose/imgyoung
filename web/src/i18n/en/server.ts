@@ -56,6 +56,8 @@ export const server = {
       'Snapshot {snapshot} was not written to {failed} of {total} channels ({detail})',
     backup_prune_failed:
       'Snapshot {snapshot} was written, but removing old snapshots failed on {failed} of {total} channels, so the retention count is not enforced ({detail})',
+    recovery_busy:
+      'A recovery run is already in progress. Wait for it to finish and try again',
     snapshot_name_invalid: 'Invalid snapshot name',
     snapshot_not_found: 'Snapshot not found',
     snapshot_corrupt:

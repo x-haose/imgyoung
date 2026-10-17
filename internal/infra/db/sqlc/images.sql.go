@@ -309,6 +309,17 @@ func (q *Queries) GetImageOwner(ctx context.Context, id string) (string, error) 
 	return user_id, err
 }
 
+const imageExists = `-- name: ImageExists :one
+SELECT EXISTS (SELECT 1 FROM images WHERE id = ?)
+`
+
+func (q *Queries) ImageExists(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, imageExists, id)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const labelColdImages = `-- name: LabelColdImages :execrows
 UPDATE images
 SET pending_cleanup = 1

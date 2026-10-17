@@ -31,6 +31,7 @@ export const audit = {
     'user.delete': 'Delete user',
     'image.update': 'Update image',
     'image.delete': 'Delete image',
+    'image.recover': 'Recover image records',
     'data.export': 'Export data',
     'backup.create': 'Create backup',
     'backup.restore': 'Restore backup',

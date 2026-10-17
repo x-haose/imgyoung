@@ -151,7 +151,7 @@ redirect target changes with channel health and configuration, so it stays out o
 | 401 | Not authenticated: invalid token, or not logged in / session expired; only ever a credential problem |
 | 403 | Not permitted: CSRF check failed, still on the initial password, administrator required, or the token lacks upload permission; for uploads it also means the storage quota is full |
 | 404 | The target does not exist or is not visible to the current user |
-| 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, or a channel configuration that changed while saving |
+| 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, a channel configuration that changed while saving, or a recovery of image records already running (`recovery_busy`) |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
 | 415 | Not a supported image format (judged by file content) |
 | 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file or not an ImgYoung metadata database (`snapshot_corrupt`) |

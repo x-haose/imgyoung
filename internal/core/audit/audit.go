@@ -37,6 +37,8 @@ const (
 	ActionImageDelete = "image.delete"
 	// ActionImageUpdate 图片有效期/清理豁免修改。
 	ActionImageUpdate = "image.update"
+	// ActionImageRecover 按渠道里的对象找回图片记录。
+	ActionImageRecover = "image.recover"
 	// ActionDataExport 元数据导出。
 	ActionDataExport = "data.export"
 	// ActionBackupCreate 手动触发元数据库备份。

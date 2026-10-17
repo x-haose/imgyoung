@@ -64,6 +64,14 @@ export function restoreBackup(name: string) {
   )
 }
 
+/** 一轮找回图片记录的结果。 */
+export type RecoveryResult = Schema<'ImageRecoveryResult'>
+
+/** 按渠道里的对象找回缺少记录的图片,归属当前管理员。 */
+export function recoverImages() {
+  return api.post<RecoveryResult>('/api/admin/image-recovery')
+}
+
 /** 下载一份快照。 */
 export function downloadBackup(name: string) {
   return api.download(`/api/admin/backups/${encodeURIComponent(name)}`)

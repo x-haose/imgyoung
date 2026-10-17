@@ -43,12 +43,14 @@ import {
   restoreBackup,
 } from './data'
 import { formatInstant } from './format'
+import { RecoverCard } from './recover-card'
 
 /** 备份与导出分区:快照表需要整行宽度,导出卡片排在其下。 */
 export function BackupTab() {
   return (
     <div className='grid max-w-5xl gap-6'>
       <BackupsCard />
+      <RecoverCard />
       <ExportCard />
     </div>
   )

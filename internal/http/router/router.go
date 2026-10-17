@@ -183,6 +183,7 @@ func mountAdminOnly(ad chi.Router, cfg Config) {
 	ad.Post("/backups", cfg.Admin.HandleBackupCreate)
 	ad.Get("/backups/{name}", cfg.Admin.HandleBackupDownload)
 	ad.Post("/backups/{name}/restore", cfg.Admin.HandleBackupRestore)
+	ad.Post("/image-recovery", cfg.Admin.HandleImageRecovery)
 	ad.Get("/export", cfg.Admin.HandleExport)
 	ad.Get("/dedup", cfg.Admin.HandleDedupCandidates)
 	ad.Post("/dedup/{id}/merge", cfg.Admin.HandleDedupMerge)

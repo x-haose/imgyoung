@@ -162,3 +162,6 @@ SELECT id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_sec
        last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
 FROM images
 ORDER BY created_at;
+
+-- name: ImageExists :one
+SELECT EXISTS (SELECT 1 FROM images WHERE id = ?);
