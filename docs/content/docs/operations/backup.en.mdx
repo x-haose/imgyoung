@@ -26,9 +26,9 @@ Do not copy `imgyoung.db` while the service is running: recent writes may still 
 
 ImgYoung takes snapshots of the metadata database on a schedule and writes the same snapshot to every healthy channel.
 
-- **Schedule**: one snapshot every **Backup interval** (`backup_interval_hours`, 24 hours by default), counted from service start; changing the interval restarts the countdown. At startup, if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately.
+- **Schedule**: one snapshot every **Backup interval** (`backup_interval_hours`, 1 hour by default), counted from service start; changing the interval restarts the countdown. At startup, if any healthy channel lacks a snapshot from within the last interval, a backup runs immediately.
 - **Location**: `_imgyoung/backup/` under the channel's path, with names like `imgyoung-20261015-083000.123.db` (UTC). On the built-in local channel that is `<data dir>/blobs/_imgyoung/backup/`. Snapshots on encrypted channels are encrypted too.
-- **Retention**: each channel keeps only its newest **Backups to keep** (`backup_keep`, 7 by default) snapshots; older ones are deleted automatically.
+- **Retention**: each channel keeps only its newest **Backups to keep** (`backup_keep`, 24 by default) snapshots; older ones are deleted automatically.
 - **Disk space**: the snapshot is first written to a temporary file `backup-snapshot.tmp` in the data directory, which needs free space of roughly the database size.
 - **Failure**: if the snapshot cannot be taken, there is no healthy channel, a channel was not written, or a channel could not prune old snapshots down to the retention count, the backup counts as failed and opens a `backup_failed` alert, which resolves after the next success. Channels that were written keep the snapshot. See [Monitoring & alerts](./monitoring.mdx).
 
