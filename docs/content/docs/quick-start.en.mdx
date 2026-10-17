@@ -14,7 +14,7 @@ You need a machine with Docker installed (Linux, macOS or Windows) whose port 87
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 - `-v imgyoung-data:/data`: the database, the images in the built-in local channel and the master key `master.key` all live in this volume. Deleting the volume deletes everything.

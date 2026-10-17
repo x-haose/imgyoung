@@ -43,7 +43,7 @@ The volume's real name carries the project name as a prefix, and the project nam
 
 ## Pinning a version and upgrading
 
-To pin a version, change `image:` to a major.minor tag such as `ghcr.io/x-haose/imgyoung:0.1`, or to an exact version, then run `docker compose up -d`.
+To pin a version, change `image:` to a major.minor tag such as `haose/imgyoung:0.1`, or to an exact version, then run `docker compose up -d`.
 
 Switching back to an older tag does not downgrade: the older version refuses to start on a database migrated by a newer one. Before upgrading, consider clicking **Back up now** under **Settings → Backups & export**; see [Upgrading](../operations/upgrade.mdx) for the rollback steps and more.
 
@@ -61,7 +61,7 @@ Caddy obtains and renews certificates automatically. Put the two files below in 
 ```yaml title="compose.yaml"
 services:
   imgyoung:
-    image: ghcr.io/x-haose/imgyoung:latest
+    image: haose/imgyoung:latest
     restart: unless-stopped
     stop_grace_period: 15s
     # No published port: Caddy is the only entry point

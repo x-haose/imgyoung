@@ -29,7 +29,7 @@ type HomeCopy = {
 const COMMANDS = {
   script: 'curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | sh',
   docker:
-    'docker run -d --name imgyoung --restart unless-stopped \\\n  -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest',
+    'docker run -d --name imgyoung --restart unless-stopped \\\n  -p 8721:8721 -v imgyoung-data:/data haose/imgyoung:latest',
   compose:
     'curl -fsSLO https://raw.githubusercontent.com/x-haose/imgyoung/main/deploy/compose.yaml\ndocker compose up -d',
   library:

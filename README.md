@@ -14,7 +14,7 @@
   <a href="https://github.com/x-haose/imgyoung/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/x-haose/imgyoung/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="./go.mod"><img src="https://img.shields.io/github/go-mod/go-version/x-haose/imgyoung" alt="Go 版本"></a>
   <a href="https://pkg.go.dev/github.com/x-haose/imgyoung"><img src="https://pkg.go.dev/badge/github.com/x-haose/imgyoung.svg" alt="Go 包文档"></a>
-  <a href="https://github.com/x-haose/imgyoung/pkgs/container/imgyoung"><img src="https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker 镜像"></a>
+  <a href="https://hub.docker.com/r/haose/imgyoung"><img src="https://img.shields.io/badge/docker-hub-2496ED?logo=docker&logoColor=white" alt="Docker 镜像"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/x-haose/imgyoung?color=blue" alt="MIT 许可证"></a>
 </p>
 
@@ -108,7 +108,7 @@
 
 ```bash
 docker run -d --name imgyoung --restart unless-stopped \
-  -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+  -p 8721:8721 -v imgyoung-data:/data haose/imgyoung:latest
 ```
 
 或者在 Linux / macOS 上一行装成本机程序，装完运行 `imgyoung` 启动（Linux 上改用 `| sudo sh -s -- --service`，会注册 systemd 服务并直接启动）：

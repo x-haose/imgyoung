@@ -120,7 +120,7 @@ sudo systemctl restart imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
   -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 写成 `-p 8721:8721` 会发布到所有网卡，而且 Docker 自己管理的端口转发规则不受 ufw 等主机防火墙约束。

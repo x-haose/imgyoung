@@ -48,7 +48,7 @@ cd web && pnpm dev  # 前端热更新,/api 与图片路径代理到 8721
 
 ## 发布
 
-推送 `vX.Y.Z` 标签即触发 release 工作流：goreleaser 构建 linux / darwin / windows 的 amd64 与 arm64 二进制、GHCR 多架构镜像，并按提交类型分组生成 Release 说明。本地用 `goreleaser check` 验证配置。
+推送 `vX.Y.Z` 标签即触发 release 工作流：goreleaser 构建 linux / darwin / windows 的 amd64 与 arm64 二进制、Docker Hub 与 GHCR 的多架构镜像，并按提交类型分组生成 Release 说明。本地用 `goreleaser check` 验证配置。
 
 ## 安全问题
 

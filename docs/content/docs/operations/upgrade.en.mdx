@@ -38,11 +38,11 @@ Pull the new image, remove the old container, and create a new one with the **sa
 If you pass the master key with `-e IMGYOUNG_MASTER_KEY=…`, do not leave it out when recreating the container. Once the instance has started for the first time, it refuses to start without its master key rather than generate a new one.
 
 ```bash title="Terminal"
-docker pull ghcr.io/x-haose/imgyoung:latest
+docker pull haose/imgyoung:latest
 docker stop imgyoung && docker rm imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 Image tags:

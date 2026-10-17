@@ -14,7 +14,7 @@
   <a href="https://github.com/x-haose/imgyoung/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/x-haose/imgyoung/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="./go.mod"><img src="https://img.shields.io/github/go-mod/go-version/x-haose/imgyoung" alt="Go version"></a>
   <a href="https://pkg.go.dev/github.com/x-haose/imgyoung"><img src="https://pkg.go.dev/badge/github.com/x-haose/imgyoung.svg" alt="Go Reference"></a>
-  <a href="https://github.com/x-haose/imgyoung/pkgs/container/imgyoung"><img src="https://img.shields.io/badge/docker-ghcr.io-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
+  <a href="https://hub.docker.com/r/haose/imgyoung"><img src="https://img.shields.io/badge/docker-hub-2496ED?logo=docker&logoColor=white" alt="Docker image"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/x-haose/imgyoung?color=blue" alt="MIT license"></a>
 </p>
 
@@ -108,7 +108,7 @@ Run it with Docker:
 
 ```bash
 docker run -d --name imgyoung --restart unless-stopped \
-  -p 8721:8721 -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+  -p 8721:8721 -v imgyoung-data:/data haose/imgyoung:latest
 ```
 
 Or install it as a local program on Linux or macOS in one line, then run `imgyoung` to start it (on Linux, use `| sudo sh -s -- --service` instead to register a systemd service and start it right away):

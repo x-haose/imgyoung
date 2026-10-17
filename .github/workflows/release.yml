@@ -1,4 +1,4 @@
-# 发布流水线:推送 v* 标签时,goreleaser 构建六平台二进制与 GHCR 多架构镜像,并创建 GitHub Release。
+# 发布流水线:推送 v* 标签时,goreleaser 构建六平台二进制与 Docker Hub、GHCR 的多架构镜像,并创建 GitHub Release。
 name: release
 
 on:
@@ -34,6 +34,10 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          username: haose
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io

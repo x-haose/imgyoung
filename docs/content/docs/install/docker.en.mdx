@@ -1,6 +1,6 @@
 ---
 title: Docker image
-description: Run ImgYoung from the multi-arch image on GHCR - the run command, image tags, the data volume, environment variables and settings behind a reverse proxy.
+description: Run ImgYoung from the multi-arch image on Docker Hub or GHCR - the run command, image tags, the data volume, environment variables and settings behind a reverse proxy.
 ---
 
 ## Running it
@@ -9,7 +9,7 @@ description: Run ImgYoung from the multi-arch image on GHCR - the run command, i
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 Open `http://<host>:8721/` and sign in with `admin` and the initial password; the first sign-in asks you to change the password right away. The initial password is printed in the log of the first start (`docker logs imgyoung 2>&1 | grep 初始密码`), or you can set it with `IMGYOUNG_ADMIN_PASSWORD`.
@@ -24,12 +24,12 @@ Open `http://<host>:8721/` and sign in with `admin` and the initial password; th
 The image is published for `linux/amd64` and `linux/arm64`, and Docker picks the right one for the host. To see the version inside an image:
 
 ```bash title="Terminal"
-docker run --rm ghcr.io/x-haose/imgyoung:latest -version
+docker run --rm haose/imgyoung:latest -version
 ```
 
 ## Image tags
 
-The image is `ghcr.io/x-haose/imgyoung`. Tags have no `v` prefix:
+The image is published on Docker Hub (`haose/imgyoung`) and GHCR (`ghcr.io/x-haose/imgyoung`) with identical contents and tags; the examples below use Docker Hub. Tags have no `v` prefix:
 
 | Tag | Points to | Good for |
 |---|---|---|
@@ -78,7 +78,7 @@ sudo chown 65532:65532 /srv/imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v /srv/imgyoung:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 A named volume inherits the ownership of `/data` from the image the first time it is mounted; a host directory does not. With the wrong owner, the process cannot create the database and fails at startup.
@@ -136,7 +136,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   -p 127.0.0.1:8721:8721 \
   -v imgyoung-data:/data \
   -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 `172.16.0.0/12` covers most networks Docker allocates by default; check the actual subnet with `docker network inspect <network>`.
@@ -165,12 +165,12 @@ Before upgrading, consider clicking **Back up now** under **Settings → Backups
 Then pull the new image and recreate the container with the same flags. All data lives in the volume and is untouched; the database schema is migrated automatically when the new version starts:
 
 ```bash title="Terminal"
-docker pull ghcr.io/x-haose/imgyoung:latest
+docker pull haose/imgyoung:latest
 docker stop imgyoung && docker rm imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 `docker stop` waits 10 seconds by default before killing the container. ImgYoung finishes shutting down within about 8 seconds, so the default is enough.

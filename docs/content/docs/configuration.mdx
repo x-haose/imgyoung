@@ -79,7 +79,7 @@ IMGYOUNG_LISTEN=127.0.0.1:8721 IMGYOUNG_DATA_DIR=/srv/imgyoung ./imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
   -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 容器内保持默认的 `:8721` 监听，只在宿主机一侧用 `-p 127.0.0.1:8721:8721` 限制对外暴露。

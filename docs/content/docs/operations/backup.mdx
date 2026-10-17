@@ -171,7 +171,7 @@ cp imgyoung-20261015-083000.123.db data/imgyoung.db.restore
 ```bash title="终端"
 # 容器已在运行时先 docker stop imgyoung;还没有容器时按原来的参数先建出来(不启动)
 docker create --name imgyoung --restart unless-stopped -p 8721:8721 \
-  -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+  -v imgyoung-data:/data haose/imgyoung:latest
 docker run --rm --volumes-from imgyoung -v "$PWD":/in:ro alpine:3.24 sh -c '
   cp /in/imgyoung-master.key /data/master.key &&
   cp /in/imgyoung-20261015-083000.123.db /data/imgyoung.db.restore &&

@@ -38,11 +38,11 @@ curl -fsSL https://raw.githubusercontent.com/x-haose/imgyoung/main/install.sh | 
 原来用 `-e IMGYOUNG_MASTER_KEY=…` 传入主密钥的，重建容器时不要漏掉。实例启动过一次之后，找不到主密钥就会拒绝启动，不会生成新的密钥。
 
 ```bash title="终端"
-docker pull ghcr.io/x-haose/imgyoung:latest
+docker pull haose/imgyoung:latest
 docker stop imgyoung && docker rm imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 镜像标签：

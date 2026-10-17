@@ -14,7 +14,7 @@ description: 用 Docker 跑起 ImgYoung，登录后台，上传第一张图并�
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 - `-v imgyoung-data:/data`：数据库、内置 local 渠道里的图片与主密钥 `master.key` 都在这个卷里，删掉卷就是删掉全部数据。

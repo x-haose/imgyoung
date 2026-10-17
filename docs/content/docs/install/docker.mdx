@@ -1,6 +1,6 @@
 ---
 title: Docker 镜像
-description: 用 GHCR 上的多架构镜像运行 ImgYoung：启动命令、镜像标签、数据卷、环境变量与反向代理下的设置。
+description: 用 Docker Hub 或 GHCR 上的多架构镜像运行 ImgYoung：启动命令、镜像标签、数据卷、环境变量与反向代理下的设置。
 ---
 
 ## 启动
@@ -9,7 +9,7 @@ description: 用 GHCR 上的多架构镜像运行 ImgYoung：启动命令、镜�
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 浏览器打开 `http://<主机>:8721/`，用 `admin` 和初始密码登录，首次登录会要求立即修改密码。初始密码打印在首次启动的日志里（`docker logs imgyoung 2>&1 | grep 初始密码`），也可以用 `IMGYOUNG_ADMIN_PASSWORD` 自己指定。
@@ -24,12 +24,12 @@ docker run -d --name imgyoung --restart unless-stopped \
 镜像提供 `linux/amd64` 与 `linux/arm64` 两种架构，Docker 会按主机自动选择。查看镜像里的版本：
 
 ```bash title="终端"
-docker run --rm ghcr.io/x-haose/imgyoung:latest -version
+docker run --rm haose/imgyoung:latest -version
 ```
 
 ## 镜像标签
 
-镜像地址为 `ghcr.io/x-haose/imgyoung`，标签不带 `v` 前缀：
+镜像发布在 Docker Hub（`haose/imgyoung`）和 GHCR（`ghcr.io/x-haose/imgyoung`），两处的内容与标签完全相同，下文以 Docker Hub 为例。标签不带 `v` 前缀：
 
 | 标签 | 指向 | 适合 |
 |---|---|---|
@@ -78,7 +78,7 @@ sudo chown 65532:65532 /srv/imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v /srv/imgyoung:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 具名卷第一次挂载时会沿用镜像里 `/data` 的属主，宿主机目录不会。属主不对时，进程无法在目录里创建数据库，启动即失败。
@@ -136,7 +136,7 @@ docker run -d --name imgyoung --restart unless-stopped \
   -p 127.0.0.1:8721:8721 \
   -v imgyoung-data:/data \
   -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 `172.16.0.0/12` 覆盖 Docker 默认分配的大部分网段，实际网段用 `docker network inspect <网络名>` 查看。
@@ -165,12 +165,12 @@ docker run -d --name imgyoung --restart unless-stopped \
 然后拉取新镜像，用同样的参数重建容器。数据都在卷里，不受影响；数据库结构在新版本启动时自动迁移：
 
 ```bash title="终端"
-docker pull ghcr.io/x-haose/imgyoung:latest
+docker pull haose/imgyoung:latest
 docker stop imgyoung && docker rm imgyoung
 docker run -d --name imgyoung --restart unless-stopped \
   -p 8721:8721 \
   -v imgyoung-data:/data \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 `docker stop` 默认等 10 秒后强制结束容器。ImgYoung 停止时最多约 8 秒就能完成收尾，默认值够用。

@@ -120,7 +120,7 @@ Keep the default listen address inside the container and publish the port on the
 docker run -d --name imgyoung --restart unless-stopped \
   -p 127.0.0.1:8721:8721 -v imgyoung-data:/data \
   -e IMGYOUNG_TRUSTED_PROXIES=172.16.0.0/12 \
-  ghcr.io/x-haose/imgyoung:latest
+  haose/imgyoung:latest
 ```
 
 `-p 8721:8721` publishes on every interface, and Docker's own forwarding rules bypass host firewalls such as ufw.

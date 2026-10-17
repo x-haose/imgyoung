@@ -48,7 +48,7 @@ cd web && pnpm dev  # front-end hot reload; /api and image paths are proxied to 
 
 ## Releases
 
-Pushing a `vX.Y.Z` tag triggers the release workflow: goreleaser builds amd64 and arm64 binaries for linux / darwin / windows and a multi-arch GHCR image, and generates release notes grouped by commit type. Validate the configuration locally with `goreleaser check`.
+Pushing a `vX.Y.Z` tag triggers the release workflow: goreleaser builds amd64 and arm64 binaries for linux / darwin / windows and a multi-arch image on Docker Hub and GHCR, and generates release notes grouped by commit type. Validate the configuration locally with `goreleaser check`.
 
 ## Security issues
 

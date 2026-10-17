@@ -3,7 +3,7 @@
 # 用 admin 和 docker compose logs 里打印的初始密码登录(首次登录强制改密)。
 services:
   imgyoung:
-    image: ghcr.io/x-haose/imgyoung:latest # 生产环境建议固定主次版本(如 0.1)或具体版本
+    image: haose/imgyoung:latest # 生产环境建议固定主次版本(如 0.1)或具体版本
     # 后台「从快照恢复」会让服务优雅退出,靠重启策略重新拉起后换入快照;正常退出也要拉起
     restart: unless-stopped
     # 优雅停机最多约 8 秒,15 秒留有余量

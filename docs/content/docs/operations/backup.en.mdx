@@ -171,7 +171,7 @@ The image runs as uid 65532 and has no shell, so use a throwaway container to wr
 ```bash title="Terminal"
 # If the container is running, docker stop imgyoung first; if there is none yet, create it with your usual options (without starting it)
 docker create --name imgyoung --restart unless-stopped -p 8721:8721 \
-  -v imgyoung-data:/data ghcr.io/x-haose/imgyoung:latest
+  -v imgyoung-data:/data haose/imgyoung:latest
 docker run --rm --volumes-from imgyoung -v "$PWD":/in:ro alpine:3.24 sh -c '
   cp /in/imgyoung-master.key /data/master.key &&
   cp /in/imgyoung-20261015-083000.123.db /data/imgyoung.db.restore &&
