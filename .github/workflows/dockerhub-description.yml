@@ -1,0 +1,28 @@
+# 把 .github/dockerhub.md 同步为 Docker Hub 仓库页的概述与简介。
+# DOCKERHUB_TOKEN 需要 Read、Write、Delete 范围,这是 peter-evans/dockerhub-description 对更新仓库描述的要求。
+name: dockerhub-description
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/dockerhub.md
+      - .github/workflows/dockerhub-description.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: peter-evans/dockerhub-description@v5
+        with:
+          username: haose
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: haose/imgyoung
+          readme-filepath: .github/dockerhub.md
+          short-description: 多渠道主备容灾的自部署图床 / Self-hosted image host with multi-channel failover
