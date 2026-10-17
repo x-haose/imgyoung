@@ -1,0 +1,80 @@
+---
+title: NAS and server panels
+description: Deploy ImgYoung with one compose file on Synology, 1Panel, BT Panel, CasaOS, Unraid and similar systems with a graphical interface, and handle data directory permissions.
+---
+
+These systems all run Docker images. ImgYoung on them is the same program as on a plain host; only the place where you create the container is a graphical interface. Below is one generic compose file, followed by the entry point and caveats for each system.
+
+## The generic compose file
+
+```yaml title="compose.yaml"
+services:
+  imgyoung:
+    image: haose/imgyoung:latest
+    restart: unless-stopped
+    stop_grace_period: 15s
+    # Run as the user that owns the data directory, as uid:gid
+    user: "1000:1000"
+    ports:
+      - "8721:8721"
+    volumes:
+      # Replace with your data directory; the database, the master key and the built-in local channel's objects live here
+      - /path/to/imgyoung:/data
+```
+
+After it starts, open `http://<device address>:8721/` and sign in as `admin` with the initial password; the first sign-in forces a password change. The initial password is printed in the first start's log; look for 「初始密码」 on the system's container log page.
+
+### Data directory permissions
+
+The image runs as uid 65532 by default. When the data directory is owned by someone else, the process cannot create the database in it and fails to start.
+
+On a NAS, shared folders usually belong to your own sign-in user, and changing the owner is awkward. ImgYoung does not depend on a particular uid; it only needs read and write access to `/data`, so there are two ways:
+
+- **Add `user:` (recommended)**: set it to the uid and gid of the user that owns the data directory. The process then runs as that user, and the files in the data directory belong to that user. Sign in over SSH and run `id <username>` to find both numbers.
+- **Change the owner**: set the data directory's owner to `65532:65532` and leave out `user:`.
+
+On systems that only accept a named volume and not a host directory, there is nothing to handle: the first mount of a named volume inherits the owner of `/data` in the image.
+
+<Callout type="warn" title="Back up master.key separately">
+  Channel credentials and the data in encrypted channels need the master key to decrypt. It lives in `master.key` in the data directory and is not part of the metadata database snapshot. Copy it somewhere else after the first start; see the "The data volume" section of [Docker image](./docker.mdx).
+</Callout>
+
+## Synology Container Manager
+
+Container Manager on DSM 7.2 and later (the package name differs slightly between DSM versions):
+
+1. Under "Project", click "Create", choose to create the compose file in the editor as the source, and paste in the content above.
+2. Installing Container Manager creates a shared folder named `docker`. Put the data directory under it, for example `/volume1/docker/imgyoung`; this is the path on the left of the colon under `volumes:`.
+3. For the uid and gid in `user:`, run `id` for your sign-in user.
+
+## 1Panel
+
+Create it under "Container", "Compose". 1Panel offers three ways: edit in the web editor, pick an existing `docker-compose.yml` on the server, or use a compose template. Choose edit and paste the content above.
+
+If you use 1Panel's website feature as the reverse proxy, see "Behind a reverse proxy" below.
+
+## BT Panel
+
+Create a new project under "Container orchestration" in the Docker module, using the compose file above.
+
+If you use BT Panel's website feature as the reverse proxy, see "Behind a reverse proxy" below.
+
+## CasaOS and ZimaOS
+
+Click "+" beside the apps area on the dashboard, choose custom install, and paste the compose file above through the import function; CasaOS converts it into its own app format. Check for host port conflicts before installing: if 8721 is taken, the install can fail without an error. Change the number on the left of the colon under `ports:` to a free port.
+
+## Unraid
+
+Unraid's built-in way is to fill in "Add Container" item by item: the image is `haose/imgyoung`, the container port is 8721, and add one path mapping with `/data` as the container path and a location in your array share as the host path. You can also install a plugin such as Compose Manager Plus from Community Applications and use the compose file above directly. Either way the data directory must be writable by the process; see "Data directory permissions" above.
+
+## Other systems
+
+Any system that runs Docker images and lets you set the image, the port and the data directory mapping can deploy it: image `haose/imgyoung`, port 8721, and the data directory mapped to `/data` in the container. Where there is a Compose entry, use the file above directly.
+
+## Behind a reverse proxy
+
+A website or reverse proxy feature built into the system usually runs on the host and forwards through the published port, so ImgYoung sees the Docker bridge gateway as the peer, not the loopback address. Set the network the proxy is on as trusted; otherwise the login rate limit treats all visitors as one source, and the image links it returns start with `http://`. See [Docker image](./docker.mdx#behind-a-reverse-proxy) for how, and [Reverse proxy](../operations/reverse-proxy.mdx) for the proxy's own configuration.
+
+## Upgrading
+
+The `latest` tag does not update itself. To upgrade, click "Back up now" under "Settings → Backup and export" in the admin UI, then pull the new image and recreate the container in the system's interface; the buttons differ by system. The data is in the data directory and survives recreating the container. See [Upgrade](../operations/upgrade.mdx) for rollback and caveats.

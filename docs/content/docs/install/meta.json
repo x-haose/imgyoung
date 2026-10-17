@@ -6,6 +6,7 @@
     "script",
     "docker",
     "compose",
+    "nas-panel",
     "binary",
     "source"
   ]
