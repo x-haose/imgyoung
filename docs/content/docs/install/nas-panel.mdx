@@ -7,20 +7,9 @@ description: 在群晖、1Panel、宝塔、CasaOS、Unraid 等带图形界面的
 
 ## 通用的 compose
 
-```yaml title="compose.yaml"
-services:
-  imgyoung:
-    image: haose/imgyoung:latest
-    restart: unless-stopped
-    stop_grace_period: 15s
-    # 以拥有数据目录的用户运行，取值为该用户的 uid:gid
-    user: "1000:1000"
-    ports:
-      - "8721:8721"
-    volumes:
-      # 换成你的数据目录；数据库、主密钥与内置 local 渠道的对象都在这里
-      - /path/to/imgyoung:/data
-```
+<include cwd lang="yaml" meta='title="deploy/compose.nas.yaml"'>../deploy/compose.nas.yaml</include>
+
+必须改的是标了「改」的两处：数据目录的路径，以及 `user:` 的 uid 与 gid，含义见下一节。注释掉的环境变量按需启用。
 
 启动后，浏览器打开 `http://<设备地址>:8721/`，用 `admin` 和初始密码登录，首次登录会要求立即修改密码。初始密码打印在首次启动的日志里，在系统的容器日志页面里找「初始密码」。
 

@@ -7,20 +7,9 @@ These systems all run Docker images. ImgYoung on them is the same program as on 
 
 ## The generic compose file
 
-```yaml title="compose.yaml"
-services:
-  imgyoung:
-    image: haose/imgyoung:latest
-    restart: unless-stopped
-    stop_grace_period: 15s
-    # Run as the user that owns the data directory, as uid:gid
-    user: "1000:1000"
-    ports:
-      - "8721:8721"
-    volumes:
-      # Replace with your data directory; the database, the master key and the built-in local channel's objects live here
-      - /path/to/imgyoung:/data
-```
+<include cwd lang="yaml" meta='title="deploy/compose.nas.yaml"'>../deploy/compose.nas.yaml</include>
+
+The two places marked 「改」 ("change") must be edited: the data directory path, and the uid and gid in `user:`; the next section explains them. The commented-out environment variables are optional.
 
 After it starts, open `http://<device address>:8721/` and sign in as `admin` with the initial password; the first sign-in forces a password change. The initial password is printed in the first start's log; look for 「初始密码」 on the system's container log page.
 

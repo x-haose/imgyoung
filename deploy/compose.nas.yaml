@@ -1,0 +1,25 @@
+# ImgYoung 的 Docker Compose 示例:数据放在宿主机目录,适合群晖、1Panel、宝塔、CasaOS 等带图形界面的系统。
+# 用法:改下面标了「改」的两处,粘贴进系统的 Compose 编辑器后启动,浏览器打开 http://<设备地址>:8721/,
+# 用 admin 和容器日志里打印的初始密码登录(首次登录强制改密)。
+services:
+  imgyoung:
+    image: haose/imgyoung:latest # 生产环境建议固定主次版本(如 0.1)或具体版本
+    # 后台「从快照恢复」会让服务优雅退出,靠重启策略重新拉起后换入快照;正常退出也要拉起
+    restart: unless-stopped
+    # 优雅停机最多约 8 秒,15 秒留有余量
+    stop_grace_period: 15s
+    # 改:以拥有数据目录的用户运行,取值为该用户的 uid:gid。镜像默认以 uid 65532 运行,
+    # 数据目录的属主不是它时进程无法创建数据库;进程不依赖特定 uid,只要求对 /data 可读写
+    user: "1000:1000"
+    ports:
+      - "8721:8721"
+    volumes:
+      # 改:换成你的数据目录。数据库、本地存储渠道与自动生成的 master.key 都在这里;
+      # 丢了 master.key,渠道凭证与加密数据不可恢复
+      - /path/to/imgyoung:/data
+    # environment:
+    #   # 管理员 admin 的初始密码,至少 8 个字符;不设置时首次启动随机生成并打印在日志里
+    #   IMGYOUNG_ADMIN_PASSWORD: 换成你的初始密码
+    #   # 前面有反向代理时(含系统自带的网站或反向代理功能),ImgYoung 看到的对端是 Docker 网络里的地址,
+    #   # 填该网络的网段(docker network inspect 查看);否则登录限速与 /metrics 放行会把所有请求都当成来自代理本身
+    #   IMGYOUNG_TRUSTED_PROXIES: 172.16.0.0/12
