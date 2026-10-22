@@ -19,13 +19,37 @@ type Unfetchable struct {
 	Reference string `json:"reference"` // 引用原文,最长 200 个字符
 }
 
+// maxReportEntries 扫描报告里逐条列出的失败页面与无法抓取的引用各保留的条数上限;超出的只计入总数。
+// 报告整份存进任务行并随每次读取任务详情返回,大站点大面积失败时不能让它无限增长。
+const maxReportEntries = 1000
+
 // ScanReport 扫描结束时的汇总,以 JSON 存在 import_jobs.scan_report。
 type ScanReport struct {
 	Pages              int64         `json:"pages"`                // 扫描的页面或文档数
 	PagesWithoutImages int64         `json:"pages_without_images"` // 其中没有找到任何图片引用的数量
 	OffsitePages       int64         `json:"offsite_pages"`        // 站点地图或订阅源里不在其所属域名下而被跳过的数量
-	FailedPages        []PageFailure `json:"failed_pages"`         // 没有抓取成功的页面,同一个地址只列一次
-	Unfetchable        []Unfetchable `json:"unfetchable"`          // 服务端无法抓取的图片引用
+	FailedPages        []PageFailure `json:"failed_pages"`         // 没有抓取成功的页面,同一个地址只列一次,至多 maxReportEntries 条
+	FailedPagesTotal   int64         `json:"failed_pages_total"`   // 没有抓取成功的页面总数
+	Unfetchable        []Unfetchable `json:"unfetchable"`          // 服务端无法抓取的图片引用,至多 maxReportEntries 条
+	UnfetchableTotal   int64         `json:"unfetchable_total"`    // 服务端无法抓取的图片引用总数
+}
+
+// addFailure 记一个失败页面;列表满了只计数。
+// @param f 失败页面
+func (r *ScanReport) addFailure(f PageFailure) {
+	r.FailedPagesTotal++
+	if len(r.FailedPages) < maxReportEntries {
+		r.FailedPages = append(r.FailedPages, f)
+	}
+}
+
+// addUnfetchable 记一处无法抓取的引用;列表满了只计数。
+// @param u 无法抓取的引用
+func (r *ScanReport) addUnfetchable(u Unfetchable) {
+	r.UnfetchableTotal++
+	if len(r.Unfetchable) < maxReportEntries {
+		r.Unfetchable = append(r.Unfetchable, u)
+	}
 }
 
 // DecodeReport 解出任务行里的扫描报告。

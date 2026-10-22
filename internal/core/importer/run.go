@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -19,6 +20,15 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/urlfetch"
 )
 
+// quotaStreakLimit 连续这么多张图都因存储配额不足而失败,就认为配额已满而中止任务;中间只要有一张成功就重新计数。
+// 单张图超过剩余额度只算这张图失败,不拦住后面放得下的图。
+const quotaStreakLimit = 3
+
+// runStats 一次导入运行中跨条目共享的计数。
+type runStats struct {
+	quotaStreak atomic.Int32 // 连续因配额不足失败的条目数
+}
+
 // importItems 逐批转存任务里待转存的条目,处理完后任务进入 done;遇到配额已满、没有可用渠道或服务端故障即中止整个任务。
 // @Description: 条目的结果在处理后立即写表,所以中断后重新执行只处理仍是 pending 的条目;已入库而没来得及写表的图片
 // 靠每张图的幂等键避免重复。ctx 取消(用户取消或停机)时留下未处理的条目,不改任务状态。
@@ -26,6 +36,7 @@ import (
 // @return 读取条目失败的错误
 func (s *Service) importItems(ctx context.Context, job sqlc.ImportJob) error {
 	var after int64
+	var stats runStats
 	for {
 		items, err := s.cfg.Queries.ListPendingImportItems(ctx, sqlc.ListPendingImportItemsParams{
 			JobID: job.ID, AfterID: after, PageLimit: pendingBatch,
@@ -37,11 +48,13 @@ func (s *Service) importItems(ctx context.Context, job sqlc.ImportJob) error {
 			break
 		}
 		after = items[len(items)-1].ID
-		if code := s.importBatch(ctx, job, items); code != "" {
-			s.abort(ctx, job.ID, StatusImporting, code)
+		code := s.importBatch(ctx, job, items, &stats)
+		// 任务已被取消或停机:中止原因是被打断的副产物,不能把可能已重新开始的任务置为中止。
+		if ctx.Err() != nil {
 			return nil
 		}
-		if ctx.Err() != nil {
+		if code != "" {
+			s.abort(ctx, job.ID, StatusImporting, code)
 			return nil
 		}
 	}
@@ -57,8 +70,10 @@ func (s *Service) importItems(ctx context.Context, job sqlc.ImportJob) error {
 // importBatch 并发转存一批条目。
 // @param job 任务行
 // @param items 待转存的条目
+// @param st 本次运行的共享计数
 // @return 需要中止整个任务时的原因码;否则为空串
-func (s *Service) importBatch(ctx context.Context, job sqlc.ImportJob, items []sqlc.ListPendingImportItemsRow) string {
+func (s *Service) importBatch(ctx context.Context, job sqlc.ImportJob, items []sqlc.ListPendingImportItemsRow,
+	st *runStats) string {
 	batchCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var (
@@ -72,7 +87,7 @@ func (s *Service) importBatch(ctx context.Context, job sqlc.ImportJob, items []s
 			if batchCtx.Err() != nil {
 				return nil
 			}
-			if code := s.importOne(batchCtx, job, item); code != "" {
+			if code := s.importOne(batchCtx, job, item, st); code != "" {
 				mu.Lock()
 				if abort == "" {
 					abort = code
@@ -94,11 +109,26 @@ func (s *Service) importBatch(ctx context.Context, job sqlc.ImportJob, items []s
 // @param ctx 批次的上下文,取消表示任务被取消、停机或批内已有条目要求中止
 // @param job 任务行
 // @param item 待转存的条目
+// @param st 本次运行的共享计数
 // @return 需要中止整个任务时的原因码;否则为空串
-func (s *Service) importOne(ctx context.Context, job sqlc.ImportJob, item sqlc.ListPendingImportItemsRow) string {
+func (s *Service) importOne(ctx context.Context, job sqlc.ImportJob, item sqlc.ListPendingImportItemsRow,
+	st *runStats) string {
 	ictx, cancel := context.WithTimeout(ctx, itemTimeout)
 	defer cancel()
-	data, _, err := s.cfg.Images.FetchWith(ictx, item.Url, urlfetch.Options{
+	// 上次中断时图片可能已入库而结果没来得及写表:先按幂等键认领,不再抓取(旧地址可能已经失效)。
+	existing, found, err := s.cfg.Upload.ExistingUpload(ctx, job.UserID, importKey(job.ID, item.ID))
+	if err != nil {
+		if ctx.Err() != nil {
+			return ""
+		}
+		s.cfg.Logger.Error("查询条目的幂等键失败,任务中止", "item", item.ID, "err", err)
+		return errcode.Internal.String()
+	}
+	if found {
+		st.quotaStreak.Store(0)
+		return s.markDone(ctx, item.ID, existing)
+	}
+	got, err := s.cfg.Images.FetchWith(ictx, item.Url, urlfetch.Options{
 		Referer: refererFor(job, item.FirstSource), UserAgent: s.cfg.UserAgent,
 	})
 	if err != nil {
@@ -108,19 +138,36 @@ func (s *Service) importOne(ctx context.Context, job sqlc.ImportJob, item sqlc.L
 		code, detail := classifyFetch(err)
 		return s.markFailed(ctx, item.ID, code, detail)
 	}
-	res, err := s.cfg.Upload.Process(ictx, data, s.uploadOptions(job, item))
+	res, err := s.cfg.Upload.Process(ictx, got.Data, s.uploadOptions(job, item))
 	if err != nil {
 		if ctx.Err() != nil {
 			return ""
 		}
-		return s.settleUploadError(ctx, item, err)
+		return s.settleUploadError(ctx, item, st, err)
 	}
-	// 图片已入库,结果无论如何都要记下:脱离取消。
-	err = s.cfg.Queries.MarkImportItemDone(context.WithoutCancel(ctx), sqlc.MarkImportItemDoneParams{
-		ID: item.ID, ImageID: sql.NullString{String: res.ImageID, Valid: true},
+	st.quotaStreak.Store(0)
+	return s.markDone(ctx, item.ID, res.ImageID)
+}
+
+// importKey 一张图的幂等键。带上任务 ID:条目 ID 在任务被删除后可能被新任务的条目复用,
+// 只用条目 ID 会让新条目认领到旧任务留下的图。
+// @param jobID 任务 ID
+// @param itemID 条目 ID
+// @return 幂等键
+func importKey(jobID string, itemID int64) string {
+	return fmt.Sprintf("import-%s-%d", jobID, itemID)
+}
+
+// markDone 记下条目已导入。图片已入库,结果无论如何都要记下,所以脱离取消。
+// @param itemID 条目 ID
+// @param imageID 图片短 ID
+// @return 写表失败时的 internal(中止任务);否则为空串
+func (s *Service) markDone(ctx context.Context, itemID int64, imageID string) string {
+	err := s.cfg.Queries.MarkImportItemDone(context.WithoutCancel(ctx), sqlc.MarkImportItemDoneParams{
+		ID: itemID, ImageID: sql.NullString{String: imageID, Valid: true},
 	})
 	if err != nil {
-		s.cfg.Logger.Error("记录导入结果失败", "item", item.ID, "image", res.ImageID, "err", err)
+		s.cfg.Logger.Error("记录导入结果失败", "item", itemID, "image", imageID, "err", err)
 		return errcode.Internal.String()
 	}
 	return ""
@@ -128,9 +175,11 @@ func (s *Service) importOne(ctx context.Context, job sqlc.ImportJob, item sqlc.L
 
 // settleUploadError 把上传管线的错误落到条目或任务上。
 // @param item 条目
+// @param st 本次运行的共享计数
 // @param err 上传管线返回的错误
 // @return 需要中止整个任务时的原因码;否则为空串
-func (s *Service) settleUploadError(ctx context.Context, item sqlc.ListPendingImportItemsRow, err error) string {
+func (s *Service) settleUploadError(ctx context.Context, item sqlc.ListPendingImportItemsRow, st *runStats,
+	err error) string {
 	switch {
 	case errors.Is(err, upload.ErrUnsupportedType):
 		return s.markFailed(ctx, item.ID, errcode.UploadUnsupportedType, truncateDetail(err.Error()))
@@ -139,7 +188,10 @@ func (s *Service) settleUploadError(ctx context.Context, item sqlc.ListPendingIm
 	case errors.Is(err, upload.ErrInvalidImage):
 		return s.markFailed(ctx, item.ID, errcode.UploadInvalidImage, truncateDetail(err.Error()))
 	case errors.Is(err, upload.ErrQuotaExceeded):
-		return errcode.UploadQuotaExceeded.String()
+		if st.quotaStreak.Add(1) >= quotaStreakLimit {
+			return errcode.UploadQuotaExceeded.String()
+		}
+		return s.markFailed(ctx, item.ID, errcode.UploadQuotaExceeded, truncateDetail(err.Error()))
 	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):
 		s.cfg.Logger.Error("渠道不可用,导入中止", "item", item.ID, "err", err)
 		return errcode.UploadUnavailable.String()
@@ -177,7 +229,7 @@ func (s *Service) uploadOptions(job sqlc.ImportJob, item sqlc.ListPendingImportI
 	opts := upload.Options{
 		UserID:         job.UserID,
 		FileName:       urlfetch.FileName(item.Url),
-		IdempotencyKey: fmt.Sprintf("import-%d", item.ID),
+		IdempotencyKey: importKey(job.ID, item.ID),
 		EXIFPolicy:     policy,
 	}
 	if job.TtlSeconds.Valid {

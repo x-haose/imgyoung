@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -26,6 +27,57 @@ import (
 type scannedDocument struct {
 	name string         // 文档名,没有时按序号补一个
 	res  imgrefs.Result // 扫描到的引用
+}
+
+// scanDocuments 扫描全部文本文档。
+// @Description: 单份文档有字节上限;解析放进有并发名额与时限的执行单元里——解析函数不能被取消,超时后它仍会算完
+// 才归还名额,所以恶意输入最多占用 parseSlots 个核,而不是随请求数增长。
+// @param docs 文档
+// @param base 解析相对路径的基准地址,可为 nil
+// @return 各文档的扫描结果
+// @return *InputError(文档过大或解析超时)、ctx 取消的错误
+func (s *Service) scanDocuments(ctx context.Context, docs []Document, base *url.URL) ([]scannedDocument, error) {
+	out := make([]scannedDocument, len(docs))
+	for i, d := range docs {
+		if len(d.Text) > MaxTextDocumentBytes {
+			return nil, &InputError{Detail: fmt.Sprintf("documents[%d] 超过 %d MiB", i, MaxTextDocumentBytes>>20)}
+		}
+		doc, err := s.scanWithDeadline(ctx, i, d, base)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = doc
+	}
+	return out, nil
+}
+
+// scanWithDeadline 在并发名额内扫描一份文档,超时即放弃等待。
+// @param i 文档序号
+// @param d 文档
+// @param base 解析相对路径的基准地址,可为 nil
+// @return 扫描结果
+// @return *InputError(解析超时)、ctx 取消的错误
+func (s *Service) scanWithDeadline(ctx context.Context, i int, d Document, base *url.URL) (scannedDocument, error) {
+	select {
+	case s.parse <- struct{}{}:
+	case <-ctx.Done():
+		return scannedDocument{}, ctx.Err()
+	}
+	done := make(chan scannedDocument, 1)
+	go func() {
+		defer func() { <-s.parse }()
+		done <- scanDocument(i, d, base)
+	}()
+	timer := time.NewTimer(s.parseDeadline)
+	defer timer.Stop()
+	select {
+	case res := <-done:
+		return res, nil
+	case <-timer.C:
+		return scannedDocument{}, &InputError{Detail: fmt.Sprintf("documents[%d] 解析超时,内容可能含有大量嵌套结构", i)}
+	case <-ctx.Done():
+		return scannedDocument{}, ctx.Err()
+	}
 }
 
 // scanDocument 扫描一份文本:HTML 文档按 HTML 解析,其余按 Markdown 解析(内嵌的 HTML 同样会被扫描)。
@@ -68,7 +120,7 @@ func textReport(docs []scannedDocument) ScanReport {
 			r.PagesWithoutImages++
 		}
 		for _, raw := range d.res.Unfetchable {
-			r.Unfetchable = append(r.Unfetchable, Unfetchable{Source: d.name, Reference: raw})
+			r.addUnfetchable(Unfetchable{Source: d.name, Reference: raw})
 		}
 	}
 	return r
@@ -249,35 +301,37 @@ type expanded struct {
 // @return 列出的页面与子站点地图
 // @return 数据库故障或 ctx 取消的错误
 func (sc *siteScan) expand(ctx context.Context, task listingTask) (expanded, error) {
-	data, err := sc.fetchDocument(ctx, task.url)
+	doc, err := sc.fetchDocument(ctx, task.url)
 	if err != nil {
 		return expanded{}, sc.recordFailure(ctx, task.url, err)
 	}
-	if strings.HasPrefix(http.DetectContentType(data), "image/") {
+	if strings.HasPrefix(http.DetectContentType(doc.Data), "image/") {
 		return expanded{}, sc.storeDirectImage(ctx, task.url)
 	}
-	kind := imgrefs.Sniff(data)
+	kind := imgrefs.Sniff(doc.Data)
 	if kind == imgrefs.KindHTML {
 		if !task.seed {
 			return expanded{}, sc.recordFailure(ctx, task.url, imgrefs.ErrMalformed)
 		}
-		return expanded{}, sc.storePage(ctx, task.url, data)
+		return expanded{}, sc.storePage(ctx, task.url, doc)
 	}
-	listing, err := imgrefs.ParseListing(data, kind)
+	listing, err := imgrefs.ParseListing(doc.Data, kind)
 	if err != nil {
 		return expanded{}, sc.recordFailure(ctx, task.url, err)
 	}
-	return sc.collectListing(ctx, task.url, listing)
+	return sc.collectListing(ctx, task.url, doc.FinalURL, listing)
 }
 
 // collectListing 把一份站点地图、索引或订阅源列出的内容归类:同域名下的页面与子站点地图留下,
 // 其他域名的计数跳过,写不成地址的记为无法抓取,站点地图列出的图片直接登记为候选。
-// @param listURL 这份列表自己的地址,所列页面须与它同域名
+// @param listURL 这份列表自己的地址,作来源记录
+// @param finalURL 抓取列表时重定向后的最终地址;所列页面须与它同域名
 // @param l 解析结果
 // @return 留下的页面与子站点地图
 // @return 数据库故障的错误
-func (sc *siteScan) collectListing(ctx context.Context, listURL string, l imgrefs.Listing) (expanded, error) {
-	host := imgrefs.Host(listURL)
+func (sc *siteScan) collectListing(ctx context.Context, listURL, finalURL string,
+	l imgrefs.Listing) (expanded, error) {
+	host := imgrefs.Host(finalURL)
 	var out expanded
 	keep := func(raws []string) []string {
 		var kept []string
@@ -335,15 +389,15 @@ func (sc *siteScan) storeDirectImage(ctx context.Context, imageURL string) error
 }
 
 // storePage 扫描一个网页并登记其中的图片引用,页面计入已发现与已处理。
-// @param pageURL 页面地址
-// @param data 页面内容
+// @param pageURL 页面地址,作来源记录
+// @param doc 抓回的页面;相对路径按它重定向后的最终地址解析
 // @return 写入失败时的错误
-func (sc *siteScan) storePage(ctx context.Context, pageURL string, data []byte) error {
-	base, err := url.Parse(pageURL)
+func (sc *siteScan) storePage(ctx context.Context, pageURL string, doc urlfetch.Fetched) error {
+	base, err := url.Parse(doc.FinalURL)
 	if err != nil {
-		return fmt.Errorf("解析页面地址 %q: %w", pageURL, err)
+		return fmt.Errorf("解析页面地址 %q: %w", doc.FinalURL, err)
 	}
-	res := imgrefs.FromHTML(data, base)
+	res := imgrefs.FromHTML(doc.Data, base)
 	sc.mu.Lock()
 	sc.found++
 	sc.mu.Unlock()
@@ -367,7 +421,7 @@ func (sc *siteScan) recordPage(ctx context.Context, pageURL string, res imgrefs.
 		sc.report.PagesWithoutImages++
 	}
 	for _, raw := range res.Unfetchable {
-		sc.report.Unfetchable = append(sc.report.Unfetchable, Unfetchable{Source: pageURL, Reference: raw})
+		sc.report.addUnfetchable(Unfetchable{Source: pageURL, Reference: raw})
 	}
 	sc.mu.Unlock()
 	return sc.progress(ctx)
@@ -381,7 +435,7 @@ func (sc *siteScan) fetchPages(ctx context.Context, pages []string) error {
 	g.SetLimit(scanConcurrency)
 	for _, page := range pages {
 		g.Go(func() error {
-			data, err := sc.fetchDocument(gctx, page)
+			doc, err := sc.fetchDocument(gctx, page)
 			if err != nil {
 				if gctx.Err() != nil {
 					return gctx.Err()
@@ -391,11 +445,11 @@ func (sc *siteScan) fetchPages(ctx context.Context, pages []string) error {
 				sc.mu.Unlock()
 				return sc.recordFailure(gctx, page, err)
 			}
-			base, err := url.Parse(page)
+			base, err := url.Parse(doc.FinalURL)
 			if err != nil {
-				return fmt.Errorf("解析页面地址 %q: %w", page, err)
+				return fmt.Errorf("解析页面地址 %q: %w", doc.FinalURL, err)
 			}
-			return sc.recordPage(gctx, page, imgrefs.FromHTML(data, base))
+			return sc.recordPage(gctx, page, imgrefs.FromHTML(doc.Data, base))
 		})
 	}
 	return g.Wait()
@@ -403,14 +457,15 @@ func (sc *siteScan) fetchPages(ctx context.Context, pages []string) error {
 
 // fetchDocument 抓取一个站点地图、订阅源或网页;gzip 压缩的按解压后计大小。
 // @param target 规范化后的地址
-// @return 内容,已解压
+// @return 抓取结果,内容已解压
 // @return 抓取或解压失败的错误
-func (sc *siteScan) fetchDocument(ctx context.Context, target string) ([]byte, error) {
-	data, _, err := sc.s.cfg.Pages.FetchWith(ctx, target, urlfetch.Options{UserAgent: sc.s.cfg.UserAgent})
+func (sc *siteScan) fetchDocument(ctx context.Context, target string) (urlfetch.Fetched, error) {
+	got, err := sc.s.cfg.Pages.FetchWith(ctx, target, urlfetch.Options{UserAgent: sc.s.cfg.UserAgent})
 	if err != nil {
-		return nil, err
+		return urlfetch.Fetched{}, err
 	}
-	return gunzip(data)
+	got.Data, err = gunzip(got.Data)
+	return got, err
 }
 
 // gunzip 内容是 gzip 时解压,否则原样返回;解压后超过 MaxDocumentBytes 视为超限。
@@ -450,8 +505,7 @@ func (sc *siteScan) recordFailure(ctx context.Context, source string, cause erro
 		return nil
 	}
 	sc.failed[source] = struct{}{}
-	sc.report.FailedPages = append(sc.report.FailedPages,
-		PageFailure{Source: source, Code: code.String(), Detail: detail})
+	sc.report.addFailure(PageFailure{Source: source, Code: code.String(), Detail: detail})
 	return nil
 }
 
@@ -460,7 +514,7 @@ func (sc *siteScan) recordFailure(ctx context.Context, source string, cause erro
 // @param raw 引用原文
 func (sc *siteScan) addUnfetchable(source, raw string) {
 	sc.mu.Lock()
-	sc.report.Unfetchable = append(sc.report.Unfetchable, Unfetchable{Source: source, Reference: raw})
+	sc.report.addUnfetchable(Unfetchable{Source: source, Reference: raw})
 	sc.mu.Unlock()
 }
 

@@ -105,11 +105,11 @@ The page shows a localized explanation for each code, plus the original message 
 
 When a job has ended, click **Retry**: failed items and unprocessed items go back to **Importing** together. Items that already succeeded are not affected. Failed items are never retried automatically.
 
-A **Done**, **Aborted** or **Cancelled** job can be retried; if it has no failed or unprocessed items, the retry is refused (`import_nothing_to_retry`).
+A **Done**, **Aborted** or **Cancelled** job can be retried; if it has no failed or unprocessed items, the retry is refused (`import_nothing_to_retry`). A website job whose scan did not finish before it was aborted or cancelled has no candidates to continue from, so retrying scans it again from the start.
 
-### Aborting when the quota is full
+### Aborting
 
-When the storage quota is full, no channel is available, or the server fails (for example the database), carrying on would only make every remaining image fail the same way, so the whole job stops as **Aborted**. The page shows the reason and the unprocessed items are kept. Fix the problem first (raise the quota, repair the channel), then click **Retry** to continue.
+When no channel is available or the server fails (for example the database), carrying on would only make every remaining image fail the same way, so the whole job stops as **Aborted**. The page shows the reason and the unprocessed items are kept. The storage quota works the same way: when 3 images in a row fail because of the quota, the quota is considered full and the job stops. If just one image is larger than the remaining quota, only that image fails and the images that still fit are imported. Fix the problem first (raise the quota, repair the channel), then click **Retry** to continue.
 
 ### Cancelling
 
@@ -127,7 +127,7 @@ Once a job has ended (**Done**, **Aborted** or **Cancelled**), click **Download 
 | `source` | The page address or document name that references this image |
 | `raw` | The reference as written in that place, possibly a relative path; use it to find and replace in the source article |
 
-- **CSV**: UTF-8 with a header row and one row per reference; an image with no reference gets one row with `source` and `raw` empty. Cells starting with `=`, `+`, `-` or `@` are prefixed with a single quote so a spreadsheet does not treat them as formulas.
+- **CSV**: UTF-8 with a header row and one row per reference; an image with no reference gets one row with `source` and `raw` empty. Cells starting with `=`, `+`, `-` or `@` are prefixed with a single quote so a spreadsheet does not treat them as formulas; use the JSON mapping when you need the exact original text.
 - **JSON**: one object per image, with all references nested in a `references` array:
 
 ```json
@@ -156,8 +156,8 @@ A job that is **Ready to confirm**, **Done**, **Cancelled** or **Aborted** can b
 - **Local file references are not recognized**: `data:` inline images, local paths and Obsidian's `![[file]]` are not fetchable addresses and are listed under unfetchable references. Use [uploads](./upload.mdx#uploading-in-the-admin-console) for local images.
 - **Formats**: only JPEG, PNG, GIF and WebP can be imported; SVG, AVIF and others fail with `upload_unsupported_type`.
 - **Public addresses only**: as with fetching from a URL, private addresses are refused; see [Fetch restrictions](./upload.mdx#fetch-restrictions).
-- **Scan limits**: 4 pages are fetched at a time, each sitemap, feed or page is capped at 50 MiB, and fetching one address takes at most 2 minutes. There is no limit on the number of pages or images. `robots.txt` is not read, and requests send `User-Agent: ImgYoung/<version> (+https://github.com/x-haose/imgyoung)`.
-- **Submission size**: what you submit under **Text and files** is at most 32 MiB in total.
+- **Scan limits**: the scan report lists the first 1000 failed pages and the first 1000 unfetchable references, and counts the rest. 4 pages are fetched at a time, each sitemap, feed or page is capped at 50 MiB, and fetching one address takes at most 2 minutes. There is no limit on the number of pages or images. `robots.txt` is not read, and requests send `User-Agent: ImgYoung/<version> (+https://github.com/x-haose/imgyoung)`.
+- **Submission size**: what you submit under **Text and files** is at most 32 MiB in total, each document at most 4 MiB, and parsing one document for more than 15 seconds is refused.
 
 ### Hosts with hotlink protection
 

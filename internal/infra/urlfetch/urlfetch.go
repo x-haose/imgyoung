@@ -86,39 +86,46 @@ type Options struct {
 	UserAgent string // 非空时替换 Go 标准库默认的 User-Agent
 }
 
+// Fetched 一次抓取的结果。
+type Fetched struct {
+	Data        []byte // 响应体
+	ContentType string // 远端返回的 Content-Type(仅作日志与文件名推断参考,格式判定仍以 magic bytes 为准)
+	FinalURL    string // 跟随重定向后实际取到内容的地址;解析页面里的相对路径以它为基准
+}
+
 // Fetch 抓取指定地址的内容,不带 Referer,使用默认 User-Agent。
 // @Description: 返回的字节数受大小上限约束——超限即报错而非截断,截断的图片会在后续
 // 解码阶段变成一个含义模糊的"图片损坏"。
 // @param ctx 控制取消;总时长另受配置上限约束
 // @param rawURL 待抓取地址
 // @return 响应体字节
-// @return 远端返回的 Content-Type(仅作日志与文件名推断参考,格式判定仍以 magic bytes 为准)
+// @return 远端返回的 Content-Type
 // @return ErrScheme / ErrBlockedAddress / ErrTooManyRedirects / ErrTooLarge / ErrStatus 或网络错误
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
-	return f.FetchWith(ctx, rawURL, Options{})
+	got, err := f.FetchWith(ctx, rawURL, Options{})
+	return got.Data, got.ContentType, err
 }
 
-// FetchWith 按选项抓取指定地址的内容,约束与返回值同 Fetch。
+// FetchWith 按选项抓取指定地址的内容,约束同 Fetch。
 // @param ctx 控制取消;总时长另受配置上限约束
 // @param rawURL 待抓取地址
 // @param opts 可选参数
-// @return 响应体字节
-// @return 远端返回的 Content-Type
+// @return 抓取结果;出错时为零值
 // @return ErrScheme / ErrBlockedAddress / ErrTooManyRedirects / ErrTooLarge / ErrStatus 或网络错误
-func (f *Fetcher) FetchWith(ctx context.Context, rawURL string, opts Options) ([]byte, string, error) {
+func (f *Fetcher) FetchWith(ctx context.Context, rawURL string, opts Options) (Fetched, error) {
 	target, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, "", fmt.Errorf("%w: 地址无法解析", ErrScheme)
+		return Fetched{}, fmt.Errorf("%w: 地址无法解析", ErrScheme)
 	}
 	if err := checkScheme(target); err != nil {
-		return nil, "", err
+		return Fetched{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("构造抓取请求: %w", err)
+		return Fetched{}, fmt.Errorf("构造抓取请求: %w", err)
 	}
 	if opts.Referer != "" {
 		req.Header.Set("Referer", opts.Referer)
@@ -128,26 +135,26 @@ func (f *Fetcher) FetchWith(ctx context.Context, rawURL string, opts Options) ([
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return nil, "", unwrapFetchError(err)
+		return Fetched{}, unwrapFetchError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, "", fmt.Errorf("%w: HTTP %d", ErrStatus, resp.StatusCode)
+		return Fetched{}, fmt.Errorf("%w: HTTP %d", ErrStatus, resp.StatusCode)
 	}
 	limit := f.maxBytes()
 	if resp.ContentLength > limit {
-		return nil, "", ErrTooLarge
+		return Fetched{}, ErrTooLarge
 	}
 	// 多读一个字节:读满上限说明远端还有内容(或谎报了 Content-Length),按超限拒绝。
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, "", fmt.Errorf("读取远端内容: %w", err)
+		return Fetched{}, fmt.Errorf("读取远端内容: %w", err)
 	}
 	if int64(len(data)) > limit {
-		return nil, "", ErrTooLarge
+		return Fetched{}, ErrTooLarge
 	}
-	return data, resp.Header.Get("Content-Type"), nil
+	return Fetched{Data: data, ContentType: resp.Header.Get("Content-Type"), FinalURL: resp.Request.URL.String()}, nil
 }
 
 // keepReferer 决定重定向请求的 Referer。

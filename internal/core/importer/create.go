@@ -88,9 +88,9 @@ func (s *Service) CreateText(ctx context.Context, opts Options, docs []Document,
 	if err != nil {
 		return "", err
 	}
-	scanned := make([]scannedDocument, len(docs))
-	for i, d := range docs {
-		scanned[i] = scanDocument(i, d, base)
+	scanned, err := s.scanDocuments(ctx, docs, base)
+	if err != nil {
+		return "", err
 	}
 	report := textReport(scanned)
 	reportJSON, err := json.Marshal(report)
@@ -257,6 +257,9 @@ func owned(ctx context.Context, q *sqlc.Queries, userID, jobID string) (sqlc.Imp
 // @param hosts 要导入的域名
 // @return ErrNotFound、*StateError(任务不在 ready)、ErrNoSelection(所选域名下没有候选条目);其他为基础设施错误
 func (s *Service) Start(ctx context.Context, userID, jobID string, hosts []string) error {
+	if len(hosts) > maxStartHosts {
+		return &InputError{Detail: fmt.Sprintf("hosts 超过 %d 个", maxStartHosts)}
+	}
 	err := s.inTx(ctx, func(q *sqlc.Queries) error {
 		job, err := owned(ctx, q, userID, jobID)
 		if err != nil {
@@ -265,7 +268,7 @@ func (s *Service) Start(ctx context.Context, userID, jobID string, hosts []strin
 		if job.Status != StatusReady {
 			return &StateError{Status: job.Status}
 		}
-		n, err := q.ConfirmImportItems(ctx, sqlc.ConfirmImportItemsParams{JobID: jobID, Hosts: lowerAll(hosts)})
+		n, err := q.ConfirmImportItems(ctx, sqlc.ConfirmImportItemsParams{JobID: jobID, Hosts: uniqueHosts(hosts)})
 		if err != nil {
 			return fmt.Errorf("确认待导入的条目: %w", err)
 		}
@@ -335,6 +338,10 @@ func (s *Service) Retry(ctx context.Context, userID, jobID string) error {
 		}
 		if job.Status != StatusDone && job.Status != StatusAborted && job.Status != StatusCancelled {
 			return &StateError{Status: job.Status}
+		}
+		if job.Mode == ModeSite && !job.ScanReport.Valid && job.Status != StatusDone {
+			// 扫描没有完成就中止或取消:没有候选可续,从头重新扫描。
+			return transition(ctx, q, job, job.Status, StatusScanning)
 		}
 		if err := requeue(ctx, q, jobID); err != nil {
 			return err
@@ -406,13 +413,18 @@ func (s *Service) stateError(ctx context.Context, jobID string) error {
 	return &StateError{Status: job.Status}
 }
 
-// lowerAll 把域名转成小写、去掉首尾空白,与条目里 host 的形态一致。
+// uniqueHosts 把域名转成小写、去掉首尾空白并去重,与条目里 host 的形态一致。
 // @param hosts 域名
 // @return 规范化后的域名
-func lowerAll(hosts []string) []string {
-	out := make([]string, len(hosts))
-	for i, h := range hosts {
-		out[i] = strings.ToLower(strings.TrimSpace(h))
+func uniqueHosts(hosts []string) []string {
+	seen := make(map[string]struct{}, len(hosts))
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if _, dup := seen[h]; !dup {
+			seen[h] = struct{}{}
+			out = append(out, h)
+		}
 	}
 	return out
 }

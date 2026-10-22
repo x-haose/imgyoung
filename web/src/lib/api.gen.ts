@@ -577,6 +577,8 @@ export interface paths {
          * @description 对 `done`、`aborted` 或 `cancelled` 的任务，把 `failed` 的条目重新置为待导入，连同尚未处理的条目一起继续，任务回到 `importing`。
          *
          *     没有 `failed` 或 `pending` 的条目时返回 409。因存储配额或没有可用渠道而中止的任务，先解决问题再重试。
+         *
+         *     扫描没有完成就中止或取消的 `site` 任务没有候选可以继续，重试会让它回到 `scanning`，从头重新扫描。
          */
         post: operations["retryImport"];
         delete?: never;
@@ -1849,7 +1851,7 @@ export interface components {
         ImportDocument: {
             /** @description 文档名，通常是文件名。作为条目的来源显示，也决定按 HTML 还是 Markdown 解析 */
             name: string;
-            /** @description 文档全文 */
+            /** @description 文档全文，不超过 4 MiB；解析超过 15 秒按输入不合法拒绝 */
             text: string;
         };
         ImportCreateRequest: {
@@ -1873,7 +1875,7 @@ export interface components {
             referer?: string;
         };
         ImportStartRequest: {
-            /** @description 要导入的域名，取自 `GET /api/admin/imports/{id}/hosts` 的 `host` */
+            /** @description 要导入的域名，取自 `GET /api/admin/imports/{id}/hosts` 的 `host`；重复的只算一个 */
             hosts: string[];
         };
         /** @description 任务各状态的条目数 */
@@ -1921,10 +1923,20 @@ export interface components {
              * @description 站点地图或订阅源里不在其所属域名下、因此被跳过的页面数
              */
             offsite_pages: number;
-            /** @description 没有抓取成功的页面，同一个地址只列一次 */
+            /** @description 没有抓取成功的页面，同一个地址只列一次，至多 1000 条 */
             failed_pages: components["schemas"]["ImportScanFailure"][];
-            /** @description 服务端无法抓取的图片引用 */
+            /**
+             * Format: int64
+             * @description 没有抓取成功的页面总数；超过 1000 时大于 `failed_pages` 的长度
+             */
+            failed_pages_total: number;
+            /** @description 服务端无法抓取的图片引用，至多 1000 条 */
             unfetchable: components["schemas"]["ImportUnfetchable"][];
+            /**
+             * Format: int64
+             * @description 服务端无法抓取的图片引用总数；超过 1000 时大于 `unfetchable` 的长度
+             */
+            unfetchable_total: number;
         };
         /** @description 扫描进度与结果 */
         ImportScan: {

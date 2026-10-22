@@ -38,6 +38,11 @@ func TestNormalize(t *testing.T) {
 	}{
 		{"绝对地址", "https://img.example.com/a.png", nil, "https://img.example.com/a.png", true},
 		{"协议与域名转小写", "HTTPS://IMG.Example.COM/A.png", nil, "https://img.example.com/A.png", true},
+		{"去掉 https 默认端口", "https://img.example.com:443/a.png", nil, "https://img.example.com/a.png", true},
+		{"去掉 http 默认端口", "http://img.example.com:80/a.png", nil, "http://img.example.com/a.png", true},
+		{"保留非默认端口", "https://img.example.com:8443/a.png", nil, "https://img.example.com:8443/a.png", true},
+		{"http 上的 443 不是默认端口", "http://img.example.com:443/a.png", nil, "http://img.example.com:443/a.png", true},
+		{"IPv6 地址去掉默认端口", "https://[2001:db8::1]:443/a.png", nil, "https://[2001:db8::1]/a.png", true},
 		{"去掉片段", "https://img.example.com/a.png#top", nil, "https://img.example.com/a.png", true},
 		{"保留查询串", "https://img.example.com/a.png?v=1&w=2", nil, "https://img.example.com/a.png?v=1&w=2", true},
 		{"首尾空白", "  https://img.example.com/a.png \n", nil, "https://img.example.com/a.png", true},

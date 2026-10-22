@@ -120,10 +120,13 @@ func TestFetchWithKeepsExplicitReferer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	data, _, err := newLoopbackFetcher(t, 1<<20).FetchWith(context.Background(), srv.URL+"/start",
+	got, err := newLoopbackFetcher(t, 1<<20).FetchWith(context.Background(), srv.URL+"/start",
 		Options{Referer: referer, UserAgent: agent})
-	if err != nil || string(data) != "ok" {
-		t.Fatalf("重定向后应带着指定的 Referer 与 User-Agent,得 %q, %v", data, err)
+	if err != nil || string(got.Data) != "ok" {
+		t.Fatalf("重定向后应带着指定的 Referer 与 User-Agent,得 %q, %v", got.Data, err)
+	}
+	if got.FinalURL != srv.URL+"/final" {
+		t.Errorf("FinalURL = %q, 期望重定向后的 %q", got.FinalURL, srv.URL+"/final")
 	}
 }
 

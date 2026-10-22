@@ -25,7 +25,7 @@ type Result struct {
 
 // Normalize 把引用解析成可抓取的绝对地址。
 // @Description: 只接受 http 与 https、带域名、不带用户名密码的地址;相对路径与 // 开头的地址按 base 解析,
-// base 为 nil 时它们无法解析。结果去掉 # 之后的部分,协议与域名转为小写,所以同一张图的不同写法得到同一个地址。
+// base 为 nil 时它们无法解析。结果去掉 # 之后的部分,协议与域名转为小写,去掉默认端口,所以同一张图的不同写法得到同一个地址。
 // @param raw 引用原文
 // @param base 解析相对路径的基准地址,可为 nil
 // @return 规范化后的绝对地址
@@ -47,8 +47,24 @@ func Normalize(raw string, base *url.URL) (string, bool) {
 	}
 	u.Fragment, u.RawFragment = "", ""
 	u.Scheme = strings.ToLower(u.Scheme)
-	u.Host = strings.ToLower(u.Host)
+	u.Host = stripDefaultPort(u.Scheme, strings.ToLower(u.Host))
 	return u.String(), true
+}
+
+// stripDefaultPort 去掉与协议对应的默认端口(http 的 80、https 的 443),让同一个地址的两种写法规范化成同一个。
+// @param scheme 小写协议
+// @param host 小写的域名,可带端口
+// @return 去掉默认端口后的域名
+func stripDefaultPort(scheme, host string) string {
+	i := strings.LastIndexByte(host, ':')
+	if i < 0 || strings.HasSuffix(host, "]") {
+		return host
+	}
+	port := host[i+1:]
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		return host[:i]
+	}
+	return host
 }
 
 // Host 返回规范化地址的域名部分:小写,非默认端口时带端口。

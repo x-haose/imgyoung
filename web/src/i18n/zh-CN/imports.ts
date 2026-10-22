@@ -141,6 +141,7 @@ export const imports = {
     showDetail: '查看明细',
     hideDetail: '收起明细',
     failedPagesTitle: '抓取失败的页面（{count}）',
+    truncatedHint: '仅列出前 {count} 条。',
     unfetchableTitle: '服务端无法抓取的引用（{count}）',
     unfetchableHint:
       '常见原因：没有基准地址的相对路径、data: 内嵌图片、本地文件路径、非 http / https 的协议',

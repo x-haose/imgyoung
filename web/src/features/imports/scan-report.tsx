@@ -29,12 +29,17 @@ export function ScanReport({ report }: { report: ImportScanReport }) {
             value={report.pages_without_images}
           />
           <Stat label={m.offsite} value={report.offsite_pages} />
-          <Stat label={m.failedPages} value={report.failed_pages.length} warn />
-          <Stat label={m.unfetchable} value={report.unfetchable.length} warn />
+          <Stat label={m.failedPages} value={report.failed_pages_total} warn />
+          <Stat label={m.unfetchable} value={report.unfetchable_total} warn />
         </dl>
         {report.failed_pages.length > 0 && (
           <Details
-            title={t(m.failedPagesTitle, { count: report.failed_pages.length })}
+            title={t(m.failedPagesTitle, { count: report.failed_pages_total })}
+            hint={truncatedHint(
+              m.truncatedHint,
+              report.failed_pages.length,
+              report.failed_pages_total
+            )}
           >
             {report.failed_pages.map((p) => (
               <li key={p.source} className='space-y-0.5 py-2'>
@@ -53,8 +58,17 @@ export function ScanReport({ report }: { report: ImportScanReport }) {
         )}
         {report.unfetchable.length > 0 && (
           <Details
-            title={t(m.unfetchableTitle, { count: report.unfetchable.length })}
-            hint={m.unfetchableHint}
+            title={t(m.unfetchableTitle, { count: report.unfetchable_total })}
+            hint={[
+              m.unfetchableHint,
+              truncatedHint(
+                m.truncatedHint,
+                report.unfetchable.length,
+                report.unfetchable_total
+              ),
+            ]
+              .filter((h) => h !== '')
+              .join(' ')}
           >
             {report.unfetchable.map((u, i) => (
               <li key={`${i}-${u.source}`} className='space-y-0.5 py-2'>
@@ -69,6 +83,11 @@ export function ScanReport({ report }: { report: ImportScanReport }) {
       </CardContent>
     </Card>
   )
+}
+
+/** 明细只列出了一部分时的提示;列全了为空串。 */
+function truncatedHint(template: string, shown: number, total: number) {
+  return total > shown ? t(template, { count: shown }) : ''
 }
 
 /** 汇总里的一个数字;warn 表示大于 0 时需要留意。 */

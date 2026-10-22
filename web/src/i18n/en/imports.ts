@@ -150,6 +150,7 @@ export const imports = {
     showDetail: 'Show details',
     hideDetail: 'Hide details',
     failedPagesTitle: 'Pages that failed ({count})',
+    truncatedHint: 'Only the first {count} are listed.',
     unfetchableTitle: 'References the server cannot fetch ({count})',
     unfetchableHint:
       'Common causes: relative paths without a base URL, data: inline images, local file paths, and schemes other than http / https',

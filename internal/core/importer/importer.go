@@ -62,6 +62,15 @@ const (
 	maxDetailRunes = 500
 	// retryBackoff 读取任务表失败后的等待时间。
 	retryBackoff = 5 * time.Second
+	// MaxTextDocumentBytes 文本模式里单份文档的字节上限。Markdown 解析在个别输入上耗时随长度呈二次增长,
+	// 单份文档的长度因此要有界;博客文章远小于此值。
+	MaxTextDocumentBytes = 4 << 20
+	// parseSlots 同时解析文本的执行单元数,限制恶意输入能占用的 CPU。
+	parseSlots = 2
+	// defaultParseDeadline 解析一份文档的时限,超时按输入不合法拒绝。
+	defaultParseDeadline = 15 * time.Second
+	// maxStartHosts 一次确认最多可选的域名数,低于 SQLite 的绑定变量上限。
+	maxStartHosts = 1000
 )
 
 // ErrNotFound 任务不存在,或不属于当前用户。
@@ -95,8 +104,8 @@ func (e *InputError) Error() string { return "importer: 导入输入不合法: "
 
 // Fetcher 抓取远端内容(由 urlfetch.Fetcher 实现)。
 type Fetcher interface {
-	// FetchWith 抓取 rawURL 的内容,返回字节与远端声明的 Content-Type;失败返回 urlfetch 的哨兵错误或网络错误。
-	FetchWith(ctx context.Context, rawURL string, opts urlfetch.Options) ([]byte, string, error)
+	// FetchWith 抓取 rawURL 的内容;失败返回 urlfetch 的哨兵错误或网络错误。
+	FetchWith(ctx context.Context, rawURL string, opts urlfetch.Options) (urlfetch.Fetched, error)
 }
 
 // Config 导入服务依赖。
@@ -116,6 +125,9 @@ type Service struct {
 	cfg  Config
 	wake chan struct{} // 有任务进入 scanning 或 importing 时唤醒调度循环;容量 1,合并重复唤醒
 
+	parse         chan struct{} // 文本解析的并发名额;解析超时后其执行单元仍占着名额直到算完
+	parseDeadline time.Duration // 解析一份文档的时限
+
 	mu      sync.Mutex
 	running map[string]context.CancelFunc // 正在处理的任务 ID → 中止它的函数
 }
@@ -124,7 +136,10 @@ type Service struct {
 // @param cfg 依赖,字段均必填
 // @return 就绪的导入服务
 func New(cfg Config) *Service {
-	return &Service{cfg: cfg, wake: make(chan struct{}, 1), running: map[string]context.CancelFunc{}}
+	return &Service{
+		cfg: cfg, wake: make(chan struct{}, 1), running: map[string]context.CancelFunc{},
+		parse: make(chan struct{}, parseSlots), parseDeadline: defaultParseDeadline,
+	}
 }
 
 // Run 调度循环:一次处理一个任务,按创建先后,直到 ctx 取消。
@@ -187,20 +202,35 @@ func (s *Service) process(ctx context.Context, job sqlc.ImportJob) {
 		s.mu.Unlock()
 	}()
 
-	var err error
-	switch job.Status {
-	case StatusScanning:
-		err = s.scan(jobCtx, job)
-	case StatusImporting:
-		err = s.importItems(jobCtx, job)
-	default:
-		err = fmt.Errorf("任务状态 %q 不是可处理的状态", job.Status)
-	}
+	err := s.dispatch(jobCtx, job)
 	if err == nil || jobCtx.Err() != nil {
 		return
 	}
 	s.cfg.Logger.Error("导入任务处理失败,任务中止", "job", job.ID, "status", job.Status, "err", err)
 	s.abort(ctx, job.ID, job.Status, "internal")
+}
+
+// dispatch 按任务状态执行扫描或导入。
+// @Description: 取到任务到登记中止函数之间用户可能已取消它,所以登记之后重新确认状态,状态变了就不处理。
+// @param ctx 任务的上下文
+// @param job 任务行
+// @return 处理失败的错误
+func (s *Service) dispatch(ctx context.Context, job sqlc.ImportJob) error {
+	current, err := s.cfg.Queries.GetImportJob(ctx, job.ID)
+	if err != nil {
+		return fmt.Errorf("确认任务状态: %w", err)
+	}
+	if current.Status != job.Status {
+		return nil
+	}
+	switch job.Status {
+	case StatusScanning:
+		return s.scan(ctx, current)
+	case StatusImporting:
+		return s.importItems(ctx, current)
+	default:
+		return fmt.Errorf("任务状态 %q 不是可处理的状态", job.Status)
+	}
 }
 
 // abort 把任务置为 aborted,记下原因;任务状态已被别处改走时不动。

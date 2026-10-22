@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/testenv"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -25,6 +27,7 @@ type stubFetcher struct {
 	replies map[string][]byte // 地址 → 内容
 	errs    map[string]error  // 地址 → 抓取错误,优先于 replies
 	block   map[string]bool   // 命中即阻塞到 ctx 取消
+	final   map[string]string // 地址 → 重定向后的最终地址;没有则等于请求地址
 	calls   []stubCall        // 按到达顺序记录的请求
 	started chan string       // 阻塞的抓取开始时通知其地址
 }
@@ -37,31 +40,35 @@ type stubCall struct {
 // newStub 构造空的替身。
 func newStub() *stubFetcher {
 	return &stubFetcher{
-		replies: map[string][]byte{}, errs: map[string]error{}, block: map[string]bool{},
+		replies: map[string][]byte{}, errs: map[string]error{}, block: map[string]bool{}, final: map[string]string{},
 		started: make(chan string, 16),
 	}
 }
 
 // FetchWith 实现 Fetcher。
-func (f *stubFetcher) FetchWith(ctx context.Context, rawURL string, opts urlfetch.Options) ([]byte, string, error) {
+func (f *stubFetcher) FetchWith(ctx context.Context, rawURL string, opts urlfetch.Options) (urlfetch.Fetched, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, stubCall{url: rawURL, referer: opts.Referer, agent: opts.UserAgent})
 	data, hasData := f.replies[rawURL]
 	err := f.errs[rawURL]
 	blocked := f.block[rawURL]
+	finalURL := f.final[rawURL]
 	f.mu.Unlock()
+	if finalURL == "" {
+		finalURL = rawURL
+	}
 	if blocked {
 		f.started <- rawURL
 		<-ctx.Done()
-		return nil, "", ctx.Err()
+		return urlfetch.Fetched{}, ctx.Err()
 	}
 	switch {
 	case err != nil:
-		return nil, "", err
+		return urlfetch.Fetched{}, err
 	case !hasData:
-		return nil, "", fmt.Errorf("%w: HTTP 404", urlfetch.ErrStatus)
+		return urlfetch.Fetched{}, fmt.Errorf("%w: HTTP 404", urlfetch.ErrStatus)
 	}
-	return data, "", nil
+	return urlfetch.Fetched{Data: data, FinalURL: finalURL}, nil
 }
 
 // reply 预置一个地址的内容,并清除它的错误。
@@ -332,15 +339,17 @@ func TestFailuresAndRetry(t *testing.T) {
 	}
 }
 
-// TestQuotaAbortAndResume 存储配额已满时整个任务中止而不是逐条失败,未处理的条目保留;解决后重试继续。
+// TestQuotaAbortAndResume 存储配额已满时,连续多张图因配额失败就中止整个任务而不是逐条失败下去;解决后重试继续。
 func TestQuotaAbortAndResume(t *testing.T) {
 	h := newHarness(t)
-	h.images.reply("https://img.example.com/a.png", pngBytes(t))
-	h.images.reply("https://img.example.com/b.png", pngBytes(t))
+	var urls []string
+	for _, name := range []string{"a", "b", "c", "d"} {
+		u := "https://img.example.com/" + name + ".png"
+		h.images.reply(u, pngBytes(t))
+		urls = append(urls, u)
+	}
 	h.exec(`UPDATE users SET quota_bytes = 1 WHERE id = ?`, sqlc.DefaultUserID)
-	id, err := h.svc.CreateImages(t.Context(), opts(), []string{
-		"https://img.example.com/a.png", "https://img.example.com/b.png",
-	})
+	id, err := h.svc.CreateImages(t.Context(), opts(), urls)
 	if err != nil {
 		t.Fatalf("创建任务: %v", err)
 	}
@@ -351,8 +360,8 @@ func TestQuotaAbortAndResume(t *testing.T) {
 	if job.Status != StatusAborted || job.ErrorCode != "upload_quota_exceeded" || !job.FinishedAt.Valid {
 		t.Fatalf("任务 = %+v, 期望 aborted / upload_quota_exceeded", job)
 	}
-	if c := h.counts(id); c[StatePending] != 2 || c[StateFailed] != 0 {
-		t.Fatalf("各状态 = %v, 期望两个条目都留在 pending", c)
+	if c := h.counts(id); c[StateDone] != 0 || c[StateFailed]+c[StatePending] != 4 {
+		t.Fatalf("各状态 = %v, 期望没有导入成功的", c)
 	}
 
 	h.exec(`UPDATE users SET quota_bytes = NULL WHERE id = ?`, sqlc.DefaultUserID)
@@ -364,16 +373,56 @@ func TestQuotaAbortAndResume(t *testing.T) {
 	}
 	h.runImport(id)
 	h.wantStatus(id, StatusDone)
-	if c := h.counts(id); c[StateDone] != 2 {
-		t.Fatalf("各状态 = %v, 期望 done=2", c)
+	if c := h.counts(id); c[StateDone] != 4 {
+		t.Fatalf("各状态 = %v, 期望 done=4", c)
 	}
 }
 
-// TestResumeDoesNotDuplicate 图片已入库而条目还没来得及记结果(进程在中间退出)时,重新处理沿用同一张图,不产生第二张。
+// noisePNG 生成一张不可压缩的 PNG,体积远大于 2x2 的小图。
+func noisePNG(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 64, 64))
+	for i := range img.Pix {
+		img.Pix[i] = byte(i*7919 + i/13)
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("编码噪声 PNG: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestOversizedImageDoesNotBlockJob 一张图超过剩余额度只算这张失败,放得下的图照常导入,任务不中止。
+func TestOversizedImageDoesNotBlockJob(t *testing.T) {
+	h := newHarness(t)
+	const bigURL, smallURL = "https://img.example.com/big.png", "https://img.example.com/small.png"
+	h.images.reply(bigURL, noisePNG(t))
+	h.images.reply(smallURL, pngBytes(t))
+	h.exec(`UPDATE users SET quota_bytes = 1000 WHERE id = ?`, sqlc.DefaultUserID)
+	id, err := h.svc.CreateImages(t.Context(), opts(), []string{bigURL, smallURL})
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+
+	h.runImport(id)
+
+	h.wantStatus(id, StatusDone)
+	if c := h.counts(id); c[StateDone] != 1 || c[StateFailed] != 1 {
+		t.Fatalf("各状态 = %v, 期望 done=1 failed=1", c)
+	}
+	rows, err := h.env.Queries.ListImportItems(t.Context(), sqlc.ListImportItemsParams{
+		JobID: id, State: StateFailed, PageLimit: 10,
+	})
+	if err != nil || len(rows) != 1 || rows[0].Url != bigURL || rows[0].ErrorCode != "upload_quota_exceeded" {
+		t.Fatalf("失败条目 = %+v, err=%v, 期望是超额的大图", rows, err)
+	}
+}
+
+// TestResumeDoesNotDuplicate 图片已入库而条目还没来得及记结果(进程在中间退出)时,重新处理沿用同一张图,不产生第二张;
+// 此时旧地址已经失效也不影响,因为不再抓取。
 func TestResumeDoesNotDuplicate(t *testing.T) {
 	h := newHarness(t)
 	const target = "https://img.example.com/a.png"
-	h.images.reply(target, pngBytes(t))
 	id, err := h.svc.CreateImages(t.Context(), opts(), []string{target})
 	if err != nil {
 		t.Fatalf("创建任务: %v", err)
@@ -385,7 +434,7 @@ func TestResumeDoesNotDuplicate(t *testing.T) {
 	}
 	pre, err := h.up.Process(t.Context(), pngBytes(t), upload.Options{
 		UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
-		IdempotencyKey: fmt.Sprintf("import-%d", items[0].ID),
+		IdempotencyKey: importKey(id, items[0].ID),
 	})
 	if err != nil {
 		t.Fatalf("预先入库: %v", err)
@@ -399,6 +448,38 @@ func TestResumeDoesNotDuplicate(t *testing.T) {
 	}
 	if got := h.imageCount(); got != 1 {
 		t.Fatalf("图片数 = %d, 期望 1", got)
+	}
+	if calls := h.images.callsTo(target); len(calls) != 0 {
+		t.Fatalf("已入库的条目不应再抓取远端: %d 次", len(calls))
+	}
+}
+
+// TestItemIDReuseDoesNotCrossJobs 删除任务后条目 ID 会被新任务的条目复用,新条目不能认领到旧任务留下的图。
+func TestItemIDReuseDoesNotCrossJobs(t *testing.T) {
+	h := newHarness(t)
+	h.images.reply("https://img.example.com/a.png", pngBytes(t))
+	h.images.reply("https://img.example.com/b.png", pngBytes(t))
+
+	first, err := h.svc.CreateImages(t.Context(), opts(), []string{"https://img.example.com/a.png"})
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	h.runImport(first)
+	if err := h.svc.Delete(t.Context(), sqlc.DefaultUserID, first); err != nil {
+		t.Fatalf("删除任务: %v", err)
+	}
+
+	second, err := h.svc.CreateImages(t.Context(), opts(), []string{"https://img.example.com/b.png"})
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	h.runImport(second)
+
+	if got := h.imageCount(); got != 2 {
+		t.Fatalf("图片数 = %d, 期望 2:第二个任务的条目要有自己的图", got)
+	}
+	if calls := h.images.callsTo("https://img.example.com/b.png"); len(calls) != 1 {
+		t.Fatalf("第二个任务的地址应被抓取一次,得 %d 次", len(calls))
 	}
 }
 
@@ -619,5 +700,95 @@ func TestSiteSeedKinds(t *testing.T) {
 		if r.Url == "https://cdn.old.com/direct.png" && r.SourceCount != 0 {
 			t.Errorf("直接给出的图片不记来源,得 %d 个", r.SourceCount)
 		}
+	}
+}
+
+// TestSiteScanFollowsRedirects 站点地图与页面经重定向后,所列页面的域名与页面里的相对路径都按最终地址判断。
+func TestSiteScanFollowsRedirects(t *testing.T) {
+	h := newHarness(t)
+	const (
+		typed = "http://blog.example.com/sitemap.xml"
+		final = "https://www.blog.example.com/sitemap.xml"
+		page  = "https://www.blog.example.com/blog/post"
+	)
+	h.pages.final[typed] = final
+	h.pages.reply(typed, []byte(`<urlset><url><loc>`+page+`</loc></url></urlset>`))
+	h.pages.final[page] = page + "/"
+	h.pages.reply(page, []byte(`<img src="a.png">`))
+
+	id, err := h.svc.CreateSite(t.Context(), opts(), []string{typed})
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	h.runScan(id)
+
+	report, err := DecodeReport(h.job(id).ScanReport)
+	if err != nil || report == nil || report.OffsitePages != 0 || report.Pages != 1 {
+		t.Fatalf("扫描报告 = %+v, err=%v, 期望所列页面不被当作站外", report, err)
+	}
+	rows, err := h.env.Queries.ListImportItems(t.Context(), sqlc.ListImportItemsParams{JobID: id, PageLimit: 10})
+	if err != nil || len(rows) != 1 || rows[0].Url != "https://www.blog.example.com/blog/post/a.png" {
+		t.Fatalf("候选 = %+v, err=%v, 期望相对路径按重定向后的地址解析", rows, err)
+	}
+}
+
+// TestSiteRetryRestartsInterruptedScan 扫描没完成就中止或取消的站点任务,重试从头重新扫描,而不是报没有可重试的条目。
+func TestSiteRetryRestartsInterruptedScan(t *testing.T) {
+	h := newHarness(t)
+	id, err := h.svc.CreateSite(t.Context(), opts(), []string{"https://blog.example.com/page"})
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	h.exec(`UPDATE import_jobs SET status = 'aborted', error_code = 'internal' WHERE id = ?`, id)
+
+	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); err != nil {
+		t.Fatalf("重试: %v", err)
+	}
+	if job := h.job(id); job.Status != StatusScanning || job.ErrorCode != "" || job.FinishedAt.Valid {
+		t.Fatalf("重试后任务 = %+v, 期望回到 scanning", job)
+	}
+
+	// 扫描完成过的站点任务(有报告)中止在导入阶段,重试不回到扫描。
+	h.exec(`UPDATE import_jobs SET status = 'aborted', scan_report = '{}' WHERE id = ?`, id)
+	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); !errors.Is(err, ErrNothingToRetry) {
+		t.Fatalf("没有失败条目时重试 = %v, 期望 ErrNothingToRetry", err)
+	}
+}
+
+// TestTextDocumentLimits 文本文档过大按输入不合法拒绝;解析超时同样拒绝,请求不会被病态输入无限拖住。
+func TestTextDocumentLimits(t *testing.T) {
+	h := newHarness(t)
+	var inputErr *InputError
+	huge := Document{Name: "huge.md", Text: strings.Repeat("a", MaxTextDocumentBytes+1)}
+	if _, err := h.svc.CreateText(t.Context(), opts(), []Document{huge}, ""); !errors.As(err, &inputErr) {
+		t.Fatalf("过大的文档 = %v, 期望 InputError", err)
+	}
+
+	h.svc.parseDeadline = 50 * time.Millisecond
+	slow := Document{Name: "slow.md", Text: strings.Repeat("[a](", 40000)}
+	if _, err := h.svc.CreateText(t.Context(), opts(), []Document{slow}, ""); !errors.As(err, &inputErr) {
+		t.Fatalf("解析超时 = %v, 期望 InputError", err)
+	}
+}
+
+// TestStartHostsBounds 确认时域名重复只算一个;域名数超过上限按输入不合法拒绝,不会撞上数据库的绑定变量上限。
+func TestStartHostsBounds(t *testing.T) {
+	h := newHarness(t)
+	docs := []Document{{Name: "a.md", Text: "![a](https://img.old.com/a.png)"}}
+	id, err := h.svc.CreateText(t.Context(), opts(), docs, "")
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	var inputErr *InputError
+	tooMany := make([]string, maxStartHosts+1)
+	for i := range tooMany {
+		tooMany[i] = fmt.Sprintf("h%d.example.com", i)
+	}
+	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, tooMany); !errors.As(err, &inputErr) {
+		t.Fatalf("域名过多 = %v, 期望 InputError", err)
+	}
+	h.wantStatus(id, StatusReady)
+	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, []string{"img.old.com", "IMG.old.com"}); err != nil {
+		t.Fatalf("重复域名确认: %v", err)
 	}
 }
