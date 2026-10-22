@@ -237,7 +237,7 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 	s.metrics = buildMetrics(manager)
 	s.runner, err = replication.NewRunner(replication.RunnerConfig{
 		Conn: writer, Queries: in.queries, Manager: manager, Metrics: s.metrics,
-		Purger: settingsPurger{settings: in.store.Current}, Logger: logger,
+		Purger: settingsPurger{settings: in.store.Current}, Settings: in.store.Current, Logger: logger,
 	})
 	if err != nil {
 		return services{}, err

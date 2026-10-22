@@ -36,7 +36,10 @@ export const settings = {
         title: '查重',
         hint: '完全相同的图片自动合并，相似的进入「疑似重复」',
       },
-      reliability: { title: '可靠性与渠道', hint: '健康检查、备份与用量' },
+      reliability: {
+        title: '可靠性与渠道',
+        hint: '健康检查、备份、用量与补齐限速',
+      },
       cdn: {
         title: 'CDN 缓存清理',
         hint: '图片删除或到期时清除 Cloudflare 缓存；需同时填写 Zone ID、API Token 与对外站点地址',
@@ -153,6 +156,10 @@ export const settings = {
         label: '渠道用量告警阈值',
         hint: '渠道用量超过此值时开启告警，不限制写入；0 表示不告警',
       },
+      replicate_limit_mbps: {
+        label: '补齐写入限速',
+        hint: '后台补齐写入各渠道的总带宽上限，所有渠道合计；0 表示不限。只限后台补齐，不限用户上传',
+      },
       cdn_cloudflare_zone_id: {
         label: 'Cloudflare Zone ID',
         hint: '留空表示不启用',
@@ -178,6 +185,7 @@ export const settings = {
     units: {
       mb: 'MB',
       gb: 'GB',
+      mbps: 'MB / 秒',
       megapixels: '百万像素',
       count: '个',
       perMinute: '次 / 分钟',

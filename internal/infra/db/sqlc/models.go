@@ -198,6 +198,7 @@ type Setting struct {
 	IdempotencyKeyTtlHours int64
 	AlertWebhookUrl        string
 	AuditRetentionDays     int64
+	ReplicateLimitMbps     int64
 	UpdatedAt              string
 }
 

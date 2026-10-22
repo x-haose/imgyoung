@@ -1,6 +1,10 @@
-import { queryOptions, useQueryClient } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  queryOptions,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { getLocale } from '@/i18n'
-import { api, type ListResponse, type Schema } from '@/lib/api'
+import { api, type ListResponse, type QueryValue, type Schema } from '@/lib/api'
 import type {
   ChannelItem,
   ChannelTemplate,
@@ -116,3 +120,33 @@ export function useInvalidateChannels() {
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
   }
 }
+
+/** 渠道上的一份副本(按物理图)。 */
+export type ChannelReplica = Schema<'ChannelReplica'>
+
+/** 副本清单的状态过滤;缺省为全部。 */
+export type ReplicaFilter = 'failed' | 'pending' | 'done'
+
+export interface ReplicaListParams {
+  state?: ReplicaFilter
+  page: number
+  page_size: number
+}
+
+/** 渠道副本分页清单,最近有变化的在前。 */
+export const replicasQueryOptions = (id: number, params: ReplicaListParams) =>
+  queryOptions({
+    queryKey: [...channelKeys.all, 'replicas', id, params] as const,
+    queryFn: () =>
+      api.get<ListResponse<ChannelReplica>>(
+        `/api/admin/channels/${id}/replicas`,
+        params as unknown as Record<string, QueryValue>
+      ),
+    placeholderData: keepPreviousData,
+  })
+
+/** 把渠道上失败的副本改回待补并重新排队;返回改回的数量。 */
+export const retryReplicas = (id: number) =>
+  api.post<Schema<'ChannelReplicaRetry'>>(
+    `/api/admin/channels/${id}/replicas/retry`
+  )

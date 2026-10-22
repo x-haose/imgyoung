@@ -105,6 +105,7 @@ export const CONFIG_GROUPS: FieldGroup[] = [
       { key: 'backup_keep', kind: 'int', min: 1, unit: 'copies' },
       { key: 'usage_report_seconds', kind: 'int', min: 1, unit: 'seconds' },
       { key: 'channel_quota_gb', kind: 'int', min: 0, unit: 'gb' },
+      { key: 'replicate_limit_mbps', kind: 'int', min: 0, unit: 'mbps' },
     ],
   },
   {

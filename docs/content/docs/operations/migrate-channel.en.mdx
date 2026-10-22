@@ -1,0 +1,101 @@
+---
+title: Migrating a storage channel
+description: How to retire an old channel, change a bucket or prefix, change the encryption setting, or switch providers by creating a new channel, watching replication, handling failures, throttling if needed, and safely deleting the old channel.
+---
+
+## When to use it
+
+Use the same procedure for any of these:
+
+- retiring a channel, for example when a provider shuts down or you stop paying for it;
+- changing the bucket, prefix or endpoint;
+- changing a channel's encryption setting; see [Channel encryption](../channels/encryption.mdx#fixed-at-creation);
+- switching to another provider.
+
+The approach is to create a new channel. ImgYoung replicates every existing image to it automatically; once that finishes, you delete the old channel. The service keeps running throughout and image links do not change.
+
+Do not edit the old channel's bucket, prefix or endpoint instead. Editing never triggers replication; see [Editing a channel](../channels/index.mdx#editing-a-channel).
+
+## Steps
+
+<Steps>
+<Step>
+
+**Create the channel**: on the **Storage channels** page click **New channel** and fill in the target storage; the encryption setting is chosen here too. Replication starts as soon as the channel is created; see [Creating a channel](../channels/index.mdx#creating-a-channel).
+
+</Step>
+<Step>
+
+**Watch progress**: the **Replicas** column shows the new channel's completion percentage and the ready, pending and failed counts. The percentage is ready divided by the sum of ready, pending and failed.
+
+</Step>
+<Step>
+
+**Throttle if needed**: replication keeps reading the old channel and writing the new one, which uses bandwidth. If other workloads need it, set `replicate_limit_mbps`; see [Limiting replication bandwidth](#limiting-replication-bandwidth).
+
+</Step>
+<Step>
+
+**Handle failed replicas**: click the **failed** number in the **Replicas** column to open that channel's **Replica list** and see why each replica failed. After fixing the cause, click **Retry failed replicas** in the list; see [Handling failed replicas](#handling-failed-replicas).
+
+</Step>
+<Step>
+
+**Move reads to the new channel**: once pending is zero and nothing has failed, raise the new channel's priority above the old one's. Reads follow priority, so images are then served from the new channel, and new uploads are written to it first. See [Primary and backup channels](../channels/index.mdx#primary-and-backup-channels).
+
+</Step>
+<Step>
+
+**Delete the old channel**: choose **Delete** in the old channel's row menu. Once the new channel holds every image, tick **Also delete what this service stored on the channel** and click **Delete and purge**. See [Deleting a channel](../channels/index.mdx#deleting-a-channel).
+
+</Step>
+</Steps>
+
+## Handling failed replicas
+
+On the **Storage channels** page, the **pending** and **failed** numbers in the **Replicas** column are links that open the channel's **Replica list**. It is sorted with the most recently changed first, and can show only pending, failed or ready replicas. Each row shows:
+
+| Column | Meaning |
+|---|---|
+| Image | The short ID of the earliest image that references this file. Identical images share one file after deduplication; empty when no image references it |
+| References | How many images reference this file |
+| State | Pending, in progress, ready or failed |
+| Attempts | Total replication attempts |
+| Failure | The classification and raw cause of the most recent failure, written like a channel's [failure reason](../channels/index.mdx#failure-reasons) |
+| Size, type | The file's size in bytes and its MIME type |
+| Updated | When the state last changed |
+
+What to check, in order:
+
+1. Look at the target channel's **Status** column first. While the channel is unhealthy every replication fails; get it healthy first.
+2. If the channel is healthy but replicas still fail, read the failure and act on it.
+3. Then click **Retry failed replicas**. All failed replicas go back to pending and are queued again, and the page reports how many were queued.
+
+Failed replicas are retried without this too: while a channel is healthy, the periodic reconciliation sets them back to pending every 10 minutes; see [Asynchronous replication](../channels/index.mdx#asynchronous-replication). **Retry failed replicas** is for when you do not want to wait for the next round. If the channel is unhealthy at that moment, the replicas fail again. Each retry is recorded in the audit log as "Retry failed replicas".
+
+## Limiting replication bandwidth
+
+Migrating an instance with many images can saturate your outbound bandwidth. `replicate_limit_mbps` under **Settings → Runtime settings → Reliability & channels** caps the total bandwidth that background replication writes to channels:
+
+- unit MB/s, all channels combined;
+- default `0`, no limit;
+- applies as soon as you save, with no restart.
+
+It limits only background replication. It does not affect the synchronous writes of user uploads, and it does not limit reads. Images uploaded during the migration are still replicated to every channel quickly and do not queue behind the backfill. See [Configuration](../configuration.mdx#reliability--channels) for the value range.
+
+## Things to know
+
+- **Every channel must hold all your images.** Channels mirror each other in full, so the new channel needs at least the current total capacity, plus room for what is added during the migration.
+- **The old channel keeps receiving replicas of new uploads during the migration.** Until the new channel's priority is raised, new uploads are written to the old channel first and replicated to the new one afterwards. So "pending is zero" can change again with new uploads; check once more after raising the priority.
+- **Deletion is protected by the only-replica check.** If some images have no ready replica on any other channel, deleting the old channel is refused (`channel_sole_replicas`) and the message gives the number of images. Delete once the new channel has caught up.
+- **Editing a channel never triggers replication.** To move storage, create a new channel instead of editing the old one.
+- **Metadata snapshots**: the new channel receives snapshots from the next backup on. **Delete and purge** on the old channel also removes the snapshots on it; see [Backup & restore](./backup.mdx).
+
+## Error codes
+
+| Action | Status | Error code | Meaning |
+|---|---|---|---|
+| Retry failed replicas | 409 | `channel_deleting` | The channel is draining and cannot be retried |
+| Deleting the old channel | 409 | `channel_sole_replicas` | The channel holds the only ready replica of some images; delete after the other channels catch up |
+
+The endpoints for the replica list and retry are in the [channel management API](../api/admin-channels.mdx).

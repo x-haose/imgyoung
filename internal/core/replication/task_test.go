@@ -34,6 +34,12 @@ type testEnv struct {
 // newTestEnv 组装环境并启动 Runner。
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	return newEnv(t, true)
+}
+
+// newEnv 组装环境;start 为 false 时 Runner 只能入队、不执行任务,供观察入队参数。
+func newEnv(t *testing.T, start bool) *testEnv {
+	t.Helper()
 	env := testenv.New(t)
 	env.AddLocalChannel(t, "backup", 200, false)
 
@@ -43,17 +49,19 @@ func newTestEnv(t *testing.T) *testEnv {
 	if err != nil {
 		t.Fatalf("NewRunner 返回错误: %v", err)
 	}
-	if err := runner.Start(t.Context()); err != nil {
-		t.Fatalf("启动 Runner: %v", err)
-	}
-	if err := runner.Recover(t.Context()); err != nil {
-		t.Fatalf("恢复扫描: %v", err)
-	}
-	t.Cleanup(func() {
-		if serr := runner.Stop(t.Context()); serr != nil {
-			t.Errorf("停止 Runner: %v", serr)
+	if start {
+		if err := runner.Start(t.Context()); err != nil {
+			t.Fatalf("启动 Runner: %v", err)
 		}
-	})
+		if err := runner.Recover(t.Context()); err != nil {
+			t.Fatalf("恢复扫描: %v", err)
+		}
+		t.Cleanup(func() {
+			if serr := runner.Stop(t.Context()); serr != nil {
+				t.Errorf("停止 Runner: %v", serr)
+			}
+		})
+	}
 
 	te := &testEnv{runner: runner, conn: env.Conn, queries: env.Queries, mgr: env.Manager, dataDir: env.DataDir}
 	for _, h := range env.Manager.All() {
@@ -70,13 +78,21 @@ func newTestEnv(t *testing.T) *testEnv {
 // @return blob 主键与对象键
 func seedBlob(t *testing.T, env *testEnv) (int64, string) {
 	t.Helper()
-	const key = "seed_00000000"
+	return seedNamedBlob(t, env, "seed_00000000", "seedhash")
+}
+
+// seedNamedBlob 造一个指定对象键与哈希的 blob,状态同 seedBlob;同一测试里造多个 blob 时键与哈希须各不相同。
+// @param key 对象键
+// @param hash 内容哈希(只需唯一,不要求真实)
+// @return blob 主键与对象键
+func seedNamedBlob(t *testing.T, env *testEnv, key, hash string) (int64, string) {
+	t.Helper()
 	payload := []byte("replicate-me-0123456789")
 	if err := env.local.Driver.Put(t.Context(), key, bytes.NewReader(payload), int64(len(payload))); err != nil {
 		t.Fatalf("写源对象: %v", err)
 	}
 	blobID, err := env.queries.CreateBlob(t.Context(), sqlc.CreateBlobParams{
-		Sha256: "seedhash", Phash: 1, StorageKey: key, Mime: "image/png",
+		Sha256: hash, Phash: 1, StorageKey: key, Mime: "image/png",
 		Size: int64(len(payload)), Width: 1, Height: 1,
 	})
 	if err != nil {

@@ -284,6 +284,7 @@ func scalarsFromRow(row sqlc.Setting) Settings {
 		IdempotencyKeyTTLHours: int(row.IdempotencyKeyTtlHours),
 		AlertWebhookURL:        row.AlertWebhookUrl,
 		AuditRetentionDays:     int(row.AuditRetentionDays),
+		ReplicateLimitMBps:     int(row.ReplicateLimitMbps),
 	}
 }
 
@@ -352,6 +353,7 @@ func scalarsToParams(cfg Settings) sqlc.UpdateSettingsParams {
 		IdempotencyKeyTtlHours: int64(cfg.IdempotencyKeyTTLHours),
 		AlertWebhookUrl:        cfg.AlertWebhookURL,
 		AuditRetentionDays:     int64(cfg.AuditRetentionDays),
+		ReplicateLimitMbps:     int64(cfg.ReplicateLimitMBps),
 	}
 }
 

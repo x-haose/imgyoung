@@ -40,7 +40,7 @@ Encryption is decided at creation and cannot change afterwards. The API rejects 
 
 The reason: after flipping the switch, one channel would hold objects written under the old setting next to objects written under the new one, and the old objects could not be read back under the new setting.
 
-To change encryption, let replication do the migration:
+To change encryption, let replication do the migration (full procedure in [Migrating a storage channel](../operations/migrate-channel.mdx)):
 
 <Steps>
 <Step>

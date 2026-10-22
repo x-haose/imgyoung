@@ -39,5 +39,6 @@ CREATE TABLE settings (
     idempotency_key_ttl_hours INTEGER NOT NULL DEFAULT 24, -- 上传幂等键保留期(小时),超期由清理循环回收;客户端重试窗口以此为界
     alert_webhook_url TEXT NOT NULL DEFAULT '', -- 告警 Webhook 地址(http/https),告警开启与恢复时 POST JSON;空=不外发
     audit_retention_days INTEGER NOT NULL DEFAULT 0, -- 审计日志保留天数,超期由清理循环回收;0=永久保留
+    replicate_limit_mbps INTEGER NOT NULL DEFAULT 0, -- 后台补齐写入渠道的总带宽上限(MB/s),所有渠道合计;0=不限;只限补齐,不限用户上传的同步写入
     updated_at TEXT NOT NULL DEFAULT (datetime('now')) -- 最近写入时刻,UTC 文本
 );

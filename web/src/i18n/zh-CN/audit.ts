@@ -21,6 +21,7 @@ export const audit = {
     'channel.update': '编辑渠道',
     'channel.delete': '删除渠道',
     'channel.export': '导出渠道 rclone 配置',
+    'channel.retry_replicas': '重试失败的副本',
     'token.issue': '签发 Token',
     'token.revoke': '吊销 Token',
     'token.rotate': '轮换 Token',

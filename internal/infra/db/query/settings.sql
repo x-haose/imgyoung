@@ -45,5 +45,6 @@ SET max_upload_mb = ?,
     idempotency_key_ttl_hours = ?,
     alert_webhook_url = ?,
     audit_retention_days = ?,
+    replicate_limit_mbps = ?,
     updated_at = datetime('now')
 WHERE id = 1;

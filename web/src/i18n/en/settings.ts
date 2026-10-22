@@ -179,6 +179,10 @@ export const settings = {
         label: 'Channel usage alert threshold',
         hint: 'Opens an alert when a channel exceeds it, without blocking writes; 0 disables',
       },
+      replicate_limit_mbps: {
+        label: 'Replication write limit',
+        hint: 'Total bandwidth cap for background replication writes across all channels; 0 means unlimited. Only background replication is limited, not user uploads',
+      },
       cdn_cloudflare_zone_id: {
         label: 'Cloudflare Zone ID',
         hint: 'Empty disables',
@@ -204,6 +208,7 @@ export const settings = {
     units: {
       mb: 'MB',
       gb: 'GB',
+      mbps: 'MB/s',
       megapixels: 'megapixels',
       count: '',
       perMinute: '/ min',

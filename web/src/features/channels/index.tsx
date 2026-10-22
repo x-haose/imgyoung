@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button'
 import { QueryState } from '@/components/query-state'
 import { ChannelSheet } from './channel-sheet'
 import { ChannelTable } from './channel-table'
-import { channelsQueryOptions } from './data'
+import { channelsQueryOptions, type ReplicaFilter } from './data'
 import { DeleteChannelDialog, RemoveNowDialog } from './delete-dialog'
 import { ExportConfigDialog } from './export-dialog'
+import { ReplicasSheet } from './replicas-sheet'
 import { type ChannelItem } from './types'
 
 /** 存储渠道页:列表 + 模板化创建 / 编辑 + 手动探测 + 导出 rclone 配置 + 删除(可选清理远端对象)。 */
@@ -24,6 +25,10 @@ export function Channels() {
   const [removing, setRemoving] = useState<ChannelItem | null>(null)
   const [removingNow, setRemovingNow] = useState<ChannelItem | null>(null)
   const [exporting, setExporting] = useState<ChannelItem | null>(null)
+  const [replicas, setReplicas] = useState<{
+    channel: ChannelItem
+    filter: ReplicaFilter
+  } | null>(null)
   const openCreate = () => setSheet({ open: true, channel: null })
 
   return (
@@ -54,6 +59,9 @@ export function Channels() {
               onExport={setExporting}
               onDelete={setRemoving}
               onRemoveNow={setRemovingNow}
+              onShowReplicas={(channel, filter) =>
+                setReplicas({ channel, filter })
+              }
             />
           </>
         )}
@@ -72,6 +80,13 @@ export function Channels() {
       <RemoveNowDialog
         channel={removingNow}
         onClose={() => setRemovingNow(null)}
+      />
+      <ReplicasSheet
+        // 换渠道或换入口过滤时重新挂载,分页与过滤回到初始。
+        key={replicas ? `${replicas.channel.id}-${replicas.filter}` : 'none'}
+        target={replicas}
+        channel={list.data?.find((c) => c.id === replicas?.channel.id) ?? null}
+        onClose={() => setReplicas(null)}
       />
       <ExportConfigDialog
         channel={exporting}

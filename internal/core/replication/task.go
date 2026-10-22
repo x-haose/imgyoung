@@ -18,6 +18,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/store/driver"
 )
@@ -34,6 +35,10 @@ const replicateQueueWorkers = 4
 
 // replicateJobTimeout 单个补齐任务的执行超时(慢渠道不允许无限占用 worker)。
 const replicateJobTimeout = 15 * time.Minute
+
+// backfillPriority 对账重新排队的补齐任务的优先级(River:1 最高、4 最低)。上传时入队的补齐用默认的最高优先级,
+// 新建渠道的存量补课与周期对账用这个较低的优先级,迁移期间大批补课不会让新上传的图排在后面等副本。
+const backfillPriority = 3
 
 // ReplicateArgs 补齐一份副本的任务参数。
 type ReplicateArgs struct {
@@ -76,12 +81,13 @@ func (DeleteObjectArgs) InsertOpts() river.InsertOpts {
 
 // RunnerConfig Runner 的全部依赖。
 type RunnerConfig struct {
-	Conn    *sql.DB          // 数据库连接(River 复用同一 SQLite)
-	Queries *sqlc.Queries    // sqlc 查询集
-	Manager *channel.Manager // 渠道管理器(取源/目标驱动)
-	Purger  ObjectPurger     // CDN 缓存清理执行器;nil 表示 purge 未启用,EnqueuePurge 为空操作
-	Metrics PutMetrics       // 指标记录口;可为 nil(不记指标)
-	Logger  *slog.Logger     // 结构化日志
+	Conn     *sql.DB                // 数据库连接(River 复用同一 SQLite)
+	Queries  *sqlc.Queries          // sqlc 查询集
+	Manager  *channel.Manager       // 渠道管理器(取源/目标驱动)
+	Purger   ObjectPurger           // CDN 缓存清理执行器;nil 表示 purge 未启用,EnqueuePurge 为空操作
+	Settings func() config.Settings // 运营配置快照读取口,取补齐带宽上限(逐次取值,热生效)
+	Metrics  PutMetrics             // 指标记录口;可为 nil(不记指标)
+	Logger   *slog.Logger           // 结构化日志
 }
 
 // PutMetrics 向渠道写对象的指标记录口(由 observability.Metrics 实现)。
@@ -100,6 +106,7 @@ type QueueStats struct {
 type Runner struct {
 	cfg    RunnerConfig           // 依赖
 	client *river.Client[*sql.Tx] // River 客户端
+	bw     *bandwidth             // 补齐写入的全局带宽限制
 }
 
 // NewRunner 创建 Runner:执行 River 自身迁移并注册 worker。
@@ -117,7 +124,8 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	}
 
 	workers := river.NewWorkers()
-	river.AddWorker(workers, &replicateWorker{cfg: cfg})
+	bw := newBandwidth()
+	river.AddWorker(workers, &replicateWorker{cfg: cfg, bw: bw})
 	river.AddWorker(workers, &deleteObjectWorker{cfg: cfg})
 	river.AddWorker(workers, &drainChannelWorker{cfg: cfg})
 	// 无条件注册:purge 配置关停后,历史遗留的 cdn_purge 任务仍能被认领并
@@ -136,7 +144,7 @@ func NewRunner(cfg RunnerConfig) (*Runner, error) {
 	if err != nil {
 		return nil, fmt.Errorf("初始化 River 客户端: %w", err)
 	}
-	return &Runner{cfg: cfg, client: client}, nil
+	return &Runner{cfg: cfg, client: client, bw: bw}, nil
 }
 
 // Start 启动 worker;之后须调用 Recover 完成恢复扫描并开启周期循环。
@@ -309,7 +317,8 @@ func (r *Runner) insertReplications(ctx context.Context, rows []sqlc.ListPending
 	params := make([]river.InsertManyParams, 0, len(rows))
 	for _, row := range rows {
 		params = append(params, river.InsertManyParams{
-			Args: ReplicateArgs{BlobID: row.BlobID, ChannelID: row.ChannelID},
+			Args:       ReplicateArgs{BlobID: row.BlobID, ChannelID: row.ChannelID},
+			InsertOpts: &river.InsertOpts{Priority: backfillPriority},
 		})
 	}
 	if _, err := r.client.InsertMany(ctx, params); err != nil {
@@ -322,6 +331,7 @@ func (r *Runner) insertReplications(ctx context.Context, rows []sqlc.ListPending
 type replicateWorker struct {
 	river.WorkerDefaults[ReplicateArgs]
 	cfg RunnerConfig // Runner 依赖(共享)
+	bw  *bandwidth   // 补齐写入的全局带宽限制
 }
 
 // Timeout 单任务执行超时(River 到时中断,防慢渠道占死 worker)。
@@ -383,6 +393,15 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 	return nil
 }
 
+// limitBytes 当前的补齐带宽上限(字节/秒);没有配置读取口时不限。
+// @return 字节/秒,0 表示不限
+func (w *replicateWorker) limitBytes() int64 {
+	if w.cfg.Settings == nil {
+		return 0
+	}
+	return w.cfg.Settings().ReplicateLimitBytes()
+}
+
 // errNoSource 没有可读的源副本:除目标外没有健康且副本就绪的渠道。
 var errNoSource = errors.New("无可用源副本")
 
@@ -407,7 +426,8 @@ func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target c
 			failedOn, err = src.ID, oerr
 			continue
 		}
-		err = target.Driver.Put(ctx, blob.StorageKey, rc, blob.Size)
+		src := w.bw.wrap(ctx, rc, w.limitBytes())
+		err = target.Driver.Put(ctx, blob.StorageKey, src, blob.Size)
 		if cerr := rc.Close(); cerr != nil && err == nil {
 			err = cerr
 		}

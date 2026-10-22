@@ -37,7 +37,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { checkChannel, useInvalidateChannels } from './data'
+import { checkChannel, type ReplicaFilter, useInvalidateChannels } from './data'
 import { TypeBadge } from './type-badge'
 import { type ChannelItem, type ReplicaStats } from './types'
 
@@ -48,6 +48,7 @@ type ChannelTableProps = {
   onExport: (channel: ChannelItem) => void // 导出渠道的 rclone 配置
   onDelete: (channel: ChannelItem) => void
   onRemoveNow: (channel: ChannelItem) => void // 清理中的渠道:放弃清理立即移除
+  onShowReplicas: (channel: ChannelItem, filter: ReplicaFilter) => void // 打开副本清单并带上过滤
 }
 
 /** 渠道列表:优先级降序,最高优先级的健康渠道标为主写。 */
@@ -58,6 +59,7 @@ export function ChannelTable({
   onExport,
   onDelete,
   onRemoveNow,
+  onShowReplicas,
 }: ChannelTableProps) {
   const m = useMessages()
   const invalidate = useInvalidateChannels()
@@ -171,7 +173,10 @@ export function ChannelTable({
                   <HealthCell row={row} />
                 </TableCell>
                 <TableCell>
-                  <ReplicaCell stats={row.replicas} />
+                  <ReplicaCell
+                    stats={row.replicas}
+                    onOpen={(filter) => onShowReplicas(row, filter)}
+                  />
                 </TableCell>
                 <TableCell className='text-end'>
                   <RowActions
@@ -261,9 +266,16 @@ function HealthCell({ row }: { row: ChannelItem }) {
   )
 }
 
-/** 副本水位:就绪 · 待补 · 失败,非零的待补 / 失败着色提醒。 */
-function ReplicaCell({ stats }: { stats: ReplicaStats }) {
+/** 副本水位:完成百分比与 就绪 · 待补 · 失败;非零的待补 / 失败着色,可点开该渠道的副本清单。 */
+function ReplicaCell({
+  stats,
+  onOpen,
+}: {
+  stats: ReplicaStats
+  onOpen: (filter: ReplicaFilter) => void
+}) {
   const m = useMessages()
+  const total = stats.done + stats.pending + stats.failed
   const parts = [
     {
       n: stats.done,
@@ -276,36 +288,60 @@ function ReplicaCell({ stats }: { stats: ReplicaStats }) {
       text: m.channels.replicaPending,
       hint: m.channels.replicaPendingHint,
       active: 'text-info',
+      filter: 'pending' as const,
     },
     {
       n: stats.failed,
       text: m.channels.replicaFailed,
       hint: m.channels.replicaFailedHint,
       active: 'text-destructive',
+      filter: 'failed' as const,
     },
   ]
   return (
-    <div className='flex items-center gap-1.5 text-xs whitespace-nowrap tabular-nums'>
-      {parts.map((part, i) => (
-        <span key={part.text} className='flex items-center gap-1.5'>
-          {i > 0 && <span className='text-muted-foreground/50'>·</span>}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className={cn(
-                  'cursor-default',
-                  part.n > 0 ? part.active : 'text-muted-foreground/60'
+    <div className='space-y-1'>
+      {total > 0 && (
+        <div className='text-xs font-medium tabular-nums'>
+          {t(m.channels.replicaPercent, {
+            percent: Math.floor((stats.done / total) * 100),
+          })}
+        </div>
+      )}
+      <div className='flex items-center gap-1.5 text-xs whitespace-nowrap tabular-nums'>
+        {parts.map((part, i) => (
+          <span key={part.text} className='flex items-center gap-1.5'>
+            {i > 0 && <span className='text-muted-foreground/50'>·</span>}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                {part.filter && part.n > 0 ? (
+                  <button
+                    type='button'
+                    className={cn(
+                      'cursor-pointer rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                      part.active
+                    )}
+                    onClick={() => onOpen(part.filter)}
+                  >
+                    {t(part.text, { n: formatNumber(part.n) })}
+                  </button>
+                ) : (
+                  <span
+                    className={cn(
+                      'cursor-default',
+                      part.n > 0 ? part.active : 'text-muted-foreground/60'
+                    )}
+                  >
+                    {t(part.text, { n: formatNumber(part.n) })}
+                  </span>
                 )}
-              >
-                {t(part.text, { n: formatNumber(part.n) })}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent className='max-w-xs'>
-              {t(part.hint, { n: formatNumber(part.n) })}
-            </TooltipContent>
-          </Tooltip>
-        </span>
-      ))}
+              </TooltipTrigger>
+              <TooltipContent className='max-w-xs'>
+                {t(part.hint, { n: formatNumber(part.n) })}
+              </TooltipContent>
+            </Tooltip>
+          </span>
+        ))}
+      </div>
     </div>
   )
 }

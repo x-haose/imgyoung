@@ -5,6 +5,7 @@
     "reverse-proxy",
     "cdn",
     "backup",
+    "migrate-channel",
     "upgrade",
     "password-reset",
     "monitoring"

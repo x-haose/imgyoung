@@ -53,6 +53,27 @@ func (q *Queries) ChannelReplicaStats(ctx context.Context) ([]ChannelReplicaStat
 	return items, nil
 }
 
+const countChannelReplicas = `-- name: CountChannelReplicas :one
+SELECT COUNT(*)
+FROM blob_channels bc
+WHERE bc.channel_id = ?1
+  AND (CAST(?2 AS TEXT) = ''
+       OR (CAST(?2 AS TEXT) = 'pending' AND bc.state IN ('pending', 'uploading'))
+       OR bc.state = CAST(?2 AS TEXT))
+`
+
+type CountChannelReplicasParams struct {
+	ChannelID int64
+	State     string
+}
+
+func (q *Queries) CountChannelReplicas(ctx context.Context, arg CountChannelReplicasParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countChannelReplicas, arg.ChannelID, arg.State)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countSoleReplicas = `-- name: CountSoleReplicas :one
 SELECT COUNT(*)
 FROM blob_channels bc
@@ -366,6 +387,79 @@ func (q *Queries) ListBlobChannelsForChannelPage(ctx context.Context, arg ListBl
 	return items, nil
 }
 
+const listChannelReplicas = `-- name: ListChannelReplicas :many
+SELECT bc.blob_id, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at, b.size, b.mime,
+       CAST(COALESCE((SELECT MIN(i.id) FROM images i WHERE i.blob_id = bc.blob_id), '') AS TEXT) AS image_id,
+       (SELECT COUNT(*) FROM images i WHERE i.blob_id = bc.blob_id) AS image_count
+FROM blob_channels bc
+JOIN blobs b ON b.id = bc.blob_id
+WHERE bc.channel_id = ?1
+  AND (CAST(?2 AS TEXT) = ''
+       OR (CAST(?2 AS TEXT) = 'pending' AND bc.state IN ('pending', 'uploading'))
+       OR bc.state = CAST(?2 AS TEXT))
+ORDER BY bc.updated_at DESC, bc.blob_id
+LIMIT ?4 OFFSET ?3
+`
+
+type ListChannelReplicasParams struct {
+	ChannelID  int64
+	State      string
+	PageOffset int64
+	PageLimit  int64
+}
+
+type ListChannelReplicasRow struct {
+	BlobID          int64
+	State           string
+	Attempts        int64
+	LastErrorReason string
+	LastError       string
+	UpdatedAt       string
+	Size            int64
+	Mime            string
+	ImageID         string
+	ImageCount      int64
+}
+
+func (q *Queries) ListChannelReplicas(ctx context.Context, arg ListChannelReplicasParams) ([]ListChannelReplicasRow, error) {
+	rows, err := q.db.QueryContext(ctx, listChannelReplicas,
+		arg.ChannelID,
+		arg.State,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChannelReplicasRow
+	for rows.Next() {
+		var i ListChannelReplicasRow
+		if err := rows.Scan(
+			&i.BlobID,
+			&i.State,
+			&i.Attempts,
+			&i.LastErrorReason,
+			&i.LastError,
+			&i.UpdatedAt,
+			&i.Size,
+			&i.Mime,
+			&i.ImageID,
+			&i.ImageCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listImageReplicas = `-- name: ListImageReplicas :many
 SELECT bc.channel_id, c.name AS channel_name, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at
 FROM images i
@@ -500,6 +594,21 @@ WHERE state = 'failed' AND channel_id = ?
 func (q *Queries) ResetFailedBlobChannels(ctx context.Context, channelID int64) error {
 	_, err := q.db.ExecContext(ctx, resetFailedBlobChannels, channelID)
 	return err
+}
+
+const retryFailedBlobChannels = `-- name: RetryFailedBlobChannels :execrows
+UPDATE blob_channels
+SET state      = 'pending',
+    updated_at = datetime('now')
+WHERE state = 'failed' AND channel_id = ?
+`
+
+func (q *Queries) RetryFailedBlobChannels(ctx context.Context, channelID int64) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retryFailedBlobChannels, channelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const seedBlobChannelsForChannel = `-- name: SeedBlobChannelsForChannel :execrows

@@ -53,7 +53,11 @@ type Settings struct {
 	IdempotencyKeyTTLHours int                `json:"idempotency_key_ttl_hours"` // 上传幂等键保留期(小时),超期回收;客户端重试窗口以此为界
 	AlertWebhookURL        string             `json:"alert_webhook_url"`         // 告警 Webhook 地址(http/https);空=不外发
 	AuditRetentionDays     int                `json:"audit_retention_days"`      // 审计日志保留天数,超期由清理循环回收;0=永久保留
+	ReplicateLimitMBps     int                `json:"replicate_limit_mbps"`      // 后台补齐写入渠道的总带宽上限(MB/s),所有渠道合计;0=不限
 }
+
+// maxReplicateLimitMBps 补齐带宽上限的取值上限(MB/s);再大的值换算成字节/秒会逼近整数上限,也没有现实意义。
+const maxReplicateLimitMBps = 1_000_000
 
 // MaxDurationHours 以整数表达的时长(配置项与请求参数)的统一上限:100 年,单位小时。
 // @Description: 时长最终要乘成 time.Duration(int64 纳秒,约 292 年溢出);溢出会得到负数,
@@ -102,6 +106,7 @@ func Defaults() Settings {
 		IdempotencyKeyTTLHours: 24,
 		AlertWebhookURL:        "",
 		AuditRetentionDays:     0,
+		ReplicateLimitMBps:     0,
 	}
 }
 
@@ -116,6 +121,10 @@ func (s Settings) AuditRetention() time.Duration {
 func (s Settings) IdempotencyKeyTTL() time.Duration {
 	return time.Duration(s.IdempotencyKeyTTLHours) * time.Hour
 }
+
+// ReplicateLimitBytes 后台补齐的总带宽上限(字节/秒);0 表示不限。
+// @return 字节/秒
+func (s Settings) ReplicateLimitBytes() int64 { return int64(s.ReplicateLimitMBps) << 20 }
 
 // MaxUploadBytes 单图字节上限(由 MB 换算)。
 // @return 字节数
@@ -248,8 +257,8 @@ func (s Settings) validateSchedules() error {
 	)
 }
 
-// validateLifecycle 校验生命周期与查重阈值:宽限、TTL、冷图天数、配额、汉明距离、审计保留期以 0 表示不启用或永久、
-// 不可为负;幂等键保留期须为正。
+// validateLifecycle 校验生命周期与查重阈值:宽限、TTL、冷图天数、配额、汉明距离、审计保留期、补齐带宽上限以 0 表示
+// 不启用、永久或不限、不可为负;幂等键保留期须为正。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateLifecycle() error {
 	return firstError(
@@ -260,6 +269,8 @@ func (s Settings) validateLifecycle() error {
 		nonNegative("dedup_phash_max_distance", s.DedupPhashMaxDistance),
 		positive("idempotency_key_ttl_hours", s.IdempotencyKeyTTLHours),
 		nonNegative("audit_retention_days", s.AuditRetentionDays),
+		nonNegative("replicate_limit_mbps", s.ReplicateLimitMBps),
+		atMost("replicate_limit_mbps", s.ReplicateLimitMBps, maxReplicateLimitMBps),
 	)
 }
 

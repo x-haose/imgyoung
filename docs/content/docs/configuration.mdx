@@ -216,11 +216,13 @@ sudo systemctl restart imgyoung
 | `backup_keep` | 备份保留份数 | `24` | ≥ 1 | 每个渠道保留的快照份数 |
 | `usage_report_seconds` | 用量上报间隔 | `300` | ≥ 1，秒 | 指标 `imgyoung_channel_storage_bytes` 的刷新间隔 |
 | `channel_quota_gb` | 渠道用量告警阈值 | `0` | ≥ 0，GB | 渠道用量超过此值时告警；`0` 不告警 |
+| `replicate_limit_mbps` | 补齐写入限速 | `0` | ≥ 0，整数，MB/s | 后台补齐写入渠道的总带宽上限；`0` 不限 |
 
 - **`backup_interval_hours`**：启动时，如果有健康渠道上没有这个间隔内的快照，会先备份一次。见[备份与恢复](./operations/backup.mdx)。
 - **`backup_keep`**：快照写到每个健康且不在清理中的渠道，每个渠道写入后只保留最新的这么多份。有渠道清理旧快照失败时，这一轮备份记为失败（错误码 `backup_prune_failed`），并开启备份失败告警。
 - **`usage_report_seconds`**：只决定这个指标的刷新间隔，用量告警按健康检查间隔评估。
 - **`channel_quota_gb`**：1 GB = 2³⁰ 字节。渠道的已存数据按已就绪副本的图片大小求和，超过阈值即开启告警，但不限制写入。
+- **`replicate_limit_mbps`**：所有渠道合计。只限制后台补齐，不限制用户上传的同步写入和读取。保存即生效。用法见[迁移存储渠道](./operations/migrate-channel.mdx#限制补齐带宽)。
 
 ### CDN 缓存清理
 

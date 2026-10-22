@@ -901,6 +901,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/channels/{id}/replicas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 渠道上的副本清单
+         * @description 分页列出一个渠道上的图片副本，最近有变化的在前。迁移或补齐时，用它找出哪些图片没有补齐成功以及原因。
+         *
+         *     一个物理图可能被多张图片引用（查重合并），所以每条给出其中最早的一张图片的短 ID 与引用张数。清理中的渠道也可以查看。仅管理员。
+         */
+        get: operations["listChannelReplicas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/channels/{id}/replicas/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 立即重试失败的副本
+         * @description 把这个渠道上补齐失败的副本全部改回待补并重新排队，不必等下一次周期对账。渠道此刻不健康时它们会再次失败。清理中的渠道返回 409。仅管理员。
+         */
+        post: operations["retryChannelReplicas"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/channel-oauth/start": {
         parameters: {
             query?: never;
@@ -1358,6 +1400,52 @@ export interface components {
             /** @description 原始错误信息，已去除凭证，最长 200 个字符，多为服务商或网络库的英文原文；分类已足以说明问题时可能为空 */
             detail: string;
         };
+        /**
+         * @description 副本状态：`pending` 待补、`uploading` 补齐中、`done` 已就绪、`failed` 补齐失败
+         * @enum {string}
+         */
+        ChannelReplicaState: "pending" | "uploading" | "done" | "failed";
+        ChannelReplica: {
+            /** @description 引用这个物理图的最早一张图片的短 ID；没有任何图片引用它（等待回收）时为 null */
+            image_id: string | null;
+            /**
+             * Format: int64
+             * @description 引用这个物理图的图片张数
+             */
+            image_count: number;
+            state: components["schemas"]["ChannelReplicaState"];
+            /**
+             * Format: int64
+             * @description 累计补齐尝试次数
+             */
+            attempts: number;
+            /** @description 最近一次补齐失败的结论；没有失败过为 null */
+            failure: components["schemas"]["Failure"] | null;
+            /**
+             * Format: int64
+             * @description 存储字节
+             */
+            size: number;
+            /** @description 真实 MIME */
+            mime: string;
+            /** @description 状态最近更新时刻 */
+            updated_at: string;
+        };
+        ChannelReplicaList: {
+            items: components["schemas"]["ChannelReplica"][];
+            /**
+             * Format: int64
+             * @description 过滤后的总条数
+             */
+            total: number;
+        };
+        ChannelReplicaRetry: {
+            /**
+             * Format: int64
+             * @description 改回待补的副本数
+             */
+            retried: number;
+        };
         /** @description 渠道最近一次失败的结论 */
         ChannelFailure: {
             /**
@@ -1559,6 +1647,8 @@ export interface components {
             alert_webhook_url: string;
             /** @description 审计日志保留天数；0 表示永久保留 */
             audit_retention_days: number;
+            /** @description 后台补齐写入渠道的总带宽上限（MB/s），所有渠道合计；0 表示不限。只限补齐，不限用户上传的同步写入 */
+            replicate_limit_mbps: number;
         };
         /** @description 「配置键 → 新值」对象；键与值类型同 Settings，只需给出要改的键 */
         SettingsPatch: {
@@ -4534,6 +4624,77 @@ export interface operations {
         responses: {
             200: components["responses"]["ChannelResponse"];
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["ChannelDeleting"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listChannelReplicas: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 起；缺省 1 */
+                page?: components["parameters"]["page"];
+                /** @description 每页条数；缺省 20，上限 100 */
+                page_size?: components["parameters"]["pageSize"];
+                /**
+                 * @description 只看指定状态的副本，缺省为全部：
+                 *     - `pending`：待补，含补齐中，与渠道列表里的「待补」口径一致
+                 *     - `failed`：补齐失败
+                 *     - `done`：已就绪
+                 */
+                state?: "pending" | "failed" | "done";
+            };
+            header?: never;
+            path: {
+                /** @description 渠道 id */
+                id: components["parameters"]["channelID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 副本分页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelReplicaList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    retryChannelReplicas: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path: {
+                /** @description 渠道 id */
+                id: components["parameters"]["channelID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已重新排队 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelReplicaRetry"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];

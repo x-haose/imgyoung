@@ -86,6 +86,33 @@ SET state      = 'pending',
     updated_at = datetime('now')
 WHERE state = 'failed' AND channel_id = ?;
 
+-- name: RetryFailedBlobChannels :execrows
+UPDATE blob_channels
+SET state      = 'pending',
+    updated_at = datetime('now')
+WHERE state = 'failed' AND channel_id = ?;
+
+-- name: ListChannelReplicas :many
+SELECT bc.blob_id, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at, b.size, b.mime,
+       CAST(COALESCE((SELECT MIN(i.id) FROM images i WHERE i.blob_id = bc.blob_id), '') AS TEXT) AS image_id,
+       (SELECT COUNT(*) FROM images i WHERE i.blob_id = bc.blob_id) AS image_count
+FROM blob_channels bc
+JOIN blobs b ON b.id = bc.blob_id
+WHERE bc.channel_id = @channel_id
+  AND (CAST(@state AS TEXT) = ''
+       OR (CAST(@state AS TEXT) = 'pending' AND bc.state IN ('pending', 'uploading'))
+       OR bc.state = CAST(@state AS TEXT))
+ORDER BY bc.updated_at DESC, bc.blob_id
+LIMIT @page_limit OFFSET @page_offset;
+
+-- name: CountChannelReplicas :one
+SELECT COUNT(*)
+FROM blob_channels bc
+WHERE bc.channel_id = @channel_id
+  AND (CAST(@state AS TEXT) = ''
+       OR (CAST(@state AS TEXT) = 'pending' AND bc.state IN ('pending', 'uploading'))
+       OR bc.state = CAST(@state AS TEXT));
+
 -- name: ListBlobChannelIDs :many
 SELECT channel_id
 FROM blob_channels

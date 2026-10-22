@@ -117,6 +117,7 @@ The replica table in the metadata database is the source of truth for replica st
 - **Periodic reconciliation**: at startup and every 10 minutes after, ImgYoung adds missing replica records for every channel that is not draining, sets `failed` replicas on healthy channels back to `pending`, and queues every unfinished replica again. The "Replica reconciliation every … s" line under **Settings → Runtime settings → Bootstrap configuration** shows this interval.
 - **Restarts**: jobs and replica states live in SQLite, so restarts lose nothing. A graceful shutdown cancels in-flight replication jobs, and the periodic reconciliation queues them again at the next startup; jobs that were running when the process was killed run again after about 16 minutes.
 - **New channels**: creating a channel registers a pending replica for every existing image, and copying starts right away. If an upload running at the same moment missed the new channel, the periodic reconciliation fills the gap.
+- **Priority**: replication triggered by an upload has the highest priority; backfilling a new channel and the jobs requeued by periodic and startup reconciliation have a lower one. Images uploaded during a migration are therefore still replicated to every channel quickly and do not queue behind the whole backfill. To cap the bandwidth replication uses, see `replicate_limit_mbps` ([Configuration](../configuration.mdx#reliability--channels)).
 - **Daily reconciliation GC**: every 24 hours the objects on each healthy channel are checked. Orphans written more than 48 hours ago are deleted; replicas the metadata database marks ready but the channel no longer has go back to `pending` and are replicated again. See [Reconciliation GC](../operations/backup.mdx#reconciliation-gc).
 
 ## Read failover
@@ -180,7 +181,9 @@ The related log lines are listed under [Logs](#logs) at the end of this page.
 
 ## Replica counts
 
-The **Replicas** column shows how many of the channel's replicas are in each state: ready, pending (including in progress) and failed.
+The **Replicas** column shows how many of the channel's replicas are in each state: ready, pending (including in progress) and failed, plus a completion percentage: ready divided by the sum of ready, pending and failed. When all three are 0 no percentage is shown.
+
+The **pending** and **failed** numbers are links that open the channel's **Replica list**, showing the replicas in that state: image short ID, number of references, state, attempts, the most recent failure, size, type and update time, most recently changed first. **Retry failed replicas** in the list sets all of the channel's failed replicas back to pending and queues them again, without waiting for the next periodic reconciliation. It is refused while the channel is draining (`channel_deleting`), and if the channel is unhealthy at that moment the replicas fail again. Each retry is recorded in the audit log. For the full migration procedure see [Migrating a storage channel](../operations/migrate-channel.mdx).
 
 A pending count that never drops, or any failures, means writes to that channel are failing: check the reason in the Status column, then run **Probe again**. Once the channel is healthy again, failed replicas are retried at the next periodic reconciliation.
 
@@ -219,7 +222,7 @@ The **binding time** is when the channel started using its current storage locat
 Restoring a snapshot resets the binding time of every channel as well; the full rules are under [Reconciliation GC](../operations/backup.mdx#reconciliation-gc).
 
 <Callout type="warn" title="Do not move storage by editing">
-Editing never triggers replication. After changing the bucket, prefix or endpoint, the channel's existing replicas are still recorded as ready; reads from it fail and fall through to other channels until the daily reconciliation notices the missing objects and replicates them again. To move storage, create a new channel, wait until its **Replicas** column shows no pending and no failed replicas, then delete the old one.
+Editing never triggers replication. After changing the bucket, prefix or endpoint, the channel's existing replicas are still recorded as ready; reads from it fail and fall through to other channels until the daily reconciliation notices the missing objects and replicates them again. To move storage, create a new channel, wait until its **Replicas** column shows no pending and no failed replicas, then delete the old one; see [Migrating a storage channel](../operations/migrate-channel.mdx).
 </Callout>
 
 ## Deleting a channel

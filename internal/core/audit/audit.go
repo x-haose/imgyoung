@@ -19,6 +19,8 @@ const (
 	ActionChannelDelete = "channel.delete"
 	// ActionChannelExport 渠道 rclone 配置导出(含凭证与解密密码)。
 	ActionChannelExport = "channel.export"
+	// ActionChannelRetryReplicas 立即重试渠道上补齐失败的副本。
+	ActionChannelRetryReplicas = "channel.retry_replicas"
 	// ActionTokenIssue Token 签发。
 	ActionTokenIssue = "token.issue"
 	// ActionTokenRevoke Token 吊销。
