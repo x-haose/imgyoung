@@ -57,26 +57,25 @@ func TestBackfillRunsInSeparateQueue(t *testing.T) {
 	}
 }
 
-// TestEnqueueChannelPendingOnlyThatChannel 只为指定渠道的待补副本入队,别的渠道的待补副本不受影响。
-func TestEnqueueChannelPendingOnlyThatChannel(t *testing.T) {
+// TestEnqueueBackfillPagesAndDedups 为指定副本入队补课任务:超过一页(reconcileBatch)也一个不少,全部进补课队列;
+// 重复调用按参数去重,不产生重复任务。
+func TestEnqueueBackfillPagesAndDedups(t *testing.T) {
 	env := newEnv(t, false)
-	blobID, _ := seedNamedBlob(t, env, "seed_one", "hash-one")
-	// seedNamedBlob 让 backup 待补、local 就绪;再把 local 上的这条也改成待补,用来验证按渠道过滤。
-	if _, err := env.conn.ExecContext(t.Context(), `UPDATE blob_channels SET state = 'pending'
-WHERE blob_id = ? AND channel_id = ?`, blobID, env.local.ID); err != nil {
-		t.Fatalf("改副本状态: %v", err)
+	ids := make([]int64, 1005)
+	for i := range ids {
+		ids[i] = int64(i + 1)
 	}
-
-	n, err := env.runner.EnqueueChannelPending(t.Context(), env.backup.ID)
-	if err != nil || n != 1 {
-		t.Fatalf("入队 = %d, err=%v, 期望只扫到 backup 上的 1 个", n, err)
+	for range 2 {
+		if err := env.runner.EnqueueBackfill(t.Context(), env.backup.ID, ids); err != nil {
+			t.Fatalf("入队: %v", err)
+		}
 	}
-	var total, backupJobs int64
+	var total, backfill int64
 	row := env.conn.QueryRowContext(t.Context(), `SELECT COUNT(*),
-COALESCE(SUM(CASE WHEN json_extract(args, '$.channel_id') = ? AND queue = 'backfill' THEN 1 ELSE 0 END), 0)
+COALESCE(SUM(CASE WHEN queue = 'backfill' AND json_extract(args, '$.channel_id') = ? THEN 1 ELSE 0 END), 0)
 FROM river_job WHERE kind = 'replicate_blob'`, env.backup.ID)
-	if err := row.Scan(&total, &backupJobs); err != nil || total != 1 || backupJobs != 1 {
-		t.Fatalf("任务数 %d、其中 backup 的补课任务 %d, err=%v, 期望都是 1", total, backupJobs, err)
+	if err := row.Scan(&total, &backfill); err != nil || total != 1005 || backfill != 1005 {
+		t.Fatalf("任务数 %d、补课队列里该渠道的 %d, err=%v, 期望都是 1005(跨页不漏、重复不增)", total, backfill, err)
 	}
 }
 
@@ -131,14 +130,14 @@ func TestChannelReplicaListAndRetry(t *testing.T) {
 		t.Fatalf("失败总数 = %d, err=%v, 期望 1", total, err)
 	}
 
-	n, err := env.queries.RetryFailedBlobChannels(t.Context(), env.backup.ID)
-	if err != nil || n != 1 {
-		t.Fatalf("重试 = %d, err=%v, 期望改回 1 个", n, err)
+	retried, err := env.queries.RetryFailedBlobChannels(t.Context(), env.backup.ID)
+	if err != nil || len(retried) != 1 || retried[0] != failed {
+		t.Fatalf("重试 = %v, err=%v, 期望改回失败的那个 blob", retried, err)
 	}
 	if rows := list("failed"); len(rows) != 0 {
 		t.Fatalf("重试后仍有失败副本: %+v", rows)
 	}
-	if n, err = env.queries.RetryFailedBlobChannels(t.Context(), env.local.ID); err != nil || n != 0 {
-		t.Fatalf("别的渠道没有失败副本,重试 = %d, err=%v", n, err)
+	if other, err := env.queries.RetryFailedBlobChannels(t.Context(), env.local.ID); err != nil || len(other) != 0 {
+		t.Fatalf("别的渠道没有失败副本,重试 = %v, err=%v", other, err)
 	}
 }

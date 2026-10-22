@@ -71,7 +71,7 @@ What to check, in order:
 2. If the channel is healthy but replicas still fail, read the failure and act on it.
 3. Then click **Retry failed replicas**. All failed replicas go back to pending and are queued again, and the page reports how many were queued.
 
-Failed replicas are retried without this too: while a channel is healthy, the periodic reconciliation sets them back to pending every 10 minutes; see [Asynchronous replication](../channels/index.mdx#asynchronous-replication). **Retry failed replicas** is for when you do not want to wait for the next round. If the channel is unhealthy at that moment, the replicas fail again. Each retry is recorded in the audit log as "Retry failed replicas".
+Failed replicas are retried without this too: while a channel is healthy, the periodic reconciliation sets them back to pending every 10 minutes; see [Asynchronous replication](../channels/index.mdx#asynchronous-replication). **Retry failed replicas** is for when you do not want to wait for the next round. If the channel is unhealthy at that moment, the replicas fail again. When `queued` in the API response is `false`, queuing did not finish for all of them: the replicas are already pending and the next periodic reconciliation queues them, so there is no need to retry again. Each retry is recorded in the audit log as "Retry failed replicas".
 
 ## Limiting replication bandwidth
 

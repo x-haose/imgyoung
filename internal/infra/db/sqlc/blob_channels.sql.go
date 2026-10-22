@@ -553,43 +553,6 @@ func (q *Queries) ListPendingBlobChannelsAfter(ctx context.Context, arg ListPend
 	return items, nil
 }
 
-const listPendingBlobIDsForChannelAfter = `-- name: ListPendingBlobIDsForChannelAfter :many
-SELECT blob_id
-FROM blob_channels
-WHERE channel_id = ?1 AND state = 'pending' AND blob_id > ?2
-ORDER BY blob_id
-LIMIT ?3
-`
-
-type ListPendingBlobIDsForChannelAfterParams struct {
-	ChannelID   int64
-	AfterBlobID int64
-	PageLimit   int64
-}
-
-func (q *Queries) ListPendingBlobIDsForChannelAfter(ctx context.Context, arg ListPendingBlobIDsForChannelAfterParams) ([]int64, error) {
-	rows, err := q.db.QueryContext(ctx, listPendingBlobIDsForChannelAfter, arg.ChannelID, arg.AfterBlobID, arg.PageLimit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var blob_id int64
-		if err := rows.Scan(&blob_id); err != nil {
-			return nil, err
-		}
-		items = append(items, blob_id)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const markBlobChannel = `-- name: MarkBlobChannel :exec
 UPDATE blob_channels
 SET state             = ?,
@@ -633,19 +596,35 @@ func (q *Queries) ResetFailedBlobChannels(ctx context.Context, channelID int64) 
 	return err
 }
 
-const retryFailedBlobChannels = `-- name: RetryFailedBlobChannels :execrows
+const retryFailedBlobChannels = `-- name: RetryFailedBlobChannels :many
 UPDATE blob_channels
 SET state      = 'pending',
     updated_at = datetime('now')
 WHERE state = 'failed' AND channel_id = ?
+RETURNING blob_id
 `
 
-func (q *Queries) RetryFailedBlobChannels(ctx context.Context, channelID int64) (int64, error) {
-	result, err := q.db.ExecContext(ctx, retryFailedBlobChannels, channelID)
+func (q *Queries) RetryFailedBlobChannels(ctx context.Context, channelID int64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, retryFailedBlobChannels, channelID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected()
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var blob_id int64
+		if err := rows.Scan(&blob_id); err != nil {
+			return nil, err
+		}
+		items = append(items, blob_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const seedBlobChannelsForChannel = `-- name: SeedBlobChannelsForChannel :execrows

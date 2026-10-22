@@ -221,38 +221,26 @@ func (r *Runner) EnqueueReplication(ctx context.Context, blobID int64, channelID
 	return errors.Join(errs...)
 }
 
-// EnqueueChannelPending 为一个渠道上全部待补的副本入队补课任务,返回入队的副本数。
-// @Description: 只处理这一个渠道,按 blob 主键游标分页,每页一次批量入队;入队按参数去重,已在队列里的跳过。
-// 供"立即重试失败的副本"在把失败副本改回待补之后调用,不触发对全部渠道的对账。
+// EnqueueBackfill 为一个渠道上指定的副本入队补课任务,每 reconcileBatch 个一次批量入队;入队按参数去重,已在队列里的跳过。
+// @Description: 供"立即重试失败的副本"在把它们改回待补之后调用,只处理传入的这些副本,不扫描整个渠道也不触发全量对账。
 // @param channelID 目标渠道主键
-// @return 本次扫到的待补副本数
+// @param blobIDs 要入队的物理图主键
 // @return 入队失败时的错误;已入队的保留,其余留待周期对账
-func (r *Runner) EnqueueChannelPending(ctx context.Context, channelID int64) (int, error) {
-	total := 0
-	var after int64
-	for {
-		ids, err := r.cfg.Queries.ListPendingBlobIDsForChannelAfter(ctx, sqlc.ListPendingBlobIDsForChannelAfterParams{
-			ChannelID: channelID, AfterBlobID: after, PageLimit: reconcileBatch,
-		})
-		if err != nil {
-			return total, fmt.Errorf("扫描渠道 %d 的待补副本: %w", channelID, err)
-		}
-		if len(ids) == 0 {
-			return total, nil
-		}
-		params := make([]river.InsertManyParams, len(ids))
-		for i, blobID := range ids {
+func (r *Runner) EnqueueBackfill(ctx context.Context, channelID int64, blobIDs []int64) error {
+	for lo := 0; lo < len(blobIDs); lo += reconcileBatch {
+		page := blobIDs[lo:min(lo+reconcileBatch, len(blobIDs))]
+		params := make([]river.InsertManyParams, len(page))
+		for i, blobID := range page {
 			params[i] = river.InsertManyParams{
 				Args:       ReplicateArgs{BlobID: blobID, ChannelID: channelID},
 				InsertOpts: &river.InsertOpts{Queue: backfillQueue},
 			}
 		}
 		if _, err := r.client.InsertMany(ctx, params); err != nil {
-			return total, fmt.Errorf("批量入队渠道 %d 的补齐任务: %w", channelID, err)
+			return fmt.Errorf("批量入队渠道 %d 的补齐任务: %w", channelID, err)
 		}
-		total += len(ids)
-		after = ids[len(ids)-1]
 	}
+	return nil
 }
 
 // EnqueueDelete 入队一个渠道对象删除任务(幂等,按参数去重)。
@@ -416,7 +404,7 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 	}
 
 	w.markState(ctx, args, channel.StateUploading, nil, 1)
-	if failedOn, err := w.copyBlob(ctx, blob, target, job.Queue == backfillQueue); err != nil {
+	if failedOn, err := w.copyBlob(ctx, blob, target, job.Queue); err != nil {
 		f := channel.Failure{Reason: channel.ReasonNoSource}
 		if !errors.Is(err, errNoSource) {
 			f = w.cfg.Manager.ExplainFor(failedOn, err)
@@ -431,6 +419,17 @@ func (w *replicateWorker) Work(ctx context.Context, job *river.Job[ReplicateArgs
 	w.markState(ctx, args, channel.StateDone, nil, 0)
 	w.cfg.Logger.Info("副本补齐完成", "blob", args.BlobID, "channel", target.Name)
 	return nil
+}
+
+// streamFor 决定复制时读取源对象所用的流:补课队列的任务按补齐带宽上限限速,其他队列(上传时的补齐)原样读取。
+// @param r 源对象的读取流
+// @param queue 任务所在的队列
+// @return 读取流
+func (w *replicateWorker) streamFor(ctx context.Context, r io.Reader, queue string) io.Reader {
+	if queue != backfillQueue {
+		return r
+	}
+	return w.bw.wrap(ctx, r, w.limitBytes)
 }
 
 // limitBytes 当前的补齐带宽上限(字节/秒);没有配置读取口时不限。
@@ -448,11 +447,11 @@ var errNoSource = errors.New("无可用源副本")
 // copyBlob 从优先级最高的就绪源渠道流式复制到目标渠道;源读不出或目标写失败时换下一个源。
 // @param blob 物理图记录
 // @param target 目标渠道
-// @param throttled 是否按补齐带宽上限限速:只有补课队列的任务限速
+// @param queue 任务所在的队列,决定是否按补齐带宽上限限速
 // @return failedOn 最后一次失败发生在哪个渠道(源读取失败为源渠道,写入失败为目标渠道);成功或无可用源时无意义
 // @return err 无可用源(errNoSource)或最后一次读写失败时的错误
 func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target channel.Handle,
-	throttled bool) (failedOn int64, err error) {
+	queue string) (failedOn int64, err error) {
 	sources, err := w.cfg.Manager.CandidatesForBlob(ctx, blob.ID)
 	if err != nil {
 		return 0, err
@@ -467,11 +466,7 @@ func (w *replicateWorker) copyBlob(ctx context.Context, blob sqlc.Blob, target c
 			failedOn, err = src.ID, oerr
 			continue
 		}
-		var stream io.Reader = rc
-		if throttled {
-			stream = w.bw.wrap(ctx, rc, w.limitBytes)
-		}
-		err = target.Driver.Put(ctx, blob.StorageKey, stream, blob.Size)
+		err = target.Driver.Put(ctx, blob.StorageKey, w.streamFor(ctx, rc, queue), blob.Size)
 		if cerr := rc.Close(); cerr != nil && err == nil {
 			err = cerr
 		}

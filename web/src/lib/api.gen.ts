@@ -1445,6 +1445,8 @@ export interface components {
              * @description 改回待补的副本数
              */
             retried: number;
+            /** @description 它们是否已全部入队。为 false 时副本已经是待补，会在下一次周期对账时排队，不必再点一次 */
+            queued: boolean;
         };
         /** @description 渠道最近一次失败的结论 */
         ChannelFailure: {

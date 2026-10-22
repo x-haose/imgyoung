@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
 	"github.com/x-haose/imgyoung/internal/core/channel"
@@ -25,6 +26,9 @@ type replicaListItem struct {
 	Mime       string           `json:"mime"`        // 真实 MIME
 	UpdatedAt  string           `json:"updated_at"`  // 状态最近更新时刻,UTC 文本
 }
+
+// enqueueRetriedTimeout 重试后为副本入队的时限。
+const enqueueRetriedTimeout = 5 * time.Minute
 
 // replicaStates 清单过滤参数的合法取值。
 var replicaStates = map[string]struct{}{"pending": {}, "failed": {}, "done": {}}
@@ -98,23 +102,39 @@ func (h *Handlers) HandleChannelReplicasRetry(w http.ResponseWriter, r *http.Req
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ChannelDeleting)
 		return
 	}
-	n, err := h.cfg.Queries.RetryFailedBlobChannels(r.Context(), channelID)
+	ids, err := h.cfg.Queries.RetryFailedBlobChannels(r.Context(), channelID)
 	if err != nil {
 		h.cfg.Logger.Error("重试失败的副本失败", "channel", channelID, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionChannelRetryReplicas, strconv.FormatInt(channelID, 10),
-		"retried="+strconv.FormatInt(n, 10))
-	// 副本已改回待补,入队失败或被打断时由周期对账补上,不影响本次结果;入队脱离请求的取消,不因客户端断开而中途停下。
-	if h.cfg.Replicator != nil && n > 0 {
-		if _, err := h.cfg.Replicator.EnqueueChannelPending(context.WithoutCancel(r.Context()), channelID); err != nil {
-			h.cfg.Logger.Warn("重试失败的副本后入队未完成,留待周期对账", "channel", channelID, "err", err)
-		}
+		"retried="+strconv.Itoa(len(ids)))
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, replicaRetryResponse{
+		Retried: int64(len(ids)), Queued: h.enqueueRetried(r, channelID, ids),
+	})
+}
+
+// replicaRetryResponse 立即重试的响应。
+type replicaRetryResponse struct {
+	Retried int64 `json:"retried"` // 改回待补的副本数
+	Queued  bool  `json:"queued"`  // 是否已全部入队;false 时副本已是待补,由下一次周期对账排队
+}
+
+// enqueueRetried 为刚改回待补的副本入队。入队脱离请求的取消(客户端断开不该让它中途停下),但有时限。
+// @param ids 刚改回待补的物理图主键
+// @return 全部入队成功为 true;失败时已记日志,副本留给周期对账
+func (h *Handlers) enqueueRetried(r *http.Request, channelID int64, ids []int64) bool {
+	if len(ids) == 0 || h.cfg.Replicator == nil {
+		return true
 	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, struct {
-		Retried int64 `json:"retried"` // 改回待补的副本数
-	}{Retried: n})
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), enqueueRetriedTimeout)
+	defer cancel()
+	if err := h.cfg.Replicator.EnqueueBackfill(ctx, channelID, ids); err != nil {
+		h.cfg.Logger.Error("重试失败的副本后入队未完成,留待周期对账", "channel", channelID, "err", err)
+		return false
+	}
+	return true
 }
 
 // channelExists 确认渠道存在;不存在或查询失败时已写响应。

@@ -56,3 +56,15 @@ func TestThrottledReaderFollowsLiveLimit(t *testing.T) {
 		t.Fatalf("改回不限速后读取不应再等待额度,得 %v", err)
 	}
 }
+
+// TestStreamForThrottlesOnlyBackfillQueue 只有补课队列的任务按带宽上限限速;上传补齐所在的默认队列原样读取。
+func TestStreamForThrottlesOnlyBackfillQueue(t *testing.T) {
+	w := &replicateWorker{bw: newBandwidth()}
+	src := bytes.NewReader([]byte("x"))
+	if got := w.streamFor(t.Context(), src, "default"); got != io.Reader(src) {
+		t.Fatalf("默认队列应原样读取,得 %T", got)
+	}
+	if _, ok := w.streamFor(t.Context(), src, backfillQueue).(*throttledReader); !ok {
+		t.Fatal("补课队列应经令牌桶限速")
+	}
+}

@@ -69,10 +69,11 @@ SET state = 'failed', last_error_reason = 'timeout', last_error = 'boom' WHERE c
 		fmt.Sprintf("%s/api/admin/channels/%d/replicas/retry", inst.baseURL, channelID), "")
 	var retry struct {
 		Retried int64 `json:"retried"` // 改回待补的副本数
+		Queued  bool  `json:"queued"`  // 是否已全部入队
 	}
 	err := json.NewDecoder(resp.Body).Decode(&retry)
-	if err != nil || resp.StatusCode != http.StatusOK || retry.Retried != 1 {
-		t.Fatalf("重试 = %d %+v err=%v, 期望改回 1 个", resp.StatusCode, retry, err)
+	if err != nil || resp.StatusCode != http.StatusOK || retry.Retried != 1 || !retry.Queued {
+		t.Fatalf("重试 = %d %+v err=%v, 期望改回 1 个且已入队", resp.StatusCode, retry, err)
 	}
 	_ = resp.Body.Close()
 	waitUntil(t, 15*time.Second, "失败的副本重新补齐", func() bool {

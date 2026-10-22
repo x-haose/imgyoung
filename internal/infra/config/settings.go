@@ -53,7 +53,7 @@ type Settings struct {
 	IdempotencyKeyTTLHours int                `json:"idempotency_key_ttl_hours"` // 上传幂等键保留期(小时),超期回收;客户端重试窗口以此为界
 	AlertWebhookURL        string             `json:"alert_webhook_url"`         // 告警 Webhook 地址(http/https);空=不外发
 	AuditRetentionDays     int                `json:"audit_retention_days"`      // 审计日志保留天数,超期由清理循环回收;0=永久保留
-	ReplicateLimitMBps     int                `json:"replicate_limit_mbps"`      // 后台补齐写入渠道的总带宽上限(MB/s),所有渠道合计;0=不限
+	ReplicateLimitMBps     int                `json:"replicate_limit_mbps"`      // 后台补课写入的总带宽上限(MB/s),各渠道合计;0=不限
 }
 
 // maxReplicateLimitMBps 补齐带宽上限的取值上限(MB/s);再大的值换算成字节/秒会逼近整数上限,也没有现实意义。

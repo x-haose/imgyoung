@@ -86,18 +86,12 @@ SET state      = 'pending',
     updated_at = datetime('now')
 WHERE state = 'failed' AND channel_id = ?;
 
--- name: RetryFailedBlobChannels :execrows
+-- name: RetryFailedBlobChannels :many
 UPDATE blob_channels
 SET state      = 'pending',
     updated_at = datetime('now')
-WHERE state = 'failed' AND channel_id = ?;
-
--- name: ListPendingBlobIDsForChannelAfter :many
-SELECT blob_id
-FROM blob_channels
-WHERE channel_id = @channel_id AND state = 'pending' AND blob_id > @after_blob_id
-ORDER BY blob_id
-LIMIT @page_limit;
+WHERE state = 'failed' AND channel_id = ?
+RETURNING blob_id;
 
 -- name: ListChannelReplicas :many
 SELECT bc.blob_id, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at, b.size, b.mime,
