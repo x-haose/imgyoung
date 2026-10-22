@@ -63,10 +63,18 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 		http.Error(w, "服务内部错误", http.StatusInternalServerError)
 		return
 	}
-	if row.Private != 0 && !h.mayViewPrivate(r, row.ID, a) {
-		// 与不存在同样的响应,不暴露私有图是否存在。
-		http.NotFound(w, r)
-		return
+	if row.Private != 0 {
+		allowed, err := h.mayViewPrivate(r, row, a)
+		if err != nil {
+			h.cfg.Logger.Error("校验私有图访问权限失败", "id", imageID, "err", err)
+			http.Error(w, "服务内部错误", http.StatusInternalServerError)
+			return
+		}
+		if !allowed {
+			// 与不存在同样的响应,不暴露私有图是否存在。
+			http.NotFound(w, r)
+			return
+		}
 	}
 	cache := cacheImmutable
 	if a.mutable {
@@ -95,33 +103,34 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 }
 
 // mayViewPrivate 判断这次请求能否看这张私有图。
-// @Description: 公开入口只认链接上未过期的有效签名;后台入口认登录身份,属主或管理员可看。
-// 无法确认(查询归属失败)按不能看处理,不放行。
+// @Description: 公开入口只认链接上未过期、代次吻合的有效签名;后台入口认登录身份,属主或管理员可看。
+// 查询归属失败是外部依赖故障,作为错误返回,不当成"无权"。
 // @param r 请求
-// @param imageID 图片短 ID
+// @param row 引用与物理图信息
 // @param a 入口属性
 // @return 能看为 true
-func (h *Handlers) mayViewPrivate(r *http.Request, imageID string, a imageAccess) bool {
+// @return 查询归属失败时的错误
+func (h *Handlers) mayViewPrivate(r *http.Request, row sqlc.GetImageBlobRow, a imageAccess) (bool, error) {
 	if !a.session {
 		q := r.URL.Query()
-		return h.cfg.Signer.Verify(imageID, q.Get(signedurl.ParamExpires), q.Get(signedurl.ParamSignature),
-			time.Now()) == nil
+		return h.cfg.Signer.Verify(row.ID, row.SignEpoch, q.Get(signedurl.ParamExpires),
+			q.Get(signedurl.ParamSignature), time.Now()) == nil, nil
 	}
 	info, ok := middleware.SessionFrom(r.Context())
 	if !ok {
-		return false
+		return false, nil
 	}
 	if info.Principal.IsAdmin() {
-		return true
+		return true, nil
 	}
-	owner, err := h.cfg.Queries.GetImageOwner(r.Context(), imageID)
+	owner, err := h.cfg.Queries.GetImageOwner(r.Context(), row.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		if !errors.Is(err, sql.ErrNoRows) {
-			h.cfg.Logger.Error("查询图片归属失败", "id", imageID, "err", err)
-		}
-		return false
+		return false, fmt.Errorf("查询图片归属: %w", err)
 	}
-	return owner == info.Principal.UserID
+	return owner == info.Principal.UserID, nil
 }
 
 // serveOriginal 代理或重定向原图字节:ETag/304 协商、302 省流量、按渠道优先级容灾读取;HEAD 只写响应头。
@@ -262,6 +271,9 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 	}
 	// 对象键可被同键重传改指,缓存语义同 /o/ 别名
 	opts := originalOpts{cache: cacheRevalidate}
+	if row.Private != 0 {
+		opts.cache = cachePrivate
+	}
 	etag := `"` + row.Sha256 + `"`
 	if r.Header.Get("If-None-Match") == etag {
 		writeNotModified(w, etag, opts.cache, opts.varyAccept)

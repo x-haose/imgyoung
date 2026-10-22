@@ -24,8 +24,8 @@ const idempotencyHeader = "Idempotency-Key"
 type uploadResponse struct {
 	ID        string `json:"id"`                   // 对外短 ID
 	URL       string `json:"url"`                  // 图片绝对访问地址;配置了 base_url 用配置,否则按请求推导;私有图是带签名的链接
-	Private   bool   `json:"private,omitempty"`    // 是否私有图
-	ExpiresAt string `json:"expires_at,omitempty"` // 私有图签名链接的到期时刻,UTC 文本;非私有图省略
+	Private   bool   `json:"private"`              // 这张图是否私有;幂等键命中既有图时以既有图为准
+	ExpiresAt string `json:"expires_at,omitempty"` // 私有图签名链接的到期时刻,UTC 文本;公开图省略
 }
 
 // HandleHealth 健康检查端点。
@@ -228,22 +228,29 @@ func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.
 		return
 	}
 	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", opts.FileName, "size", len(data))
-	h.writeUploaded(w, r, set, res.ImageID, signedTTL)
+	if opts.IdempotencyKey != "" {
+		// 幂等键可能命中既有的图,私有与否以库里为准。
+		h.writeUploaded(w, r, set, res.ImageID, signedTTL)
+		return
+	}
+	// 新建的图,私有开关就是本次请求的取值,签名代次从 0 起。
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, h.uploadedBody(r, set, res.ImageID, opts.Private, 0, signedTTL))
 }
 
-// writeUploaded 写上传成功的响应体:短 ID 与绝对访问地址。
+// writeUploaded 按库里这张图当前的状态写上传成功的响应体:短 ID 与绝对访问地址。
 // @param set 配置快照
 // @param imageID 对外短 ID
 // @param signedTTL 私有图响应里签名链接的有效时长
 func (h *Handlers) writeUploaded(w http.ResponseWriter, r *http.Request, set config.Settings, imageID string,
 	signedTTL time.Duration) {
-	body, err := h.uploadedBody(r, set, imageID, signedTTL)
+	signing, err := h.cfg.Queries.GetImageSigning(r.Context(), imageID)
 	if err != nil {
-		h.cfg.Logger.Error("组装上传响应失败", "id", imageID, "err", err)
+		h.cfg.Logger.Error("查询图片私有状态失败", "id", imageID, "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, body)
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK,
+		h.uploadedBody(r, set, imageID, signing.Private != 0, signing.SignEpoch, signedTTL))
 }
 
 // writeUploadError 把上传服务的业务错误映射为 HTTP 状态码与用户可读消息。

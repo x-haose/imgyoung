@@ -101,16 +101,31 @@ func TestPrivateImages(t *testing.T) {
 		t.Errorf("后台预览私有图状态码 = %d, 期望 200", thumb.StatusCode)
 	}
 
-	patch := adminReq(t, client, csrf, http.MethodPatch, api, `{"private":false}`)
-	_ = patch.Body.Close()
-	if patch.StatusCode != http.StatusOK {
-		t.Fatalf("改回公开状态码 = %d, 期望 200", patch.StatusCode)
+	patch := func(body string) {
+		resp := adminReq(t, client, csrf, http.MethodPatch, api, body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("修改 %s 状态码 = %d, 期望 200", body, resp.StatusCode)
+		}
 	}
+	patch(`{"private":false}`)
 	if code, _ := status(t, inst, "/i/"+id); code != http.StatusOK {
 		t.Errorf("改回公开后无签名访问状态码 = %d, 期望 200", code)
 	}
 	if code := post(`{"ttl_seconds":3600}`); code != http.StatusConflict {
 		t.Errorf("公开图签发状态码 = %d, 期望 409", code)
+	}
+
+	// 改回私有后,此前签发的链接全部失效。
+	patch(`{"private":true}`)
+	if code, _ := status(t, inst, signed); code != http.StatusNotFound {
+		t.Errorf("私有开关变过之后旧链接状态码 = %d, 期望 404", code)
+	}
+	if code, _ := status(t, inst, u.RequestURI()); code != http.StatusNotFound {
+		t.Errorf("私有开关变过之后旧签发链接状态码 = %d, 期望 404", code)
+	}
+	if code := post(`{"ttl_seconds":31536001}`); code != http.StatusBadRequest {
+		t.Errorf("超过 365 天的签发状态码 = %d, 期望 400", code)
 	}
 }
 
@@ -122,7 +137,7 @@ func TestPrivateUploadValidation(t *testing.T) {
 		"private 非布尔":     {"private": "maybe"},
 		"signed_ttl 非整数":  {"private": "true", "signed_ttl": "1h"},
 		"signed_ttl 为 0":  {"private": "true", "signed_ttl": "0"},
-		"signed_ttl 超过上限": {"private": "true", "signed_ttl": "9999999999999"},
+		"signed_ttl 超过上限": {"private": "true", "signed_ttl": "31536001"},
 	} {
 		resp := upload(t, inst, inst.token, "p.png", pngBytes(t), fields, nil)
 		_ = resp.Body.Close()

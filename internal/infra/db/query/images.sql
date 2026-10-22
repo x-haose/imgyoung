@@ -13,7 +13,7 @@ SET object_key = NULL
 WHERE user_id = @user_id AND object_key = @object_key;
 
 -- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, i.created_at, i.private, b.storage_key, b.mime, b.size, b.sha256
+SELECT i.id, i.file_name, i.blob_id, i.created_at, i.private, i.sign_epoch, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = @id
@@ -146,7 +146,7 @@ FROM images i
 JOIN blobs b ON b.id = i.blob_id;
 
 -- name: TopAccessedImages :many
-SELECT i.id, i.file_name, i.access_count, b.size
+SELECT i.id, i.file_name, i.access_count, i.private, b.size
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.access_count > 0
@@ -167,12 +167,13 @@ ORDER BY created_at;
 -- name: ImageExists :one
 SELECT EXISTS (SELECT 1 FROM images WHERE id = ?);
 
--- name: GetImagePrivate :one
-SELECT private
+-- name: GetImageSigning :one
+SELECT private, sign_epoch
 FROM images
 WHERE id = ?;
 
 -- name: SetImagePrivate :execrows
 UPDATE images
-SET private = @private
+SET sign_epoch = sign_epoch + (private <> @private),
+    private = @private
 WHERE id = @id;

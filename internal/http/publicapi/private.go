@@ -1,7 +1,6 @@
 package publicapi
 
 import (
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/errcode"
+	"github.com/x-haose/imgyoung/internal/infra/signedurl"
 )
 
 // defaultSignedTTL 私有图上传响应里签名链接的默认有效时长;可用 signed_ttl 指定。
@@ -39,7 +39,7 @@ func parsePrivacy(private, signedTTL string) (privacy, bool) {
 	}
 	if signedTTL != "" {
 		n, err := strconv.ParseInt(signedTTL, 10, 64)
-		if err != nil || strconv.FormatInt(n, 10) != signedTTL || n < 1 || n > httpx.MaxTTLSeconds {
+		if err != nil || strconv.FormatInt(n, 10) != signedTTL || n < 1 || n > int64(signedurl.MaxTTL/time.Second) {
 			return privacy{}, false
 		}
 		p.signedTTL = time.Duration(n) * time.Second
@@ -50,28 +50,23 @@ func parsePrivacy(private, signedTTL string) (privacy, bool) {
 // writePrivacyInvalid 写 private 或 signed_ttl 取值不合法的响应。
 func (h *Handlers) writePrivacyInvalid(w http.ResponseWriter) {
 	httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadPrivateInvalid,
-		"max", strconv.FormatInt(httpx.MaxTTLSeconds, 10))
+		"max", strconv.FormatInt(int64(signedurl.MaxTTL/time.Second), 10))
 }
 
 // uploadedBody 组装上传成功的响应体;私有图的 url 是带签名的链接,客户端直接粘贴即可使用。
 // @param set 配置快照
 // @param imageID 对外短 ID
+// @param private 是否私有图
+// @param epoch 图片当前的签名代次
 // @param signedTTL 签名链接的有效时长
 // @return 响应体
-// @return 查询图片是否私有失败时的错误
-func (h *Handlers) uploadedBody(r *http.Request, set config.Settings, imageID string,
-	signedTTL time.Duration) (uploadResponse, error) {
-	body := uploadResponse{ID: imageID, URL: httpx.ImageURL(r, set.BaseURL, imageID)}
-	private, err := h.cfg.Queries.GetImagePrivate(r.Context(), imageID)
-	if err != nil {
-		return uploadResponse{}, fmt.Errorf("查询私有开关: %w", err)
+func (h *Handlers) uploadedBody(r *http.Request, set config.Settings, imageID string, private bool, epoch int64,
+	signedTTL time.Duration) uploadResponse {
+	body := uploadResponse{ID: imageID, URL: httpx.ImageURL(r, set.BaseURL, imageID), Private: private}
+	if private {
+		expires := time.Now().Add(signedTTL)
+		body.URL += "?" + h.cfg.Signer.Query(imageID, epoch, expires)
+		body.ExpiresAt = sqlc.TimeText(expires)
 	}
-	if private == 0 {
-		return body, nil
-	}
-	expires := time.Now().Add(signedTTL)
-	body.URL += "?" + h.cfg.Signer.Query(imageID, expires)
-	body.Private = true
-	body.ExpiresAt = sqlc.TimeText(expires)
-	return body, nil
+	return body
 }

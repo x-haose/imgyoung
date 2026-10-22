@@ -103,7 +103,7 @@ See [Reverse proxy & HTTPS](./reverse-proxy.mdx).
 
 ## Recovering image records
 
-When the metadata database goes back to an earlier state (restored from a snapshot, or recent writes had not been replicated yet), images uploaded afterwards are still in the channels but have no record in the database. **Settings → Backups & export → Recover image records** registers those objects as images again, and their original links work again.
+When the metadata database goes back to an earlier state (restored from a snapshot, or recent writes had not been replicated yet), images uploaded afterwards are still in the channels but have no record in the database. **Settings → Backups & export → Recover image records** registers those objects as images again, and their original links work again. Recovered images are public: objects in a channel carry no [private](../guides/private.mdx) flag, so images that used to be private must be marked private again afterwards.
 
 If the database was overwritten or lost without putting the snapshot in as a restore, objects without a record are deleted by the reconciliation GC once 48 hours old, so run the recovery quickly; see "Disaster recovery after losing the host" below for details.
 

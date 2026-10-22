@@ -127,14 +127,15 @@ export const images = {
   private: '私有',
   privateRow: '私有图',
   privateHelp:
-    '私有图的公开链接打不开，只有带有效签名的链接能访问；一律经本服务输出，不走渠道直链，也不被 CDN 缓存。防盗链白名单对它同样生效',
+    '私有图的公开链接打不开，只有带有效签名的链接能访问；一律经本服务输出，不走渠道直链，也不被 CDN 缓存。防盗链白名单对它同样生效。已经公开过的图片，此前被缓存的副本和渠道直链不会因改私有而收回',
   privateSet: '已设为私有',
   privateUnset: '已改回公开',
   privateUpload: '私有',
   privateUploadHint:
     '私有图没有永久链接，上传后在图片详情里生成有时效的签名链接',
   signedTitle: '签名链接',
-  signedHint: '选择有效期后生成，链接到期即失效。已发出的链接无法提前收回',
+  signedHint:
+    '选择有效期后生成，链接到期即失效。要提前收回已发出的链接，把图片改回公开再设为私有',
   signedValidity: '链接有效期',
   signedGenerate: '生成链接',
   signedExpiresAt: '{time} 到期',

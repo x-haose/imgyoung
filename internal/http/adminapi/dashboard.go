@@ -25,7 +25,7 @@ const topImagesLimit = 10
 // topImage 仪表盘的热门图项(按 access_count 降序)。
 type topImage struct {
 	ID          string `json:"id"`           // 引用短 ID
-	URL         string `json:"url"`          // 访问路径,缩略图与外链共用
+	URL         string `json:"url"`          // 点开的地址:公开图是 /i/ 链接,私有图是后台预览
 	FileName    string `json:"file_name"`    // 原始文件名
 	AccessCount int64  `json:"access_count"` // 累计访问次数,flush 周期粒度
 	Size        int64  `json:"size"`         // 存储字节
@@ -144,8 +144,13 @@ func (h *Handlers) topImages(ctx context.Context) ([]topImage, error) {
 	}
 	items := make([]topImage, 0, len(rows))
 	for _, row := range rows {
+		link := "/i/" + row.ID
+		if row.Private != 0 {
+			// 私有图没有永久链接;后台预览走会话鉴权,管理员点开能看到图。
+			link = "/api/admin/images/" + row.ID + "/thumb"
+		}
 		items = append(items, topImage{
-			ID: row.ID, URL: "/i/" + row.ID, FileName: row.FileName,
+			ID: row.ID, URL: link, FileName: row.FileName,
 			AccessCount: row.AccessCount, Size: row.Size,
 		})
 	}

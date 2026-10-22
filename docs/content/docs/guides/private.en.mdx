@@ -26,7 +26,7 @@ Three ways:
 A private image has no permanent link. To share it, generate a time-limited signed link first:
 
 - **Admin console**: open the image details, pick a validity (1 hour, 1 day, 7 days, 30 days), click **Generate link**, then copy it in the format you need.
-- **API**: `POST /api/admin/images/{id}/signed-url` with the body `{"ttl_seconds": 3600}`; the validity is 1 second to 100 years, and the response has the full signed link and its expiry.
+- **API**: `POST /api/admin/images/{id}/signed-url` with the body `{"ttl_seconds": 3600}`; the validity is 1 second to 365 days, and the response has the full signed link and its expiry.
 - **Upload response**: for a private upload, `url` itself is the signed link, its expiry is in `expires_at`, and it is valid for 24 hours by default; use `signed_ttl` (seconds) to change that. Clients such as PicGo that take `url` directly need no change.
 
 A signed link looks like:
@@ -35,14 +35,14 @@ A signed link looks like:
 https://img.example.com/i/Ab3xK9?exp=1893456000&sig=hF3...
 ```
 
-`exp` is the expiry (Unix seconds) and `sig` is an HMAC-SHA256 signature over the image's short ID and the expiry. You can still append [processing parameters](./access.mdx#on-demand-processing) such as `w` and `format`; they are not part of the signature. Every generated signed link is recorded in the audit log.
+`exp` is the expiry (Unix seconds) and `sig` is an HMAC-SHA256 signature over the image's short ID, its signing generation and the expiry. The generation goes up by one every time the private switch changes. You can still append [processing parameters](./access.mdx#on-demand-processing) such as `w` and `format`; they are not part of the signature. Every generated signed link is recorded in the audit log.
 
 ## Access rules
 
 | Request | Result |
 |---|---|
 | Public link without a signature | 404 |
-| Tampered signature, mismatched image ID, non-canonical `exp` | 404 |
+| Tampered signature, mismatched image ID, non-canonical `exp`, or an old link used after the private switch changed | 404 |
 | Correct signature, past `exp` | 404 |
 | Correct signature, not expired | 200, the image |
 | Thumbnails and previews in the admin console | By login session: the owner and admins can view, no signature needed |
@@ -60,12 +60,13 @@ Opening a private image through its S3 object key alias `/o/<user id>/<object ke
 - **Hotlink protection**: it still applies, and a valid signature does not bypass the allowlist. With hotlink protection configured and **Allow empty referer** off, opening a signed link directly in the address bar is rejected.
 - **Deduplication**: images with identical bytes share one physical file, but whether an image is private is judged per image record; a public record is not affected by a private one.
 - **Access counting**: accesses with a valid signature are counted as usual.
-- **Recovering image records**: images [recovered](../operations/backup.mdx#recovering-image-records) from channel objects are public, because objects in a channel carry no private flag. Backups and exports of the metadata database include the flag, so restoring a backup is unaffected.
+- **Recovering image records**: images [recovered](../operations/backup.mdx#recovering-image-records) from channel objects are public, because objects in a channel carry no private flag; mark the ones that used to be private again afterwards. Backups and exports of the metadata database include the flag, so restoring a backup is unaffected.
 
 <Callout type="warn" title="What a signed link protects against, and what it does not">
 - It protects against links being guessed, crawled or kept forever: the public link does not open, and a signed link stops working when it expires.
 - It does not stop the holder from forwarding it: anyone who has the link during its validity can open it. For a shorter exposure window, generate a link with a shorter validity.
-- A link already handed out cannot be recalled on its own; the only way to make it stop working before it expires is to delete the image.
-- The signing key is derived from the [master key](../configuration.mdx#master-key). Changing the master key invalidates every signed link already handed out, but it is not a way to recall links: it also affects encrypted channels, see the master key section.
+- To recall links already handed out before they expire: make the image public again, then private again. Every change of the private switch invalidates all links signed before it; while the image is public, its public link can be opened.
+- For an image that was public before it became private, copies cached earlier by browsers or CDNs (up to a year), and channel direct links already returned in `redirect` mode, are not recalled: the object behind a direct link stays reachable. Do not expect the private switch to take back the past.
+- The signing key is derived from the [master key](../configuration.mdx#master-key). Changing the master key invalidates every signed link, but it is not a way to recall links: it also affects encrypted channels, see the master key section.
 - Private does not change the storage layer: objects in a channel are still plaintext (unless the channel has [storage encryption](../channels/encryption.mdx)) and visible to anyone who can sign in to the storage provider account.
 </Callout>

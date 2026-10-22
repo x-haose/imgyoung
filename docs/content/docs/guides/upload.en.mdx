@@ -43,7 +43,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 | `ttl` | No | Lifetime in whole seconds (0 to 3153600000) or `never`; both `0` and `never` mean the image never expires. When omitted, the user's default applies, then the global default; see [Lifecycle and deduplication](./lifecycle.mdx) |
 | `exif_policy` | No | `strip`, `passthrough` or `spoof`. When omitted, the global default applies (`passthrough` by default); see [EXIF handling](#exif-handling) below |
 | `private` | No | `true` or `false` (`1` and `0` are also accepted); `true` stores the image as a [private image](#private-images). Defaults to `false` |
-| `signed_ttl` | No | Private images only: validity in seconds (1 to 3153600000) of the signed link in the response; defaults to 86400 (24 hours) |
+| `signed_ttl` | No | Private images only: validity in seconds (1 to 31536000, that is 365 days) of the signed link in the response; defaults to 86400 (24 hours) |
 
 - `ttl`, `exif_policy`, `private` and `signed_ttl` are read only from multipart form fields; putting them in the URL query string has no effect.
 - Each of the two fields is at most 1 KiB; a longer one returns 400.
@@ -61,7 +61,7 @@ A successful upload returns 200:
 
 - `id` is a 10-character short ID drawn from `0-9A-Za-z`.
 - `url` is always absolute. If the **Public site address** (`base_url`) is set, it is used; otherwise the address is derived from the request: the scheme from whether the connection uses TLS, the host from the `Host` header.
-- For a private image, `url` is a signed link with `exp` and `sig` parameters, and the response also has `private: true` and `expires_at`.
+- For a private image, `url` is a signed link with `exp` and `sig` parameters, and the response also has `expires_at`. `private` in the response always shows the image's current state, so you can check it when an idempotency key hits an existing image.
 - When the request arrives through a trusted reverse proxy, `X-Forwarded-Proto` and `X-Forwarded-Host` are used instead. Which proxies are trusted is set by the `IMGYOUNG_TRUSTED_PROXIES` environment variable.
 
 <Callout type="warn" title="Set base_url behind a reverse proxy or CDN">

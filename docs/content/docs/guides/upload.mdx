@@ -43,7 +43,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 | `ttl` | 否 | 有效期：整数秒（0 到 3153600000）或 `never`，`0` 和 `never` 都表示永久。省略时先取用户默认，没有再取全局默认，见[生命周期与查重](./lifecycle.mdx) |
 | `exif_policy` | 否 | `strip`、`passthrough` 或 `spoof`。省略时用全局默认（默认为 `passthrough`），见下文 [EXIF 处理](#exif-处理) |
 | `private` | 否 | `true` 或 `false`（也接受 `1`、`0`），`true` 作为[私有图片](#私有图片)保存。省略为 `false` |
-| `signed_ttl` | 否 | 仅私有图片使用：响应里签名链接的有效秒数（1 到 3153600000），省略为 86400（24 小时） |
+| `signed_ttl` | 否 | 仅私有图片使用：响应里签名链接的有效秒数（1 到 31536000，即 365 天），省略为 86400（24 小时） |
 
 - `ttl`、`exif_policy`、`private` 和 `signed_ttl` 只从 multipart 表单字段读取，写在 URL 查询参数里不生效。
 - 这些字段各自最长 1 KiB，超出返回 400。
@@ -61,7 +61,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 
 - `id` 是 10 位短 ID，字符取自 `0-9A-Za-z`。
 - `url` 总是绝对地址。设置了「对外站点地址」（`base_url`）时用它；没有设置时按本次请求推导：协议看连接是否为 TLS，域名取 `Host` 头。
-- 私有图片的 `url` 是带 `exp`、`sig` 参数的签名链接，响应另带 `private: true` 与 `expires_at`。
+- 私有图片的 `url` 是带 `exp`、`sig` 参数的签名链接，响应另带 `expires_at`。响应里的 `private` 恒为这张图当前的状态，幂等键命中既有图时可据此核对。
 - 请求经信任的反向代理转发时，改用 `X-Forwarded-Proto` 和 `X-Forwarded-Host` 推导。信任哪些代理由环境变量 `IMGYOUNG_TRUSTED_PROXIES` 决定。
 
 <Callout type="warn" title="经反向代理或 CDN 时设置 base_url">

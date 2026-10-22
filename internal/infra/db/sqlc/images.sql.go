@@ -230,7 +230,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 }
 
 const getImageBlob = `-- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, i.created_at, i.private, b.storage_key, b.mime, b.size, b.sha256
+SELECT i.id, i.file_name, i.blob_id, i.created_at, i.private, i.sign_epoch, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?1
@@ -248,6 +248,7 @@ type GetImageBlobRow struct {
 	BlobID     int64
 	CreatedAt  string
 	Private    int64
+	SignEpoch  int64
 	StorageKey string
 	Mime       string
 	Size       int64
@@ -263,6 +264,7 @@ func (q *Queries) GetImageBlob(ctx context.Context, arg GetImageBlobParams) (Get
 		&i.BlobID,
 		&i.CreatedAt,
 		&i.Private,
+		&i.SignEpoch,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
@@ -315,17 +317,22 @@ func (q *Queries) GetImageOwner(ctx context.Context, id string) (string, error) 
 	return user_id, err
 }
 
-const getImagePrivate = `-- name: GetImagePrivate :one
-SELECT private
+const getImageSigning = `-- name: GetImageSigning :one
+SELECT private, sign_epoch
 FROM images
 WHERE id = ?
 `
 
-func (q *Queries) GetImagePrivate(ctx context.Context, id string) (int64, error) {
-	row := q.db.QueryRowContext(ctx, getImagePrivate, id)
-	var private int64
-	err := row.Scan(&private)
-	return private, err
+type GetImageSigningRow struct {
+	Private   int64
+	SignEpoch int64
+}
+
+func (q *Queries) GetImageSigning(ctx context.Context, id string) (GetImageSigningRow, error) {
+	row := q.db.QueryRowContext(ctx, getImageSigning, id)
+	var i GetImageSigningRow
+	err := row.Scan(&i.Private, &i.SignEpoch)
+	return i, err
 }
 
 const imageExists = `-- name: ImageExists :one
@@ -509,15 +516,32 @@ FROM images
 ORDER BY created_at
 `
 
-func (q *Queries) ListImagesExport(ctx context.Context) ([]Image, error) {
+type ListImagesExportRow struct {
+	ID                 string
+	BlobID             int64
+	UserID             string
+	TokenID            sql.NullInt64
+	FileName           string
+	ObjectKey          sql.NullString
+	ExpireAt           sql.NullString
+	TtlSeconds         sql.NullInt64
+	LastPublicAccessAt sql.NullString
+	AccessCount        int64
+	PendingCleanup     int64
+	CleanupExempt      int64
+	Private            int64
+	CreatedAt          string
+}
+
+func (q *Queries) ListImagesExport(ctx context.Context) ([]ListImagesExportRow, error) {
 	rows, err := q.db.QueryContext(ctx, listImagesExport)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Image
+	var items []ListImagesExportRow
 	for rows.Next() {
-		var i Image
+		var i ListImagesExportRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.BlobID,
@@ -680,7 +704,8 @@ func (q *Queries) SetImageCleanupExempt(ctx context.Context, arg SetImageCleanup
 
 const setImagePrivate = `-- name: SetImagePrivate :execrows
 UPDATE images
-SET private = ?1
+SET sign_epoch = sign_epoch + (private <> ?1),
+    private = ?1
 WHERE id = ?2
 `
 
@@ -698,7 +723,7 @@ func (q *Queries) SetImagePrivate(ctx context.Context, arg SetImagePrivateParams
 }
 
 const topAccessedImages = `-- name: TopAccessedImages :many
-SELECT i.id, i.file_name, i.access_count, b.size
+SELECT i.id, i.file_name, i.access_count, i.private, b.size
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.access_count > 0
@@ -710,6 +735,7 @@ type TopAccessedImagesRow struct {
 	ID          string
 	FileName    string
 	AccessCount int64
+	Private     int64
 	Size        int64
 }
 
@@ -726,6 +752,7 @@ func (q *Queries) TopAccessedImages(ctx context.Context, limit int64) ([]TopAcce
 			&i.ID,
 			&i.FileName,
 			&i.AccessCount,
+			&i.Private,
 			&i.Size,
 		); err != nil {
 			return nil, err

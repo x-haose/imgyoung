@@ -164,7 +164,7 @@ func tokensExport(rows []sqlc.ListTokensExportRow) []tokenExportItem {
 // imagesExport 把上传引用行映射为导出项,可空列以 null 表达。
 // @param rows 引用行
 // @return 导出项
-func imagesExport(rows []sqlc.Image) []imageExportItem {
+func imagesExport(rows []sqlc.ListImagesExportRow) []imageExportItem {
 	items := make([]imageExportItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, imageExportItem{

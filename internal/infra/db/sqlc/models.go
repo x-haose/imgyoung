@@ -103,6 +103,7 @@ type Image struct {
 	PendingCleanup     int64
 	CleanupExempt      int64
 	Private            int64
+	SignEpoch          int64
 	CreatedAt          string
 }
 

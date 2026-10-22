@@ -410,7 +410,7 @@ export interface paths {
         put?: never;
         /**
          * 签发私有图的访问链接
-         * @description 为一张私有图签发带签名的访问链接。签名覆盖图片 ID 与到期时刻，链接到期后失效；可带 `?w=`、`?format=` 等处理参数。要提前收回已发出的链接，只能删除图片或更换主密钥。公开图返回 409（`image_not_private`），普通用户操作他人的图返回 404。
+         * @description 为一张私有图签发带签名的访问链接。签名覆盖图片 ID 与到期时刻，链接到期后失效；可带 `?w=`、`?format=` 等处理参数。私有开关每变一次，此前签发的链接全部失效：要在到期前收回已发出的链接，把图片改回公开再设为私有即可（改回公开期间公开链接可访问）。公开图返回 409（`image_not_private`），普通用户操作他人的图返回 404。
          */
         post: operations["signImageURL"];
         delete?: never;
@@ -1510,9 +1510,9 @@ export interface components {
              * @description 图片的完整访问地址；配置了 `base_url` 时以它为前缀，否则按请求推导。私有图返回的是带 `exp` 与 `sig` 参数的签名链接，可直接使用
              */
             url: string;
-            /** @description 是否私有图；公开图省略 */
-            private?: boolean;
-            /** @description 私有图签名链接的到期时刻，UTC 文本；公开图省略 */
+            /** @description 这张图是否私有。幂等键命中既有的图时以既有图为准，调用方可据此核对 */
+            private: boolean;
+            /** @description 私有图签名链接的到期时刻，UTC 文本；公开图没有这个字段 */
             expires_at?: string;
         };
         UploadURLRequest: {
@@ -2242,7 +2242,7 @@ export interface components {
             ttl_hours?: number;
             /** @description 设置或取消冷图清理豁免，仅管理员。设置与取消都会清除待清理标记，取消后由下一轮扫描重新判定 */
             cleanup_exempt?: boolean;
-            /** @description 设为私有或改回公开。改回公开后，此前签发的签名链接仍然有效但不再需要 */
+            /** @description 设为私有或改回公开。私有开关每变一次，此前签发的签名链接全部失效；改回公开后原来的公开链接可用 */
             private?: boolean;
         };
         BatchDeleteRequest: {
@@ -3100,7 +3100,7 @@ export interface components {
                      * @enum {string}
                      */
                     private?: "true" | "false";
-                    /** @description 仅私有图使用：响应里签名链接的有效秒数，1 到 3153600000 的整数；缺省为 86400（24 小时） */
+                    /** @description 仅私有图使用：响应里签名链接的有效秒数，1 到 31536000（365 天）的整数；缺省为 86400（24 小时） */
                     signed_ttl?: string;
                 };
             };
@@ -3739,7 +3739,7 @@ export interface operations {
                 "application/json": {
                     /**
                      * Format: int64
-                     * @description 链接的有效秒数
+                     * @description 链接的有效秒数，最长 365 天
                      */
                     ttl_seconds: number;
                 };

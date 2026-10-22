@@ -133,7 +133,7 @@ export const images = {
   private: 'Private',
   privateRow: 'Private image',
   privateHelp:
-    'The public link of a private image does not open; only a link with a valid signature does. It is always served through this service, never redirected to a channel and never cached by a CDN. The hotlink allowlist still applies',
+    'The public link of a private image does not open; only a link with a valid signature does. It is always served through this service, never redirected to a channel and never cached by a CDN. The hotlink allowlist still applies. For an image that was public before, copies cached earlier and channel direct links are not recalled by making it private',
   privateSet: 'Set to private',
   privateUnset: 'Made public again',
   privateUpload: 'Private',
@@ -141,7 +141,7 @@ export const images = {
     'A private image has no permanent link; generate a time-limited signed link in the image details after uploading',
   signedTitle: 'Signed link',
   signedHint:
-    'Pick a validity and generate; the link stops working when it expires. A link already handed out cannot be recalled early',
+    'Pick a validity and generate; the link stops working when it expires. To recall links already handed out, make the image public again, then private again',
   signedValidity: 'Link validity',
   signedGenerate: 'Generate link',
   signedExpiresAt: 'Expires {time}',
