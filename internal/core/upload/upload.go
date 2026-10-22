@@ -1,5 +1,5 @@
 // Package upload 实现上传链路的 Service 层编排:
-// 格式校验 → 像素预算 → 净化(strip)→ 哈希(SHA256 + pHash)→ 存渠道 → 落库。
+// 格式校验 → 尺寸限制 → 净化(strip / spoof)→ 哈希(SHA256 + pHash)→ 存渠道 → 落库。
 package upload
 
 import (
@@ -69,6 +69,8 @@ var (
 	ErrUnsupportedType = errors.New("upload: 不支持的文件类型")
 	// ErrTooManyPixels 图片分辨率超出像素预算(内存三道闸之一)。
 	ErrTooManyPixels = errors.New("upload: 图片分辨率超出限制")
+	// ErrBadDimensions 图片单边或宽高比超出限制。
+	ErrBadDimensions = errors.New("upload: 图片边长或宽高比超出限制")
 	// ErrInvalidImage 声明格式合法但内容无法解析。
 	ErrInvalidImage = errors.New("upload: 图片内容无法解析")
 )
@@ -124,7 +126,7 @@ type Options struct {
 	TokenID        int64              // 上传所经 Token 的记录 id,0 表示非 Token 途径
 	FileName       string             // 原始文件名(仅存元数据,不参与任何逻辑)
 	IdempotencyKey string             // 客户端幂等键,可为空;按用户隔离
-	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入;strip 按格式分发(JPEG/PNG/WebP 剥离,GIF 直通)
+	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入
 	TTL            time.Duration      // 请求显式指定的有效时长,仅 TTLSet 为 true 时生效;0 表示显式永久
 	TTLSet         bool               // 请求是否显式指定 ttl;false 时按"用户默认 > 全局默认"解析,到期时刻由落库时刻推算
 	ObjectKey      string             // S3 协议上传时客户端指定的对象键,可为空;同用户同键按 S3 语义覆盖(旧图让出别名,短 ID 仍可访问)
@@ -172,7 +174,8 @@ func outcomeOf(err error) string {
 	switch {
 	case err == nil:
 		return "ok"
-	case errors.Is(err, ErrUnsupportedType), errors.Is(err, ErrTooManyPixels), errors.Is(err, ErrInvalidImage),
+	case errors.Is(err, ErrUnsupportedType), errors.Is(err, ErrTooManyPixels), errors.Is(err, ErrBadDimensions),
+		errors.Is(err, ErrInvalidImage),
 		errors.Is(err, ErrQuotaExceeded), errors.Is(err, imaging.ErrUnknownPolicy):
 		return "rejected"
 	default:
@@ -201,7 +204,7 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 	} else if found {
 		return Result{ImageID: imageID}, nil
 	}
-	meta, err := inspect(data, set.MaxPixels())
+	meta, err := inspect(data, limitsOf(set))
 	if err != nil {
 		return Result{}, err
 	}
@@ -214,7 +217,7 @@ func (s *Service) runPipeline(ctx context.Context, data []byte, opts Options) (R
 	if err := s.checkQuota(ctx, user, int64(len(data))); err != nil {
 		return Result{}, err
 	}
-	prep, err := prepare(data, meta.mime, opts.EXIFPolicy)
+	prep, err := prepare(data, meta, opts.EXIFPolicy, set)
 	if err != nil {
 		return Result{}, err
 	}
@@ -335,13 +338,27 @@ type imageMeta struct {
 	width, height int    // 像素尺寸
 }
 
-// inspect 按 magic bytes 判定格式、只读图片头取尺寸并执行像素预算。
-// @Description: 不信扩展名与客户端声明;超预算直接拒绝、不进完整解码器(内存三道闸之一)。
+// limits 图片尺寸的三道闸。
+type limits struct {
+	pixels int64 // 宽 × 高的上限
+	side   int   // 单边像素的上限
+	aspect int   // 长边与短边之比的上限
+}
+
+// limitsOf 取配置快照里的尺寸限制。
+// @param set 配置快照
+// @return 尺寸限制
+func limitsOf(set config.Settings) limits {
+	return limits{pixels: set.MaxPixels(), side: set.MaxSidePx, aspect: set.MaxAspectRatio}
+}
+
+// inspect 按 magic bytes 判定格式、只读图片头取尺寸并执行尺寸限制。
+// @Description: 不信扩展名与客户端声明;超限直接拒绝、不进完整解码器(内存三道闸之一)。
 // @param data 上传字节
-// @param maxPixels 像素预算
+// @param lim 尺寸限制
 // @return 格式与尺寸
-// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels
-func inspect(data []byte, maxPixels int64) (imageMeta, error) {
+// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels / ErrBadDimensions
+func inspect(data []byte, lim limits) (imageMeta, error) {
 	mime := http.DetectContentType(data)
 	if _, ok := allowedMIME[mime]; !ok {
 		return imageMeta{}, ErrUnsupportedType
@@ -353,32 +370,34 @@ func inspect(data []byte, maxPixels int64) (imageMeta, error) {
 	if formatMIME[format] != mime {
 		return imageMeta{}, fmt.Errorf("%w: 嗅探类型 %s 与解码格式 %s 不一致", ErrInvalidImage, mime, format)
 	}
-	if int64(cfg.Width)*int64(cfg.Height) > maxPixels {
+	if int64(cfg.Width)*int64(cfg.Height) > lim.pixels {
 		return imageMeta{}, ErrTooManyPixels
+	}
+	long, short := max(cfg.Width, cfg.Height), min(cfg.Width, cfg.Height)
+	if long > lim.side || int64(long) > int64(lim.aspect)*int64(short) {
+		return imageMeta{}, ErrBadDimensions
 	}
 	return imageMeta{mime: mime, width: cfg.Width, height: cfg.Height}, nil
 }
 
 // prepared 净化后的待存字节及其指纹。
 type prepared struct {
-	data   []byte // 实际存储字节(strip 档位下已剥离元数据)
+	data   []byte // 实际存储字节(strip 与 spoof 档位下已替换元数据)
 	sha256 string // 存储字节的 SHA-256 十六进制
 	phash  int64  // 感知哈希,按位存入 int64
 }
 
 // prepare 按档位净化字节并计算指纹;净化在前、哈希在后,哈希对象即实际存储字节。
 // @param data 上传字节
-// @param mime 真实 MIME
+// @param meta 原图的格式与尺寸
 // @param policy EXIF 档位
+// @param set 配置快照,spoof 档据此取机型与城市的来源
 // @return 待存字节与指纹
-// @return ErrInvalidImage 或哈希计算错误
-func prepare(data []byte, mime string, policy imaging.EXIFPolicy) (prepared, error) {
-	if policy == imaging.PolicyStrip {
-		stripped, err := imaging.StripMetadata(data, mime)
-		if err != nil {
-			return prepared{}, fmt.Errorf("%w: %w", ErrInvalidImage, err)
-		}
-		data = stripped
+// @return ErrInvalidImage、伪装配置不可用或哈希计算错误
+func prepare(data []byte, meta imageMeta, policy imaging.EXIFPolicy, set config.Settings) (prepared, error) {
+	data, err := sanitize(data, meta, policy, set)
+	if err != nil {
+		return prepared{}, err
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -394,6 +413,39 @@ func prepare(data []byte, mime string, policy imaging.EXIFPolicy) (prepared, err
 		sha256: hex.EncodeToString(sum[:]),
 		phash:  ph,
 	}, nil
+}
+
+// sanitize 按 EXIF 档位处理元数据;passthrough 原样返回。
+// @param data 上传字节
+// @param meta 原图的格式与尺寸
+// @param policy EXIF 档位
+// @param set 配置快照
+// @return 处理后的字节
+// @return 图片畸形时为 ErrInvalidImage;伪装配置不可用或读取系统熵失败时为对应错误,不降级成别的档位
+func sanitize(data []byte, meta imageMeta, policy imaging.EXIFPolicy, set config.Settings) ([]byte, error) {
+	switch policy {
+	case imaging.PolicyStrip:
+		out, err := imaging.StripMetadata(data, meta.mime)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidImage, err)
+		}
+		return out, nil
+	case imaging.PolicySpoof:
+		rng, err := imaging.NewSpoofRNG()
+		if err != nil {
+			return nil, err
+		}
+		out, err := imaging.Spoof(data, meta.mime, meta.width, meta.height, set.SpoofConfig(), rng, time.Now())
+		switch {
+		case errors.Is(err, imaging.ErrSpoofConfig):
+			return nil, err
+		case err != nil:
+			return nil, fmt.Errorf("%w: %w", ErrInvalidImage, err)
+		}
+		return out, nil
+	default:
+		return data, nil
+	}
 }
 
 // writeReplicas 按优先级向健康渠道同步写入,直到凑够 need 份;写入失败自动顺延下一渠道。

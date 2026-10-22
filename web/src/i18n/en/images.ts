@@ -129,8 +129,9 @@ export const images = {
   exifDefault: 'Default',
   exifStrip: 'Strip',
   exifPassthrough: 'Keep',
+  exifSpoof: 'Spoof',
   exifHint:
-    'Stripping removes camera, GPS and similar metadata; the default follows the global setting',
+    'Stripping removes camera, GPS and similar metadata; spoofing replaces them with an invented camera, location and time; the default follows the global setting',
   clipboardImage: 'Clipboard image',
   uploading: 'Uploading',
   uploadDone: 'Uploaded',

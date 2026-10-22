@@ -128,8 +128,11 @@ export const server = {
     upload_busy: '已达上传并发上限，请稍后重试',
     upload_unsupported_type: '仅支持图片文件（jpeg/png/gif/webp）',
     upload_too_many_pixels: '图片分辨率超过像素预算（{max} 百万像素）',
+    upload_bad_dimensions:
+      '图片单边超过 {max_side} 像素，或长边与短边之比超过 {max_ratio}：1',
     upload_invalid_image: '图片内容无法解析',
-    upload_exif_policy: 'exif_policy 取值非法（可选 strip / passthrough）',
+    upload_exif_policy:
+      'exif_policy 取值非法（可选 strip / passthrough / spoof）',
     upload_quota_exceeded: '存储配额已满',
     upload_unavailable: '存储渠道暂不可用，请稍后重试',
     upload_ttl_invalid:

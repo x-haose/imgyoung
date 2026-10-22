@@ -67,6 +67,7 @@ export function UploadOptionsFields({
               { value: 'default', label: m.images.exifDefault },
               { value: 'strip', label: m.images.exifStrip },
               { value: 'passthrough', label: m.images.exifPassthrough },
+              { value: 'spoof', label: m.images.exifSpoof },
             ]}
           />
         </div>

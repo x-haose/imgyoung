@@ -109,12 +109,21 @@ func truncateAtEOI(tail []byte) []byte {
 // @return 剥离后的 JPEG 字节
 // @return 输入不是结构完整的 JPEG 时的错误
 func StripJPEGMetadata(data []byte) ([]byte, error) {
+	return stripJPEG(data, true)
+}
+
+// stripJPEG 是 StripJPEGMetadata 的实现,keepOrientation 为 false 时连方向标记也不保留。
+// @param data 完整的 JPEG 字节
+// @param keepOrientation 原图带非默认方向时是否补回只含方向的 EXIF 段
+// @return 剥离后的 JPEG 字节
+// @return 输入不是结构完整的 JPEG 时的错误
+func stripJPEG(data []byte, keepOrientation bool) ([]byte, error) {
 	if len(data) < 4 || data[0] != 0xFF || data[1] != markerSOI {
 		return nil, fmt.Errorf("%w: 缺少 SOI", errMalformedJPEG)
 	}
 	out := make([]byte, 0, len(data))
 	out = append(out, data[:2]...)
-	if o := jpegOrientation(data); o != orientationNormal {
+	if o := jpegOrientation(data); keepOrientation && o != orientationNormal {
 		out = append(out, orientationSegment(o)...)
 	}
 	for i := 2; ; {

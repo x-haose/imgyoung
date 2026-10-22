@@ -190,10 +190,10 @@ func TestProcessPassthroughKeepsEXIF(t *testing.T) {
 
 // TestProcessRejectsUnknownPolicy 验证非法档位返回 ErrUnknownPolicy。
 // @Description: 档位决策在调用方(API 层)完成,Service 只接受明确档位——
-// 空值同样拒绝,未实现的 spoof 与乱填值一视同仁。
+// 空值同样拒绝,与乱填值一视同仁。
 func TestProcessRejectsUnknownPolicy(t *testing.T) {
 	env := newTestEnv(t, nil)
-	for _, policy := range []imaging.EXIFPolicy{"", "spoof", "bogus"} {
+	for _, policy := range []imaging.EXIFPolicy{"", "bogus"} {
 		_, err := env.svc.Process(t.Context(), pngBytes(t), upload.Options{
 			UserID:     sqlc.DefaultUserID,
 			FileName:   "a.png",
@@ -202,6 +202,40 @@ func TestProcessRejectsUnknownPolicy(t *testing.T) {
 		if !errors.Is(err, imaging.ErrUnknownPolicy) {
 			t.Fatalf("policy=%q 错误 = %v, 期望 ErrUnknownPolicy", policy, err)
 		}
+	}
+}
+
+// TestProcessRejectsBadDimensions 验证单边与宽高比的边界:恰好等于上限放行,多 1 即拒绝。
+func TestProcessRejectsBadDimensions(t *testing.T) {
+	wide := func(w, h int) []byte {
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+			t.Fatalf("编码 PNG: %v", err)
+		}
+		return buf.Bytes()
+	}
+	env := newTestEnv(t, func(s *config.Settings) { s.MaxSidePx = 100; s.MaxAspectRatio = 10 })
+	cases := map[string]struct {
+		w, h int
+		ok   bool
+	}{
+		"边长与比例都恰好在上限": {100, 10, true},
+		"竖向恰好在上限":     {10, 100, true},
+		"单边多 1":       {101, 20, false},
+		"比例多 1":       {100, 9, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := env.svc.Process(t.Context(), wide(tc.w, tc.h), upload.Options{
+				UserID: sqlc.DefaultUserID, FileName: "a.png", EXIFPolicy: imaging.PolicyPassthrough,
+			})
+			if tc.ok && err != nil {
+				t.Fatalf("%dx%d 应放行: %v", tc.w, tc.h, err)
+			}
+			if !tc.ok && !errors.Is(err, upload.ErrBadDimensions) {
+				t.Fatalf("%dx%d 错误 = %v, 期望 ErrBadDimensions", tc.w, tc.h, err)
+			}
+		})
 	}
 }
 

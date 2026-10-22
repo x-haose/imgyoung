@@ -14,6 +14,16 @@ export const fullConfigQueryOptions = () =>
     staleTime: 60_000,
   })
 
+/** 伪装档可选的机型、城市与国家代码(GET /api/admin/spoof-profiles,仅管理员);清单随版本变化,会话内不变。 */
+export type SpoofProfiles = Schema<'SpoofProfiles'>
+
+export const spoofProfilesQueryOptions = () =>
+  queryOptions({
+    queryKey: ['spoof-profiles'],
+    queryFn: () => api.get<SpoofProfiles>('/api/admin/spoof-profiles'),
+    staleTime: Infinity,
+  })
+
 /** 提交一组运营配置修改(只传改动的键),成功即热生效并返回更新后的全量切面;非法取值整体 400。 */
 export function updateConfig(patch: Partial<RuntimeSettings>) {
   return api.put<FullConfig>('/api/admin/config', patch)

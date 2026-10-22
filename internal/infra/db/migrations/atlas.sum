@@ -1,5 +1,6 @@
-h1:A9iuMVEMQSrgwzjCyns/Htqouv/1HdT5VF6EzI+BGTU=
+h1:gcbikSMQKd13miWQRv9/5LdijZ0LcQbnp5iKoP7efns=
 20261016110645_initial.sql h1:Wr0w982VH4jTUaWsbzg2S7c0qMUU7OalrdNmtD3pBuc=
 20261017111027_settings_backup_defaults.sql h1:rjzvvsMGjBgS9gcLtZX2LSPY3V8vTrGuaf24amADISI=
 20261019115125_batch_import.sql h1:hOQpxsiAJUuEdYZoDwnlVAwKMGYoSG+EW45YK8wVycg=
 20261022042012_replicate_limit.sql h1:cv9qVdXhFteL1qEgw2yWZrQdgNWyZd6SE/1zhS0gtog=
+20261022055234_exif_spoof.sql h1:0iClLwyA5xcYr+Wy3SaLbZQl4Bx+2d+7YHq/HgJD8dA=

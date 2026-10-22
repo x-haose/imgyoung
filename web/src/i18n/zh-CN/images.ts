@@ -123,7 +123,9 @@ export const images = {
   exifDefault: '默认',
   exifStrip: '剥离',
   exifPassthrough: '保留',
-  exifHint: '剥离会去掉拍摄设备、GPS 等元数据；默认跟随全局设置',
+  exifSpoof: '伪装',
+  exifHint:
+    '剥离会去掉拍摄设备、GPS 等元数据；伪装会换成一份编造的机型、位置与时间；默认跟随全局设置',
   clipboardImage: '剪贴板图片',
   uploading: '上传中',
   uploadDone: '已上传',

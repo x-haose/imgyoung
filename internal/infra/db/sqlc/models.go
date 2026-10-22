@@ -199,6 +199,13 @@ type Setting struct {
 	AlertWebhookUrl        string
 	AuditRetentionDays     int64
 	ReplicateLimitMbps     int64
+	SpoofMode              string
+	SpoofCamera            string
+	SpoofCity              string
+	SpoofCountries         string
+	SpoofWindowDays        int64
+	MaxSidePx              int64
+	MaxAspectRatio         int64
 	UpdatedAt              string
 }
 

@@ -242,6 +242,9 @@ func (s *Store) load(ctx context.Context) (Settings, error) {
 	if err := json.Unmarshal([]byte(row.ProcessFormats), &cfg.ProcessFormats); err != nil {
 		return Settings{}, fmt.Errorf("解析 process_formats: %w", err)
 	}
+	if err := json.Unmarshal([]byte(row.SpoofCountries), &cfg.SpoofCountries); err != nil {
+		return Settings{}, fmt.Errorf("解析 spoof_countries: %w", err)
+	}
 	return cfg, nil
 }
 
@@ -285,6 +288,12 @@ func scalarsFromRow(row sqlc.Setting) Settings {
 		AlertWebhookURL:        row.AlertWebhookUrl,
 		AuditRetentionDays:     int(row.AuditRetentionDays),
 		ReplicateLimitMBps:     int(row.ReplicateLimitMbps),
+		SpoofMode:              row.SpoofMode,
+		SpoofCamera:            row.SpoofCamera,
+		SpoofCity:              row.SpoofCity,
+		SpoofWindowDays:        int(row.SpoofWindowDays),
+		MaxSidePx:              int(row.MaxSidePx),
+		MaxAspectRatio:         int(row.MaxAspectRatio),
 	}
 }
 
@@ -309,6 +318,11 @@ func (s *Store) toParams(cfg Settings) (sqlc.UpdateSettingsParams, error) {
 	if err != nil {
 		return sqlc.UpdateSettingsParams{}, fmt.Errorf("编码 process_formats: %w", err)
 	}
+	countries, err := json.Marshal(cfg.SpoofCountries)
+	if err != nil {
+		return sqlc.UpdateSettingsParams{}, fmt.Errorf("编码 spoof_countries: %w", err)
+	}
+	params.SpoofCountries = string(countries)
 	params.ProcessWidths = string(widths)
 	params.ProcessFormats = string(formats)
 	return params, nil
@@ -354,6 +368,12 @@ func scalarsToParams(cfg Settings) sqlc.UpdateSettingsParams {
 		AlertWebhookUrl:        cfg.AlertWebhookURL,
 		AuditRetentionDays:     int64(cfg.AuditRetentionDays),
 		ReplicateLimitMbps:     int64(cfg.ReplicateLimitMBps),
+		SpoofMode:              cfg.SpoofMode,
+		SpoofCamera:            cfg.SpoofCamera,
+		SpoofCity:              cfg.SpoofCity,
+		SpoofWindowDays:        int64(cfg.SpoofWindowDays),
+		MaxSidePx:              int64(cfg.MaxSidePx),
+		MaxAspectRatio:         int64(cfg.MaxAspectRatio),
 	}
 }
 

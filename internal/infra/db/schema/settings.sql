@@ -11,7 +11,7 @@ CREATE TABLE settings (
     cdn_cloudflare_zone_id TEXT NOT NULL DEFAULT '', -- Cloudflare Zone ID;三者齐备才启用 CDN purge
     cdn_cloudflare_api_token TEXT NOT NULL DEFAULT '', -- Cloudflare API Token 密文(AES-GCM,base64);空串表示未配置
     allow_empty_referer INTEGER NOT NULL DEFAULT 1, -- 空 Referer 是否放行(布尔 0/1)
-    exif_policy TEXT NOT NULL DEFAULT 'passthrough', -- 全局默认 EXIF 档位:passthrough / strip
+    exif_policy TEXT NOT NULL DEFAULT 'passthrough', -- 全局默认 EXIF 档位:passthrough / strip / spoof
     min_success INTEGER NOT NULL DEFAULT 1, -- 上传返回成功所需的最少同步副本数
     access_mode TEXT NOT NULL DEFAULT 'proxy', -- 访问模式:proxy(代理)/ redirect(302 省流量)
     encrypt_new_channels INTEGER NOT NULL DEFAULT 0, -- 新建渠道未显式指定时是否加密(布尔 0/1)
@@ -40,5 +40,12 @@ CREATE TABLE settings (
     alert_webhook_url TEXT NOT NULL DEFAULT '', -- 告警 Webhook 地址(http/https),告警开启与恢复时 POST JSON;空=不外发
     audit_retention_days INTEGER NOT NULL DEFAULT 0, -- 审计日志保留天数,超期由清理循环回收;0=永久保留
     replicate_limit_mbps INTEGER NOT NULL DEFAULT 0, -- 后台补课写入渠道的总带宽上限(MB/s),所有渠道合计;0=不限;只限补课队列,不限新上传触发的补齐与用户上传的同步写入
+    spoof_mode TEXT NOT NULL DEFAULT 'per_image', -- spoof 档的身份模式:per_image(每张图独立随机机型与城市)/ uniform(全站固定 spoof_camera 与 spoof_city)
+    spoof_camera TEXT NOT NULL DEFAULT '', -- uniform 模式使用的机型标识;per_image 模式忽略
+    spoof_city TEXT NOT NULL DEFAULT '', -- uniform 模式使用的城市标识;per_image 模式忽略
+    spoof_countries TEXT NOT NULL DEFAULT '[]', -- per_image 模式候选城市的国家代码(JSON 数组);[] 表示全部
+    spoof_window_days INTEGER NOT NULL DEFAULT 90, -- spoof 档的拍摄时间落在上传时刻往前这么多天之内
+    max_side_px INTEGER NOT NULL DEFAULT 30000, -- 单边像素上限,超过的图片被拒收
+    max_aspect_ratio INTEGER NOT NULL DEFAULT 100, -- 长边与短边之比的上限,超过的图片被拒收
     updated_at TEXT NOT NULL DEFAULT (datetime('now')) -- 最近写入时刻,UTC 文本
 );

@@ -32,6 +32,10 @@ export const settings = {
         title: '按需处理',
         hint: '缩放与格式转换只接受下列取值；需要生成衍生图的请求始终由本服务输出，redirect 模式下也不跳转',
       },
+      spoof: {
+        title: 'EXIF 伪装',
+        hint: '选用 spoof 档时写入的假机型、位置与拍摄时间；位置只到城市级，不指向具体住址',
+      },
       dedup: {
         title: '查重',
         hint: '完全相同的图片自动合并，相似的进入「疑似重复」',
@@ -67,6 +71,14 @@ export const settings = {
       max_pixels_mp: {
         label: '像素预算',
         hint: '单张图片宽 × 高的上限，超出即拒绝上传',
+      },
+      max_side_px: {
+        label: '单边像素上限',
+        hint: '宽或高超过它的图片被拒收，用来挡掉极端的长条图',
+      },
+      max_aspect_ratio: {
+        label: '宽高比上限',
+        hint: '长边与短边之比超过它的图片被拒收；填 100 即 100:1',
       },
       max_concurrent_uploads: {
         label: '上传并发上限',
@@ -114,7 +126,27 @@ export const settings = {
       },
       exif_policy: {
         label: 'EXIF 默认档',
-        hint: '上传时保留还是剥离 EXIF 等元数据；单次上传可用表单字段覆盖，S3 上传一律按原样保存',
+        hint: '上传时保留、剥离还是伪装 EXIF 等元数据；单次上传可用表单字段覆盖，S3 上传一律按原样保存',
+      },
+      spoof_mode: {
+        label: '身份模式',
+        hint: 'per_image 让每张图各自随机机型与城市，图与图之间无法关联；uniform 让全站用同一个机型和城市',
+      },
+      spoof_camera: {
+        label: '固定机型',
+        hint: '仅 uniform 模式使用',
+      },
+      spoof_city: {
+        label: '固定城市',
+        hint: '仅 uniform 模式使用；每张图的位置仍会在该城市中心附近随机偏移',
+      },
+      spoof_countries: {
+        label: '候选国家和地区',
+        hint: '仅 per_image 模式使用，城市从所选国家和地区里随机取；一个都不选表示全部',
+      },
+      spoof_window_days: {
+        label: '拍摄时间窗口',
+        hint: '假的拍摄时间落在上传时刻往前这么多天之内，当地时间 8 点到 17 点之间',
       },
       process_quality_webp: { label: 'WebP 质量档', hint: '1 到 100' },
       process_quality_jpeg: { label: 'JPEG 质量档', hint: '1 到 100' },
@@ -187,6 +219,8 @@ export const settings = {
       gb: 'GB',
       mbps: 'MB / 秒',
       megapixels: '百万像素',
+      pixels: '像素',
+      ratio: '：1',
       count: '个',
       perMinute: '次 / 分钟',
       hours: '小时',
@@ -206,8 +240,14 @@ export const settings = {
       exif_policy: {
         passthrough: 'passthrough · 保留',
         strip: 'strip · 剥离元数据',
+        spoof: 'spoof · 换成假信息',
+      },
+      spoof_mode: {
+        per_image: 'per_image · 每张图随机',
+        uniform: 'uniform · 全站固定',
       },
     },
+    catalogUnset: '未选择',
     tokenSet: '已配置，留空保持不变',
     tokenUnset: '未配置',
     purgeEnabled: '已启用',

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
@@ -24,17 +25,17 @@ type Description struct {
 }
 
 // Describe 判定已存储字节的格式、读出尺寸并计算指纹;字节原样使用,不再净化。
-// @Description: 与上传管道同一套判定(格式白名单、嗅探与解码格式交叉验证、像素预算)。
+// @Description: 与上传管道同一套判定(格式白名单、嗅探与解码格式交叉验证、尺寸限制)。
 // @param data 对象的完整字节
-// @param maxPixels 像素预算
+// @param set 配置快照,取其中的尺寸限制
 // @return 格式、尺寸与指纹
-// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels
-func Describe(data []byte, maxPixels int64) (Description, error) {
-	meta, err := inspect(data, maxPixels)
+// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels / ErrBadDimensions
+func Describe(data []byte, set config.Settings) (Description, error) {
+	meta, err := inspect(data, limitsOf(set))
 	if err != nil {
 		return Description{}, err
 	}
-	prep, err := prepare(data, meta.mime, imaging.PolicyPassthrough)
+	prep, err := prepare(data, meta, imaging.PolicyPassthrough, set)
 	if err != nil {
 		return Description{}, err
 	}
@@ -64,7 +65,7 @@ func (s *Service) Adopt(ctx context.Context, p AdoptParams) (string, error) {
 	if !id.IsStorageKey(p.Key) {
 		return "", fmt.Errorf("upload: 非法的对象键 %q", p.Key)
 	}
-	desc, err := Describe(p.Data, s.cfg.Settings().MaxPixels())
+	desc, err := Describe(p.Data, s.cfg.Settings())
 	if err != nil {
 		return "", err
 	}

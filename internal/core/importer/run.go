@@ -185,6 +185,8 @@ func (s *Service) settleUploadError(ctx context.Context, item sqlc.ListPendingIm
 		return s.markFailed(ctx, item.ID, errcode.UploadUnsupportedType, truncateDetail(err.Error()))
 	case errors.Is(err, upload.ErrTooManyPixels):
 		return s.markFailed(ctx, item.ID, errcode.UploadTooManyPixels, truncateDetail(err.Error()))
+	case errors.Is(err, upload.ErrBadDimensions):
+		return s.markFailed(ctx, item.ID, errcode.UploadBadDimensions, truncateDetail(err.Error()))
 	case errors.Is(err, upload.ErrInvalidImage):
 		return s.markFailed(ctx, item.ID, errcode.UploadInvalidImage, truncateDetail(err.Error()))
 	case errors.Is(err, upload.ErrQuotaExceeded):

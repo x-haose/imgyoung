@@ -13,7 +13,7 @@ export type GroupKey = keyof ConfigMessages['groups']
 
 type UnitKey = keyof ConfigMessages['units']
 
-/** 控件类型:int 数值;text 单行文本;url 带主机的 http/https 地址;bool 开关;select 枚举;widths 宽度档;formats 格式多选;secret 只写不回显的凭证。 */
+/** 控件类型:int 数值;text 单行文本;url 带主机的 http/https 地址;bool 开关;select 枚举;widths 宽度档;formats 格式多选;secret 只写不回显的凭证;catalog 取自伪装清单的单选;countries 伪装清单里国家代码的多选。 */
 export type FieldDef =
   | { key: FieldKey; kind: 'int'; min: number; max?: number; unit?: UnitKey }
   | { key: FieldKey; kind: 'text' | 'url' | 'secret' }
@@ -21,6 +21,8 @@ export type FieldDef =
   | { key: FieldKey; kind: 'select'; options: readonly string[] }
   | { key: FieldKey; kind: 'widths' }
   | { key: FieldKey; kind: 'formats'; options: readonly string[] }
+  | { key: FieldKey; kind: 'catalog'; catalog: 'cameras' | 'cities' }
+  | { key: FieldKey; kind: 'countries' }
 
 export interface FieldGroup {
   key: GroupKey
@@ -45,6 +47,14 @@ export const CONFIG_GROUPS: FieldGroup[] = [
     fields: [
       { key: 'max_upload_mb', kind: 'int', min: 1, unit: 'mb' },
       { key: 'max_pixels_mp', kind: 'int', min: 1, unit: 'megapixels' },
+      { key: 'max_side_px', kind: 'int', min: 1, unit: 'pixels' },
+      {
+        key: 'max_aspect_ratio',
+        kind: 'int',
+        min: 1,
+        max: 100000,
+        unit: 'ratio',
+      },
       { key: 'max_concurrent_uploads', kind: 'int', min: 1, unit: 'count' },
       { key: 'upload_rate_per_min', kind: 'int', min: 0, unit: 'perMinute' },
     ],
@@ -66,7 +76,11 @@ export const CONFIG_GROUPS: FieldGroup[] = [
     fields: [
       { key: 'process_widths', kind: 'widths' },
       { key: 'process_formats', kind: 'formats', options: PROCESS_FORMATS },
-      { key: 'exif_policy', kind: 'select', options: ['passthrough', 'strip'] },
+      {
+        key: 'exif_policy',
+        kind: 'select',
+        options: ['passthrough', 'strip', 'spoof'],
+      },
       {
         key: 'process_quality_webp',
         kind: 'int',
@@ -88,6 +102,22 @@ export const CONFIG_GROUPS: FieldGroup[] = [
       { key: 'process_workers', kind: 'int', min: 1, unit: 'count' },
       { key: 'process_timeout_ms', kind: 'int', min: 1, unit: 'ms' },
       { key: 'variants_cache_mb', kind: 'int', min: 1, unit: 'mb' },
+    ],
+  },
+  {
+    key: 'spoof',
+    fields: [
+      { key: 'spoof_mode', kind: 'select', options: ['per_image', 'uniform'] },
+      { key: 'spoof_camera', kind: 'catalog', catalog: 'cameras' },
+      { key: 'spoof_city', kind: 'catalog', catalog: 'cities' },
+      { key: 'spoof_countries', kind: 'countries' },
+      {
+        key: 'spoof_window_days',
+        kind: 'int',
+        min: 1,
+        max: 3650,
+        unit: 'days',
+      },
     ],
   },
   {
@@ -146,6 +176,8 @@ function baselineOf(def: FieldDef, s: RuntimeSettings): FieldValue {
       return (s.process_widths ?? []).join(', ')
     case 'formats':
       return [...(s.process_formats ?? [])]
+    case 'countries':
+      return [...s.spoof_countries]
     case 'secret':
       return ''
     default:
@@ -217,6 +249,7 @@ export function toPatchValue(def: FieldDef, value: FieldValue): unknown {
     case 'widths':
       return parseWidths(String(value)) ?? []
     case 'formats':
+    case 'countries':
       return [...(value as string[])].sort()
     case 'text':
     case 'url':

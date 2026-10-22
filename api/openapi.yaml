@@ -546,6 +546,28 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/admin/spoof-profiles:
+    get:
+      operationId: spoofProfiles
+      tags: [Admin · Overview and settings]
+      summary: 伪装档的机型与城市清单
+      description: 返回 `spoof` 档可选的机型、城市与国家代码，设置页据此填充选项。清单内置在程序里，随版本变化；已入库的图片不受影响。仅管理员。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 机型、城市与国家清单
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpoofProfiles'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/admin/upload:
     post:
       operationId: sessionUpload
@@ -2736,7 +2758,7 @@ components:
                 description: 图片文件；其文件名记为图片的原始文件名（`file_name`）
               exif_policy:
                 type: string
-                enum: [strip, passthrough]
+                enum: [strip, passthrough, spoof]
                 description: 本次 EXIF 档位；缺省用运营配置的全局默认
               ttl:
                 type: string
@@ -3046,6 +3068,7 @@ components:
         - upload_busy
         - upload_unsupported_type
         - upload_too_many_pixels
+        - upload_bad_dimensions
         - upload_invalid_image
         - upload_exif_policy
         - upload_quota_exceeded
@@ -3192,7 +3215,7 @@ components:
           description: 文件名；缺省取地址的最后一段
         exif_policy:
           type: string
-          enum: [strip, passthrough]
+          enum: [strip, passthrough, spoof]
           description: 本次 EXIF 档位；缺省用运营配置的全局默认
         ttl:
           description: 有效期秒数，0 到 3153600000 的整数，可写成数字或数字字符串；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
@@ -3308,7 +3331,7 @@ components:
           description: 访问模式
         exif_policy:
           type: string
-          enum: [passthrough, strip]
+          enum: [passthrough, strip, spoof]
           description: 全局默认 EXIF 档位；S3 PutObject 不适用
         encrypt_new_channels:
           type: boolean
@@ -3356,6 +3379,13 @@ components:
         - alert_webhook_url
         - audit_retention_days
         - replicate_limit_mbps
+        - spoof_mode
+        - spoof_camera
+        - spoof_city
+        - spoof_countries
+        - spoof_window_days
+        - max_side_px
+        - max_aspect_ratio
       properties:
         max_upload_mb:
           type: integer
@@ -3385,7 +3415,7 @@ components:
           description: 空 Referer 是否放行
         exif_policy:
           type: string
-          enum: [passthrough, strip]
+          enum: [passthrough, strip, spoof]
           description: 全局默认 EXIF 档位，上传时可用 `exif_policy` 字段覆盖；不适用于 S3 PutObject，后者一律按原字节保存
         min_success:
           type: integer
@@ -3477,6 +3507,70 @@ components:
         replicate_limit_mbps:
           type: integer
           description: 后台补课写入渠道的总带宽上限（MB/s），所有渠道合计；0 表示不限。补课指新建渠道的存量补齐与对账重新排队的补齐；不限新上传触发的补齐、用户上传的同步写入与读取
+        spoof_mode:
+          type: string
+          enum: [per_image, uniform]
+          description: '`spoof` 档的身份模式。`per_image`：每张图独立随机机型与城市；`uniform`：全站固定 `spoof_camera` 与 `spoof_city`'
+        spoof_camera:
+          type: string
+          description: '`uniform` 模式使用的机型标识，取自 `GET /api/admin/spoof-profiles` 的 `cameras`；`per_image` 模式忽略，可为空串'
+        spoof_city:
+          type: string
+          description: '`uniform` 模式使用的城市标识，取自 `GET /api/admin/spoof-profiles` 的 `cities`；`per_image` 模式忽略，可为空串'
+        spoof_countries:
+          type: array
+          items:
+            type: string
+          description: '`per_image` 模式候选城市的国家或地区代码（ISO 3166-1 alpha-2），取自 `GET /api/admin/spoof-profiles` 的 `countries`；空数组表示全部城市'
+        spoof_window_days:
+          type: integer
+          description: '`spoof` 档写入的拍摄时间落在上传时刻往前这么多天之内，1 到 3650'
+        max_side_px:
+          type: integer
+          description: 单边像素上限，宽或高超过它的图片被拒收
+        max_aspect_ratio:
+          type: integer
+          description: 长边与短边之比的上限，1 到 100000，超过它的图片被拒收
+    SpoofProfiles:
+      type: object
+      description: '`spoof` 档可选的机型、城市与国家代码'
+      required: [cameras, cities, countries]
+      properties:
+        cameras:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id:
+                type: string
+                description: 机型标识，配置项 `spoof_camera` 的取值
+              label:
+                type: string
+                description: 显示名
+        cities:
+          type: array
+          items:
+            type: object
+            required: [id, name_zh, name_en, country]
+            properties:
+              id:
+                type: string
+                description: 城市标识，配置项 `spoof_city` 的取值
+              name_zh:
+                type: string
+                description: 中文名
+              name_en:
+                type: string
+                description: 英文名
+              country:
+                type: string
+                description: 所在国家或地区代码（ISO 3166-1 alpha-2）
+        countries:
+          type: array
+          items:
+            type: string
+          description: 城市覆盖的国家或地区代码，配置项 `spoof_countries` 的取值范围
     SettingsPatch:
       type: object
       description: 「配置键 → 新值」对象；键与值类型同 Settings，只需给出要改的键
@@ -3948,7 +4042,7 @@ components:
             - type: string
         exif_policy:
           type: string
-          enum: [strip, passthrough]
+          enum: [strip, passthrough, spoof]
           description: 导入图片的 EXIF 档位；缺省用运营配置的全局默认
         referer:
           type: string

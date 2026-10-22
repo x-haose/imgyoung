@@ -27,7 +27,9 @@ export function SettingsCard({ job }: { job: ImportJob }) {
       ? m.images.exifStrip
       : job.exif_policy === 'passthrough'
         ? m.images.exifPassthrough
-        : d.exifDefault
+        : job.exif_policy === 'spoof'
+          ? m.images.exifSpoof
+          : d.exifDefault
   const rows: Row[] = [
     { label: d.mode, value: m.imports.mode[job.mode] },
     { label: d.created, value: formatTime(job.created_at) },

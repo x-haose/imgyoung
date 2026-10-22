@@ -103,7 +103,7 @@ images(上传引用)──→ blobs(物理图)──→ blob_channels(各渠道�
 </Step>
 <Step>
 
-**格式与像素预算**：按文件头的 magic bytes 判定真实格式，只接受 JPEG、PNG、GIF、WebP。只读图片头取得尺寸，并与嗅探出的格式交叉核对；宽 × 高超过 `max_pixels_mp`（像素预算）直接拒绝，不做完整解码。解码所需的内存取决于分辨率，与文件大小无关，所以这一步必须在解码之前。
+**格式与像素预算**：按文件头的 magic bytes 判定真实格式，只接受 JPEG、PNG、GIF、WebP。只读图片头取得尺寸，并与嗅探出的格式交叉核对；宽 × 高超过 `max_pixels_mp`（像素预算），或单边超过 `max_side_px`、长边与短边之比超过 `max_aspect_ratio`，直接拒绝，不做完整解码。解码所需的内存取决于分辨率，与文件大小无关，所以这一步必须在解码之前。
 
 </Step>
 <Step>
@@ -113,7 +113,7 @@ images(上传引用)──→ blobs(物理图)──→ blob_channels(各渠道�
 </Step>
 <Step>
 
-**净化**：EXIF 档位为 `strip` 时剥离元数据（JPEG、PNG、WebP；GIF 没有标准元数据段，原样保留）。JPEG 剥离后补回一个只含方向（Orientation）的最小 Exif 段，靠方向标记摆正的照片不会显示成错误的方向；GPS、机型、时间等字段照样删除。方向为默认值时不补。
+**净化**：EXIF 档位为 `strip` 时剥离元数据（JPEG、PNG、WebP；GIF 没有标准元数据段，原样保留）。JPEG 剥离后补回一个只含方向（Orientation）的最小 Exif 段，靠方向标记摆正的照片不会显示成错误的方向；GPS、机型、时间等字段照样删除。方向为默认值时不补。EXIF 档位为 `spoof` 时，JPEG 同样先剥离，再写入一份新生成、前后一致的 EXIF（内置机型、城市级位置、与城市时区一致的拍摄时间），其余格式按 `strip` 处理；随机源与当前时刻由调用方注入。
 
 </Step>
 <Step>

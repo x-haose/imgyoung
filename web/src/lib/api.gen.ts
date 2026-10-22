@@ -296,6 +296,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/spoof-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 伪装档的机型与城市清单
+         * @description 返回 `spoof` 档可选的机型、城市与国家代码，设置页据此填充选项。清单内置在程序里，随版本变化；已入库的图片不受影响。仅管理员。
+         */
+        get: operations["spoofProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/upload": {
         parameters: {
             query?: never;
@@ -1388,7 +1408,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "import_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "import_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_bad_dimensions" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -1480,7 +1500,7 @@ export interface components {
              * @description 本次 EXIF 档位；缺省用运营配置的全局默认
              * @enum {string}
              */
-            exif_policy?: "strip" | "passthrough";
+            exif_policy?: "strip" | "passthrough" | "spoof";
             /** @description 有效期秒数，0 到 3153600000 的整数，可写成数字或数字字符串；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
             ttl?: number | string;
         };
@@ -1555,7 +1575,7 @@ export interface components {
              * @description 全局默认 EXIF 档位；S3 PutObject 不适用
              * @enum {string}
              */
-            exif_policy: "passthrough" | "strip";
+            exif_policy: "passthrough" | "strip" | "spoof";
             /** @description 新建渠道未指定 `encrypted` 时的默认值；为 true 时，按默认加密的新渠道不能开启 302 直链 */
             encrypt_new_channels: boolean;
             build: components["schemas"]["BuildInfo"];
@@ -1588,7 +1608,7 @@ export interface components {
              * @description 全局默认 EXIF 档位，上传时可用 `exif_policy` 字段覆盖；不适用于 S3 PutObject，后者一律按原字节保存
              * @enum {string}
              */
-            exif_policy: "passthrough" | "strip";
+            exif_policy: "passthrough" | "strip" | "spoof";
             /** @description 上传返回成功所需的最少同步副本数 */
             min_success: number;
             /**
@@ -1651,6 +1671,44 @@ export interface components {
             audit_retention_days: number;
             /** @description 后台补课写入渠道的总带宽上限（MB/s），所有渠道合计；0 表示不限。补课指新建渠道的存量补齐与对账重新排队的补齐；不限新上传触发的补齐、用户上传的同步写入与读取 */
             replicate_limit_mbps: number;
+            /**
+             * @description `spoof` 档的身份模式。`per_image`：每张图独立随机机型与城市；`uniform`：全站固定 `spoof_camera` 与 `spoof_city`
+             * @enum {string}
+             */
+            spoof_mode: "per_image" | "uniform";
+            /** @description `uniform` 模式使用的机型标识，取自 `GET /api/admin/spoof-profiles` 的 `cameras`；`per_image` 模式忽略，可为空串 */
+            spoof_camera: string;
+            /** @description `uniform` 模式使用的城市标识，取自 `GET /api/admin/spoof-profiles` 的 `cities`；`per_image` 模式忽略，可为空串 */
+            spoof_city: string;
+            /** @description `per_image` 模式候选城市的国家或地区代码（ISO 3166-1 alpha-2），取自 `GET /api/admin/spoof-profiles` 的 `countries`；空数组表示全部城市 */
+            spoof_countries: string[];
+            /** @description `spoof` 档写入的拍摄时间落在上传时刻往前这么多天之内，1 到 3650 */
+            spoof_window_days: number;
+            /** @description 单边像素上限，宽或高超过它的图片被拒收 */
+            max_side_px: number;
+            /** @description 长边与短边之比的上限，1 到 100000，超过它的图片被拒收 */
+            max_aspect_ratio: number;
+        };
+        /** @description `spoof` 档可选的机型、城市与国家代码 */
+        SpoofProfiles: {
+            cameras: {
+                /** @description 机型标识，配置项 `spoof_camera` 的取值 */
+                id: string;
+                /** @description 显示名 */
+                label: string;
+            }[];
+            cities: {
+                /** @description 城市标识，配置项 `spoof_city` 的取值 */
+                id: string;
+                /** @description 中文名 */
+                name_zh: string;
+                /** @description 英文名 */
+                name_en: string;
+                /** @description 所在国家或地区代码（ISO 3166-1 alpha-2） */
+                country: string;
+            }[];
+            /** @description 城市覆盖的国家或地区代码，配置项 `spoof_countries` 的取值范围 */
+            countries: string[];
         };
         /** @description 「配置键 → 新值」对象；键与值类型同 Settings，只需给出要改的键 */
         SettingsPatch: {
@@ -1966,7 +2024,7 @@ export interface components {
              * @description 导入图片的 EXIF 档位；缺省用运营配置的全局默认
              * @enum {string}
              */
-            exif_policy?: "strip" | "passthrough";
+            exif_policy?: "strip" | "passthrough" | "spoof";
             /** @description 抓取图片时发送的 `Referer`，须是 http 或 https 绝对地址，用于绕过只放行自家页面的防盗链。缺省时取该图片来源页的地址；来源不是网页（图片清单、文档）时不发送 */
             referer?: string;
         };
@@ -2998,7 +3056,7 @@ export interface components {
                      * @description 本次 EXIF 档位；缺省用运营配置的全局默认
                      * @enum {string}
                      */
-                    exif_policy?: "strip" | "passthrough";
+                    exif_policy?: "strip" | "passthrough" | "spoof";
                     /** @description 有效期秒数，0 到 3153600000 的整数；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
                     ttl?: string;
                 };
@@ -3443,6 +3501,29 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["FullConfigResponse"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    spoofProfiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 机型、城市与国家清单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpoofProfiles"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalError"];

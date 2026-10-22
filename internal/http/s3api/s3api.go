@@ -297,6 +297,9 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, r *http.Request, set 
 	case errors.Is(err, upload.ErrTooManyPixels):
 		h.writeStatus(w, r, http.StatusBadRequest, "InvalidRequest",
 			fmt.Sprintf("图片分辨率超出限制(像素预算 %d 百万像素)", set.MaxPixelsMP))
+	case errors.Is(err, upload.ErrBadDimensions):
+		h.writeStatus(w, r, http.StatusBadRequest, "InvalidRequest",
+			fmt.Sprintf("图片单边超过 %d 像素,或长边与短边之比超过 %d:1", set.MaxSidePx, set.MaxAspectRatio))
 	case errors.Is(err, upload.ErrQuotaExceeded):
 		h.writeStatus(w, r, http.StatusForbidden, "QuotaExceeded", "存储配额已满")
 	case errors.Is(err, channel.ErrNoHealthyChannel), errors.Is(err, upload.ErrInsufficientReplicas):

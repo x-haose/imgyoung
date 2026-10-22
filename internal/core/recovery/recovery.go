@@ -243,7 +243,7 @@ func (s *Service) recoverOne(ctx context.Context, userID, key string, holders he
 	case errors.Is(err, upload.ErrKeyMismatch):
 		return fail(ReasonKeyMismatch, err)
 	case errors.Is(err, upload.ErrUnsupportedType), errors.Is(err, upload.ErrInvalidImage),
-		errors.Is(err, upload.ErrTooManyPixels):
+		errors.Is(err, upload.ErrTooManyPixels), errors.Is(err, upload.ErrBadDimensions):
 		return fail(ReasonInvalidImage, err)
 	default:
 		return fail(ReasonRegisterFailed, err)

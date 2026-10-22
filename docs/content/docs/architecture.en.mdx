@@ -142,8 +142,8 @@ no upload of any size is written to a temporary file. Request size limits are li
 
 **Format and pixel budget**: the real format is decided by the magic bytes at the start of the file, and only JPEG,
 PNG, GIF, and WebP are accepted. Only the image header is read to get the dimensions, which are cross-checked against
-the sniffed format; if width × height exceeds `max_pixels_mp` (the pixel budget), the upload is rejected without a full
-decode. Decoded memory depends on resolution, not on file size, so this check has to come before decoding.
+the sniffed format; if width × height exceeds `max_pixels_mp` (the pixel budget), a side exceeds `max_side_px`, or the long side is more
+than `max_aspect_ratio` times the short side, the upload is rejected without a full decode. Decoded memory depends on resolution, not on file size, so this check has to come before decoding.
 
 </Step>
 <Step>
@@ -156,7 +156,10 @@ decode. Decoded memory depends on resolution, not on file size, so this check ha
 **Sanitizing**: with the EXIF policy `strip`, metadata is removed (JPEG, PNG, WebP; GIF has no standard metadata
 segment and passes through unchanged). For JPEG, a minimal Exif segment holding only the orientation is added back, so
 photos that rely on the orientation tag to display upright do not end up rotated; GPS, camera model, timestamps, and
-every other field are still removed. Nothing is added back when the orientation is the default.
+every other field are still removed. Nothing is added back when the orientation is the default. With the policy `spoof`, JPEG is stripped the same way and then
+gets a newly generated, internally consistent EXIF (a built-in camera, a city-level location, and a capture time that
+agrees with the city's time zone); other formats are handled like `strip`. The random source and the current time are
+injected by the caller.
 
 </Step>
 <Step>

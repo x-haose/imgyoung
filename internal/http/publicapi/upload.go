@@ -233,6 +233,9 @@ func (h *Handlers) writeUploadError(w http.ResponseWriter, set config.Settings, 
 	case errors.Is(err, upload.ErrTooManyPixels):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, errcode.UploadTooManyPixels,
 			"max", strconv.FormatInt(set.MaxPixelsMP, 10))
+	case errors.Is(err, upload.ErrBadDimensions):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusUnprocessableEntity, errcode.UploadBadDimensions,
+			"max_side", strconv.Itoa(set.MaxSidePx), "max_ratio", strconv.Itoa(set.MaxAspectRatio))
 	case errors.Is(err, upload.ErrInvalidImage):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadInvalidImage)
 	case errors.Is(err, imaging.ErrUnknownPolicy):

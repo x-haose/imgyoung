@@ -135,6 +135,15 @@ linters:
       - path: internal/infra/imaging/phash\.go$
         linters: [gosec]
         text: "G115"
+      # EXIF 以定宽字段编码:段长、记录数、日期时间与坐标分量的取值范围由构造保证,
+      # 像素尺寸来自已通过像素预算的解码头(JPEG 单边不超过 65535)
+      - path: internal/infra/imaging/spoof\.go$|internal/infra/imaging/tiffwriter\.go$
+        linters: [gosec]
+        text: "G115"
+      # 伪装用的随机性只决定编造出的机型、位置与时刻,不承担保密;随机源由调用方注入,生产路径以系统熵播种
+      - path: internal/infra/imaging/spoof\.go$
+        linters: [gosec]
+        text: "G404"
       # 设置项的列名 cdn_cloudflare_api_token 与公开的掩码哨兵是常量字面量,不是凭证;
       # 失败归类的说明文案以 ReasonAppCredentials 等常量为键、正文提到 Secret Key,同样不是凭证
       - path: internal/infra/config/store\.go$|internal/core/channel/editconfig\.go$|internal/core/channel/failure\.go$

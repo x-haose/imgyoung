@@ -34,7 +34,7 @@ export const guide = {
     file: 'Required multipart file field; the format is detected from the content, and only JPEG / PNG / GIF / WebP are accepted',
     ttl: 'Optional lifetime in seconds; 0 or never means permanent. If omitted, your default expiry applies, otherwise the global default',
     exifPolicy:
-      'Optional: strip (remove metadata) or passthrough (keep as is); if omitted, the global default applies',
+      'Optional: strip (remove metadata), passthrough (keep as is) or spoof (replace with a fake camera, location and time); if omitted, the global default applies',
     idempotencyKey:
       'Optional request header; retrying with the same key never creates a second image',
   },

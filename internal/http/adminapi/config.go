@@ -28,7 +28,7 @@ type RuntimeConfigView struct {
 	MaxUploadMB        int64        `json:"max_upload_mb"`        // 单图上限(MB)
 	BaseURL            string       `json:"base_url"`             // 对外站点地址;空则按请求域名推导绝对地址
 	AccessMode         string       `json:"access_mode"`          // 访问模式:proxy / redirect
-	EXIFPolicy         string       `json:"exif_policy"`          // 全局 EXIF 档位:passthrough / strip
+	EXIFPolicy         string       `json:"exif_policy"`          // 全局 EXIF 档位:passthrough / strip / spoof
 	EncryptNewChannels bool         `json:"encrypt_new_channels"` // 新建渠道未显式指定时的加密默认值;渠道表单据此判断直链能否开启
 	Build              version.Info `json:"build"`                // 服务端构建信息:版本、提交与构建时刻
 }

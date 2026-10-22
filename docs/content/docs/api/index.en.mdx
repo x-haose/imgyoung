@@ -154,7 +154,7 @@ redirect target changes with channel health and configuration, so it stays out o
 | 409 | Conflicts with existing state, such as a duplicate name, a channel that holds the only copy of some images, a channel that is draining, a channel configuration that changed while saving, or a recovery of image records already running (`recovery_busy`) |
 | 413 | Larger than the per-image size limit (runtime setting `max_upload_mb`) |
 | 415 | Not a supported image format (judged by file content) |
-| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file or not an ImgYoung metadata database (`snapshot_corrupt`) |
+| 422 | Resolution exceeds the pixel budget (runtime setting `max_pixels_mp`), or the side length or aspect ratio exceeds the limit (`max_side_px`, `max_aspect_ratio`, error code `upload_bad_dimensions`); a parameter value cannot be written to the exported rclone config file (`channel_unrepresentable`); the snapshot to restore is not a complete database file or not an ImgYoung metadata database (`snapshot_corrupt`) |
 | 429 | The upload concurrency limit is reached, the user is uploading too often, or there are too many login attempts; wait as indicated by `Retry-After` when present |
 | 500 | Internal server error, including database faults; error code `internal`, retry later. Any endpoint that touches the database can return 500 |
 | 503 | On upload, no healthy channel can be written or too few synchronous replicas succeeded; on image access, no channel can currently read the image |

@@ -187,6 +187,7 @@ func mountAdminOnly(ad chi.Router, cfg Config) {
 	ad.Delete("/users/{id}", cfg.Admin.HandleUserDelete)
 	ad.Get("/config/full", cfg.Admin.HandleConfigFull)
 	ad.Put("/config", cfg.Admin.HandleConfigUpdate)
+	ad.Get("/spoof-profiles", cfg.Admin.HandleSpoofProfiles)
 	ad.Get("/referer-whitelist", cfg.Admin.HandleRefererList)
 	ad.Post("/referer-whitelist", cfg.Admin.HandleRefererAdd)
 	ad.Delete("/referer-whitelist/{id}", cfg.Admin.HandleRefererDelete)

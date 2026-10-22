@@ -12,7 +12,7 @@ description: Upload images through the HTTP API, URL fetch, the admin console or
 | **Upload** on the **Images** page of the admin console | Console session | Drag and drop, file picker, clipboard paste, fetch from URL |
 | S3-compatible API `/s3/…` | S3 credential derived from an upload token | Clients that can upload to S3; see [Upload clients](./clients.mdx) |
 
-All four go through the same processing steps: format check, pixel budget check, quota pre-check, EXIF handling, channel writes, then the metadata database record. They differ only in where the bytes come from and which options they accept: the S3-compatible API cannot set the lifetime per request, does no EXIF processing, and has no idempotency key.
+All four go through the same processing steps: format check, size limit check, quota pre-check, EXIF handling, channel writes, then the metadata database record. They differ only in where the bytes come from and which options they accept: the S3-compatible API cannot set the lifetime per request, does no EXIF processing, and has no idempotency key.
 
 Upload tokens are issued on the **Upload tokens** page of the console; see [Admin console](./admin.mdx#upload-tokens).
 
@@ -41,7 +41,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 |---|---|---|
 | `file` | Yes | The image file. Only the first `file` part with a file name is used. The file name is metadata only (shown and searchable in the console); control characters are removed and it is truncated to 255 bytes |
 | `ttl` | No | Lifetime in whole seconds (0 to 3153600000) or `never`; both `0` and `never` mean the image never expires. When omitted, the user's default applies, then the global default; see [Lifecycle and deduplication](./lifecycle.mdx) |
-| `exif_policy` | No | `strip` or `passthrough`. When omitted, the global default applies (`passthrough` by default); see [EXIF handling](#exif-handling) below |
+| `exif_policy` | No | `strip`, `passthrough` or `spoof`. When omitted, the global default applies (`passthrough` by default); see [EXIF handling](#exif-handling) below |
 
 - `ttl` and `exif_policy` are read only from multipart form fields; putting them in the URL query string has no effect.
 - Each of the two fields is at most 1 KiB; a longer one returns 400.
@@ -115,7 +115,7 @@ Both `/api/upload` and `/api/upload/url` honor idempotency keys; the S3-compatib
 
 ## Fetching from a URL
 
-Give the server an image address and it downloads and stores the image for you, which is handy for pulling images back from other image hosts. The fetched bytes go through the same processing steps as a direct upload, so the format allowlist, pixel budget, EXIF handling and quota all apply; the server never copies a remote file straight into a channel.
+Give the server an image address and it downloads and stores the image for you, which is handy for pulling images back from other image hosts. The fetched bytes go through the same processing steps as a direct upload, so the format allowlist, size limits, EXIF handling and quota all apply; the server never copies a remote file straight into a channel.
 
 ```bash title="Terminal"
 curl -H "Authorization: Bearer imgy_xxxxxxxx" \
@@ -168,7 +168,7 @@ On the **Images** page, click **Upload**. The dialog has two tabs:
 - **Local files**: click to pick files or drag images onto the dashed area; you can select several. While the dialog is open, Ctrl / ⌘ + V pastes images straight from the clipboard. At most two files upload at the same time; the rest wait in a queue.
 - **Fetch from URL**: enter an image address and click **Fetch**; this works the same as [fetching from a URL](#fetching-from-a-url).
 
-The **Expiry** (Default / Never / Custom hours) and **EXIF** (Default / Strip / Keep) options below apply to files added afterwards. **Default** means the field is not sent.
+The **Expiry** (Default / Never / Custom hours) and **EXIF** (Default / Strip / Keep / Spoof) options below apply to files added afterwards. **Default** means the field is not sent.
 
 Closing the dialog does not interrupt uploads in progress. Each finished upload shows its link in the list, ready to copy.
 
@@ -186,12 +186,14 @@ Only JPEG, PNG, GIF and WebP are accepted. The format is determined from the fil
 |---|---|---|---|
 | Image size | `max_upload_mb` | 50 MB | 413 |
 | Pixel budget | `max_pixels_mp` | 50 megapixels (width × height) | 422 |
+| Side length and aspect ratio | `max_side_px`, `max_aspect_ratio` | 30000 px, 100:1 | 422 |
 | Concurrent uploads | `max_concurrent_uploads` | 8 | 429 with `Retry-After: 1` |
 | Upload rate limit | `upload_rate_per_min` | 0 (off) | 429 with `Retry-After: 60` |
 | Storage quota | Set per user | Unlimited | 403 |
 
 - **Image size**: only the file itself counts, so a file exactly at the limit is accepted. The request body as a whole is capped separately at the limit + 64 KiB, and exceeding that also returns 413.
 - **Pixel budget**: this guards decoded memory, which depends on resolution rather than file size: a 20-megapixel image decodes to about 80 MB of RGBA. The server judges it from the image header alone, so an oversized image never reaches the decoder.
+- **Side length and aspect ratio**: an image whose width or height exceeds `max_side_px`, or whose long side is at least `max_aspect_ratio` times the short side, gets 422 (`upload_bad_dimensions`). This keeps extreme strips out, which produce odd results in thumbnails and on-demand processing. It is also judged from the image header alone.
 - **Concurrent uploads**: a single limit for the whole site, shared by data API uploads, URL fetches, console uploads and every S3 request (including GET / HEAD / DELETE). It caps how many requests are processed at once. Uploads of any size are processed in memory and never written to temporary files, so this number bounds the peak memory of uploading. When every slot is taken, requests get 429 immediately instead of queueing.
 - **Upload rate limit**: per user, and uploads by the same user through tokens, the console and S3 PutObject share one allowance. It is a token bucket: up to N uploads can go through back to back (N being the per-minute allowance), after which one more is allowed every 60/N seconds. The buckets live in process memory and reset on restart.
 - **Storage quota**: every reference counts in full. Each image record counts the full size of its physical file against its owner, and background deduplication does not reduce usage. The pre-check uses the size of the uploaded bytes.
@@ -216,6 +218,7 @@ All of these are changed under **Settings → Runtime settings** and take effect
 | 413 | `url_too_large` | URL fetch: the remote content is over the per-image size limit |
 | 415 | `upload_unsupported_type` | Not a supported image format |
 | 422 | `upload_too_many_pixels` | Resolution exceeds the pixel budget |
+| 422 | `upload_bad_dimensions` | The side length or aspect ratio exceeds the limit |
 | 429 | `upload_busy` | Every upload concurrency slot is taken; retry after `Retry-After` |
 | 429 | `upload_rate_limited` | The user is uploading too fast; retry after `Retry-After` |
 | 500 | `internal` | Internal server error, including a database read failure while checking the token; retry later |
@@ -228,6 +231,7 @@ All of these are changed under **Settings → Runtime settings** and take effect
 |---|---|
 | `passthrough` | Stored byte for byte; no metadata is touched. This is the global default |
 | `strip` | Metadata is removed before storing, as listed below |
+| `spoof` | Metadata is removed, then a newly generated fake camera, location and capture time are written; see [the spoof policy](#spoof) |
 
 By default the original is left untouched: whether to strip metadata from what visitors with the link can see is the uploader's choice. Keeping image content from storage providers is the job of [channel encryption](../channels/encryption.mdx), independent of the EXIF policy.
 
@@ -248,6 +252,35 @@ An image's SHA-256 (the hash shown in the console and the basis of deduplication
 With `passthrough`, GPS and other metadata in the original can be read by anyone who has the link and fetches the original bytes. The variants produced by [on-demand processing](./access.mdx#on-demand-processing) are re-encoded and carry no metadata, but the original itself stays reachable.
 </Callout>
 
+### The spoof policy [#spoof]
+
+`spoof` first removes all the original's metadata the way `strip` does, then writes a newly generated, internally consistent EXIF. Whoever reads the metadata sees an ordinary camera shooting the photo in some city, not an image whose information was wiped. It is meant for people who want to leave neither their own information nor the trace of having wiped it.
+
+| Field | What is written |
+|---|---|
+| Camera | One of 13 built-in phones and cameras: make, model, firmware version, lens, and aperture, focal length, ISO and shutter within that camera's plausible range |
+| Location | GPS latitude, longitude and altitude, from about 60 built-in cities; a random point within 500 to 1500 m of the city centre, with a smaller radius for coastal and riverside cities. City level only, never a specific address |
+| Capture time | A day within the last `spoof_window_days` days before the upload, between 8:00 and 17:00 local time; the EXIF times, the time zone offset and the GPS UTC time agree with each other for the city's time zone |
+| Pixel size | The image's actual width and height |
+| Orientation | Taken from the original's orientation tag |
+
+The original's GPS, camera, capture time, XMP, IPTC and the like are never kept. No thumbnail, no vendor-private data and no ImgYoung marker is written.
+
+Only JPEG gets fake information. PNG and WebP rarely carry camera EXIF in the first place, so inventing it would stand out; they are handled like `strip`. GIF is left alone.
+
+The setting `spoof_mode` chooses the identity mode:
+
+- `per_image` (default): every image gets its own random camera and city, so images cannot be linked to each other. `spoof_countries` limits the candidate cities to some countries and regions.
+- `uniform`: the whole site uses the one camera and city given by `spoof_camera` and `spoof_city`, blending into a mass of similar photos. The exact location, time and exposure of each image are still random.
+
+See [Configuration](../configuration.mdx#exif-spoofing) for the settings.
+
+<Callout type="warn" title="What spoof can and cannot do">
+- It changes only what EXIF readers see. The pixels are untouched, so the JPEG quantization tables, the ICC color profile, sensor noise and the like can still reveal where an image really came from.
+- The camera profiles are typical values built into the program. They do not correspond to a particular device and are not guaranteed to match a vendor's firmware field by field. They hold up against ordinary metadata viewers, not against professional forensics.
+- The fake information is for protecting your own privacy. Do not use it to impersonate someone else's device or to fabricate evidence.
+</Callout>
+
 ### Why processing happens at upload time [#why-on-upload]
 
 The EXIF policy takes effect at upload time, and the processed bytes are what the channels store. Changing the global policy later affects only new uploads; existing images are not reprocessed on access.
@@ -265,7 +298,7 @@ The background deduplication job (every 300 seconds by default, `dedup_scan_seco
 - Each upload keeps its own short ID, lifetime, access count and owner, and every link keeps working.
 - Quotas count every reference in full, so a merge does not reduce usage.
 
-The same photo uploaded with different EXIF policies is stored as different bytes and is not merged automatically. Its perceptual hashes are close, so the pair lands in **Duplicates** for an administrator to decide. See [Lifecycle and deduplication](./lifecycle.mdx#deduplication).
+The same photo uploaded with different EXIF policies is stored as different bytes and is not merged automatically; `spoof` generates different content every time, so the same photo uploaded twice is not merged by bytes either. Its perceptual hashes are close, so the pair lands in **Duplicates** for an administrator to decide. See [Lifecycle and deduplication](./lifecycle.mdx#deduplication).
 
 Duplicates caused by client retries are best avoided at the source with [idempotency keys](#idempotency-keys).
 

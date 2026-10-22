@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestValidatePolicy 表驱动验证档位校验:合法值通过,空值/spoof/乱填拒绝。
+// TestValidatePolicy 表驱动验证档位校验:合法值通过,空值/乱填拒绝。
 func TestValidatePolicy(t *testing.T) {
 	cases := map[string]struct {
 		policy EXIFPolicy
@@ -14,7 +14,7 @@ func TestValidatePolicy(t *testing.T) {
 		"strip":       {PolicyStrip, true},
 		"passthrough": {PolicyPassthrough, true},
 		"空值":          {"", false},
-		"spoof未实现":    {"spoof", false},
+		"spoof":       {PolicySpoof, true},
 		"乱填":          {"bogus", false},
 	}
 	for name, tc := range cases {

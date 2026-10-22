@@ -149,11 +149,15 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 |---|---|---|---|---|
 | `max_upload_mb` | Max image size | `50` | ≥ 1, MB | Size limit for a single image |
 | `max_pixels_mp` | Pixel budget | `50` | ≥ 1, megapixels | Limit on a single image's width × height |
+| `max_side_px` | Max side length | `30000` | ≥ 1, pixels | Limit on width or height |
+| `max_aspect_ratio` | Max aspect ratio | `100` | 1–100000 | Limit on the long side divided by the short side |
 | `max_concurrent_uploads` | Concurrent uploads | `8` | ≥ 1 | Concurrency shared by every upload entry point |
 | `upload_rate_per_min` | Upload rate limit | `0` | ≥ 0, per minute | Uploads per user per minute; `0` disables it |
 
 - **`max_upload_mb`**: 1 MB = 1024 × 1024 bytes. A file exactly at the limit is accepted; anything larger gets 413. A multipart request body is additionally capped at "this limit + 64 KiB". The limit also applies to URL imports, S3 uploads, and the source image read for on-demand processing: after lowering it, older images above the new limit are served as originals instead of being resized or converted.
 - **`max_pixels_mp`**: images whose width × height exceeds `max_pixels_mp × 1,000,000` are rejected with 422.
+- **`max_side_px`**: images whose width or height exceeds it are rejected with 422 (`upload_bad_dimensions`).
+- **`max_aspect_ratio`**: images whose long side is more than this many times the short side are rejected with 422 (`upload_bad_dimensions`). `100` means 100:1, and an image exactly at the limit is accepted.
 - **`max_concurrent_uploads`**: one limit shared by the upload API, URL imports, admin console uploads and every request on the S3-compatible API. When it is full, requests get 429 (`Retry-After: 1`) immediately.
 - **`upload_rate_per_min`**: a user's uploads through tokens, the admin console and S3 share one allowance, and the burst equals the per-minute allowance. Excess requests get 429 (`Retry-After: 60`).
 
@@ -183,7 +187,7 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 |---|---|---|---|---|
 | `process_widths` | Width tiers | `[100,200,400,800,1600]` | Array of positive integers, pixels; may be empty | Widths allowed in `?w=` |
 | `process_formats` | Target formats | `["webp","jpeg","png"]` | Non-empty subset of `webp`, `jpeg`, `png` | Formats allowed in `?format=` |
-| `exif_policy` | Default EXIF policy | `passthrough` | `passthrough` / `strip` | Whether uploads keep or strip EXIF and other metadata |
+| `exif_policy` | Default EXIF policy | `passthrough` | `passthrough` / `strip` / `spoof` | Whether uploads keep, strip or spoof EXIF and other metadata |
 | `process_quality_webp` | WebP quality | `80` | 1–100 | WebP encoding quality |
 | `process_quality_jpeg` | JPEG quality | `85` | 1–100 | JPEG encoding quality |
 | `process_webp_method` | WebP effort | `4` | 0–6 | Higher is slower and smaller |
@@ -193,10 +197,25 @@ Runtime settings are edited under **Settings** in the admin console, which only 
 
 - **`process_widths`**: `?w=` accepts only the listed values; anything else gets 400. An empty list disallows resizing.
 - **`process_formats`**: `?format=` accepts only the listed values. With `webp` included, browsers that support WebP automatically get WebP for JPEG and PNG images.
-- **`exif_policy`**: `passthrough` keeps metadata as is; `strip` removes it. A single upload can override it with the `exif_policy` form field. It does not apply to S3 uploads, which are stored byte for byte.
+- **`exif_policy`**: `passthrough` keeps metadata as is; `strip` removes it; `spoof` replaces it with a fake camera, location and capture time, see [the spoof policy](./guides/upload.mdx#spoof). A single upload can override it with the `exif_policy` form field. It does not apply to S3 uploads, which are stored byte for byte.
 - **`process_quality_webp`**: 0 is not accepted, because the encoder treats 0 as its default quality of 75.
 - **`process_workers` and `process_timeout_ms`**: the timeout covers time queued for a processing slot and reading the original, not the encoding itself. On timeout the original is served, and that response carries `Cache-Control: no-store`.
 - **`variants_cache_mb`**: variants are cached in `<data dir>/variants/`; beyond the limit, the least recently accessed are evicted.
+
+### EXIF spoofing
+
+Used when `exif_policy` is `spoof`; for the behavior see [Upload](./guides/upload.mdx#spoof).
+
+| Key | UI label | Default | Valid values | Notes |
+|---|---|---|---|---|
+| `spoof_mode` | Identity mode | `per_image` | `per_image` / `uniform` | Random per image, or fixed site-wide |
+| `spoof_camera` | Fixed camera | empty | A camera ID | Used in `uniform` mode |
+| `spoof_city` | Fixed city | empty | A city ID | Used in `uniform` mode |
+| `spoof_countries` | Candidate countries and regions | `[]` | Array of country and region codes (ISO 3166-1 alpha-2) | Used in `per_image` mode; an empty array means all |
+| `spoof_window_days` | Capture time window | `90` | 1–3650, days | The fake capture time falls within this many days before the upload |
+
+- **`spoof_camera` and `spoof_city`**: the values come from lists built into the program, and the console dropdowns are filled from them; the API is `GET /api/admin/spoof-profiles`. When `spoof_mode` is `uniform`, both must be given and must exist, or saving fails. `per_image` mode ignores both.
+- **`spoof_countries`**: limits only the candidate cities of `per_image` mode. In `uniform` mode the city is `spoof_city`.
 
 ### Deduplication
 
@@ -272,8 +291,8 @@ If one request contains several invalid values, only one of them is reported, pi
 | `setting_positive` | A positive integer is required | `key`, `value` |
 | `setting_non_negative` | Must not be negative | `key`, `value` |
 | `setting_too_large` | Above the limit (the 100-year cap on duration settings) | `key`, `value`, `max` |
-| `setting_range` | Outside the allowed range (quality levels, WebP effort) | `key`, `value`, `min`, `max` |
-| `setting_option` | Not one of the allowed values (access mode, default EXIF policy, target formats) | `key`, `value`, `options` |
+| `setting_range` | Outside the allowed range (quality levels, WebP effort, aspect ratio limit, capture time window) | `key`, `value`, `min`, `max` |
+| `setting_option` | Not one of the allowed values (access mode, default EXIF policy, target formats, identity mode, camera, city, country codes) | `key`, `value`, `options` |
 | `setting_url` | Not an `http` / `https` address with a host (alert webhook URL) | `key`, `value` |
 | `setting_site_root` | Not a site root (public site address); see `base_url` above for the rules | `key`, `value` |
 | `setting_empty` | Must not be empty (target formats) | `key` |

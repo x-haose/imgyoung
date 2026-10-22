@@ -54,7 +54,26 @@ type Settings struct {
 	AlertWebhookURL        string             `json:"alert_webhook_url"`         // 告警 Webhook 地址(http/https);空=不外发
 	AuditRetentionDays     int                `json:"audit_retention_days"`      // 审计日志保留天数,超期由清理循环回收;0=永久保留
 	ReplicateLimitMBps     int                `json:"replicate_limit_mbps"`      // 后台补课写入的总带宽上限(MB/s),各渠道合计;0=不限
+	SpoofMode              string             `json:"spoof_mode"`                // spoof 档的身份模式:per_image / uniform
+	SpoofCamera            string             `json:"spoof_camera"`              // uniform 模式使用的机型标识;per_image 模式忽略
+	SpoofCity              string             `json:"spoof_city"`                // uniform 模式使用的城市标识;per_image 模式忽略
+	SpoofCountries         []string           `json:"spoof_countries"`           // per_image 模式候选城市的国家代码;空表示全部
+	SpoofWindowDays        int                `json:"spoof_window_days"`         // spoof 档的拍摄时间落在上传时刻往前这么多天之内
+	MaxSidePx              int                `json:"max_side_px"`               // 单边像素上限
+	MaxAspectRatio         int                `json:"max_aspect_ratio"`          // 长边与短边之比的上限
 }
+
+// spoof 档身份模式的取值。
+const (
+	SpoofPerImage = "per_image" // 每张图独立随机机型与城市
+	SpoofUniform  = "uniform"   // 全站固定机型与城市
+)
+
+// maxAspectRatioLimit 宽高比上限配置的取值上限;再大已不构成限制。
+const maxAspectRatioLimit = 100000
+
+// maxSpoofWindowDays spoof 档拍摄时间窗口的取值上限(天),10 年。
+const maxSpoofWindowDays = 3650
 
 // maxReplicateLimitMBps 补齐带宽上限的取值上限(MB/s);再大的值换算成字节/秒会逼近整数上限,也没有现实意义。
 const maxReplicateLimitMBps = 1_000_000
@@ -107,6 +126,22 @@ func Defaults() Settings {
 		AlertWebhookURL:        "",
 		AuditRetentionDays:     0,
 		ReplicateLimitMBps:     0,
+		SpoofMode:              SpoofPerImage,
+		SpoofCamera:            "",
+		SpoofCity:              "",
+		SpoofCountries:         []string{},
+		SpoofWindowDays:        90,
+		MaxSidePx:              30000,
+		MaxAspectRatio:         100,
+	}
+}
+
+// SpoofConfig 换算 spoof 档的取值来源。
+// @return imaging.Spoof 使用的配置
+func (s Settings) SpoofConfig() imaging.SpoofConfig {
+	return imaging.SpoofConfig{
+		Uniform: s.SpoofMode == SpoofUniform, CameraID: s.SpoofCamera, CityID: s.SpoofCity,
+		Countries: s.SpoofCountries, WindowDays: s.SpoofWindowDays,
 	}
 }
 
@@ -175,6 +210,9 @@ func (s Settings) validate() error {
 	if err := s.validateProcess(); err != nil {
 		return err
 	}
+	if err := s.validateSpoof(); err != nil {
+		return err
+	}
 	if err := s.validateDurationCaps(); err != nil {
 		return err
 	}
@@ -230,16 +268,41 @@ func (s Settings) validateDurationCaps() error {
 // validateUpload 校验上传入口与公开访问的配置:体积与像素预算、并发与限速、副本门槛、访问模式、EXIF 档位。
 // @return 非法配置的错误;全部合法时为 nil
 func (s Settings) validateUpload() error {
-	// 档位枚举的单一真相在 imaging 包;spoof 为实验特性,校验即拒绝、不静默降级。
+	// 档位枚举的单一真相在 imaging 包。
 	policy := oneOf("exif_policy", s.EXIFPolicy, imaging.Policies())
 	return firstError(
 		positive("max_upload_mb", s.MaxUploadMB),
 		positive("max_pixels_mp", s.MaxPixelsMP),
+		positive("max_side_px", s.MaxSidePx),
+		between("max_aspect_ratio", s.MaxAspectRatio, 1, maxAspectRatioLimit),
 		positive("max_concurrent_uploads", s.MaxConcurrentUploads),
 		nonNegative("upload_rate_per_min", s.UploadRatePerMin),
 		positive("min_success", s.MinSuccess),
 		oneOf("access_mode", s.AccessMode, []string{"proxy", "redirect"}),
 		policy,
+	)
+}
+
+// validateSpoof 校验 spoof 档的取值:模式、国家代码与时间窗口;uniform 模式下机型与城市必须指定且存在。
+// @return 非法配置的错误;全部合法时为 nil
+func (s Settings) validateSpoof() error {
+	if err := firstError(
+		oneOf("spoof_mode", s.SpoofMode, []string{SpoofPerImage, SpoofUniform}),
+		between("spoof_window_days", s.SpoofWindowDays, 1, maxSpoofWindowDays),
+	); err != nil {
+		return err
+	}
+	for _, code := range s.SpoofCountries {
+		if err := oneOf("spoof_countries", code, imaging.CountryCodes()); err != nil {
+			return err
+		}
+	}
+	if s.SpoofMode != SpoofUniform {
+		return nil
+	}
+	return firstError(
+		oneOf("spoof_camera", s.SpoofCamera, imaging.CameraIDs()),
+		oneOf("spoof_city", s.SpoofCity, imaging.CityIDs()),
 	)
 }
 

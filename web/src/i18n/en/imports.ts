@@ -186,5 +186,7 @@ export const imports = {
   failureReasons: {
     url_too_large: 'The remote file exceeds the per-image size limit',
     upload_too_many_pixels: 'The image resolution exceeds the pixel budget',
+    upload_bad_dimensions:
+      'The image side length or aspect ratio exceeds the limit',
   },
 } satisfies typeof zh

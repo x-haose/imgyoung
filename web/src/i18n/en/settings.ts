@@ -43,6 +43,10 @@ export const settings = {
         title: 'On-demand processing',
         hint: 'Resizing and format conversion accept only the values below; requests that need a variant are always served by this service, even in redirect mode',
       },
+      spoof: {
+        title: 'EXIF spoofing',
+        hint: 'The fake camera, location and capture time written by the spoof policy; locations are city-level and never point to a specific address',
+      },
       dedup: {
         title: 'Deduplication',
         hint: 'Identical images merge automatically; similar ones go to Duplicates',
@@ -84,6 +88,14 @@ export const settings = {
       max_pixels_mp: {
         label: 'Pixel budget',
         hint: 'Width × height limit per image; larger images are rejected',
+      },
+      max_side_px: {
+        label: 'Max side length',
+        hint: 'Images whose width or height exceeds this are rejected, which keeps extreme strips out',
+      },
+      max_aspect_ratio: {
+        label: 'Max aspect ratio',
+        hint: 'Images whose long side is more than this many times the short side are rejected; 100 means 100:1',
       },
       max_concurrent_uploads: {
         label: 'Concurrent uploads',
@@ -131,7 +143,27 @@ export const settings = {
       },
       exif_policy: {
         label: 'Default EXIF policy',
-        hint: 'Whether uploads keep or strip EXIF and other metadata; a per-upload form field can override it, and S3 uploads are always stored as is',
+        hint: 'Whether uploads keep, strip or spoof EXIF and other metadata; a per-upload form field can override it, and S3 uploads are always stored as is',
+      },
+      spoof_mode: {
+        label: 'Identity mode',
+        hint: 'per_image gives every image its own random camera and city so images cannot be linked; uniform uses one camera and one city site-wide',
+      },
+      spoof_camera: {
+        label: 'Fixed camera',
+        hint: 'Used only in uniform mode',
+      },
+      spoof_city: {
+        label: 'Fixed city',
+        hint: 'Used only in uniform mode; each image still gets a random offset around the city centre',
+      },
+      spoof_countries: {
+        label: 'Candidate countries and regions',
+        hint: 'Used only in per_image mode; cities are drawn from the selected countries and regions, and none selected means all',
+      },
+      spoof_window_days: {
+        label: 'Capture time window',
+        hint: 'The fake capture time falls within this many days before the upload, between 8:00 and 17:00 local time',
       },
       process_quality_webp: { label: 'WebP quality', hint: '1 to 100' },
       process_quality_jpeg: { label: 'JPEG quality', hint: '1 to 100' },
@@ -210,6 +242,8 @@ export const settings = {
       gb: 'GB',
       mbps: 'MB/s',
       megapixels: 'megapixels',
+      pixels: 'px',
+      ratio: ': 1',
       count: '',
       perMinute: '/ min',
       hours: 'h',
@@ -229,8 +263,14 @@ export const settings = {
       exif_policy: {
         passthrough: 'passthrough · keep',
         strip: 'strip · remove metadata',
+        spoof: 'spoof · replace with fake',
+      },
+      spoof_mode: {
+        per_image: 'per_image · random per image',
+        uniform: 'uniform · fixed site-wide',
       },
     },
+    catalogUnset: 'Not selected',
     tokenSet: 'Configured; leave empty to keep',
     tokenUnset: 'Not configured',
     purgeEnabled: 'Enabled',

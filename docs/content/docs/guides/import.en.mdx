@@ -98,6 +98,7 @@ Once the job is **Importing**, the page shows progress and the count in each sta
 | `upload_unsupported_type` | The format is not on the allowlist, such as SVG or AVIF | Cannot be imported; see [Formats and limits](./upload.mdx#formats-and-limits) |
 | `upload_invalid_image` | The content is not a decodable image | Check that the address really points to an image |
 | `upload_too_many_pixels` | The resolution exceeds the pixel budget | Raise **Pixel budget**, then retry |
+| `upload_bad_dimensions` | The side length or aspect ratio exceeds the limit | Raise **Max side length** or **Max aspect ratio**, then retry |
 
 The page shows a localized explanation for each code, plus the original message from the remote server or the server (at most 500 characters). Each image gets at most 20 minutes.
 

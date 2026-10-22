@@ -178,5 +178,6 @@ export const imports = {
   failureReasons: {
     url_too_large: '远端文件超过单图大小上限',
     upload_too_many_pixels: '图片分辨率超过像素预算',
+    upload_bad_dimensions: '图片的边长或宽高比超出限制',
   },
 }

@@ -98,6 +98,7 @@ description: 把旧图床或博客里的图片批量转存进 ImgYoung，支持�
 | `upload_unsupported_type` | 格式不在白名单内，如 SVG、AVIF | 无法导入，见[格式与上限](./upload.mdx#格式与上限) |
 | `upload_invalid_image` | 内容不是可解析的图片 | 检查地址是否真的指向图片 |
 | `upload_too_many_pixels` | 分辨率超过像素预算 | 调大「像素预算」后重试 |
+| `upload_bad_dimensions` | 单边或宽高比超过限制 | 调大「单边像素上限」或「宽高比上限」后重试 |
 
 页面按错误码显示本地化的说明，并附远端或服务端返回的原文（最长 500 个字符）。每张图最长处理 20 分钟。
 

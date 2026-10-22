@@ -32,7 +32,7 @@ export const guide = {
     file: '必填，multipart 文件字段；按文件内容识别格式，仅支持 JPEG / PNG / GIF / WebP',
     ttl: '可选，有效期秒数；0 或 never 表示永久，省略时用你的默认有效期，未设置则用全局默认',
     exifPolicy:
-      '可选，strip（剥离元数据）或 passthrough（原样保留），省略时用全局默认',
+      '可选，strip（剥离元数据）、passthrough（原样保留）或 spoof（换成假的机型、位置与时间），省略时用全局默认',
     idempotencyKey: '可选请求头，幂等键；重试时带同一个键，不会重复生成图片',
   },
   response: '成功响应（200）',

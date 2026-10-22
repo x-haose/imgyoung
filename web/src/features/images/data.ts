@@ -45,7 +45,7 @@ export const BATCH_DELETE_MAX = 100
 const OPTION_PAGE_SIZE = 100
 
 /** 后端允许的 EXIF 档位;空表示跟随站点默认。 */
-export const EXIF_POLICIES = ['strip', 'passthrough'] as const
+export const EXIF_POLICIES = ['strip', 'passthrough', 'spoof'] as const
 export type ExifPolicy = (typeof EXIF_POLICIES)[number]
 
 /** 本地日期(YYYY-MM-DD)当天零点的毫秒时间戳;offsetDays 为向后平移的天数。 */

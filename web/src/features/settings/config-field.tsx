@@ -1,5 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
-import { useMessages } from '@/context/locale-provider'
+import { useLocale, useMessages } from '@/context/locale-provider'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,6 +14,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { PasswordInput } from '@/components/password-input'
 import { type FieldDef, type FieldKey, type FieldValue } from './config-fields'
+import { spoofProfilesQueryOptions } from './data'
 
 type ConfigFieldProps = {
   def: FieldDef
@@ -41,7 +43,7 @@ export function ConfigField({
     <div
       className={cn(
         'grid content-start gap-1.5',
-        def.kind === 'widths' && 'sm:col-span-2'
+        (def.kind === 'widths' || def.kind === 'countries') && 'sm:col-span-2'
       )}
     >
       <Label htmlFor={id} className='flex items-center gap-2'>
@@ -200,6 +202,24 @@ function FieldControl({
           onChange={(e) => onChange(e.target.value)}
         />
       )
+    case 'catalog':
+      return (
+        <CatalogSelect
+          id={id}
+          catalog={def.catalog}
+          value={String(value)}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      )
+    case 'countries':
+      return (
+        <CountryPicker
+          value={Array.isArray(value) ? value : []}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      )
     case 'formats': {
       const selected = Array.isArray(value) ? value : []
       return (
@@ -228,4 +248,83 @@ function FieldControl({
       )
     }
   }
+}
+
+type CatalogSelectProps = {
+  id: string
+  catalog: 'cameras' | 'cities'
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+}
+
+/** 机型或城市的单选:选项取自伪装清单,城市按当前语言显示名称;未选时显示占位文案。 */
+function CatalogSelect({
+  id,
+  catalog,
+  value,
+  disabled,
+  onChange,
+}: CatalogSelectProps) {
+  const { locale } = useLocale()
+  const c = useMessages().settings.config
+  const { data } = useQuery(spoofProfilesQueryOptions())
+  const options =
+    catalog === 'cameras'
+      ? (data?.cameras ?? []).map((o) => ({ id: o.id, label: o.label }))
+      : (data?.cities ?? []).map((o) => ({
+          id: o.id,
+          label: `${locale === 'zh-CN' ? o.name_zh : o.name_en} · ${o.country}`,
+        }))
+  return (
+    <Select
+      value={value}
+      disabled={disabled || data === undefined}
+      onValueChange={onChange}
+    >
+      <SelectTrigger id={id} className='w-full'>
+        <SelectValue placeholder={c.catalogUnset} />
+      </SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem key={o.id} value={o.id}>
+            {o.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
+
+type CountryPickerProps = {
+  value: string[]
+  disabled: boolean
+  onChange: (value: string[]) => void
+}
+
+/** 国家或地区多选:名称由浏览器按当前语言给出;一个都不选表示全部。 */
+function CountryPicker({ value, disabled, onChange }: CountryPickerProps) {
+  const { locale } = useLocale()
+  const { data } = useQuery(spoofProfilesQueryOptions())
+  const names = new Intl.DisplayNames([locale], { type: 'region' })
+  return (
+    <div className='flex flex-wrap items-center gap-x-5 gap-y-2 py-1.5'>
+      {(data?.countries ?? []).map((code) => (
+        <label key={code} className='flex items-center gap-2 text-sm'>
+          <Checkbox
+            checked={value.includes(code)}
+            disabled={disabled}
+            onCheckedChange={(checked) =>
+              onChange(
+                checked === true
+                  ? [...value, code]
+                  : value.filter((v) => v !== code)
+              )
+            }
+          />
+          {names.of(code) ?? code}
+        </label>
+      ))}
+    </div>
+  )
 }

@@ -635,7 +635,7 @@ func TestAuthAndValidation(t *testing.T) {
 	}
 }
 
-// TestEXIFPolicies 默认 passthrough 保留元数据,strip 字段剥离元数据,实验档 spoof 显式指定即 400。
+// TestEXIFPolicies 默认 passthrough 保留元数据,strip 字段剥离元数据,spoof 换成新生成的元数据。
 func TestEXIFPolicies(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
@@ -651,11 +651,76 @@ func TestEXIFPolicies(t *testing.T) {
 		t.Error("strip 档未剥离 EXIF")
 	}
 
-	bad := upload(t, inst, inst.token, "e.jpg", jpegWithEXIF(t), map[string]string{"exif_policy": "spoof"}, nil)
+	_, spoofURL := mustUpload(t, inst, jpegWithEXIF(t), map[string]string{"exif_policy": "spoof"}, nil)
+	spoofed := fetchBytes(t, inst, spoofURL)
+	if bytes.Contains(spoofed, bytes.Repeat([]byte{0xAB}, 16)) {
+		t.Error("spoof 档残留了原 EXIF")
+	}
+	if !bytes.Contains(spoofed, marker) {
+		t.Error("spoof 档没有写入新的 EXIF")
+	}
+	if _, _, err := image.Decode(bytes.NewReader(spoofed)); err != nil {
+		t.Errorf("spoof 档输出无法解码: %v", err)
+	}
+
+	bad := upload(t, inst, inst.token, "e.jpg", jpegWithEXIF(t), map[string]string{"exif_policy": "bogus"}, nil)
 	_ = bad.Body.Close()
 	if bad.StatusCode != http.StatusBadRequest {
-		t.Errorf("spoof 档状态码 = %d, 期望 400(实验特性未实现)", bad.StatusCode)
+		t.Errorf("非法档位状态码 = %d, 期望 400", bad.StatusCode)
 	}
+}
+
+// TestSpoofSettings uniform 模式必须指定存在的机型与城市;清单接口给出可选项;尺寸限制拒绝极端长条图。
+func TestSpoofSettings(t *testing.T) {
+	t.Parallel()
+	inst := startInstance(t, map[string]any{"max_aspect_ratio": 4})
+	client, csrf := adminSession(t, inst)
+	put := func(body string) int {
+		resp := adminReq(t, client, csrf, http.MethodPut, inst.baseURL+"/api/admin/config", body)
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := put(`{"spoof_mode":"uniform"}`); code != http.StatusBadRequest {
+		t.Errorf("uniform 未指定机型与城市状态码 = %d, 期望 400", code)
+	}
+	badCity := `{"spoof_mode":"uniform","spoof_camera":"apple-iphone-14","spoof_city":"nowhere"}`
+	if code := put(badCity); code != http.StatusBadRequest {
+		t.Errorf("uniform 指定不存在的城市状态码 = %d, 期望 400", code)
+	}
+	if code := put(`{"spoof_countries":["ZZ"]}`); code != http.StatusBadRequest {
+		t.Errorf("不存在的国家代码状态码 = %d, 期望 400", code)
+	}
+	good := `{"spoof_mode":"uniform","spoof_camera":"apple-iphone-14","spoof_city":"tokyo"}`
+	if code := put(good); code != http.StatusOK {
+		t.Fatalf("合法的 uniform 配置状态码 = %d, 期望 200", code)
+	}
+	_, url := mustUpload(t, inst, jpegWithEXIF(t), map[string]string{"exif_policy": "spoof"}, nil)
+	if !bytes.Contains(fetchBytes(t, inst, url), []byte("iPhone 14")) {
+		t.Error("uniform 模式没有写入指定的机型")
+	}
+
+	resp := adminReq(t, client, csrf, http.MethodGet, inst.baseURL+"/api/admin/spoof-profiles", "")
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || !bytes.Contains(body, []byte(`"tokyo"`)) {
+		t.Errorf("清单接口状态码 = %d, body=%s", resp.StatusCode, body)
+	}
+
+	strip := upload(t, inst, inst.token, "wide.png", widePNG(t, 40, 4), nil, nil)
+	defer func() { _ = strip.Body.Close() }()
+	if strip.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("宽高比 10:1 超过上限 4 的状态码 = %d, 期望 422", strip.StatusCode)
+	}
+}
+
+// widePNG 生成指定尺寸的 PNG。
+func widePNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+		t.Fatalf("编码测试 PNG: %v", err)
+	}
+	return buf.Bytes()
 }
 
 // TestIdempotency 同一 Idempotency-Key 重复上传返回同一 ID。

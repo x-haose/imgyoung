@@ -150,8 +150,11 @@ export const server = {
       'Only image files are supported (jpeg/png/gif/webp)',
     upload_too_many_pixels:
       'The image resolution exceeds the pixel budget ({max} megapixels)',
+    upload_bad_dimensions:
+      'The image side exceeds {max_side} px, or its long side is more than {max_ratio} times the short side',
     upload_invalid_image: 'The image content cannot be decoded',
-    upload_exif_policy: 'Invalid exif_policy (allowed: strip / passthrough)',
+    upload_exif_policy:
+      'Invalid exif_policy (allowed: strip / passthrough / spoof)',
     upload_quota_exceeded: 'Storage quota is full',
     upload_unavailable:
       'Storage channels are temporarily unavailable. Try again later',
