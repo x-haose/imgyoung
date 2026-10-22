@@ -232,3 +232,31 @@ func TestStripJPEGMetadataKeepsOrientation(t *testing.T) {
 		t.Fatal("默认方向不应补 Exif 段")
 	}
 }
+
+// TestStripJPEGMetadataBetweenScans 验证扫描之间的元数据段(渐进式 JPEG 的形态)被剥离,
+// 段里内嵌的 FFD9 不会让输出提前截断,内容不是 JFIF / ICC 的 APP0 与 APP2 同样被剥离。
+func TestStripJPEGMetadataBetweenScans(t *testing.T) {
+	jpg := encodeJPEG(t)
+	eoi := len(jpg) - 2
+	hidden := append([]byte("Exif\x00\x00GPS-SENTINEL"), 0xFF, 0xD9, 'x')
+	seg := func(marker byte, payload []byte) []byte {
+		b := []byte{0xFF, marker}
+		b = binary.BigEndian.AppendUint16(b, uint16(len(payload)+2))
+		return append(b, payload...)
+	}
+	in := slices.Concat(jpg[:eoi], seg(0xE1, hidden), seg(0xE0, []byte("JFXX\x00thumb")),
+		seg(0xE2, []byte("MPF\x00more")), jpg[eoi:])
+
+	got, err := StripJPEGMetadata(in)
+	if err != nil {
+		t.Fatalf("StripJPEGMetadata 返回错误: %v", err)
+	}
+	for _, leaked := range []string{"GPS-SENTINEL", "JFXX", "MPF"} {
+		if bytes.Contains(got, []byte(leaked)) {
+			t.Errorf("扫描之间的 %s 未被剥离", leaked)
+		}
+	}
+	if !bytes.Equal(got, encodeJPEG(t)) {
+		t.Error("剥离后应与不含元数据的原图逐字节相同")
+	}
+}

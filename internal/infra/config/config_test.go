@@ -292,6 +292,22 @@ func TestStoreUpdateRejectionIsAtomic(t *testing.T) {
 	if got := store.Current().ProcessWidths; !reflect.DeepEqual(got, before) {
 		t.Fatalf("被拒 patch 就地改写了快照数组: %v, 期望 %v", got, before)
 	}
+
+	// 字符串数组同理:spoof_countries 已有取值时,被拒的 patch 不得改写它。
+	if _, err := store.Update(context.Background(), map[string]json.RawMessage{
+		"spoof_countries": rawPatch(t, []string{"CN", "US"}),
+	}); err != nil {
+		t.Fatalf("设置 spoof_countries: %v", err)
+	}
+	if _, err := store.Update(context.Background(), map[string]json.RawMessage{
+		"spoof_countries": rawPatch(t, []string{"HK"}),
+		"access_mode":     rawPatch(t, "garbage"),
+	}); !errors.Is(err, ErrInvalidSetting) {
+		t.Fatalf("err = %v, 期望 ErrInvalidSetting", err)
+	}
+	if got := store.Current().SpoofCountries; !reflect.DeepEqual(got, []string{"CN", "US"}) {
+		t.Fatalf("被拒 patch 就地改写了 spoof_countries: %v", got)
+	}
 }
 
 // TestStoreConcurrentUpdateAndRead 以 -race 守卫:并发改 process_widths 与无锁读快照切片无竞争。

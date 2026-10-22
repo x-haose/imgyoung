@@ -9,7 +9,7 @@ import (
 
 // City 伪装用的城市档案:位置取城市中心附近,时间按城市所在时区推算。
 type City struct {
-	ID      string  `json:"id"`      // 稳定标识,配置里引用它
+	ID      string  `json:"id"`      // 稳定标识,配置里引用它;发布后只增不删
 	NameZH  string  `json:"name_zh"` // 后台显示的中文名
 	NameEN  string  `json:"name_en"` // 后台显示的英文名
 	Country string  `json:"country"` // 国家或地区代码,ISO 3166-1 alpha-2

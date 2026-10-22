@@ -14,9 +14,9 @@ const (
 	markerEOI   = 0xD9 // 文件结束
 	markerSOS   = 0xDA // 扫描数据开始,其后为熵编码数据
 	markerTEM   = 0x01 // 独立标记(无长度字段)
-	markerAPP0  = 0xE0 // JFIF 头(结构必需,保留)
-	markerAPP2  = 0xE2 // ICC 色彩配置(剥掉会改变颜色渲染,保留)
-	markerAPP14 = 0xEE // Adobe 色彩转换标记(剥掉会导致解码偏色,保留)
+	markerAPP0  = 0xE0 // JFIF 头(内容为 JFIF 时保留)
+	markerAPP2  = 0xE2 // ICC 色彩配置(内容为 ICC 时保留,剥掉会改变颜色渲染)
+	markerAPP14 = 0xEE // Adobe 色彩转换标记(内容为 Adobe 时保留,剥掉会导致解码偏色)
 	markerAPP15 = 0xEF // APPn 区间终点
 	markerCOM   = 0xFE // 注释段(常含编辑软件信息,剥离)
 	markerRST0  = 0xD0 // 重启标记区间起点(RST0–RST7 均无长度字段)
@@ -24,18 +24,36 @@ const (
 )
 
 // isMetadataSegment 判断段是否属于应剥离的元数据。
-// @Description: 白名单策略——APPn 中仅保留 APP0/APP2/APP14(功能必需),
-// 其余 APPn(Exif/XMP/IPTC/相机私有段等)与 COM 注释一律视为元数据剥离。
+// @Description: 白名单策略——只保留功能必需的段:内容为 JFIF 的 APP0、ICC 配置的 APP2(分块的配置同样以
+// ICC_PROFILE 开头)、Adobe 色彩转换标记的 APP14;其余 APPn(Exif/XMP/IPTC/相机私有段、JFXX 缩略图、
+// MPF 等)与 COM 注释一律剥离。按内容而不只按标记号判断,是因为同一个 APPn 号也能承载任意数据。
 // @param marker 段标记(0xFF 后的第二字节)
+// @param payload 段负载(长度字段之后);无长度字段的标记为 nil
 // @return 是否应剥离
-func isMetadataSegment(marker byte) bool {
-	if marker == markerCOM {
+func isMetadataSegment(marker byte, payload []byte) bool {
+	switch marker {
+	case markerCOM:
 		return true
+	case markerAPP0:
+		return !bytes.HasPrefix(payload, []byte("JFIF\x00"))
+	case markerAPP2:
+		return !bytes.HasPrefix(payload, []byte("ICC_PROFILE\x00"))
+	case markerAPP14:
+		return !bytes.HasPrefix(payload, []byte("Adobe"))
+	default:
+		return marker >= markerAPP0 && marker <= markerAPP15
 	}
-	if marker >= markerAPP0 && marker <= markerAPP15 {
-		return marker != markerAPP0 && marker != markerAPP2 && marker != markerAPP14
+}
+
+// segmentPayload 返回段负载(长度字段之后的字节)。
+// @param data 完整的 JPEG 字节
+// @param seg 段位置
+// @return 负载;无长度字段的标记为 nil
+func segmentPayload(data []byte, seg jpegSegment) []byte {
+	if seg.end-seg.start < 4 {
+		return nil
 	}
-	return false
+	return data[seg.start+4 : seg.end]
 }
 
 // isStandaloneMarker 报告标记是否不带长度字段:TEM 与 RST0–RST7 只占两字节,其后紧接下一段。
@@ -86,25 +104,76 @@ func nextJPEGSegment(data []byte, i int) (jpegSegment, error) {
 	return jpegSegment{marker: marker, start: i, end: i + 2 + segLen}, nil
 }
 
-// truncateAtEOI 把从 SOS 起的字节截到首个 EOI 标记(含)为止,丢弃其后的尾部附加数据。
-// @Description: 熵编码流中 0xFF 均被填充为 FF00(RST 为 FFD0–D7),裸 FFD9 必为真正的 EOI;
-// 无 EOI 时原样返回。
-// @param tail 从 SOS 标记起的字节
-// @return 截断后的字节
-func truncateAtEOI(tail []byte) []byte {
-	if end := bytes.Index(tail, []byte{0xFF, markerEOI}); end >= 0 {
-		return tail[:end+2]
+// scanEnd 返回从 SOS 起的一次扫描的结束偏移:扫描头之后的熵编码数据在下一个真正的标记处结束。
+// @Description: 熵编码数据里 0xFF 一律填充为 FF00,重启标记为 FFD0–D7,连续的 0xFF 是填充,其余 FFxx 才是标记。
+// @param data 完整的 JPEG 字节
+// @param start SOS 标记的偏移
+// @return 下一个标记的偏移;数据在标记之前结束时为 len(data)
+// @return 扫描头长度越界时的错误
+func scanEnd(data []byte, start int) (int, error) {
+	if start+4 > len(data) {
+		return 0, fmt.Errorf("%w: 扫描头在偏移 %d 处截断", errMalformedJPEG, start)
 	}
-	return tail
+	headerLen := int(binary.BigEndian.Uint16(data[start+2 : start+4]))
+	p := start + 2 + headerLen
+	if headerLen < 2 || p > len(data) {
+		return 0, fmt.Errorf("%w: 偏移 %d 处扫描头长度越界", errMalformedJPEG, start)
+	}
+	for p+1 < len(data) {
+		next := data[p+1]
+		switch {
+		case data[p] != 0xFF:
+			p++
+		case next == 0x00 || (next >= markerRST0 && next <= markerRST7):
+			p += 2
+		case next == 0xFF:
+			p++
+		default:
+			return p, nil
+		}
+	}
+	return len(data), nil
+}
+
+// copyScans 复制从 SOS 起的全部扫描,沿途丢弃扫描之间的元数据段,到 EOI 为止;EOI 之后的附加数据一并丢弃。
+// @Description: 渐进式 JPEG 有多次扫描,元数据段可以出现在任意两次扫描之间;无 EOI 时复制到末尾。
+// @param out 已写出的字节
+// @param data 完整的 JPEG 字节
+// @param i SOS 标记的偏移
+// @return 追加后的字节
+// @return 段表在扫描之间畸形时的错误
+func copyScans(out, data []byte, i int) ([]byte, error) {
+	for i < len(data) {
+		seg, err := nextJPEGSegment(data, i)
+		if err != nil {
+			return nil, err
+		}
+		switch seg.marker {
+		case markerEOI:
+			return append(out, data[seg.start:seg.end]...), nil
+		case markerSOS:
+			end, err := scanEnd(data, seg.start)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, data[seg.start:end]...)
+			i = end
+		default:
+			if !isMetadataSegment(seg.marker, segmentPayload(data, seg)) {
+				out = append(out, data[seg.start:seg.end]...)
+			}
+			i = seg.end
+		}
+	}
+	return out, nil
 }
 
 // StripJPEGMetadata 移除 JPEG 中的全部元数据段与 EOI 后的尾部附加数据,
 // 返回新的字节切片(不修改输入)。
 // @Description: 纯段级字节操作,不解码、无损、零像素改动。
-// 剥离范围见 isMetadataSegment(APPn 白名单 + COM);熵编码数据原样保留。
+// 剥离范围见 isMetadataSegment(APPn 白名单 + COM),含渐进式 JPEG 各次扫描之间的段;熵编码数据原样保留。
 // 唯一例外是 EXIF 方向:像素不旋转,丢了它手机竖拍的照片会横着显示,故原图带非默认方向时
 // 补回一个只含 Orientation 的最小 Exif 段,其余 EXIF 字段(GPS、机型、时间等)照删。
-// 已知边界:渐进式 JPEG 多次扫描之间的段不扫描(极少携带元数据)。
 // @param data 完整的 JPEG 字节
 // @return 剥离后的 JPEG 字节
 // @return 输入不是结构完整的 JPEG 时的错误
@@ -133,12 +202,12 @@ func stripJPEG(data []byte, keepOrientation bool) ([]byte, error) {
 		}
 		switch {
 		case seg.marker == markerSOS:
-			// 段表结束,其后为熵编码数据;EOI 之后的尾部附加数据(Motion Photo 视频、隐写载荷等)一并丢弃。
-			return append(out, truncateAtEOI(data[seg.start:])...), nil
+			// 其后为熵编码数据与可能的后续扫描;EOI 之后的尾部附加数据(Motion Photo 视频、隐写载荷等)一并丢弃。
+			return copyScans(out, data, seg.start)
 		case seg.marker == markerEOI:
 			// 文件结束:只保留 EOI 本身,丢弃其后的尾部数据。
 			return append(out, data[seg.start:seg.end]...), nil
-		case isMetadataSegment(seg.marker):
+		case isMetadataSegment(seg.marker, segmentPayload(data, seg)):
 			// 元数据段:丢弃。
 		default:
 			out = append(out, data[seg.start:seg.end]...)

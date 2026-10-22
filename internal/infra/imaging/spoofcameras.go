@@ -7,7 +7,7 @@ import (
 
 // Camera 伪装用的机型档案:一组自洽的厂商、型号、固件与镜头参数。
 type Camera struct {
-	ID       string    // 稳定标识,配置里引用它;不随显示名变化
+	ID       string    // 稳定标识,配置里引用它;不随显示名变化,发布后只增不删
 	Label    string    // 后台显示名
 	Make     string    // EXIF Make
 	Model    string    // EXIF Model

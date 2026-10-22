@@ -241,7 +241,7 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 
 | 格式 | 剥离 | 保留 |
 |---|---|---|
-| JPEG | 除 APP0（JFIF）、APP2（ICC 色彩配置）、APP14（Adobe）之外的全部 APPn 段，包括 EXIF（GPS、机型、拍摄时间等）、XMP、IPTC 与相机私有段；COM 注释段；EOI 之后的附加数据（如 Motion Photo 里的视频）| 熵编码数据原样保留。原图带非默认的方向标记（Orientation）时，补回一个只含方向的最小 EXIF 段，照片仍按正确方向显示。渐进式 JPEG 各次扫描之间的段不检查 |
+| JPEG | 除内容为 JFIF 的 APP0、ICC 色彩配置的 APP2、Adobe 的 APP14 之外的全部 APPn 段，包括 EXIF（GPS、机型、拍摄时间等）、XMP、IPTC、相机私有段与 JFXX 缩略图；COM 注释段；渐进式 JPEG 各次扫描之间的上述段；EOI 之后的附加数据（如 Motion Photo 里的视频）| 熵编码数据原样保留。原图带非默认的方向标记（Orientation）时，补回一个只含方向的最小 EXIF 段，照片仍按正确方向显示 |
 | PNG | `eXIf`、`tEXt`、`zTXt`、`iTXt` 块；IEND 之后的附加数据 | `gAMA`、`iCCP` 等影响颜色渲染的块 |
 | WebP | `EXIF` 与 `XMP` chunk，并同步清除 VP8X 头里对应的标志位、修正 RIFF 长度；RIFF 声明长度之外的附加数据 | 像素 chunk |
 | GIF | 不处理 | GIF 没有承载 EXIF / XMP 的标准容器 |

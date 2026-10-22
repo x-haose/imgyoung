@@ -359,6 +359,24 @@ func limitsOf(set config.Settings) limits {
 // @return 格式与尺寸
 // @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels / ErrBadDimensions
 func inspect(data []byte, lim limits) (imageMeta, error) {
+	meta, err := sniff(data, lim.pixels)
+	if err != nil {
+		return imageMeta{}, err
+	}
+	long, short := max(meta.width, meta.height), min(meta.width, meta.height)
+	if long > lim.side || int64(long) > int64(lim.aspect)*int64(short) {
+		return imageMeta{}, ErrBadDimensions
+	}
+	return meta, nil
+}
+
+// sniff 按 magic bytes 判定格式、只读图片头取尺寸并执行像素预算,不看边长与宽高比。
+// @Description: 像素预算护的是解码内存,任何要解码这份字节的入口都必须过;边长与宽高比是上传时的准入规则。
+// @param data 图片字节
+// @param maxPixels 像素预算
+// @return 格式与尺寸
+// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels
+func sniff(data []byte, maxPixels int64) (imageMeta, error) {
 	mime := http.DetectContentType(data)
 	if _, ok := allowedMIME[mime]; !ok {
 		return imageMeta{}, ErrUnsupportedType
@@ -370,12 +388,8 @@ func inspect(data []byte, lim limits) (imageMeta, error) {
 	if formatMIME[format] != mime {
 		return imageMeta{}, fmt.Errorf("%w: 嗅探类型 %s 与解码格式 %s 不一致", ErrInvalidImage, mime, format)
 	}
-	if int64(cfg.Width)*int64(cfg.Height) > lim.pixels {
+	if int64(cfg.Width)*int64(cfg.Height) > maxPixels {
 		return imageMeta{}, ErrTooManyPixels
-	}
-	long, short := max(cfg.Width, cfg.Height), min(cfg.Width, cfg.Height)
-	if long > lim.side || int64(long) > int64(lim.aspect)*int64(short) {
-		return imageMeta{}, ErrBadDimensions
 	}
 	return imageMeta{mime: mime, width: cfg.Width, height: cfg.Height}, nil
 }

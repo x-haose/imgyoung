@@ -141,9 +141,10 @@ func applyPatch(cur Settings, patch map[string]json.RawMessage) (Settings, error
 	next := cur
 	// 切片字段深拷贝后再解码:json 解码数组会复用已有底层数组,不克隆则 Decode 会在
 	// 校验通过、原子换入之前就地改写当前生效快照的数组——破坏"非法值整体拒绝"的原子性,
-	// 且与访问路径对 Current().ProcessWidths/Formats 的无锁读形成数据竞争。
+	// 且与访问路径对 Current() 里各切片字段的无锁读形成数据竞争。
 	next.ProcessWidths = append([]int(nil), cur.ProcessWidths...)
 	next.ProcessFormats = append([]string(nil), cur.ProcessFormats...)
+	next.SpoofCountries = append([]string{}, cur.SpoofCountries...)
 	dec := json.NewDecoder(bytes.NewReader(blob))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&next); err != nil {

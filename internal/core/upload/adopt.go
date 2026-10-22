@@ -25,13 +25,14 @@ type Description struct {
 }
 
 // Describe 判定已存储字节的格式、读出尺寸并计算指纹;字节原样使用,不再净化。
-// @Description: 与上传管道同一套判定(格式白名单、嗅探与解码格式交叉验证、尺寸限制)。
+// @Description: 与上传管道同一套格式判定(白名单、嗅探与解码格式交叉验证)和像素预算;边长与宽高比是上传时的
+// 准入规则,渠道上已有的对象不再按它拒收。
 // @param data 对象的完整字节
-// @param set 配置快照,取其中的尺寸限制
+// @param set 配置快照,取其中的像素预算
 // @return 格式、尺寸与指纹
-// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels / ErrBadDimensions
+// @return ErrUnsupportedType / ErrInvalidImage / ErrTooManyPixels
 func Describe(data []byte, set config.Settings) (Description, error) {
-	meta, err := inspect(data, limitsOf(set))
+	meta, err := sniff(data, set.MaxPixels())
 	if err != nil {
 		return Description{}, err
 	}

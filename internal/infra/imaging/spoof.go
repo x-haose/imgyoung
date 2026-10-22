@@ -268,12 +268,14 @@ func jitter(city City, rng *rand.Rand) (lat, lon float64) {
 }
 
 // degreesMinutesSeconds 把一个带符号的角度拆成 EXIF 的 度/分/秒 三个有理数,符号由调用方用 Ref 字段表达。
+// @Description: 先把角度换成以万分之一秒为单位的整数再用整数运算拆分,分与秒不会因浮点舍入出现 60。
 // @param v 角度,度
-// @return 度、分、秒;秒保留四位小数
+// @return 度、分、秒;秒的分母为 10000
 func degreesMinutesSeconds(v float64) [][2]uint32 {
-	v = math.Abs(v)
-	deg := math.Floor(v)
-	minutes := math.Floor((v - deg) * 60)
-	seconds := (v - deg - minutes/60) * 3600
-	return [][2]uint32{{uint32(deg), 1}, {uint32(minutes), 1}, {uint32(seconds * 10000), 10000}}
+	const unitsPerSecond = 10000
+	total := uint64(math.Round(math.Abs(v) * 3600 * unitsPerSecond))
+	deg := total / (3600 * unitsPerSecond)
+	minutes := total % (3600 * unitsPerSecond) / (60 * unitsPerSecond)
+	seconds := total % (60 * unitsPerSecond)
+	return [][2]uint32{{uint32(deg), 1}, {uint32(minutes), 1}, {uint32(seconds), unitsPerSecond}}
 }

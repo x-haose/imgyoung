@@ -241,7 +241,7 @@ The policy for an upload is the form (or JSON) field if given, otherwise the glo
 
 | Format | Removed | Kept |
 |---|---|---|
-| JPEG | Every APPn segment except APP0 (JFIF), APP2 (ICC color profile) and APP14 (Adobe), which covers EXIF (GPS, camera model, capture time and so on), XMP, IPTC and vendor segments; COM comment segments; any data after EOI (such as the video in a Motion Photo) | Entropy-coded data is kept untouched. If the original has a non-default orientation tag (Orientation), a minimal EXIF segment holding only the orientation is added back, so the photo still displays upright. Segments between the scans of a progressive JPEG are not inspected |
+| JPEG | Every APPn segment except an APP0 holding JFIF, an APP2 holding an ICC color profile and an APP14 holding Adobe, which covers EXIF (GPS, camera model, capture time and so on), XMP, IPTC, vendor segments and JFXX thumbnails; COM comment segments; the same segments between the scans of a progressive JPEG; any data after EOI (such as the video in a Motion Photo) | Entropy-coded data is kept untouched. If the original has a non-default orientation tag (Orientation), a minimal EXIF segment holding only the orientation is added back, so the photo still displays upright |
 | PNG | `eXIf`, `tEXt`, `zTXt` and `iTXt` chunks; any data after IEND | `gAMA`, `iCCP` and other chunks that affect color rendering |
 | WebP | `EXIF` and `XMP` chunks, clearing the matching flags in the VP8X header and fixing the RIFF length; any data beyond the declared RIFF length | Pixel chunks |
 | GIF | Nothing | GIF has no standard container for EXIF / XMP |
