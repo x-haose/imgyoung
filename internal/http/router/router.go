@@ -136,6 +136,17 @@ func mountSession(g chi.Router, cfg Config, guards uploadGuards) {
 	g.Post("/tokens/{id}/s3-credential", cfg.Admin.HandleTokenS3Credential)
 	g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
 	g.Get("/images", cfg.Admin.HandleImageList)
+	// 批量导入:所有登录用户可用,任务只对创建者可见;转存与上传同一条管线,并发由导入服务自行限定。
+	g.Post("/imports", cfg.Admin.HandleImportCreate)
+	g.Get("/imports", cfg.Admin.HandleImportList)
+	g.Get("/imports/{id}", cfg.Admin.HandleImportGet)
+	g.Delete("/imports/{id}", cfg.Admin.HandleImportDelete)
+	g.Get("/imports/{id}/hosts", cfg.Admin.HandleImportHosts)
+	g.Get("/imports/{id}/items", cfg.Admin.HandleImportItems)
+	g.Post("/imports/{id}/start", cfg.Admin.HandleImportStart)
+	g.Post("/imports/{id}/cancel", cfg.Admin.HandleImportCancel)
+	g.Post("/imports/{id}/retry", cfg.Admin.HandleImportRetry)
+	g.Get("/imports/{id}/mapping", cfg.Admin.HandleImportMapping)
 	// 后台缩略图/预览走会话鉴权的不计数通道,避免管理员浏览污染
 	// 公开访问统计与冷图裁决;对外分享链接仍走 /i/。
 	g.Get("/images/{id}/thumb", cfg.Public.HandleAdminServe)

@@ -427,6 +427,189 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导入任务列表
+         * @description 分页返回当前用户创建的导入任务，最新的在前。管理员也只看得到自己的任务。
+         */
+        get: operations["listImports"];
+        put?: never;
+        /**
+         * 创建导入任务
+         * @description 按 `mode` 创建一个导入任务。导入的图片归属当前用户，走与上传相同的处理流程：格式白名单、像素预算、EXIF 处理与存储配额照常生效。
+         *
+         *     - `images`：`urls` 是图片地址清单。任务直接进入 `importing`，逐张转存。
+         *     - `text`：`documents` 是 Markdown 或 HTML 文本，从中找出图片引用。文件名以 `.html` 或 `.htm` 结尾的按 HTML 解析，内容以 `<!doctype html` 或 `<html` 开头的也按 HTML 解析，其余按 Markdown 解析（内嵌的 HTML 同样会被扫描）。扫描在本请求内完成，任务进入 `ready`，等待确认。
+         *     - `site`：`sites` 是站点地图、订阅源（RSS 或 Atom）、网页或图片的地址。任务进入 `scanning`，由服务端抓取并找出图片，完成后进入 `ready`，等待确认。
+         *
+         *     各模式只能带自己的字段，带了其他模式的字段返回 400。
+         */
+        post: operations["createImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导入任务详情
+         * @description 返回任务的状态、各状态的条目数与扫描报告。进行中的任务由前端轮询本接口取得进度。
+         */
+        get: operations["getImport"];
+        put?: never;
+        post?: never;
+        /**
+         * 删除导入任务
+         * @description 删除任务及其条目、来源与对照表。已经导入的图片不受影响。`scanning` 与 `importing` 的任务须先取消。
+         */
+        delete: operations["deleteImport"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 待确认的图片地址按域名分组
+         * @description 返回 `candidate` 状态的条目按域名分组的数量，数量多的在前，每组附最多 3 个示例地址。用于确认页决定导入哪些域名下的图片。任务确认之后没有 `candidate` 条目，返回空数组。
+         */
+        get: operations["listImportHosts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导入任务的条目
+         * @description 分页返回任务的条目，按发现顺序排列，可按状态与域名过滤。
+         */
+        get: operations["listImportItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 确认并开始导入
+         * @description 对 `ready` 状态的任务，导入 `hosts` 所列域名下的全部 `candidate` 条目，其余条目记为 `skipped`，任务进入 `importing`。
+         *
+         *     `hosts` 里没有任何域名对应待导入的条目时返回 400，任务保持 `ready`。
+         */
+        post: operations["startImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 取消导入任务
+         * @description 取消 `scanning`、`ready` 或 `importing` 的任务。正在转存的图片会被中断，没处理完的条目保持 `pending`，已经导入的图片保留。
+         */
+        post: operations["cancelImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 重试失败的条目并继续
+         * @description 对 `done`、`aborted` 或 `cancelled` 的任务，把 `failed` 的条目重新置为待导入，连同尚未处理的条目一起继续，任务回到 `importing`。
+         *
+         *     没有 `failed` 或 `pending` 的条目时返回 409。因存储配额或没有可用渠道而中止的任务，先解决问题再重试。
+         */
+        post: operations["retryImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/imports/{id}/mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 导出新旧链接对照表
+         * @description 以附件形式下载已导入成功的条目的对照表。新地址是图片的绝对访问地址：配置了对外站点地址（`base_url`）时用它，否则按本次请求推导。
+         *
+         *     - `format=json`：每个条目一个对象，来源引用嵌套在 `references` 里。
+         *     - `format=csv`：UTF-8，首行为表头，每条来源引用一行，列为 `old_url`、`new_url`、`image_id`、`source`、`raw`；没有来源引用的条目也输出一行，`source` 与 `raw` 为空。
+         *
+         *     图片被删除后，对应条目不再出现在对照表里。
+         */
+        get: operations["exportImportMapping"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/tokens": {
         parameters: {
             query?: never;
@@ -1157,7 +1340,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -1633,6 +1816,219 @@ export interface components {
              * @description 过滤后的总条数
              */
             total: number;
+        };
+        /**
+         * @description 输入类型：
+         *     - `images`：图片地址清单，直接导入
+         *     - `text`：Markdown 或 HTML 文本，扫描后确认
+         *     - `site`：站点地图、订阅源、网页或图片的地址，由服务端抓取并扫描，完成后确认
+         * @enum {string}
+         */
+        ImportMode: "images" | "text" | "site";
+        /**
+         * @description 任务状态：
+         *     - `scanning`：正在抓取并扫描（仅 `site`）
+         *     - `ready`：扫描完成，等待确认要导入哪些域名
+         *     - `importing`：正在逐张转存
+         *     - `done`：已处理完全部条目，其中可能有失败的
+         *     - `cancelled`：已取消
+         *     - `aborted`：因存储配额已满、没有可用渠道或服务端故障而中止，原因见 `error_code`；未处理的条目保留，可重试
+         * @enum {string}
+         */
+        ImportStatus: "scanning" | "ready" | "importing" | "done" | "cancelled" | "aborted";
+        /**
+         * @description 条目状态：
+         *     - `candidate`：扫描发现，等待确认
+         *     - `pending`：已确认，等待转存
+         *     - `done`：已导入
+         *     - `failed`：转存失败，原因见 `error_code`
+         *     - `skipped`：确认时所在域名未被选中
+         * @enum {string}
+         */
+        ImportItemState: "candidate" | "pending" | "done" | "failed" | "skipped";
+        ImportDocument: {
+            /** @description 文档名，通常是文件名。作为条目的来源显示，也决定按 HTML 还是 Markdown 解析 */
+            name: string;
+            /** @description 文档全文 */
+            text: string;
+        };
+        ImportCreateRequest: {
+            mode: components["schemas"]["ImportMode"];
+            /** @description `images` 必填：图片地址，每个都是 http 或 https 绝对地址，不能为空，同一个地址出现多次只导入一次 */
+            urls?: string[];
+            /** @description `text` 必填：文档，至少一份 */
+            documents?: components["schemas"]["ImportDocument"][];
+            /** @description `text` 可选：解析文档里相对路径的基准地址，须是 http 或 https 绝对地址。没有它，相对路径无法转成可抓取的地址，会记入扫描报告的 `unfetchable`。HTML 文档里的 `<base href>` 优先于它 */
+            base_url?: string;
+            /** @description `site` 必填：站点地图、订阅源、网页或图片的地址，至少一个，每个都是 http 或 https 绝对地址 */
+            sites?: string[];
+            /** @description 导入图片的有效期秒数，规则同 URL 转存的 `ttl`。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
+            ttl?: number | string;
+            /**
+             * @description 导入图片的 EXIF 档位；缺省用运营配置的全局默认
+             * @enum {string}
+             */
+            exif_policy?: "strip" | "passthrough";
+            /** @description 抓取图片时发送的 `Referer`，须是 http 或 https 绝对地址，用于绕过只放行自家页面的防盗链。缺省时取该图片来源页的地址；来源不是网页（图片清单、文档）时不发送 */
+            referer?: string;
+        };
+        ImportStartRequest: {
+            /** @description 要导入的域名，取自 `GET /api/admin/imports/{id}/hosts` 的 `host` */
+            hosts: string[];
+        };
+        /** @description 任务各状态的条目数 */
+        ImportCounts: {
+            /** Format: int64 */
+            candidate: number;
+            /** Format: int64 */
+            pending: number;
+            /** Format: int64 */
+            done: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            skipped: number;
+        };
+        /** @description 一个没有抓取成功的页面 */
+        ImportScanFailure: {
+            /** @description 页面地址 */
+            source: string;
+            code: components["schemas"]["ErrorCode"];
+            /** @description 根因原文，供排障 */
+            detail: string;
+        };
+        /** @description 一处服务端无法抓取的图片引用 */
+        ImportUnfetchable: {
+            /** @description 引用所在的页面地址或文档名 */
+            source: string;
+            /** @description 引用原文，最长 200 个字符。常见原因：没有基准地址的相对路径、`data:` 内嵌图片、本地文件路径、非 http 与 https 的协议 */
+            reference: string;
+        };
+        /** @description 扫描结束时的汇总 */
+        ImportScanReport: {
+            /**
+             * Format: int64
+             * @description 扫描的页面或文档数
+             */
+            pages: number;
+            /**
+             * Format: int64
+             * @description 其中没有找到任何图片引用的页面数。网页靠脚本渲染图片时，这里的数量会偏高
+             */
+            pages_without_images: number;
+            /**
+             * Format: int64
+             * @description 站点地图或订阅源里不在其所属域名下、因此被跳过的页面数
+             */
+            offsite_pages: number;
+            /** @description 没有抓取成功的页面，同一个地址只列一次 */
+            failed_pages: components["schemas"]["ImportScanFailure"][];
+            /** @description 服务端无法抓取的图片引用 */
+            unfetchable: components["schemas"]["ImportUnfetchable"][];
+        };
+        /** @description 扫描进度与结果 */
+        ImportScan: {
+            /**
+             * Format: int64
+             * @description 已发现的页面数；`scanning` 期间可能还在增加
+             */
+            pages_found: number;
+            /**
+             * Format: int64
+             * @description 已处理的页面数
+             */
+            pages_done: number;
+            /** @description 扫描结束后的汇总；`scanning` 期间与没有扫描过程的 `images` 任务为 null */
+            report: components["schemas"]["ImportScanReport"] | null;
+        };
+        ImportJob: {
+            /** @description 任务 ID */
+            id: string;
+            mode: components["schemas"]["ImportMode"];
+            status: components["schemas"]["ImportStatus"];
+            /** @description `site` 任务的起始地址；其他模式为空数组 */
+            seeds: string[];
+            /**
+             * Format: int64
+             * @description 创建时指定的有效期秒数，0 表示永久；null 表示按用户默认与全局默认
+             */
+            ttl_seconds: number | null;
+            /** @description 创建时指定的 EXIF 档位；空串表示用全局默认 */
+            exif_policy: string;
+            /** @description 创建时指定的 `Referer`；空串表示取来源页 */
+            referer: string;
+            counts: components["schemas"]["ImportCounts"];
+            scan: components["schemas"]["ImportScan"];
+            /** @description `aborted` 的原因：`upload_quota_exceeded`、`upload_unavailable` 或 `internal`；其他状态为 null */
+            error_code: components["schemas"]["ErrorCode"] | null;
+            created_at: string;
+            /** @description 进入 `done`、`cancelled` 或 `aborted` 的时刻；重试后清空 */
+            finished_at: string | null;
+        };
+        ImportList: {
+            items: components["schemas"]["ImportJob"][];
+            /**
+             * Format: int64
+             * @description 当前用户的任务总数
+             */
+            total: number;
+        };
+        ImportHost: {
+            /** @description 域名，小写，非默认端口时带端口 */
+            host: string;
+            /**
+             * Format: int64
+             * @description 该域名下待确认的条目数
+             */
+            count: number;
+            /** @description 最多 3 个示例地址 */
+            samples: string[];
+        };
+        ImportItem: {
+            /** Format: int64 */
+            id: number;
+            /** @description 图片的绝对地址，去掉了 `#` 之后的部分 */
+            url: string;
+            /** @description 地址的域名，规则同 `ImportHost.host` */
+            host: string;
+            state: components["schemas"]["ImportItemState"];
+            /** @description 导入成功后的图片短 ID；尚未导入、导入失败或图片已被删除时为 null */
+            image_id: string | null;
+            /** @description `failed` 的原因，取值同上传与 URL 转存的错误码，如 `url_blocked`、`url_bad_status`、`upload_unsupported_type`；其他状态为 null */
+            error_code: components["schemas"]["ErrorCode"] | null;
+            /** @description 失败的根因原文，最长 500 个字符；没有失败时为空串 */
+            error_detail: string;
+            /** @description 引用这张图的页面地址或文档名，最多 5 个 */
+            sources: string[];
+            /**
+             * Format: int64
+             * @description 引用这张图的页面或文档总数
+             */
+            source_count: number;
+        };
+        ImportItemList: {
+            items: components["schemas"]["ImportItem"][];
+            /**
+             * Format: int64
+             * @description 过滤后的总条数
+             */
+            total: number;
+        };
+        ImportReference: {
+            /** @description 引用所在的页面地址或文档名 */
+            source: string;
+            /** @description 引用在该处的原文：相对路径或绝对地址。Markdown 的转义已还原，可能与源文件里的字面写法略有出入 */
+            raw: string;
+        };
+        ImportMappingRow: {
+            /** @description 旧图片的绝对地址 */
+            old_url: string;
+            /** @description 新图片的绝对访问地址 */
+            new_url: string;
+            /** @description 新图片的短 ID */
+            image_id: string;
+            /** @description 旧图片被引用的位置，按发现顺序，不限条数 */
+            references: components["schemas"]["ImportReference"][];
         };
         /** @description 要修改的项；未带的项保持不变，至少带一项 */
         ImagePatch: {
@@ -2461,6 +2857,8 @@ export interface components {
         until: string;
         /** @description 图片短 ID */
         imageID: string;
+        /** @description 导入任务 ID */
+        importID: string;
         /** @description Token id */
         tokenID: number;
         /** @description 渠道 id */
@@ -3208,6 +3606,375 @@ export interface operations {
                 };
             };
             503: components["responses"]["ImageUnavailable"];
+        };
+    };
+    listImports: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 起；缺省 1 */
+                page?: components["parameters"]["page"];
+                /** @description 每页条数；缺省 20，上限 100 */
+                page_size?: components["parameters"]["pageSize"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 导入任务分页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    createImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已创建 */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            /** @description 请求体不合法，错误码 `import_input_invalid`，`params.detail` 指出哪一项不合法；或 `ttl`、`exif_policy` 取值非法 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /** @description 请求体超过 32 MiB，错误码 `import_input_invalid` */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    deleteImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务仍在进行，错误码 `import_state_invalid` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listImportHosts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 域名分组 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportHost"][];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listImportItems: {
+        parameters: {
+            query?: {
+                /** @description 页码，从 1 起；缺省 1 */
+                page?: components["parameters"]["page"];
+                /** @description 每页条数；缺省 20，上限 100 */
+                page_size?: components["parameters"]["pageSize"];
+                /** @description 只看指定状态的条目 */
+                state?: components["schemas"]["ImportItemState"];
+                /** @description 只看指定域名的条目，须与分组里的 `host` 完全一致 */
+                host?: string;
+            };
+            header?: never;
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 条目分页 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportItemList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    startImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportStartRequest"];
+            };
+        };
+        responses: {
+            /** @description 任务已开始 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            /** @description 请求体不合法，或所选域名下没有待导入的条目（`import_no_selection`） */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务不在 `ready` 状态，错误码 `import_state_invalid` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    cancelImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务已取消 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务已经结束，错误码 `import_state_invalid` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    retryImport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 任务已继续 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportJob"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 任务状态不允许重试（`import_state_invalid`），或没有可重试的条目（`import_nothing_to_retry`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            500: components["responses"]["InternalError"];
+        };
+    };
+    exportImportMapping: {
+        parameters: {
+            query?: {
+                /** @description 输出格式，缺省 `json` */
+                format?: "json" | "csv";
+            };
+            header?: never;
+            path: {
+                /** @description 导入任务 ID */
+                id: components["parameters"]["importID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 对照表 */
+            200: {
+                headers: {
+                    /** @description 附件文件名 `imgyoung-import-<任务 ID>.json` 或 `.csv` */
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportMappingRow"][];
+                    "text/csv": string;
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
         };
     };
     listTokens: {

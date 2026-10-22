@@ -53,6 +53,16 @@ var (
 	RecoveryBusy = define("recovery_busy", "已有一轮找回在进行,请等它结束后再试")
 )
 
+// 批量导入。
+var (
+	ImportInputInvalid   = define("import_input_invalid", "导入请求不合法: {detail}")
+	ImportNotFound       = define("import_not_found", "导入任务不存在")
+	ImportStateInvalid   = define("import_state_invalid", "任务当前状态不允许此操作")
+	ImportNoSelection    = define("import_no_selection", "所选域名下没有待导入的图片地址")
+	ImportNothingToRetry = define("import_nothing_to_retry", "没有需要重试的条目")
+	ImportListingInvalid = define("import_listing_invalid", "站点地图或订阅源的内容无法解析")
+)
+
 // 相似图裁决。
 var (
 	CandidateIDInvalid = define("candidate_id_invalid", "候选 ID 非法")

@@ -40,5 +40,8 @@ export const audit = {
     'referer.add': 'Add referer allowlist entry',
     'referer.remove': 'Remove referer allowlist entry',
     'config.update': 'Update settings',
+    'import.create': 'Create import',
+    'import.cancel': 'Cancel import',
+    'import.delete': 'Delete import',
   },
 } satisfies typeof zh

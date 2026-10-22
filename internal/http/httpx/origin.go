@@ -97,3 +97,17 @@ func ForwardedFirst(v string) string {
 	}
 	return strings.TrimSpace(v)
 }
+
+// ImageURL 拼图片的对外绝对地址。
+// @Description: 配置了 base_url 一律用配置;未配置则按当前请求推导,保证返回值恒为绝对地址。
+// 推导值只回显给当前请求方,见 RequestBaseURL。
+// @param r 当前请求
+// @param baseURL 运营配置的对外站点地址,可为空
+// @param imageID 对外短 ID
+// @return 绝对访问地址
+func ImageURL(r *http.Request, baseURL, imageID string) string {
+	if baseURL == "" {
+		baseURL = RequestBaseURL(r)
+	}
+	return baseURL + "/i/" + imageID
+}

@@ -19,6 +19,8 @@ import { Route as AuthenticatedCleanupIndexRouteImport } from './routes/_authent
 import { Route as AuthenticatedDedupIndexRouteImport } from './routes/_authenticated/dedup/index'
 import { Route as AuthenticatedGuideIndexRouteImport } from './routes/_authenticated/guide/index'
 import { Route as AuthenticatedImagesIndexRouteImport } from './routes/_authenticated/images/index'
+import { Route as AuthenticatedImportsIndexRouteImport } from './routes/_authenticated/imports/index'
+import { Route as AuthenticatedImportsIdRouteImport } from './routes/_authenticated/imports/$id'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedTokensIndexRouteImport } from './routes/_authenticated/tokens/index'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
@@ -75,6 +77,17 @@ const AuthenticatedImagesIndexRoute =
     path: '/images/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedImportsIndexRoute =
+  AuthenticatedImportsIndexRouteImport.update({
+    id: '/imports/',
+    path: '/imports/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedImportsIdRoute = AuthenticatedImportsIdRouteImport.update({
+  id: '/imports/$id',
+  path: '/imports/$id',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedSettingsIndexRoute =
   AuthenticatedSettingsIndexRouteImport.update({
     id: '/settings/',
@@ -97,12 +110,14 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/first-run-password': typeof authFirstRunPasswordRoute
   '/login': typeof authLoginRoute
+  '/imports/$id': typeof AuthenticatedImportsIdRoute
   '/audit/': typeof AuthenticatedAuditIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/cleanup/': typeof AuthenticatedCleanupIndexRoute
   '/dedup/': typeof AuthenticatedDedupIndexRoute
   '/guide/': typeof AuthenticatedGuideIndexRoute
   '/images/': typeof AuthenticatedImagesIndexRoute
+  '/imports/': typeof AuthenticatedImportsIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
   '/tokens/': typeof AuthenticatedTokensIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
@@ -111,12 +126,14 @@ export interface FileRoutesByTo {
   '/first-run-password': typeof authFirstRunPasswordRoute
   '/login': typeof authLoginRoute
   '/': typeof AuthenticatedIndexRoute
+  '/imports/$id': typeof AuthenticatedImportsIdRoute
   '/audit': typeof AuthenticatedAuditIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/cleanup': typeof AuthenticatedCleanupIndexRoute
   '/dedup': typeof AuthenticatedDedupIndexRoute
   '/guide': typeof AuthenticatedGuideIndexRoute
   '/images': typeof AuthenticatedImagesIndexRoute
+  '/imports': typeof AuthenticatedImportsIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
   '/tokens': typeof AuthenticatedTokensIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
@@ -127,12 +144,14 @@ export interface FileRoutesById {
   '/(auth)/first-run-password': typeof authFirstRunPasswordRoute
   '/(auth)/login': typeof authLoginRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
+  '/_authenticated/imports/$id': typeof AuthenticatedImportsIdRoute
   '/_authenticated/audit/': typeof AuthenticatedAuditIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/cleanup/': typeof AuthenticatedCleanupIndexRoute
   '/_authenticated/dedup/': typeof AuthenticatedDedupIndexRoute
   '/_authenticated/guide/': typeof AuthenticatedGuideIndexRoute
   '/_authenticated/images/': typeof AuthenticatedImagesIndexRoute
+  '/_authenticated/imports/': typeof AuthenticatedImportsIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
   '/_authenticated/tokens/': typeof AuthenticatedTokensIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
@@ -143,12 +162,14 @@ export interface FileRouteTypes {
     | '/'
     | '/first-run-password'
     | '/login'
+    | '/imports/$id'
     | '/audit/'
     | '/channels/'
     | '/cleanup/'
     | '/dedup/'
     | '/guide/'
     | '/images/'
+    | '/imports/'
     | '/settings/'
     | '/tokens/'
     | '/users/'
@@ -157,12 +178,14 @@ export interface FileRouteTypes {
     | '/first-run-password'
     | '/login'
     | '/'
+    | '/imports/$id'
     | '/audit'
     | '/channels'
     | '/cleanup'
     | '/dedup'
     | '/guide'
     | '/images'
+    | '/imports'
     | '/settings'
     | '/tokens'
     | '/users'
@@ -172,12 +195,14 @@ export interface FileRouteTypes {
     | '/(auth)/first-run-password'
     | '/(auth)/login'
     | '/_authenticated/'
+    | '/_authenticated/imports/$id'
     | '/_authenticated/audit/'
     | '/_authenticated/channels/'
     | '/_authenticated/cleanup/'
     | '/_authenticated/dedup/'
     | '/_authenticated/guide/'
     | '/_authenticated/images/'
+    | '/_authenticated/imports/'
     | '/_authenticated/settings/'
     | '/_authenticated/tokens/'
     | '/_authenticated/users/'
@@ -261,6 +286,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedImagesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/imports/': {
+      id: '/_authenticated/imports/'
+      path: '/imports'
+      fullPath: '/imports/'
+      preLoaderRoute: typeof AuthenticatedImportsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/imports/$id': {
+      id: '/_authenticated/imports/$id'
+      path: '/imports/$id'
+      fullPath: '/imports/$id'
+      preLoaderRoute: typeof AuthenticatedImportsIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/settings/': {
       id: '/_authenticated/settings/'
       path: '/settings'
@@ -287,12 +326,14 @@ declare module '@tanstack/react-router' {
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedImportsIdRoute: typeof AuthenticatedImportsIdRoute
   AuthenticatedAuditIndexRoute: typeof AuthenticatedAuditIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedCleanupIndexRoute: typeof AuthenticatedCleanupIndexRoute
   AuthenticatedDedupIndexRoute: typeof AuthenticatedDedupIndexRoute
   AuthenticatedGuideIndexRoute: typeof AuthenticatedGuideIndexRoute
   AuthenticatedImagesIndexRoute: typeof AuthenticatedImagesIndexRoute
+  AuthenticatedImportsIndexRoute: typeof AuthenticatedImportsIndexRoute
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
   AuthenticatedTokensIndexRoute: typeof AuthenticatedTokensIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
@@ -300,12 +341,14 @@ interface AuthenticatedRouteRouteChildren {
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedImportsIdRoute: AuthenticatedImportsIdRoute,
   AuthenticatedAuditIndexRoute: AuthenticatedAuditIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedCleanupIndexRoute: AuthenticatedCleanupIndexRoute,
   AuthenticatedDedupIndexRoute: AuthenticatedDedupIndexRoute,
   AuthenticatedGuideIndexRoute: AuthenticatedGuideIndexRoute,
   AuthenticatedImagesIndexRoute: AuthenticatedImagesIndexRoute,
+  AuthenticatedImportsIndexRoute: AuthenticatedImportsIndexRoute,
   AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,
   AuthenticatedTokensIndexRoute: AuthenticatedTokensIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,

@@ -105,6 +105,41 @@ type Image struct {
 	CreatedAt          string
 }
 
+type ImportItem struct {
+	ID          int64
+	JobID       string
+	Url         string
+	Host        string
+	State       string
+	ImageID     sql.NullString
+	ErrorCode   string
+	ErrorDetail string
+}
+
+type ImportItemSource struct {
+	ID     int64
+	ItemID int64
+	Source string
+	Raw    string
+}
+
+type ImportJob struct {
+	ID             string
+	UserID         string
+	Mode           string
+	Status         string
+	Seeds          string
+	TtlSeconds     sql.NullInt64
+	ExifPolicy     string
+	Referer        string
+	ScanPagesFound int64
+	ScanPagesDone  int64
+	ScanReport     sql.NullString
+	ErrorCode      string
+	CreatedAt      string
+	FinishedAt     sql.NullString
+}
+
 type MasterKeyFingerprint struct {
 	ID          int64
 	Fingerprint string

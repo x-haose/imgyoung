@@ -101,6 +101,48 @@ func TestFetchRedirectHopLimit(t *testing.T) {
 	}
 }
 
+// TestFetchWithKeepsExplicitReferer 调用方指定的 Referer 与 User-Agent 在重定向的每一跳都原样送达。
+func TestFetchWithKeepsExplicitReferer(t *testing.T) {
+	const referer = "https://blog.example.com/post/1"
+	const agent = "ImgYoung-test"
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Referer") != referer || r.Header.Get("User-Agent") != agent {
+			msg := "referer=" + r.Header.Get("Referer") + " agent=" + r.Header.Get("User-Agent")
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, srv.URL+"/final", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+
+	data, _, err := newLoopbackFetcher(t, 1<<20).FetchWith(context.Background(), srv.URL+"/start",
+		Options{Referer: referer, UserAgent: agent})
+	if err != nil || string(data) != "ok" {
+		t.Fatalf("重定向后应带着指定的 Referer 与 User-Agent,得 %q, %v", data, err)
+	}
+}
+
+// TestFileName 文件名取地址路径的最后一段,推不出时用兜底名。
+func TestFileName(t *testing.T) {
+	cases := map[string]string{
+		"https://a.example.com/x/y/cat.png?v=1#top": "cat.png",
+		"https://a.example.com/":                    fallbackName,
+		"https://a.example.com":                     fallbackName,
+		"https://a.example.com/dir/":                "dir",
+		"%zz":                                       fallbackName,
+	}
+	for raw, want := range cases {
+		if got := FileName(raw); got != want {
+			t.Errorf("FileName(%q) = %q, 期望 %q", raw, got, want)
+		}
+	}
+}
+
 // TestFetchSizeLimit 超上限即报错,不返回被截断的半张图;谎报 Content-Length 也拦得住。
 func TestFetchSizeLimit(t *testing.T) {
 	big := strings.Repeat("x", 1024)

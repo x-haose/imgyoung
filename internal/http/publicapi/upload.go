@@ -6,7 +6,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -20,9 +19,6 @@ import (
 // idempotencyHeader 客户端幂等键请求头。
 const idempotencyHeader = "Idempotency-Key"
 
-// maxTTLSeconds ttl 秒数上限:config.MaxDurationHours 折算成秒,与管理面 ttl_hours 同口径。
-const maxTTLSeconds = config.MaxDurationHours * 3600
-
 // uploadResponse 上传成功的响应体。
 type uploadResponse struct {
 	ID  string `json:"id"`  // 对外短 ID
@@ -34,28 +30,6 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	if _, err := w.Write([]byte("ok")); err != nil {
 		h.cfg.Logger.Debug("写健康检查响应失败", "err", err)
-	}
-}
-
-// parseTTL 解析 ttl 取值;未显式指定时的"用户默认 > 全局默认"回退
-// 由上传服务按用户行解析,本层只翻译请求。
-// @Description: ttl 单位秒;"never" 或 0 表示显式永久;空表示未显式指定。
-// @param raw ttl 原始取值
-// @return 显式指定的有效时长(0 表示显式永久)
-// @return 是否显式指定了 ttl
-// @return ttl 取值合法为 true;非法(非整数、负数或超上限)为 false
-func parseTTL(raw string) (ttl time.Duration, explicit, ok bool) {
-	switch raw {
-	case "never":
-		return 0, true, true
-	case "":
-		return 0, false, true
-	default:
-		secs, err := strconv.Atoi(raw)
-		if err != nil || secs < 0 || secs > maxTTLSeconds {
-			return 0, false, false
-		}
-		return time.Duration(secs) * time.Second, true, true
 	}
 }
 
@@ -103,10 +77,10 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		policy = set.EXIFPolicy
 	}
 
-	ttl, ttlSet, ok := parseTTL(form.ttl)
+	ttl, ttlSet, ok := httpx.ParseTTL(form.ttl)
 	if !ok {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
-			"max", strconv.FormatInt(maxTTLSeconds, 10))
+			"max", strconv.FormatInt(httpx.MaxTTLSeconds, 10))
 		return
 	}
 
@@ -246,21 +220,8 @@ func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.
 func writeUploaded(h *Handlers, w http.ResponseWriter, r *http.Request, set config.Settings, imageID string) {
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
 		ID:  imageID,
-		URL: imageURL(r, set, imageID),
+		URL: httpx.ImageURL(r, set.BaseURL, imageID),
 	})
-}
-
-// imageURL 拼图片的对外绝对地址。
-// @Description: 配置了 base_url 一律用配置;未配置则按当前请求推导,保证响应里的 url 恒为绝对地址。
-// @param set 配置快照
-// @param imageID 对外短 ID
-// @return 绝对访问地址
-func imageURL(r *http.Request, set config.Settings, imageID string) string {
-	base := set.BaseURL
-	if base == "" {
-		base = httpx.RequestBaseURL(r)
-	}
-	return base + "/i/" + imageID
 }
 
 // writeUploadError 把上传服务的业务错误映射为 HTTP 状态码与用户可读消息。

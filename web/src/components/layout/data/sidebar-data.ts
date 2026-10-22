@@ -3,6 +3,7 @@ import {
   CopyCheck,
   HardDrive,
   Images,
+  Import,
   KeyRound,
   LayoutDashboard,
   ScrollText,
@@ -19,6 +20,7 @@ export const sidebarData: NavGroupDef[] = [
     items: [
       { key: 'dashboard', url: '/', icon: LayoutDashboard },
       { key: 'images', url: '/images', icon: Images },
+      { key: 'imports', url: '/imports', icon: Import },
       { key: 'tokens', url: '/tokens', icon: KeyRound },
     ],
   },

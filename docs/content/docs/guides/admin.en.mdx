@@ -23,7 +23,7 @@ The sidebar has three groups, and regular users see only part of it:
 
 | Group | Pages | Visible to |
 |---|---|---|
-| Content | Dashboard, Images, Upload tokens | Everyone |
+| Content | Dashboard, Images, Upload tokens, Imports | Everyone |
 | Site | Storage channels, Users, Duplicates, Cleanup, Audit log | Administrators |
 | Other | Guide | Everyone |
 | Other | Settings | Administrators |
@@ -85,6 +85,18 @@ Lifetimes and cleanup exemptions are explained in [Lifecycle and deduplication](
 ### Upload tokens [#upload-tokens-page]
 
 Issue and manage upload tokens; see [Upload tokens](#upload-tokens) below.
+
+### Imports
+
+Move images from an old image host or a blog into ImgYoung in bulk. Each user sees and manages only their own jobs.
+
+| Input | Use |
+|---|---|
+| Image URLs | One address per line, imported directly |
+| Website | A sitemap, feed or web page; after scanning, confirm the domains to import |
+| Text and files | Markdown or HTML text; after scanning, confirm the domains to import |
+
+When a job ends you can download a mapping from old links to new ones. For the full walkthrough see [Bulk import](./import.mdx).
 
 ### Storage channels
 
@@ -178,6 +190,7 @@ Recorded actions:
 | Tokens | Issue token, Revoke token, Rotate token, Delete token |
 | Users | Create user, Update user (including password changes and resets), Delete user |
 | Images | Update image (lifetime, cleanup exemption), Delete image (including S3 DeleteObject) |
+| Imports | Create import, Cancel import, Delete import |
 | Reviews | Merge duplicates, Dismiss duplicates |
 | Settings | Update settings, Add referer allowlist entry, Remove referer allowlist entry |
 | Data | Export data, Create backup, Restore backup |
@@ -322,3 +335,4 @@ Common error codes for console actions are listed below; the complete list is th
 | Editing, test connection, probing, re-authorizing | 409 | `channel_deleting` | The channel is draining; the only action left is **Remove now** |
 | Opening image details | 404 | `image_not_found` | The image does not exist, or a regular user opened someone else's image |
 | Changing an image's expiry | 409 | `image_expired` | The image has expired, so its expiry can no longer be changed |
+| Bulk import | 400, 404, 409 | `import_input_invalid`, `import_not_found`, `import_state_invalid` and others | See [Bulk import](./import.mdx#error-codes) |

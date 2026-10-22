@@ -19,6 +19,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/dedup"
+	"github.com/x-haose/imgyoung/internal/core/importer"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
 	"github.com/x-haose/imgyoung/internal/core/recovery"
 	"github.com/x-haose/imgyoung/internal/core/referer"
@@ -103,6 +104,8 @@ type services struct {
 	reporter *usage.Reporter        // 渠道用量上报器
 	backup   *reliability.Service   // 元数据库备份服务
 	recovery *recovery.Service      // 图片记录找回服务
+	fetcher  *urlfetch.Fetcher      // 抓取远端图片的抓取器,URL 转存与批量导入共用;大小上限与单图上限同源
+	importer *importer.Service      // 批量导入服务
 }
 
 // newLogger 构造进程级结构化日志,并设为 slog 默认。
@@ -286,6 +289,12 @@ func (s *services) buildDataServices(in infra, logger *slog.Logger) {
 	s.recovery = recovery.New(recovery.Config{
 		Queries: in.queries, Channels: s.manager, Upload: s.upload, Settings: in.store.Current, Logger: logger,
 	})
+	s.fetcher = urlfetch.New(func() int64 { return in.store.Current().MaxUploadBytes() }, urlFetchTimeout)
+	s.importer = importer.New(importer.Config{
+		Conn: writer, Queries: in.queries, Upload: s.upload, Images: s.fetcher,
+		Pages:    urlfetch.New(func() int64 { return importer.MaxDocumentBytes }, importer.DocumentTimeout),
+		Settings: in.store.Current, UserAgent: importUserAgent(), Logger: logger,
+	})
 	s.alerts = alert.New(alert.Config{
 		Queries:    in.queries,
 		QuotaBytes: func() int64 { return int64(in.store.Current().ChannelQuotaGB) * bytesPerGB },
@@ -330,17 +339,15 @@ func registerQueueGauges(m *observability.Metrics, runner *replication.Runner, l
 // @param logger 结构化日志
 // @return HTTP 服务器
 func buildHTTP(in infra, s services, shutdown func(), logger *slog.Logger) *http.Server {
-	// URL 转存的大小上限与单图上限同源(逐次取快照,后台改即生效)。
-	fetcher := urlfetch.New(func() int64 { return in.store.Current().MaxUploadBytes() }, urlFetchTimeout)
 	pub := publicapi.New(publicapi.Config{
-		Queries: in.queries, Channels: s.manager, Upload: s.upload, Fetch: fetcher,
+		Queries: in.queries, Channels: s.manager, Upload: s.upload, Fetch: s.fetcher,
 		Settings: in.store.Current, Activity: s.tracker, Variants: s.variants, Logger: logger,
 	})
 	adm := adminapi.New(adminapi.Config{
 		Admin: s.manager, OAuth: channel.NewOAuthSessions(),
 		Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot,
-		Backups: s.backup, Recovery: s.recovery, Shutdown: shutdown, Logger: logger,
+		Backups: s.backup, Recovery: s.recovery, Imports: s.importer, Shutdown: shutdown, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{
 		Auth: s.auth, Upload: s.upload, Queries: in.queries, Objects: pub, Images: s.sweeper, Audit: s.audit,
@@ -435,6 +442,12 @@ func seedAdminPassword(queries *sqlc.Queries, initial string, logger *slog.Logge
 		logger.Warn("已按 IMGYOUNG_ADMIN_PASSWORD 设置内置管理员的初始密码,请登录后立即修改", "user", admin.Name)
 	}
 	return nil
+}
+
+// importUserAgent 批量导入抓取时发送的 User-Agent:标明身份与版本,站长能据此在访问日志里认出它。
+// @return User-Agent 取值
+func importUserAgent() string {
+	return "ImgYoung/" + version.Current().Version + " (+https://github.com/x-haose/imgyoung)"
 }
 
 // settingsPurger 按当前配置执行 CDN purge:逐次取快照判定启用与凭证,

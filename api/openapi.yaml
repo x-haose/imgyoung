@@ -57,6 +57,11 @@ tags:
     description: 图片列表、详情、修改与删除
     x-description-en: Image list, details, edits and deletion
     x-slug: admin-images
+  - name: Admin · Import
+    x-displayName: 后台·批量导入
+    description: 从图片地址清单、Markdown 与 HTML 文本、站点地图或网页批量转存图片，并导出新旧链接对照表
+    x-description-en: Bulk-import images from lists of image URLs, Markdown and HTML text, sitemaps or web pages, and export a mapping from old links to new ones
+    x-slug: admin-import
   - name: Admin · Upload tokens
     x-displayName: 后台·上传 Token
     description: 具名 Token 的签发、轮转、吊销与 S3 凭证
@@ -821,6 +826,360 @@ paths:
         '503':
           $ref: '#/components/responses/ImageUnavailable'
 
+  /api/admin/imports:
+    get:
+      operationId: listImports
+      tags: [Admin · Import]
+      summary: 导入任务列表
+      description: 分页返回当前用户创建的导入任务，最新的在前。管理员也只看得到自己的任务。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+      responses:
+        '200':
+          description: 导入任务分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      operationId: createImport
+      tags: [Admin · Import]
+      summary: 创建导入任务
+      description: |
+        按 `mode` 创建一个导入任务。导入的图片归属当前用户，走与上传相同的处理流程：格式白名单、像素预算、EXIF 处理与存储配额照常生效。
+
+        - `images`：`urls` 是图片地址清单。任务直接进入 `importing`，逐张转存。
+        - `text`：`documents` 是 Markdown 或 HTML 文本，从中找出图片引用。文件名以 `.html` 或 `.htm` 结尾的按 HTML 解析，内容以 `<!doctype html` 或 `<html` 开头的也按 HTML 解析，其余按 Markdown 解析（内嵌的 HTML 同样会被扫描）。扫描在本请求内完成，任务进入 `ready`，等待确认。
+        - `site`：`sites` 是站点地图、订阅源（RSS 或 Atom）、网页或图片的地址。任务进入 `scanning`，由服务端抓取并找出图片，完成后进入 `ready`，等待确认。
+
+        各模式只能带自己的字段，带了其他模式的字段返回 400。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportCreateRequest'
+      responses:
+        '201':
+          description: 任务已创建
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+        '400':
+          description: 请求体不合法，错误码 `import_input_invalid`，`params.detail` 指出哪一项不合法；或 `ttl`、`exif_policy` 取值非法
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          description: 请求体超过 32 MiB，错误码 `import_input_invalid`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}:
+    get:
+      operationId: getImport
+      tags: [Admin · Import]
+      summary: 导入任务详情
+      description: 返回任务的状态、各状态的条目数与扫描报告。进行中的任务由前端轮询本接口取得进度。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/importID'
+      responses:
+        '200':
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      operationId: deleteImport
+      tags: [Admin · Import]
+      summary: 删除导入任务
+      description: 删除任务及其条目、来源与对照表。已经导入的图片不受影响。`scanning` 与 `importing` 的任务须先取消。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+        - $ref: '#/components/parameters/importID'
+      responses:
+        '204':
+          description: 已删除
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 任务仍在进行，错误码 `import_state_invalid`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}/hosts:
+    get:
+      operationId: listImportHosts
+      tags: [Admin · Import]
+      summary: 待确认的图片地址按域名分组
+      description: 返回 `candidate` 状态的条目按域名分组的数量，数量多的在前，每组附最多 3 个示例地址。用于确认页决定导入哪些域名下的图片。任务确认之后没有 `candidate` 条目，返回空数组。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/importID'
+      responses:
+        '200':
+          description: 域名分组
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ImportHost'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}/items:
+    get:
+      operationId: listImportItems
+      tags: [Admin · Import]
+      summary: 导入任务的条目
+      description: 分页返回任务的条目，按发现顺序排列，可按状态与域名过滤。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/importID'
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/pageSize'
+        - name: state
+          in: query
+          description: 只看指定状态的条目
+          schema:
+            $ref: '#/components/schemas/ImportItemState'
+        - name: host
+          in: query
+          description: 只看指定域名的条目，须与分组里的 `host` 完全一致
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 条目分页
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportItemList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}/start:
+    post:
+      operationId: startImport
+      tags: [Admin · Import]
+      summary: 确认并开始导入
+      description: |
+        对 `ready` 状态的任务，导入 `hosts` 所列域名下的全部 `candidate` 条目，其余条目记为 `skipped`，任务进入 `importing`。
+
+        `hosts` 里没有任何域名对应待导入的条目时返回 400，任务保持 `ready`。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+        - $ref: '#/components/parameters/importID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportStartRequest'
+      responses:
+        '200':
+          description: 任务已开始
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+        '400':
+          description: 请求体不合法，或所选域名下没有待导入的条目（`import_no_selection`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 任务不在 `ready` 状态，错误码 `import_state_invalid`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}/cancel:
+    post:
+      operationId: cancelImport
+      tags: [Admin · Import]
+      summary: 取消导入任务
+      description: 取消 `scanning`、`ready` 或 `importing` 的任务。正在转存的图片会被中断，没处理完的条目保持 `pending`，已经导入的图片保留。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+        - $ref: '#/components/parameters/importID'
+      responses:
+        '200':
+          description: 任务已取消
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 任务已经结束，错误码 `import_state_invalid`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}/retry:
+    post:
+      operationId: retryImport
+      tags: [Admin · Import]
+      summary: 重试失败的条目并继续
+      description: |
+        对 `done`、`aborted` 或 `cancelled` 的任务，把 `failed` 的条目重新置为待导入，连同尚未处理的条目一起继续，任务回到 `importing`。
+
+        没有 `failed` 或 `pending` 的条目时返回 409。因存储配额或没有可用渠道而中止的任务，先解决问题再重试。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+        - $ref: '#/components/parameters/importID'
+      responses:
+        '200':
+          description: 任务已继续
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 任务状态不允许重试（`import_state_invalid`），或没有可重试的条目（`import_nothing_to_retry`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/imports/{id}/mapping:
+    get:
+      operationId: exportImportMapping
+      tags: [Admin · Import]
+      summary: 导出新旧链接对照表
+      description: |
+        以附件形式下载已导入成功的条目的对照表。新地址是图片的绝对访问地址：配置了对外站点地址（`base_url`）时用它，否则按本次请求推导。
+
+        - `format=json`：每个条目一个对象，来源引用嵌套在 `references` 里。
+        - `format=csv`：UTF-8，首行为表头，每条来源引用一行，列为 `old_url`、`new_url`、`image_id`、`source`、`raw`；没有来源引用的条目也输出一行，`source` 与 `raw` 为空。
+
+        图片被删除后，对应条目不再出现在对照表里。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/importID'
+        - name: format
+          in: query
+          description: 输出格式，缺省 `json`
+          schema:
+            type: string
+            enum: [json, csv]
+      responses:
+        '200':
+          description: 对照表
+          headers:
+            Content-Disposition:
+              description: 附件文件名 `imgyoung-import-<任务 ID>.json` 或 `.csv`
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ImportMappingRow'
+            text/csv:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/tokens:
     get:
       operationId: listTokens
@@ -2203,6 +2562,13 @@ components:
       description: 图片短 ID
       schema:
         type: string
+    importID:
+      name: id
+      in: path
+      required: true
+      description: 导入任务 ID
+      schema:
+        type: string
     tokenID:
       name: id
       in: path
@@ -2526,6 +2892,12 @@ components:
         - backup_store_failed
         - backup_prune_failed
         - recovery_busy
+        - import_input_invalid
+        - import_not_found
+        - import_state_invalid
+        - import_no_selection
+        - import_nothing_to_retry
+        - import_listing_invalid
         - snapshot_name_invalid
         - snapshot_not_found
         - snapshot_corrupt
@@ -3344,6 +3716,327 @@ components:
           type: integer
           format: int64
           description: 过滤后的总条数
+    ImportMode:
+      type: string
+      description: |
+        输入类型：
+        - `images`：图片地址清单，直接导入
+        - `text`：Markdown 或 HTML 文本，扫描后确认
+        - `site`：站点地图、订阅源、网页或图片的地址，由服务端抓取并扫描，完成后确认
+      enum: [images, text, site]
+    ImportStatus:
+      type: string
+      description: |
+        任务状态：
+        - `scanning`：正在抓取并扫描（仅 `site`）
+        - `ready`：扫描完成，等待确认要导入哪些域名
+        - `importing`：正在逐张转存
+        - `done`：已处理完全部条目，其中可能有失败的
+        - `cancelled`：已取消
+        - `aborted`：因存储配额已满、没有可用渠道或服务端故障而中止，原因见 `error_code`；未处理的条目保留，可重试
+      enum: [scanning, ready, importing, done, cancelled, aborted]
+    ImportItemState:
+      type: string
+      description: |
+        条目状态：
+        - `candidate`：扫描发现，等待确认
+        - `pending`：已确认，等待转存
+        - `done`：已导入
+        - `failed`：转存失败，原因见 `error_code`
+        - `skipped`：确认时所在域名未被选中
+      enum: [candidate, pending, done, failed, skipped]
+    ImportDocument:
+      type: object
+      additionalProperties: false
+      required: [name, text]
+      properties:
+        name:
+          type: string
+          description: 文档名，通常是文件名。作为条目的来源显示，也决定按 HTML 还是 Markdown 解析
+        text:
+          type: string
+          description: 文档全文
+    ImportCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          $ref: '#/components/schemas/ImportMode'
+        urls:
+          type: array
+          description: '`images` 必填：图片地址，每个都是 http 或 https 绝对地址，不能为空，同一个地址出现多次只导入一次'
+          items:
+            type: string
+        documents:
+          type: array
+          description: '`text` 必填：文档，至少一份'
+          items:
+            $ref: '#/components/schemas/ImportDocument'
+        base_url:
+          type: string
+          description: '`text` 可选：解析文档里相对路径的基准地址，须是 http 或 https 绝对地址。没有它，相对路径无法转成可抓取的地址，会记入扫描报告的 `unfetchable`。HTML 文档里的 `<base href>` 优先于它'
+        sites:
+          type: array
+          description: '`site` 必填：站点地图、订阅源、网页或图片的地址，至少一个，每个都是 http 或 https 绝对地址'
+          items:
+            type: string
+        ttl:
+          description: 导入图片的有效期秒数，规则同 URL 转存的 `ttl`。缺省时用该用户的默认有效期，用户未设置则用全局默认
+          oneOf:
+            - type: integer
+            - type: string
+        exif_policy:
+          type: string
+          enum: [strip, passthrough]
+          description: 导入图片的 EXIF 档位；缺省用运营配置的全局默认
+        referer:
+          type: string
+          description: 抓取图片时发送的 `Referer`，须是 http 或 https 绝对地址，用于绕过只放行自家页面的防盗链。缺省时取该图片来源页的地址；来源不是网页（图片清单、文档）时不发送
+    ImportStartRequest:
+      type: object
+      additionalProperties: false
+      required: [hosts]
+      properties:
+        hosts:
+          type: array
+          minItems: 1
+          description: 要导入的域名，取自 `GET /api/admin/imports/{id}/hosts` 的 `host`
+          items:
+            type: string
+    ImportCounts:
+      type: object
+      description: 任务各状态的条目数
+      required: [candidate, pending, done, failed, skipped]
+      properties:
+        candidate:
+          type: integer
+          format: int64
+        pending:
+          type: integer
+          format: int64
+        done:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        skipped:
+          type: integer
+          format: int64
+    ImportScanFailure:
+      type: object
+      description: 一个没有抓取成功的页面
+      required: [source, code, detail]
+      properties:
+        source:
+          type: string
+          description: 页面地址
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        detail:
+          type: string
+          description: 根因原文，供排障
+    ImportUnfetchable:
+      type: object
+      description: 一处服务端无法抓取的图片引用
+      required: [source, reference]
+      properties:
+        source:
+          type: string
+          description: 引用所在的页面地址或文档名
+        reference:
+          type: string
+          description: 引用原文，最长 200 个字符。常见原因：没有基准地址的相对路径、`data:` 内嵌图片、本地文件路径、非 http 与 https 的协议
+    ImportScanReport:
+      type: object
+      description: 扫描结束时的汇总
+      required: [pages, pages_without_images, offsite_pages, failed_pages, unfetchable]
+      properties:
+        pages:
+          type: integer
+          format: int64
+          description: 扫描的页面或文档数
+        pages_without_images:
+          type: integer
+          format: int64
+          description: 其中没有找到任何图片引用的页面数。网页靠脚本渲染图片时，这里的数量会偏高
+        offsite_pages:
+          type: integer
+          format: int64
+          description: 站点地图或订阅源里不在其所属域名下、因此被跳过的页面数
+        failed_pages:
+          type: array
+          description: 没有抓取成功的页面，同一个地址只列一次
+          items:
+            $ref: '#/components/schemas/ImportScanFailure'
+        unfetchable:
+          type: array
+          description: 服务端无法抓取的图片引用
+          items:
+            $ref: '#/components/schemas/ImportUnfetchable'
+    ImportScan:
+      type: object
+      description: 扫描进度与结果
+      required: [pages_found, pages_done, report]
+      properties:
+        pages_found:
+          type: integer
+          format: int64
+          description: 已发现的页面数；`scanning` 期间可能还在增加
+        pages_done:
+          type: integer
+          format: int64
+          description: 已处理的页面数
+        report:
+          oneOf:
+            - $ref: '#/components/schemas/ImportScanReport'
+            - type: 'null'
+          description: 扫描结束后的汇总；`scanning` 期间与没有扫描过程的 `images` 任务为 null
+    ImportJob:
+      type: object
+      required:
+        [id, mode, status, seeds, ttl_seconds, exif_policy, referer, counts, scan, error_code, created_at, finished_at]
+      properties:
+        id:
+          type: string
+          description: 任务 ID
+        mode:
+          $ref: '#/components/schemas/ImportMode'
+        status:
+          $ref: '#/components/schemas/ImportStatus'
+        seeds:
+          type: array
+          description: '`site` 任务的起始地址；其他模式为空数组'
+          items:
+            type: string
+        ttl_seconds:
+          type: [integer, 'null']
+          format: int64
+          description: 创建时指定的有效期秒数，0 表示永久；null 表示按用户默认与全局默认
+        exif_policy:
+          type: string
+          description: 创建时指定的 EXIF 档位；空串表示用全局默认
+        referer:
+          type: string
+          description: 创建时指定的 `Referer`；空串表示取来源页
+        counts:
+          $ref: '#/components/schemas/ImportCounts'
+        scan:
+          $ref: '#/components/schemas/ImportScan'
+        error_code:
+          oneOf:
+            - $ref: '#/components/schemas/ErrorCode'
+            - type: 'null'
+          description: '`aborted` 的原因：`upload_quota_exceeded`、`upload_unavailable` 或 `internal`；其他状态为 null'
+        created_at:
+          type: string
+        finished_at:
+          type: [string, 'null']
+          description: 进入 `done`、`cancelled` 或 `aborted` 的时刻；重试后清空
+    ImportList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportJob'
+        total:
+          type: integer
+          format: int64
+          description: 当前用户的任务总数
+    ImportHost:
+      type: object
+      required: [host, count, samples]
+      properties:
+        host:
+          type: string
+          description: 域名，小写，非默认端口时带端口
+        count:
+          type: integer
+          format: int64
+          description: 该域名下待确认的条目数
+        samples:
+          type: array
+          description: 最多 3 个示例地址
+          items:
+            type: string
+    ImportItem:
+      type: object
+      required: [id, url, host, state, image_id, error_code, error_detail, sources, source_count]
+      properties:
+        id:
+          type: integer
+          format: int64
+        url:
+          type: string
+          description: 图片的绝对地址，去掉了 `#` 之后的部分
+        host:
+          type: string
+          description: 地址的域名，规则同 `ImportHost.host`
+        state:
+          $ref: '#/components/schemas/ImportItemState'
+        image_id:
+          type: [string, 'null']
+          description: 导入成功后的图片短 ID；尚未导入、导入失败或图片已被删除时为 null
+        error_code:
+          oneOf:
+            - $ref: '#/components/schemas/ErrorCode'
+            - type: 'null'
+          description: '`failed` 的原因，取值同上传与 URL 转存的错误码，如 `url_blocked`、`url_bad_status`、`upload_unsupported_type`；其他状态为 null'
+        error_detail:
+          type: string
+          description: 失败的根因原文，最长 500 个字符；没有失败时为空串
+        sources:
+          type: array
+          description: 引用这张图的页面地址或文档名，最多 5 个
+          items:
+            type: string
+        source_count:
+          type: integer
+          format: int64
+          description: 引用这张图的页面或文档总数
+    ImportItemList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportItem'
+        total:
+          type: integer
+          format: int64
+          description: 过滤后的总条数
+    ImportReference:
+      type: object
+      required: [source, raw]
+      properties:
+        source:
+          type: string
+          description: 引用所在的页面地址或文档名
+        raw:
+          type: string
+          description: 引用在该处的原文：相对路径或绝对地址。Markdown 的转义已还原，可能与源文件里的字面写法略有出入
+    ImportMappingRow:
+      type: object
+      required: [old_url, new_url, image_id, references]
+      properties:
+        old_url:
+          type: string
+          description: 旧图片的绝对地址
+        new_url:
+          type: string
+          description: 新图片的绝对访问地址
+        image_id:
+          type: string
+          description: 新图片的短 ID
+        references:
+          type: array
+          description: 旧图片被引用的位置，按发现顺序，不限条数
+          items:
+            $ref: '#/components/schemas/ImportReference'
     ImagePatch:
       type: object
       description: 要修改的项；未带的项保持不变，至少带一项

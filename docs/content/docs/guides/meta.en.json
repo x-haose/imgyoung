@@ -3,6 +3,7 @@
   "icon": "BookOpen",
   "pages": [
     "upload",
+    "import",
     "clients",
     "access",
     "lifecycle",

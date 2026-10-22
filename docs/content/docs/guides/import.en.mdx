@@ -1,0 +1,209 @@
+---
+title: Bulk import
+description: Move images from an old image host or a blog into ImgYoung in bulk, from a list of image URLs, a sitemap, a feed, a web page, or Markdown and HTML text, and export a mapping from old links to new ones.
+---
+
+## When to use it
+
+An old image host is shutting down, or the images on your blog are scattered across several places, and you want them all in ImgYoung together with an "old link → new link" mapping for updating your articles. Bulk import does exactly that:
+
+1. Give it image addresses, or a site or text where images can be found.
+2. Confirm which domains to import from.
+3. The server fetches and stores the images one by one; when it finishes, download the mapping.
+
+Imported images belong to the signed-in account and go through the same processing as an [upload](./upload.mdx): the format allowlist, pixel budget, EXIF handling and storage quota all apply. To fetch a single image, use [fetching from a URL](./upload.mdx#fetching-from-a-url).
+
+Every signed-in user can use it, and each user sees and manages only their own jobs.
+
+## Creating an import
+
+In the **Content** group of the sidebar open **Imports** and click **New import**; you can also click **Bulk import** next to **Upload** on the **Images** page. The dialog has three tabs; pick the one that matches what you have:
+
+| Tab | What to enter | Then |
+|---|---|---|
+| Image URLs | Image addresses, one per line | The import starts right away |
+| Website | Sitemap, feed or web page addresses, one per line | After scanning, confirm the domains to import |
+| Text and files | Pasted Markdown or HTML text, or files | After scanning, confirm the domains to import |
+
+### Image URLs
+
+One `http` or `https` image address per line. An address that appears more than once is imported once. The job goes straight to **Importing**, with no confirmation step.
+
+### Website
+
+One address per line. What each address is gets decided from the content fetched, not from its extension:
+
+| The address points to | What happens |
+|---|---|
+| A sitemap (`urlset`, `sitemapindex`, gzip included) | Every article page in it is scanned; sub-sitemaps in an index are expanded in turn |
+| A feed (RSS, Atom) | Every article page in it is scanned |
+| Plain text with one address per line | Treated as a text sitemap, each page scanned |
+| A web page | That page is scanned |
+| An image | Imported directly |
+
+The server expands only as far as article pages and never follows links found inside pages. Pages in a sitemap or feed that do not belong to its own domain are skipped; a web page you enter directly is not subject to this rule.
+
+The job starts as **Scanning** and shows how many pages have been processed. When the scan ends it becomes **Ready to confirm**.
+
+### Text and files
+
+Paste text, or pick one or more `.md`, `.markdown`, `.html`, `.htm` or `.txt` files. Pasted text appears in the report as "Pasted text"; a file is named by its file name.
+
+If the text uses relative image paths, enter the address of the page the article is published at as the **Base URL**, and the server resolves them against it. Without a base URL, relative paths cannot be fetched and are listed under unfetchable references in the scan report. A `<base href>` in an HTML document takes precedence over the base URL.
+
+Scanning finishes while you submit, and the job goes straight to **Ready to confirm**.
+
+### Advanced options
+
+Shared by all three tabs and all optional:
+
+| Option | Effect |
+|---|---|
+| Expiry | The lifetime of the imported images. When left empty, your default lifetime applies, then the global default; see [Lifecycle and deduplication](./lifecycle.mdx) |
+| EXIF | Strip or keep metadata. When left empty, the global default applies; see [EXIF handling](./upload.mdx#exif-handling) |
+| Referer | The source page address sent when fetching images, for old hosts with hotlink protection; see [Hosts with hotlink protection](#hosts-with-hotlink-protection) |
+
+## Confirming the domains to import
+
+Open a job that is **Ready to confirm** and the page shows:
+
+- **Scan report**: how many pages or documents were scanned, how many had no images, how many failed to load (each listed with its address and reason; `import_listing_invalid` when the content of a sitemap or feed cannot be parsed), how many image references could not be fetched (each listed), and how many pages were skipped because they are outside the site's domain.
+- **Domain table**: the images found, grouped by domain, one row per domain with the image count and up to 3 sample addresses, largest first.
+
+No domain is selected by default. Tick the domains of the old image host and click **Start import**: images under the selected domains are imported and the rest are not. **Select all** and **Clear** work in bulk. The table shows address text only and loads no thumbnails.
+
+While no domain is ticked, **Start import** is disabled. If the scan found no images at all, the page says "No images found" and the only thing you can do is delete the job.
+
+A single page often has images from several domains: the old host, analytics icons and third-party avatars all show up in the table. Tick only the one you want to move.
+
+## While the import runs
+
+Once the job is **Importing**, the page shows progress and the count in each state, and failed items appear as they happen; there is no need to refresh.
+
+- **Concurrency**: a job transfers 4 images at a time. These 4 slots are independent of the [upload concurrency limit](./upload.mdx#formats-and-limits) and do not use the upload rate allowance; when planning memory, count the two together.
+- **Queueing**: the whole instance processes one import job at a time. The other jobs wait in the order they were created and show no progress meanwhile.
+- **Processing**: each image goes through the same steps as an upload and, once stored, records the new short ID. The file name is the last segment of the address path.
+- **Failures**: one failed image does not affect the others; the reason is recorded on the item. When every item has been processed the job becomes **Done**, even if some items failed.
+- **Restarts**: after a restart, an **Importing** job continues from the items not yet processed, and images already stored are not imported again; a **Scanning** job is scanned again from the start.
+
+### Failed items
+
+| Error code | Usual cause | What to do |
+|---|---|---|
+| `url_blocked` | The address is not a public address | Private addresses cannot be imported; see [Fetch restrictions](./upload.mdx#fetch-restrictions) |
+| `url_too_large` | The image exceeds the per-image size limit | Raise **Max image size**, then retry |
+| `url_bad_status` | The remote server returned a non-2xx status, often hotlink protection | Enter a Referer and create the job again, or check whether the old address still exists |
+| `url_fetch_failed` | Timeout or connection failure | Retry later |
+| `url_too_many_redirects` | More than 5 redirects | Check the address |
+| `upload_unsupported_type` | The format is not on the allowlist, such as SVG or AVIF | Cannot be imported; see [Formats and limits](./upload.mdx#formats-and-limits) |
+| `upload_invalid_image` | The content is not a decodable image | Check that the address really points to an image |
+| `upload_too_many_pixels` | The resolution exceeds the pixel budget | Raise **Pixel budget**, then retry |
+
+The page shows a localized explanation for each code, plus the original message from the remote server or the server (at most 500 characters). Each image gets at most 20 minutes.
+
+### Retry
+
+When a job has ended, click **Retry**: failed items and unprocessed items go back to **Importing** together. Items that already succeeded are not affected. Failed items are never retried automatically.
+
+A **Done**, **Aborted** or **Cancelled** job can be retried; if it has no failed or unprocessed items, the retry is refused (`import_nothing_to_retry`).
+
+### Aborting when the quota is full
+
+When the storage quota is full, no channel is available, or the server fails (for example the database), carrying on would only make every remaining image fail the same way, so the whole job stops as **Aborted**. The page shows the reason and the unprocessed items are kept. Fix the problem first (raise the quota, repair the channel), then click **Retry** to continue.
+
+### Cancelling
+
+Jobs that are **Scanning**, **Ready to confirm** or **Importing** can be cancelled. Images being transferred are interrupted and their items stay pending; images already imported are kept. A cancelled job can be retried.
+
+## Mapping
+
+Once a job has ended (**Done**, **Aborted** or **Cancelled**), click **Download mapping** and choose JSON or CSV. The mapping contains only items that were imported successfully and whose image still exists. The new address is the image's full access address: the public site address (`base_url`) when it is set, otherwise generated from the domain you are using.
+
+| Column | Meaning |
+|---|---|
+| `old_url` | The address of the old image |
+| `new_url` | The address of the new image |
+| `image_id` | The new image's short ID |
+| `source` | The page address or document name that references this image |
+| `raw` | The reference as written in that place, possibly a relative path; use it to find and replace in the source article |
+
+- **CSV**: UTF-8 with a header row and one row per reference; an image with no reference gets one row with `source` and `raw` empty. Cells starting with `=`, `+`, `-` or `@` are prefixed with a single quote so a spreadsheet does not treat them as formulas.
+- **JSON**: one object per image, with all references nested in a `references` array:
+
+```json
+[
+  {
+    "old_url": "https://old.example.com/img/a.png",
+    "new_url": "https://img.example.com/i/R0RjUyP1UW",
+    "image_id": "R0RjUyP1UW",
+    "references": [
+      { "source": "https://blog.example.com/post-1", "raw": "/img/a.png" }
+    ]
+  }
+]
+```
+
+The mapping is for you to update your articles with; ImgYoung never modifies the source articles.
+
+## Deleting a job
+
+A job that is **Ready to confirm**, **Done**, **Cancelled** or **Aborted** can be deleted; the job record, its items and its mapping are removed together, and images already imported are not affected. A **Scanning** or **Importing** job must be cancelled first. Download any mapping you need before deleting.
+
+## Limits and notes
+
+- **Static HTML only**: images that a script renders cannot be found, and such pages count under pages without images in the report.
+- **Website mode produces a mapping**: what is fetched is the rendered page, not the article's source file, so ImgYoung does not rewrite articles; you replace the addresses using the mapping.
+- **Local file references are not recognized**: `data:` inline images, local paths and Obsidian's `![[file]]` are not fetchable addresses and are listed under unfetchable references. Use [uploads](./upload.mdx#uploading-in-the-admin-console) for local images.
+- **Formats**: only JPEG, PNG, GIF and WebP can be imported; SVG, AVIF and others fail with `upload_unsupported_type`.
+- **Public addresses only**: as with fetching from a URL, private addresses are refused; see [Fetch restrictions](./upload.mdx#fetch-restrictions).
+- **Scan limits**: 4 pages are fetched at a time, each sitemap, feed or page is capped at 50 MiB, and fetching one address takes at most 2 minutes. There is no limit on the number of pages or images. `robots.txt` is not read, and requests send `User-Agent: ImgYoung/<version> (+https://github.com/x-haose/imgyoung)`.
+- **Submission size**: what you submit under **Text and files** is at most 32 MiB in total.
+
+### Hosts with hotlink protection
+
+Images are fetched with a `Referer`: the one entered under **Advanced options** if there is one, otherwise the address of the page that references the image; with neither (for example an image URL list) none is sent. An old host that only allows its own pages answers such requests with a status such as 403, which shows as `url_bad_status`. Enter the old site's home page or an article address as the Referer and create the job again.
+
+## Calling it from a script
+
+The import endpoints use signed-in session authentication and do not accept upload tokens. For authentication see the [API reference](../api/index.mdx); parameters and responses of each endpoint are in [API reference: Admin · Bulk import](../api/admin-import.mdx).
+
+After signing in, create a job from a list of image URLs (`csrf_token` comes from the login response):
+
+```bash title="Terminal"
+curl -b jar.txt \
+  -H "X-CSRF-Token: <csrf_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "images", "urls": ["https://old.example.com/img/a.png", "https://old.example.com/img/b.jpg"]}' \
+  https://img.example.com/api/admin/imports
+```
+
+Download the mapping:
+
+```bash title="Terminal"
+curl -b jar.txt -OJ \
+  "https://img.example.com/api/admin/imports/<job ID>/mapping?format=csv"
+```
+
+## Error codes
+
+| Action | Status | Error code | Meaning |
+|---|---|---|---|
+| Create | 400 | `import_input_invalid` | The request is invalid; the message says which part, for example an address that is not an absolute `http` or `https` address |
+| Create | 413 | `import_input_invalid` | The request body exceeds 32 MiB |
+| View, cancel, retry, delete, start, mapping | 404 | `import_not_found` | The job does not exist or belongs to another user |
+| Cancel, retry, delete, start | 409 | `import_state_invalid` | The job's current state does not allow this action |
+| Start | 400 | `import_no_selection` | No pending image addresses under the selected domains |
+| Retry | 409 | `import_nothing_to_retry` | There are no failed or unprocessed items |
+
+What each state allows:
+
+| State | Shown as | You can |
+|---|---|---|
+| `scanning` | Scanning | Cancel |
+| `ready` | Ready to confirm | Start import, cancel, delete |
+| `importing` | Importing | Cancel |
+| `done` | Done | Retry, download mapping, delete |
+| `cancelled` | Cancelled | Retry, download mapping, delete |
+| `aborted` | Aborted | Retry, download mapping, delete |
+
+Error codes for failed items are in [Failed items](#failed-items). The complete list is the `ErrorCode` schema in the [API reference](../api/index.mdx#error-format).

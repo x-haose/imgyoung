@@ -1,4 +1,4 @@
-package publicapi
+package httpx
 
 import (
 	"strconv"
@@ -21,17 +21,17 @@ func TestParseTTL(t *testing.T) {
 		{"空值未显式指定", "", 0, false, true},
 		{"0 显式永久", "0", 0, true, true},
 		{"合法秒数", "3600", time.Hour, true, true},
-		{"上限恰好可用", strconv.Itoa(maxTTLSeconds), time.Duration(maxTTLSeconds) * time.Second, true, true},
-		{"超上限拒绝", strconv.Itoa(maxTTLSeconds + 1), 0, false, false},
+		{"上限恰好可用", strconv.Itoa(MaxTTLSeconds), time.Duration(MaxTTLSeconds) * time.Second, true, true},
+		{"超上限拒绝", strconv.Itoa(MaxTTLSeconds + 1), 0, false, false},
 		{"溢出巨值拒绝", "10000000000000000000", 0, false, false},
 		{"负数拒绝", "-1", 0, false, false},
 		{"非整数拒绝", "abc", 0, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, explicit, ok := parseTTL(tc.raw)
+			got, explicit, ok := ParseTTL(tc.raw)
 			if got != tc.want || explicit != tc.explicit || ok != tc.ok {
-				t.Errorf("parseTTL(%q) = (%v, %t, %t), 期望 (%v, %t, %t)",
+				t.Errorf("ParseTTL(%q) = (%v, %t, %t), 期望 (%v, %t, %t)",
 					tc.raw, got, explicit, ok, tc.want, tc.explicit, tc.ok)
 			}
 		})

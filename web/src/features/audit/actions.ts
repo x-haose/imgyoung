@@ -22,6 +22,9 @@ export const AUDIT_ACTIONS = [
   'referer.add',
   'referer.remove',
   'config.update',
+  'import.create',
+  'import.cancel',
+  'import.delete',
 ] as const
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number]

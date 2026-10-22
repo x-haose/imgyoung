@@ -55,6 +55,12 @@ const (
 	ActionRefererRemove = "referer.remove"
 	// ActionConfigUpdate 运营配置修改(热生效)。
 	ActionConfigUpdate = "config.update"
+	// ActionImportCreate 创建批量导入任务。
+	ActionImportCreate = "import.create"
+	// ActionImportCancel 取消批量导入任务。
+	ActionImportCancel = "import.cancel"
+	// ActionImportDelete 删除批量导入任务。
+	ActionImportDelete = "import.delete"
 )
 
 // Recorder 审计记录器,追加写 audit_log。

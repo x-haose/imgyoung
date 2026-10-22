@@ -159,6 +159,8 @@ In addition:
 - The request carries no `Referer`, not even when following redirects, so the submitted address never leaks to the redirect target. Its `User-Agent` is the Go standard library default. Sources with hotlink protection or bot blocking may refuse it, which shows up as a 502.
 - A fetch occupies one upload concurrency slot while it runs; see [Formats and limits](#formats-and-limits).
 
+Use this for a single image; to move a whole old image host or blog in bulk, use [bulk import](./import.mdx).
+
 ## Uploading in the admin console
 
 On the **Images** page, click **Upload**. The dialog has two tabs:

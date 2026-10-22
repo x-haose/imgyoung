@@ -9,6 +9,7 @@ import { dedup } from './dedup'
 import { errors } from './errors'
 import { guide } from './guide'
 import { images } from './images'
+import { imports } from './imports'
 import { nav, navGroups } from './nav'
 import { server } from './server'
 import { settings } from './settings'
@@ -24,6 +25,7 @@ export const zhCN = {
   errors,
   dashboard,
   images,
+  imports,
   tokens,
   channels,
   channelTemplates,

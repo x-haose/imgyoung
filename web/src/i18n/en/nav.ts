@@ -9,6 +9,7 @@ export const navGroups = {
 export const nav = {
   dashboard: 'Dashboard',
   images: 'Images',
+  imports: 'Import',
   tokens: 'Upload tokens',
   channels: 'Storage channels',
   users: 'Users',

@@ -58,6 +58,14 @@ export const server = {
       'Snapshot {snapshot} was written, but removing old snapshots failed on {failed} of {total} channels, so the retention count is not enforced ({detail})',
     recovery_busy:
       'A recovery run is already in progress. Wait for it to finish and try again',
+    import_input_invalid: 'Invalid import request: {detail}',
+    import_not_found: 'The import task does not exist',
+    import_state_invalid:
+      'The current state of the task does not allow this action',
+    import_no_selection:
+      'No image addresses are waiting to be imported under the selected hosts',
+    import_nothing_to_retry: 'There are no items to retry',
+    import_listing_invalid: 'The sitemap or feed content cannot be parsed',
     snapshot_name_invalid: 'Invalid snapshot name',
     snapshot_not_found: 'Snapshot not found',
     snapshot_corrupt:

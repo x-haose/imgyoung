@@ -12,6 +12,7 @@ import {
   CheckSquare,
   ImageOff,
   Images as ImagesIcon,
+  Import,
   Search,
   Trash2,
   Upload,
@@ -195,6 +196,12 @@ export function Images() {
           >
             {selecting ? <X /> : <CheckSquare />}
             {selecting ? m.images.cancelSelect : m.images.select}
+          </Button>
+          <Button variant='outline' asChild>
+            <Link to='/imports' search={{ new: true }}>
+              <Import />
+              {m.imports.entry}
+            </Link>
           </Button>
           <Button onClick={() => setUploadOpen(true)}>
             <Upload />

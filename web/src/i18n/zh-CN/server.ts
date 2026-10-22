@@ -56,6 +56,12 @@ export const server = {
     backup_prune_failed:
       '快照 {snapshot} 已写入，但有 {failed}/{total} 个渠道清理旧快照失败，保留份数未生效（{detail}）',
     recovery_busy: '已有一轮找回在进行，请等它结束后再试',
+    import_input_invalid: '导入请求不合法：{detail}',
+    import_not_found: '导入任务不存在',
+    import_state_invalid: '任务当前状态不允许此操作',
+    import_no_selection: '所选域名下没有待导入的图片地址',
+    import_nothing_to_retry: '没有需要重试的条目',
+    import_listing_invalid: '站点地图或订阅源的内容无法解析',
     snapshot_name_invalid: '快照名非法',
     snapshot_not_found: '快照不存在',
     snapshot_corrupt:

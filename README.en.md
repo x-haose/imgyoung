@@ -50,6 +50,7 @@ When an image host loses your files, every link to them in blog posts, docs and 
 ## Features
 
 - **Upload**: drag and drop or paste in the admin console, the HTTP API, URL import, and an S3-compatible API; PicGo, PicList and ShareX connect directly, and Typora connects through PicGo. The upload API accepts idempotency keys, so client retries never create duplicates.
+- **Import**: give it a list of image URLs, Markdown or HTML text, or just a sitemap; the server scans out the images, you confirm which hosts to import, and it transfers them in bulk and exports a mapping from old links to new ones.
 - **Serve**: short links `/i/<id>` can be cached by a CDN for a year; `?w=` resizes to preset widths and serves WebP to browsers that accept it; Referer allowlist against hotlinking; optionally 302 visitors to a channel's own public URL to save bandwidth.
 - **Storage**: ready-made templates for common object storage and cloud drives, raw parameters for any other rclone backend; priority decides primary and backups; scheduled health checks demote failing channels and bring them back once they recover; optionally require N synchronous copies per upload.
 - **Administration**: multiple users with storage quotas; named upload tokens with expiry, rotation and revocation; audit log, alerts and webhooks, Prometheus metrics; English and Simplified Chinese, light and dark themes.

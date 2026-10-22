@@ -23,11 +23,14 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { type ExifPolicy, type UploadOptions } from './data'
+import { type UploadOptions } from './data'
+import {
+  defaultOptionsDraft,
+  draftToOptions,
+  type OptionsDraft,
+} from './upload-options'
+import { UploadOptionsFields } from './upload-options-fields'
 import { type UploadEntry, useUploadQueue } from './upload-queue'
-
-type TtlMode = 'default' | 'never' | 'custom'
-type ExifMode = 'default' | ExifPolicy
 
 /** 与后端格式白名单一致的选择器提示;真校验在服务端。 */
 const ACCEPT = 'image/jpeg,image/png,image/gif,image/webp'
@@ -47,29 +50,16 @@ export function UploadDialog({
   const m = useMessages()
   const config = useServerConfig()
   const queue = useUploadQueue(onUploaded)
-  const [ttlMode, setTtlMode] = useState<TtlMode>('default')
-  const [ttlHours, setTtlHours] = useState('24')
-  const [exif, setExif] = useState<ExifMode>('default')
+  const [draft, setDraft] = useState<OptionsDraft>(defaultOptionsDraft)
   const [sourceURL, setSourceURL] = useState('')
   const [fetching, setFetching] = useState(false)
 
-  /** 当前选项;自定义档未填小时数时拒绝,静默回退到默认档会打破三态语义。 */
-  const options = useCallback((): UploadOptions | null => {
-    const hours = Number(ttlHours)
-    if (ttlMode === 'custom' && !(Number.isFinite(hours) && hours > 0)) {
-      toast.warning(m.images.ttlCustomRequired)
-      return null
-    }
-    return {
-      ttl:
-        ttlMode === 'never'
-          ? 'never'
-          : ttlMode === 'custom'
-            ? String(Math.round(hours * 3600))
-            : undefined,
-      exif: exif === 'default' ? undefined : exif,
-    }
-  }, [ttlMode, ttlHours, exif, m])
+  /** 当前选项;自定义档未填小时数时拒绝。 */
+  const options = useCallback(
+    (): UploadOptions | null =>
+      draftToOptions(draft, m.images.ttlCustomRequired),
+    [draft, m]
+  )
 
   const addFiles = useCallback(
     (files: Iterable<File>) => {
@@ -108,13 +98,6 @@ export function UploadDialog({
     document.addEventListener('paste', onPaste)
     return () => document.removeEventListener('paste', onPaste)
   }, [open, addFiles])
-
-  const ttlHint =
-    ttlMode === 'default'
-      ? m.images.ttlDefaultHint
-      : ttlMode === 'never'
-        ? m.images.ttlNeverHint
-        : m.images.ttlCustomHint
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -166,57 +149,11 @@ export function UploadDialog({
           </TabsContent>
         </Tabs>
 
-        <div className='grid gap-3 rounded-lg border bg-muted/30 p-3'>
-          <div className='grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2'>
-            <span className='text-sm whitespace-nowrap'>{m.images.ttl}</span>
-            <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
-              <Segmented
-                value={ttlMode}
-                onChange={setTtlMode}
-                options={[
-                  { value: 'default', label: m.images.ttlDefault },
-                  { value: 'never', label: m.images.ttlNever },
-                  { value: 'custom', label: m.images.ttlCustom },
-                ]}
-              />
-              {ttlMode === 'custom' && (
-                <div className='flex items-center gap-1.5'>
-                  <Input
-                    type='number'
-                    min={1}
-                    step={1}
-                    value={ttlHours}
-                    onChange={(e) => setTtlHours(e.target.value)}
-                    className='h-8 w-24'
-                    aria-label={m.images.hours}
-                  />
-                  <span className='text-xs text-muted-foreground'>
-                    {m.images.hours}
-                  </span>
-                </div>
-              )}
-            </div>
-            <span className='text-sm whitespace-nowrap'>
-              {m.images.exifPolicy}
-            </span>
-            <div>
-              <Segmented
-                value={exif}
-                onChange={setExif}
-                options={[
-                  { value: 'default', label: m.images.exifDefault },
-                  { value: 'strip', label: m.images.exifStrip },
-                  { value: 'passthrough', label: m.images.exifPassthrough },
-                ]}
-              />
-            </div>
-          </div>
-          <p className='text-xs text-muted-foreground'>
-            {[ttlHint, m.images.exifHint, m.images.appliesLater].join(
-              m.common.sentenceSeparator
-            )}
-          </p>
-        </div>
+        <UploadOptionsFields
+          draft={draft}
+          onChange={setDraft}
+          footnote={m.images.appliesLater}
+        />
 
         {queue.entries.length > 0 && (
           <EntryList entries={queue.entries} onClear={queue.clearSettled} />
@@ -276,42 +213,6 @@ function Dropzone({
         <span className='block'>{limits}</span>
       </span>
     </label>
-  )
-}
-
-/** 分段单选:一组互斥档位。 */
-function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T
-  options: { value: T; label: string }[]
-  onChange: (value: T) => void
-}) {
-  return (
-    <div
-      role='radiogroup'
-      className='inline-flex rounded-lg border bg-background p-0.5'
-    >
-      {options.map((o) => (
-        <button
-          key={o.value}
-          type='button'
-          role='radio'
-          aria-checked={o.value === value}
-          onClick={() => onChange(o.value)}
-          className={cn(
-            'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
-            o.value === value
-              ? 'bg-primary/15 text-primary'
-              : 'text-muted-foreground hover:text-foreground'
-          )}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
   )
 }
 

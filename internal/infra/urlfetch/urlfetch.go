@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"path"
 	"syscall"
 	"time"
 )
@@ -72,15 +73,20 @@ func New(maxBytes func() int64, timeout time.Duration) *Fetcher {
 			if len(via) > maxRedirects {
 				return ErrTooManyRedirects
 			}
-			// net/http 跟随重定向时把上一跳的完整地址写进 Referer,用户提交的地址不外泄给重定向目标。
-			req.Header.Del("Referer")
+			keepReferer(req, via)
 			return checkScheme(req.URL)
 		},
 	}
 	return f
 }
 
-// Fetch 抓取指定地址的内容。
+// Options 单次抓取的可选参数,零值即默认行为。
+type Options struct {
+	Referer   string // 非空时随请求发送,重定向时保留;从 https 跳到 http 时不发。空表示不带 Referer
+	UserAgent string // 非空时替换 Go 标准库默认的 User-Agent
+}
+
+// Fetch 抓取指定地址的内容,不带 Referer,使用默认 User-Agent。
 // @Description: 返回的字节数受大小上限约束——超限即报错而非截断,截断的图片会在后续
 // 解码阶段变成一个含义模糊的"图片损坏"。
 // @param ctx 控制取消;总时长另受配置上限约束
@@ -89,6 +95,17 @@ func New(maxBytes func() int64, timeout time.Duration) *Fetcher {
 // @return 远端返回的 Content-Type(仅作日志与文件名推断参考,格式判定仍以 magic bytes 为准)
 // @return ErrScheme / ErrBlockedAddress / ErrTooManyRedirects / ErrTooLarge / ErrStatus 或网络错误
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, string, error) {
+	return f.FetchWith(ctx, rawURL, Options{})
+}
+
+// FetchWith 按选项抓取指定地址的内容,约束与返回值同 Fetch。
+// @param ctx 控制取消;总时长另受配置上限约束
+// @param rawURL 待抓取地址
+// @param opts 可选参数
+// @return 响应体字节
+// @return 远端返回的 Content-Type
+// @return ErrScheme / ErrBlockedAddress / ErrTooManyRedirects / ErrTooLarge / ErrStatus 或网络错误
+func (f *Fetcher) FetchWith(ctx context.Context, rawURL string, opts Options) ([]byte, string, error) {
 	target, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, "", fmt.Errorf("%w: 地址无法解析", ErrScheme)
@@ -102,6 +119,12 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, string, err
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("构造抓取请求: %w", err)
+	}
+	if opts.Referer != "" {
+		req.Header.Set("Referer", opts.Referer)
+	}
+	if opts.UserAgent != "" {
+		req.Header.Set("User-Agent", opts.UserAgent)
 	}
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -125,6 +148,37 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, string, err
 		return nil, "", ErrTooLarge
 	}
 	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// keepReferer 决定重定向请求的 Referer。
+// @Description: net/http 跟随重定向时会把上一跳的完整地址写进 Referer,提交的地址会外泄给重定向目标,
+// 所以调用方没有指定 Referer 时一律去掉;调用方指定了就保留,与浏览器带着来源页跟随重定向一致,
+// 只有从 https 跳到 http 时去掉,不把 https 来源泄露给明文连接。
+// @param req 即将发出的重定向请求
+// @param via 此前已发出的请求,首个是最初那次
+func keepReferer(req *http.Request, via []*http.Request) {
+	downgrade := via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme == "http"
+	if via[0].Header.Get("Referer") == "" || downgrade {
+		req.Header.Del("Referer")
+	}
+}
+
+// fallbackName 地址推不出文件名时的兜底名。
+const fallbackName = "fetched"
+
+// FileName 从地址路径的最后一段推断文件名,仅作元数据展示。
+// @param rawURL 远端地址
+// @return 推断出的文件名;推不出时返回兜底名
+func FileName(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fallbackName
+	}
+	name := path.Base(u.Path)
+	if name == "" || name == "." || name == "/" {
+		return fallbackName
+	}
+	return name
 }
 
 // checkScheme 校验协议白名单。

@@ -39,5 +39,8 @@ export const audit = {
     'referer.add': '添加防盗链白名单',
     'referer.remove': '移除防盗链白名单',
     'config.update': '修改配置',
+    'import.create': '创建导入',
+    'import.cancel': '取消导入',
+    'import.delete': '删除导入',
   },
 }

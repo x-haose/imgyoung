@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
-	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -18,9 +16,6 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 	"github.com/x-haose/imgyoung/internal/infra/urlfetch"
 )
-
-// fetchFallbackName 远端地址推不出文件名时的兜底名;文件名只作元数据展示,不参与任何逻辑。
-const fetchFallbackName = "fetched"
 
 // maxJSONBody URL 转存请求体的大小上限;正常请求只有几百字节,此闸只防喂超大 body。
 const maxJSONBody = 8 << 10
@@ -114,10 +109,10 @@ func (h *Handlers) parseURLUpload(w http.ResponseWriter, r *http.Request, set co
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.URLRequired)
 		return urlUpload{}, false
 	}
-	ttl, ttlSet, ok := parseTTL(rawTTLString(req.TTL))
+	ttl, ttlSet, ok := httpx.ParseTTL(httpx.TTLString(req.TTL))
 	if !ok {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.UploadTTLInvalid,
-			"max", strconv.FormatInt(maxTTLSeconds, 10))
+			"max", strconv.FormatInt(httpx.MaxTTLSeconds, 10))
 		return urlUpload{}, false
 	}
 	policy := imaging.EXIFPolicy(req.EXIFPolicy)
@@ -130,7 +125,7 @@ func (h *Handlers) parseURLUpload(w http.ResponseWriter, r *http.Request, set co
 	}
 	name := req.FileName
 	if name == "" {
-		name = fileNameFromURL(req.URL)
+		name = urlfetch.FileName(req.URL)
 	}
 	return urlUpload{url: req.URL, fileName: name, policy: policy, ttl: ttl, ttlSet: ttlSet}, true
 }
@@ -151,38 +146,6 @@ func (h *Handlers) respondExisting(w http.ResponseWriter, r *http.Request, set c
 		writeUploaded(h, w, r, set, imageID)
 	}
 	return found
-}
-
-// rawTTLString 把 JSON 里的 ttl 取值归一成字符串。
-// @Description: 数字(3600)与字符串("3600" / "never")都收——客户端两种写法都自然,
-// 不值得为此逼用户记住某一种。
-// @param raw 原始 JSON 片段;为空表示未出现该字段
-// @return 归一后的取值,空串表示未指定
-func rawTTLString(raw json.RawMessage) string {
-	s := strings.TrimSpace(string(raw))
-	if s == "" || s == "null" {
-		return ""
-	}
-	var str string
-	if err := json.Unmarshal(raw, &str); err == nil {
-		return str
-	}
-	return s
-}
-
-// fileNameFromURL 从地址末段推断文件名,仅作元数据展示。
-// @param rawURL 远端地址
-// @return 推断出的文件名;推不出时返回兜底名
-func fileNameFromURL(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return fetchFallbackName
-	}
-	name := path.Base(u.Path)
-	if name == "" || name == "." || name == "/" {
-		return fetchFallbackName
-	}
-	return name
 }
 
 // writeFetchError 把抓取失败映射为状态码与可读理由。

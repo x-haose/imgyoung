@@ -103,6 +103,7 @@ type Config struct {
 	Boot       config.Bootstrap       // 引导配置(只读展示用;密钥与密码不进任何响应)
 	Backups    BackupAdmin            // 备份管理入口
 	Recovery   RecoveryAdmin          // 图片记录找回入口
+	Imports    ImportAdmin            // 批量导入的命令入口
 	Shutdown   func()                 // 触发整个进程优雅停机;恢复快照后调用,由进程管理器拉起时换入
 	Logger     *slog.Logger           // 结构化日志
 }

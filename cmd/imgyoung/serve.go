@@ -130,7 +130,7 @@ func (a *app) addStopRequest(ctx context.Context, g *run.Group, shutdown func())
 	}, func(error) { shutdown() })
 }
 
-// addLoops 把全部后台周期循环(用量/查重/清理/活跃度/衍生图访问时间/健康/告警/备份/认证维护)作为 actor 加入运行组。
+// addLoops 把全部后台循环(用量/查重/清理/活跃度/衍生图访问时间/健康/告警/备份/认证维护/批量导入)作为 actor 加入运行组。
 // @Description: 各循环共用 ctx,execute 跑到 ctx 取消即返回;ctx 由按序停机在 HTTP 收敛之后取消。
 // 间隔取自配置快照,后台改间隔即刻重排当前等待。均为兜底型循环。
 // @param ctx 循环生命周期;取消即各自收敛退出
@@ -147,6 +147,7 @@ func (a *app) addLoops(ctx context.Context, g *run.Group, shutdown func()) {
 	}
 
 	add(func() { authMaintenanceLoop(ctx, a.auth, a.logger) })
+	add(func() { a.importer.Run(ctx) })
 	add(func() { a.reporter.Run(ctx, seconds(func(s config.Settings) int { return s.UsageReportSeconds })) })
 	add(func() { a.merger.Run(ctx, seconds(func(s config.Settings) int { return s.DedupScanSeconds })) })
 	add(func() { a.sweeper.Run(ctx, seconds(func(s config.Settings) int { return s.CleanupSweepSeconds })) })

@@ -22,6 +22,7 @@ require (
 	github.com/riverqueue/river/riverdriver/riversqlite v0.39.0
 	github.com/riverqueue/river/rivertype v0.39.0
 	github.com/unknwon/goconfig v1.0.0
+	github.com/yuin/goldmark v1.8.6
 	golang.org/x/crypto v0.58.0
 	golang.org/x/image v0.47.0
 	golang.org/x/net v0.61.0
