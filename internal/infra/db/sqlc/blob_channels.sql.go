@@ -389,7 +389,7 @@ func (q *Queries) ListBlobChannelsForChannelPage(ctx context.Context, arg ListBl
 
 const listChannelReplicas = `-- name: ListChannelReplicas :many
 SELECT bc.blob_id, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at, b.size, b.mime,
-       CAST(COALESCE((SELECT MIN(i.id) FROM images i WHERE i.blob_id = bc.blob_id), '') AS TEXT) AS image_id,
+       CAST(COALESCE((SELECT i.id FROM images i WHERE i.blob_id = bc.blob_id ORDER BY i.created_at, i.id LIMIT 1), '') AS TEXT) AS image_id,
        (SELECT COUNT(*) FROM images i WHERE i.blob_id = bc.blob_id) AS image_count
 FROM blob_channels bc
 JOIN blobs b ON b.id = bc.blob_id
@@ -543,6 +543,43 @@ func (q *Queries) ListPendingBlobChannelsAfter(ctx context.Context, arg ListPend
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingBlobIDsForChannelAfter = `-- name: ListPendingBlobIDsForChannelAfter :many
+SELECT blob_id
+FROM blob_channels
+WHERE channel_id = ?1 AND state = 'pending' AND blob_id > ?2
+ORDER BY blob_id
+LIMIT ?3
+`
+
+type ListPendingBlobIDsForChannelAfterParams struct {
+	ChannelID   int64
+	AfterBlobID int64
+	PageLimit   int64
+}
+
+func (q *Queries) ListPendingBlobIDsForChannelAfter(ctx context.Context, arg ListPendingBlobIDsForChannelAfterParams) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingBlobIDsForChannelAfter, arg.ChannelID, arg.AfterBlobID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var blob_id int64
+		if err := rows.Scan(&blob_id); err != nil {
+			return nil, err
+		}
+		items = append(items, blob_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

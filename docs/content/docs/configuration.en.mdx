@@ -216,13 +216,13 @@ Each round first merges byte-identical images automatically, then scans for simi
 | `backup_keep` | Backups to keep | `24` | ≥ 1 | Snapshots kept on each channel |
 | `usage_report_seconds` | Usage report interval | `300` | ≥ 1, seconds | How often the `imgyoung_channel_storage_bytes` metric is refreshed |
 | `channel_quota_gb` | Channel usage alert threshold | `0` | ≥ 0, GB | Alert when a channel's usage exceeds this; `0` disables the alert |
-| `replicate_limit_mbps` | Replication write limit | `0` | integer ≥ 0, MB/s | Cap on the total bandwidth background replication writes to channels; `0` means unlimited |
+| `replicate_limit_mbps` | Replication write limit | `0` | integer ≥ 0, MB/s | Cap on the total bandwidth backfill writes to channels; `0` means unlimited |
 
 - **`backup_interval_hours`**: at startup, a backup runs right away if any healthy channel lacks a snapshot within this interval. See [Backup & restore](./operations/backup.mdx).
 - **`backup_keep`**: snapshots are written to every channel that is healthy and not draining, and after each write that channel keeps only the newest this many. If any channel fails to remove old snapshots, the round counts as failed (error code `backup_prune_failed`) and opens the backup failed alert.
 - **`usage_report_seconds`**: only controls how often that metric is refreshed; usage alerts are evaluated on the health check interval.
 - **`channel_quota_gb`**: 1 GB = 2³⁰ bytes. A channel's stored data is the sum of image sizes of its completed replicas. Exceeding the threshold opens an alert but does not block writes.
-- **`replicate_limit_mbps`**: all channels combined. It limits only background replication, not the synchronous writes of user uploads or reads. Applies as soon as you save. See [Migrating a storage channel](./operations/migrate-channel.mdx#limiting-replication-bandwidth).
+- **`replicate_limit_mbps`**: all channels combined. It limits only backfill (replication of existing images to a new channel and the replication that reconciliation re-queues), not the replication triggered by new uploads, the synchronous writes of user uploads, or reads. Applies as soon as you save. See [Migrating a storage channel](./operations/migrate-channel.mdx#limiting-replication-bandwidth).
 
 ### CDN cache purge
 

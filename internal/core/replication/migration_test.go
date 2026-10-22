@@ -7,23 +7,23 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 )
 
-// jobPriorities 按目标 blob 返回 River 里补齐任务的优先级。
-func jobPriorities(t *testing.T, env *testEnv) map[int64]int {
+// jobQueues 按目标 blob 返回 River 里补齐任务所在的队列。
+func jobQueues(t *testing.T, env *testEnv) map[int64]string {
 	t.Helper()
-	rows, err := env.conn.QueryContext(t.Context(), `SELECT CAST(json_extract(args, '$.blob_id') AS INTEGER), priority
+	rows, err := env.conn.QueryContext(t.Context(), `SELECT CAST(json_extract(args, '$.blob_id') AS INTEGER), queue
 FROM river_job WHERE kind = 'replicate_blob'`)
 	if err != nil {
 		t.Fatalf("查询任务表: %v", err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[int64]int{}
+	out := map[int64]string{}
 	for rows.Next() {
 		var blobID int64
-		var priority int
-		if err := rows.Scan(&blobID, &priority); err != nil {
+		var queue string
+		if err := rows.Scan(&blobID, &queue); err != nil {
 			t.Fatalf("读取任务行: %v", err)
 		}
-		out[blobID] = priority
+		out[blobID] = queue
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("遍历任务行: %v", err)
@@ -31,9 +31,9 @@ FROM river_job WHERE kind = 'replicate_blob'`)
 	return out
 }
 
-// TestBackfillQueuedBelowLiveReplication 对账重新排队的补课任务优先级低于上传时入队的补齐,
-// 并且同一个 (blob, 渠道) 已在队列里时不会因为优先级不同重复入队。
-func TestBackfillQueuedBelowLiveReplication(t *testing.T) {
+// TestBackfillRunsInSeparateQueue 对账重新排队的补课任务进补课队列,与上传时入队的补齐所在的默认队列隔离;
+// 同一个 (blob, 渠道) 已在队列里时不会因为队列不同重复入队。
+func TestBackfillRunsInSeparateQueue(t *testing.T) {
 	env := newEnv(t, false)
 	backfill, _ := seedNamedBlob(t, env, "seed_backfill", "hash-backfill")
 	live, _ := seedNamedBlob(t, env, "seed_live", "hash-live")
@@ -45,15 +45,38 @@ func TestBackfillQueuedBelowLiveReplication(t *testing.T) {
 		t.Fatalf("对账: %v", err)
 	}
 
-	got := jobPriorities(t, env)
+	got := jobQueues(t, env)
 	if len(got) != 2 {
 		t.Fatalf("任务数 = %d, 期望 2(live 已在队列,对账不重复入队): %v", len(got), got)
 	}
-	if got[live] != 1 {
-		t.Errorf("上传补齐的优先级 = %d, 期望 1(最高)", got[live])
+	if got[live] != "default" {
+		t.Errorf("上传补齐所在队列 = %q, 期望 default", got[live])
 	}
-	if got[backfill] <= got[live] {
-		t.Errorf("补课任务优先级 = %d, 期望低于上传补齐的 %d", got[backfill], got[live])
+	if got[backfill] != "backfill" {
+		t.Errorf("补课任务所在队列 = %q, 期望 backfill", got[backfill])
+	}
+}
+
+// TestEnqueueChannelPendingOnlyThatChannel 只为指定渠道的待补副本入队,别的渠道的待补副本不受影响。
+func TestEnqueueChannelPendingOnlyThatChannel(t *testing.T) {
+	env := newEnv(t, false)
+	blobID, _ := seedNamedBlob(t, env, "seed_one", "hash-one")
+	// seedNamedBlob 让 backup 待补、local 就绪;再把 local 上的这条也改成待补,用来验证按渠道过滤。
+	if _, err := env.conn.ExecContext(t.Context(), `UPDATE blob_channels SET state = 'pending'
+WHERE blob_id = ? AND channel_id = ?`, blobID, env.local.ID); err != nil {
+		t.Fatalf("改副本状态: %v", err)
+	}
+
+	n, err := env.runner.EnqueueChannelPending(t.Context(), env.backup.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("入队 = %d, err=%v, 期望只扫到 backup 上的 1 个", n, err)
+	}
+	var total, backupJobs int64
+	row := env.conn.QueryRowContext(t.Context(), `SELECT COUNT(*),
+COALESCE(SUM(CASE WHEN json_extract(args, '$.channel_id') = ? AND queue = 'backfill' THEN 1 ELSE 0 END), 0)
+FROM river_job WHERE kind = 'replicate_blob'`, env.backup.ID)
+	if err := row.Scan(&total, &backupJobs); err != nil || total != 1 || backupJobs != 1 {
+		t.Fatalf("任务数 %d、其中 backup 的补课任务 %d, err=%v, 期望都是 1", total, backupJobs, err)
 	}
 }
 
@@ -64,7 +87,8 @@ func TestChannelReplicaListAndRetry(t *testing.T) {
 	failed, _ := seedNamedBlob(t, env, "seed_failed", "hash-failed")
 	uploading, _ := seedNamedBlob(t, env, "seed_uploading", "hash-uploading")
 	if _, err := env.conn.ExecContext(t.Context(),
-		`INSERT INTO images (id, blob_id, user_id) VALUES ('img0000001', ?, 'default'), ('img0000002', ?, 'default')`,
+		`INSERT INTO images (id, blob_id, user_id, created_at) VALUES
+('img0000001', ?, 'default', '2026-01-02 00:00:00'), ('img0000002', ?, 'default', '2026-01-01 00:00:00')`,
 		failed, failed); err != nil {
 		t.Fatalf("造图片引用: %v", err)
 	}
@@ -91,8 +115,8 @@ func TestChannelReplicaListAndRetry(t *testing.T) {
 		return rows
 	}
 	if rows := list("failed"); len(rows) != 1 || rows[0].BlobID != failed || rows[0].LastErrorReason != "timeout" ||
-		rows[0].ImageID != "img0000001" || rows[0].ImageCount != 2 {
-		t.Fatalf("失败清单 = %+v, 期望只有失败的那个 blob,带最早的图片与引用数 2", rows)
+		rows[0].ImageID != "img0000002" || rows[0].ImageCount != 2 {
+		t.Fatalf("失败清单 = %+v, 期望只有失败的那个 blob,带创建最早的图片(不是 ID 字典序最小的)与引用数 2", rows)
 	}
 	if rows := list("pending"); len(rows) != 1 || rows[0].BlobID != uploading || rows[0].ImageID != "" {
 		t.Fatalf("待补清单 = %+v, 期望含补齐中的 blob,且没有图片引用时 image_id 为空", rows)

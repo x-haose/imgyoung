@@ -1,6 +1,7 @@
 package adminapi
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -103,13 +104,14 @@ func (h *Handlers) HandleChannelReplicasRetry(w http.ResponseWriter, r *http.Req
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	if h.cfg.Replicator != nil {
-		if err := h.cfg.Replicator.Reconcile(r.Context()); err != nil {
-			h.cfg.Logger.Warn("重试失败的副本后重新排队未完成,留待周期对账", "channel", channelID, "err", err)
-		}
-	}
 	h.recordAudit(r.Context(), audit.ActionChannelRetryReplicas, strconv.FormatInt(channelID, 10),
 		"retried="+strconv.FormatInt(n, 10))
+	// 副本已改回待补,入队失败或被打断时由周期对账补上,不影响本次结果;入队脱离请求的取消,不因客户端断开而中途停下。
+	if h.cfg.Replicator != nil && n > 0 {
+		if _, err := h.cfg.Replicator.EnqueueChannelPending(context.WithoutCancel(r.Context()), channelID); err != nil {
+			h.cfg.Logger.Warn("重试失败的副本后入队未完成,留待周期对账", "channel", channelID, "err", err)
+		}
+	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, struct {
 		Retried int64 `json:"retried"` // 改回待补的副本数
 	}{Retried: n})

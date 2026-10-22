@@ -50,6 +50,8 @@ type ReplicationKicker interface {
 	Reconcile(ctx context.Context) error
 	// EnqueueChannelDrain 为清理中的渠道入队排空任务(幂等,按参数去重)。
 	EnqueueChannelDrain(ctx context.Context, channelID int64) error
+	// EnqueueChannelPending 为一个渠道上全部待补的副本入队补课任务,返回扫到的副本数。
+	EnqueueChannelPending(ctx context.Context, channelID int64) (int, error)
 }
 
 // ImageAdmin 图片的修改与删除入口(由 lifecycle.Sweeper 实现)。

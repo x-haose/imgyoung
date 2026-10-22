@@ -181,7 +181,7 @@ export const settings = {
       },
       replicate_limit_mbps: {
         label: 'Replication write limit',
-        hint: 'Total bandwidth cap for background replication writes across all channels; 0 means unlimited. Only background replication is limited, not user uploads',
+        hint: 'Total bandwidth cap for backfill writes across all channels (replication of existing images to a new channel and similar); 0 means unlimited. Replication triggered by new uploads and user uploads are not limited',
       },
       cdn_cloudflare_zone_id: {
         label: 'Cloudflare Zone ID',

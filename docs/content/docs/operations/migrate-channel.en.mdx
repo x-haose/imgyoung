@@ -75,13 +75,15 @@ Failed replicas are retried without this too: while a channel is healthy, the pe
 
 ## Limiting replication bandwidth
 
-Migrating an instance with many images can saturate your outbound bandwidth. `replicate_limit_mbps` under **Settings → Runtime settings → Reliability & channels** caps the total bandwidth that background replication writes to channels:
+Migrating an instance with many images can saturate your outbound bandwidth. `replicate_limit_mbps` under **Settings → Runtime settings → Reliability & channels** caps the total bandwidth that backfill writes to channels. Backfill means the replication of existing images to a new channel, plus the replication that reconciliation re-queues at startup and periodically. It runs in a separate backfill queue:
 
 - unit MB/s, all channels combined;
 - default `0`, no limit;
 - applies as soon as you save, with no restart.
 
-It limits only background replication. It does not affect the synchronous writes of user uploads, and it does not limit reads. Images uploaded during the migration are still replicated to every channel quickly and do not queue behind the backfill. See [Configuration](../configuration.mdx#reliability--channels) for the value range.
+It limits only backfill. It does not affect the replication triggered by new uploads or the synchronous writes of user uploads, and it does not limit reads. The backfill queue and the default queue that handles replication triggered by uploads do not share workers, so images uploaded during the migration are still replicated to every channel quickly.
+
+The backfill queue runs at most 3 replication jobs at a time, and they share this cap; one job may run for at most 15 minutes. If the limit is too low, a file that cannot finish in time times out and is retried. With the default single-image limit of 50 MB, 1 MB/s is enough. See [Configuration](../configuration.mdx#reliability--channels) for the value range.
 
 ## Things to know
 

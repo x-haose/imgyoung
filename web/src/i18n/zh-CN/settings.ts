@@ -158,7 +158,7 @@ export const settings = {
       },
       replicate_limit_mbps: {
         label: '补齐写入限速',
-        hint: '后台补齐写入各渠道的总带宽上限，所有渠道合计；0 表示不限。只限后台补齐，不限用户上传',
+        hint: '后台补课（新渠道的存量补齐等）写入各渠道的总带宽上限，所有渠道合计；0 表示不限。不限新上传的补齐与用户上传',
       },
       cdn_cloudflare_zone_id: {
         label: 'Cloudflare Zone ID',

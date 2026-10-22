@@ -92,9 +92,16 @@ SET state      = 'pending',
     updated_at = datetime('now')
 WHERE state = 'failed' AND channel_id = ?;
 
+-- name: ListPendingBlobIDsForChannelAfter :many
+SELECT blob_id
+FROM blob_channels
+WHERE channel_id = @channel_id AND state = 'pending' AND blob_id > @after_blob_id
+ORDER BY blob_id
+LIMIT @page_limit;
+
 -- name: ListChannelReplicas :many
 SELECT bc.blob_id, bc.state, bc.attempts, bc.last_error_reason, bc.last_error, bc.updated_at, b.size, b.mime,
-       CAST(COALESCE((SELECT MIN(i.id) FROM images i WHERE i.blob_id = bc.blob_id), '') AS TEXT) AS image_id,
+       CAST(COALESCE((SELECT i.id FROM images i WHERE i.blob_id = bc.blob_id ORDER BY i.created_at, i.id LIMIT 1), '') AS TEXT) AS image_id,
        (SELECT COUNT(*) FROM images i WHERE i.blob_id = bc.blob_id) AS image_count
 FROM blob_channels bc
 JOIN blobs b ON b.id = bc.blob_id

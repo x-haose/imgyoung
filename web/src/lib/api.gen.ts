@@ -1647,7 +1647,7 @@ export interface components {
             alert_webhook_url: string;
             /** @description 审计日志保留天数；0 表示永久保留 */
             audit_retention_days: number;
-            /** @description 后台补齐写入渠道的总带宽上限（MB/s），所有渠道合计；0 表示不限。只限补齐，不限用户上传的同步写入 */
+            /** @description 后台补课写入渠道的总带宽上限（MB/s），所有渠道合计；0 表示不限。补课指新建渠道的存量补齐与对账重新排队的补齐；不限新上传触发的补齐、用户上传的同步写入与读取 */
             replicate_limit_mbps: number;
         };
         /** @description 「配置键 → 新值」对象；键与值类型同 Settings，只需给出要改的键 */
