@@ -8,6 +8,7 @@ CREATE TABLE import_jobs (
     ttl_seconds INTEGER, -- 导入图片的有效期,秒;0 表示永久,NULL 表示按用户默认与全局默认
     exif_policy TEXT NOT NULL DEFAULT '', -- 导入图片的 EXIF 档位 strip / passthrough;空串表示全局默认
     referer TEXT NOT NULL DEFAULT '', -- 抓取图片时发送的 Referer;空串表示取条目的第一个来源页
+    tags TEXT NOT NULL DEFAULT '[]', -- 导入的每张图自动带上的标签,JSON 字符串数组
     scan_pages_found INTEGER NOT NULL DEFAULT 0, -- 扫描中已发现的页面数
     scan_pages_done INTEGER NOT NULL DEFAULT 0, -- 扫描中已处理的页面数
     scan_report TEXT, -- 扫描结束时的汇总,JSON 对象;NULL 表示没有扫描过程或尚未扫描完

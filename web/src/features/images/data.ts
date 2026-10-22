@@ -36,6 +36,7 @@ export interface ImageListParams {
   since?: string // UTC 文本,闭区间下界
   until?: string // UTC 文本,开区间上界
   exempt?: 1
+  tag?: string
 }
 
 /** 单次批量删除的张数上限,与后端一致,超限整请求 400。 */
@@ -65,6 +66,7 @@ export function toListParams(s: ImagesSearch): ImageListParams {
     since: s.since ? toUTCText(localDayStart(s.since)) : undefined,
     until: s.until ? toUTCText(localDayStart(s.until, 1)) : undefined,
     exempt: s.exempt ? 1 : undefined,
+    tag: s.tag,
   }
 }
 

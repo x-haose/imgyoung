@@ -32,6 +32,7 @@ export const audit = {
     'user.delete': 'Delete user',
     'image.update': 'Update image',
     'image.signed_url': 'Sign private image link',
+    'image.tags': 'Bulk edit tags',
     'image.delete': 'Delete image',
     'image.recover': 'Recover image records',
     'data.export': 'Export data',

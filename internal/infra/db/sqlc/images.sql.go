@@ -70,6 +70,8 @@ WHERE (?1 = '' OR i.user_id = ?1)
   AND (?4 = '' OR i.created_at >= ?4)
   AND (?5 = '' OR i.created_at < ?5)
   AND (?6 = 0 OR i.cleanup_exempt = 1)
+  AND (?7 = '' OR EXISTS (SELECT 1 FROM image_tags it JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id AND tg.name = ?7))
 `
 
 type CountImagesAdminParams struct {
@@ -79,6 +81,7 @@ type CountImagesAdminParams struct {
 	Since   interface{}
 	Until   interface{}
 	Exempt  interface{}
+	Tag     interface{}
 }
 
 func (q *Queries) CountImagesAdmin(ctx context.Context, arg CountImagesAdminParams) (int64, error) {
@@ -89,6 +92,7 @@ func (q *Queries) CountImagesAdmin(ctx context.Context, arg CountImagesAdminPara
 		arg.Since,
 		arg.Until,
 		arg.Exempt,
+		arg.Tag,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -170,6 +174,12 @@ const getImageAdmin = `-- name: GetImageAdmin :one
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
+       CAST(COALESCE((SELECT json_group_array(n)
+                      FROM (SELECT tg.name AS n
+                            FROM image_tags it
+                            JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id
+                            ORDER BY tg.name)), '[]') AS TEXT) AS tags,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -193,6 +203,7 @@ type GetImageAdminRow struct {
 	CleanupExempt      int64
 	Private            int64
 	CreatedAt          string
+	Tags               string
 	Mime               string
 	Size               int64
 	Width              int64
@@ -219,6 +230,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 		&i.CleanupExempt,
 		&i.Private,
 		&i.CreatedAt,
+		&i.Tags,
 		&i.Mime,
 		&i.Size,
 		&i.Width,
@@ -407,6 +419,12 @@ const listImagesAdmin = `-- name: ListImagesAdmin :many
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
+       CAST(COALESCE((SELECT json_group_array(n)
+                      FROM (SELECT tg.name AS n
+                            FROM image_tags it
+                            JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id
+                            ORDER BY tg.name)), '[]') AS TEXT) AS tags,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -418,8 +436,10 @@ WHERE (?1 = '' OR i.user_id = ?1)
   AND (?4 = '' OR i.created_at >= ?4)
   AND (?5 = '' OR i.created_at < ?5)
   AND (?6 = 0 OR i.cleanup_exempt = 1)
+  AND (?7 = '' OR EXISTS (SELECT 1 FROM image_tags it JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id AND tg.name = ?7))
 ORDER BY i.created_at DESC
-LIMIT ?8 OFFSET ?7
+LIMIT ?9 OFFSET ?8
 `
 
 type ListImagesAdminParams struct {
@@ -429,6 +449,7 @@ type ListImagesAdminParams struct {
 	Since      interface{}
 	Until      interface{}
 	Exempt     interface{}
+	Tag        interface{}
 	PageOffset int64
 	PageLimit  int64
 }
@@ -448,6 +469,7 @@ type ListImagesAdminRow struct {
 	CleanupExempt      int64
 	Private            int64
 	CreatedAt          string
+	Tags               string
 	Mime               string
 	Size               int64
 	Width              int64
@@ -464,6 +486,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 		arg.Since,
 		arg.Until,
 		arg.Exempt,
+		arg.Tag,
 		arg.PageOffset,
 		arg.PageLimit,
 	)
@@ -489,6 +512,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 			&i.CleanupExempt,
 			&i.Private,
 			&i.CreatedAt,
+			&i.Tags,
 			&i.Mime,
 			&i.Size,
 			&i.Width,

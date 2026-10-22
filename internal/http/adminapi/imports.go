@@ -57,6 +57,7 @@ type importCreateRequest struct {
 	TTL        json.RawMessage  `json:"ttl"`         // 导入图片的有效期,规则同 URL 转存
 	EXIFPolicy string           `json:"exif_policy"` // 导入图片的 EXIF 档位
 	Referer    string           `json:"referer"`     // 抓取图片时发送的 Referer
+	Tags       []string         `json:"tags"`        // 导入的每张图自动带上的标签
 }
 
 // HandleImportCreate 创建导入任务。
@@ -113,7 +114,7 @@ func importOptions(userID string, req importCreateRequest) (importer.Options, er
 	}
 	return importer.Options{
 		UserID: userID, TTL: ttl, TTLSet: explicit,
-		EXIFPolicy: imaging.EXIFPolicy(req.EXIFPolicy), Referer: req.Referer,
+		EXIFPolicy: imaging.EXIFPolicy(req.EXIFPolicy), Referer: req.Referer, Tags: req.Tags,
 	}, nil
 }
 

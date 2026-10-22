@@ -396,6 +396,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/images/batch-tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量追加或移除标签
+         * @description 对每张图追加 `add` 里的标签、移除 `remove` 里的标签，某张失败不影响其余。标签挂在图片属主名下，普通用户修改他人的图按不存在处理。单次最多 100 个 ID。
+         */
+        post: operations["batchTagImages"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 我的标签
+         * @description 返回当前用户正在使用的标签及各自的图片数，按名称排序。没有图片使用的标签不会出现。
+         */
+        get: operations["listTags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/images/{id}/signed-url": {
         parameters: {
             query?: never;
@@ -444,8 +484,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 修改有效期、清理豁免或私有开关
-         * @description 至少带一个修改项。`ttl_hours` 与 `private` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
+         * 修改有效期、清理豁免、私有开关或标签
+         * @description 至少带一个修改项。`ttl_hours`、`private` 与 `tags` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
          */
         patch: operations["patchImage"];
         trace?: never;
@@ -1431,7 +1471,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_not_private" | "signed_url_invalid" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "import_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_private_invalid" | "upload_bad_dimensions" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_not_private" | "tag_invalid" | "tag_too_many" | "batch_tags_invalid" | "signed_url_invalid" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "import_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_private_invalid" | "upload_bad_dimensions" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -1965,6 +2005,8 @@ export interface components {
             cleanup_exempt: boolean;
             /** @description 是否私有图；私有图的公开链接返回 404，只有带有效签名的链接能访问 */
             private: boolean;
+            /** @description 标签，按名称排序；没有标签为空数组 */
+            tags: string[];
             /** @description 上传时刻 */
             created_at: string;
             /**
@@ -2060,6 +2102,8 @@ export interface components {
             exif_policy?: "strip" | "passthrough" | "spoof";
             /** @description 抓取图片时发送的 `Referer`，须是 http 或 https 绝对地址，用于绕过只放行自家页面的防盗链。缺省时取该图片来源页的地址；来源不是网页（图片清单、文档）时不发送 */
             referer?: string;
+            /** @description 导入的每张图自动带上的标签，规则同 `PATCH /api/admin/images/{id}` 的 `tags`；缺省不带 */
+            tags?: string[];
         };
         ImportStartRequest: {
             /** @description 要导入的域名，取自 `GET /api/admin/imports/{id}/hosts` 的 `host`；重复的只算一个 */
@@ -2160,6 +2204,8 @@ export interface components {
             exif_policy: string;
             /** @description 创建时指定的 `Referer`；空串表示取来源页 */
             referer: string;
+            /** @description 创建时指定的标签；没有为空数组 */
+            tags: string[];
             counts: components["schemas"]["ImportCounts"];
             scan: components["schemas"]["ImportScan"];
             /** @description `aborted` 的原因：`upload_quota_exceeded`、`upload_unavailable` 或 `internal`；其他状态为 null */
@@ -2244,10 +2290,40 @@ export interface components {
             cleanup_exempt?: boolean;
             /** @description 设为私有或改回公开。私有开关每变一次，此前签发的签名链接全部失效；改回公开后原来的公开链接可用 */
             private?: boolean;
+            /** @description 整体替换这张图的标签，空数组清除全部标签。标签名去首尾空白后 1 到 32 个字符，不含控制字符，最多 20 个；标签挂在图片属主名下 */
+            tags?: string[];
         };
         BatchDeleteRequest: {
             /** @description 待删除的短 ID */
             ids: string[];
+        };
+        BatchTagsRequest: {
+            ids: string[];
+            /** @description 追加的标签；与 `remove` 至少有一个非空 */
+            add?: string[];
+            /** @description 移除的标签 */
+            remove?: string[];
+        };
+        BatchTagsResult: {
+            /** @description 成功修改张数 */
+            updated: number;
+            /** @description 失败明细；全部成功时为空数组 */
+            failed: (components["schemas"]["Error"] & {
+                id: string;
+            })[];
+        };
+        TagList: {
+            items: {
+                /** @description 标签名 */
+                name: string;
+                /**
+                 * Format: int64
+                 * @description 带这个标签的图片数
+                 */
+                image_count: number;
+            }[];
+            /** Format: int64 */
+            total: number;
         };
         BatchDeleteResult: {
             /** @description 成功删除张数 */
@@ -2767,6 +2843,7 @@ export interface components {
             pending_cleanup: boolean;
             cleanup_exempt: boolean;
             private: boolean;
+            tags: string[];
             created_at: string;
         };
         /** @description 导出的物理图 */
@@ -3668,6 +3745,8 @@ export interface operations {
                 until?: components["parameters"]["until"];
                 /** @description 只能为 `1`，表示只看已清理豁免的图 */
                 exempt?: 1;
+                /** @description 只看带这个标签的图，按标签名精确匹配；管理员能看到所有用户里带这个标签的图 */
+                tag?: string;
             };
             header?: never;
             path?: never;
@@ -3716,6 +3795,60 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    batchTagImages: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchTagsRequest"];
+            };
+        };
+        responses: {
+            /** @description 逐张结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchTagsResult"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    listTags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 标签列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagList"];
+                };
+            };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             500: components["responses"]["InternalError"];

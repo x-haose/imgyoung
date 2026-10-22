@@ -73,6 +73,18 @@ func DecodeReport(raw sql.NullString) (*ScanReport, error) {
 	return &r, nil
 }
 
+// DecodeTags 解出任务行里的标签。
+// @param raw tags 列,JSON 字符串数组
+// @return 标签,恒非 nil
+// @return 内容不是合法 JSON 时的错误
+func DecodeTags(raw string) ([]string, error) {
+	names := []string{}
+	if err := json.Unmarshal([]byte(raw), &names); err != nil {
+		return nil, fmt.Errorf("解析标签: %w", err)
+	}
+	return names, nil
+}
+
 // DecodeSeeds 解出任务行里的起始地址。
 // @param raw seeds 列,JSON 字符串数组
 // @return 起始地址,恒非 nil

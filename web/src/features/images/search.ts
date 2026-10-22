@@ -15,6 +15,7 @@ export const imagesSearchSchema = searchSchema({
   since: day(),
   until: day(),
   exempt: bool(),
+  tag: str(), // 只看带这个标签的图
   view: str(), // 当前打开详情的图片短 ID
 })
 
@@ -24,5 +25,7 @@ export type ImagesSearch = ReturnType<
 
 /** 是否带了任一筛选条件(决定空态文案:无图 vs 无匹配)。 */
 export function hasFilters(s: ImagesSearch): boolean {
-  return Boolean(s.q || s.user || s.token || s.since || s.until || s.exempt)
+  return Boolean(
+    s.q || s.user || s.token || s.since || s.until || s.exempt || s.tag
+  )
 }

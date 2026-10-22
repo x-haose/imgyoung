@@ -43,6 +43,9 @@ var (
 var (
 	ImageNotFound          = define("image_not_found", "图片不存在")
 	ImagePatchInvalid      = define("image_patch_invalid", "请求体非法:ttl_hours 须为 0 或不超过 {max} 的正整数,private 须为布尔值,至少含一项修改")
+	TagInvalid             = define("tag_invalid", "标签名需为 1 到 {max} 个字符,不含控制字符")
+	TagTooMany             = define("tag_too_many", "一张图最多 {max} 个标签")
+	BatchTagsInvalid       = define("batch_tags_invalid", "请求体非法:ids 需为 1 到 {max} 个图片 ID,add 与 remove 至少有一项非空")
 	ImageNotPrivate        = define("image_not_private", "只有私有图才有签名链接")
 	SignedURLInvalid       = define("signed_url_invalid", "ttl_seconds 须为 1 到 {max} 的整数")
 	CleanupExemptAdminOnly = define("cleanup_exempt_admin_only", "清理豁免仅管理员可设置")

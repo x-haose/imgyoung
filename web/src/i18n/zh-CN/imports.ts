@@ -67,6 +67,9 @@ export const imports = {
     advanced: '高级选项',
     referer: 'Referer',
     refererPlaceholder: 'https://old.example.com/',
+    tags: '标签',
+    tagsPlaceholder: '例如：旧博客，2023',
+    tagsHint: '导入的每张图都会带上这些标签，逗号分隔，最多 20 个',
     refererHint:
       '抓取图片时发送，用来绕过只放行自家页面的防盗链；留空则取图片所在的来源页，没有来源页时不发送',
     submitImages: '开始导入',

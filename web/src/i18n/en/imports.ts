@@ -70,6 +70,10 @@ export const imports = {
     advanced: 'Advanced options',
     referer: 'Referer',
     refererPlaceholder: 'https://old.example.com/',
+    tags: 'Tags',
+    tagsPlaceholder: 'For example: old blog, 2023',
+    tagsHint:
+      'Every imported image gets these tags; separate them with commas, at most 20',
     refererHint:
       'Sent when fetching images, to get past hotlink protection that only allows their own pages. Left empty, the page that referenced the image is used; with no such page, none is sent',
     submitImages: 'Start import',

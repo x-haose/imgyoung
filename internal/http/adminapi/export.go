@@ -37,20 +37,21 @@ type tokenExportItem struct {
 
 // imageExportItem 导出的上传引用。
 type imageExportItem struct {
-	ID                 string  `json:"id"`                    // 引用短 ID
-	BlobID             int64   `json:"blob_id"`               // 物理图主键
-	UserID             string  `json:"user_id"`               // 归属用户
-	TokenID            *int64  `json:"token_id"`              // 来源 Token;null 表示非 Token 途径或 Token 记录已删除
-	FileName           string  `json:"file_name"`             // 原始文件名
-	ObjectKey          *string `json:"object_key"`            // S3 客户端自取的对象键;null 表示无别名
-	ExpireAt           *string `json:"expire_at"`             // 到期时刻,UTC 文本;null 表示永久
-	TTLSeconds         *int64  `json:"ttl_seconds"`           // 有效时长(秒);null 表示永久
-	LastPublicAccessAt *string `json:"last_public_access_at"` // 最近公开访问,UTC 文本;null 表示从未
-	AccessCount        int64   `json:"access_count"`          // 累计公开访问次数
-	PendingCleanup     bool    `json:"pending_cleanup"`       // 是否在待清理列表
-	CleanupExempt      bool    `json:"cleanup_exempt"`        // 是否清理豁免
-	Private            bool    `json:"private"`               // 是否私有图
-	CreatedAt          string  `json:"created_at"`            // 上传时刻,UTC 文本
+	ID                 string   `json:"id"`                    // 引用短 ID
+	BlobID             int64    `json:"blob_id"`               // 物理图主键
+	UserID             string   `json:"user_id"`               // 归属用户
+	TokenID            *int64   `json:"token_id"`              // 来源 Token;null 表示非 Token 途径或 Token 记录已删除
+	FileName           string   `json:"file_name"`             // 原始文件名
+	ObjectKey          *string  `json:"object_key"`            // S3 客户端自取的对象键;null 表示无别名
+	ExpireAt           *string  `json:"expire_at"`             // 到期时刻,UTC 文本;null 表示永久
+	TTLSeconds         *int64   `json:"ttl_seconds"`           // 有效时长(秒);null 表示永久
+	LastPublicAccessAt *string  `json:"last_public_access_at"` // 最近公开访问,UTC 文本;null 表示从未
+	AccessCount        int64    `json:"access_count"`          // 累计公开访问次数
+	PendingCleanup     bool     `json:"pending_cleanup"`       // 是否在待清理列表
+	CleanupExempt      bool     `json:"cleanup_exempt"`        // 是否清理豁免
+	Private            bool     `json:"private"`               // 是否私有图
+	Tags               []string `json:"tags"`                  // 标签,按名称排序;没有为空数组
+	CreatedAt          string   `json:"created_at"`            // 上传时刻,UTC 文本
 }
 
 // blobExportItem 导出的物理图。
@@ -114,6 +115,10 @@ func (h *Handlers) collectExport(ctx context.Context) (exportPayload, error) {
 	if err != nil {
 		return exportPayload{}, fmt.Errorf("images: %w", err)
 	}
+	imageTags, err := h.cfg.Queries.ListImageTagsExport(ctx)
+	if err != nil {
+		return exportPayload{}, fmt.Errorf("image_tags: %w", err)
+	}
 	blobs, err := h.cfg.Queries.ListBlobsExport(ctx)
 	if err != nil {
 		return exportPayload{}, fmt.Errorf("blobs: %w", err)
@@ -126,7 +131,7 @@ func (h *Handlers) collectExport(ctx context.Context) (exportPayload, error) {
 		Users:        usersExport(users),
 		Channels:     channels,
 		Tokens:       tokensExport(tokens),
-		Images:       imagesExport(images),
+		Images:       imagesExport(images, imageTags),
 		Blobs:        blobsExport(blobs),
 		BlobChannels: blobChannelsExport(blobChannels),
 	}, nil
@@ -163,8 +168,13 @@ func tokensExport(rows []sqlc.ListTokensExportRow) []tokenExportItem {
 
 // imagesExport 把上传引用行映射为导出项,可空列以 null 表达。
 // @param rows 引用行
+// @param tagRows 全部图片与标签的关联,按图片与标签名排序
 // @return 导出项
-func imagesExport(rows []sqlc.ListImagesExportRow) []imageExportItem {
+func imagesExport(rows []sqlc.ListImagesExportRow, tagRows []sqlc.ListImageTagsExportRow) []imageExportItem {
+	tagsByImage := make(map[string][]string, len(tagRows))
+	for _, tr := range tagRows {
+		tagsByImage[tr.ImageID] = append(tagsByImage[tr.ImageID], tr.Name)
+	}
 	items := make([]imageExportItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, imageExportItem{
@@ -172,7 +182,7 @@ func imagesExport(rows []sqlc.ListImagesExportRow) []imageExportItem {
 			FileName: r.FileName, ObjectKey: nullableStr(r.ObjectKey), ExpireAt: nullableStr(r.ExpireAt),
 			TTLSeconds: nullableInt(r.TtlSeconds), LastPublicAccessAt: nullableStr(r.LastPublicAccessAt),
 			AccessCount: r.AccessCount, PendingCleanup: r.PendingCleanup != 0, CleanupExempt: r.CleanupExempt != 0,
-			Private: r.Private != 0, CreatedAt: r.CreatedAt,
+			Private: r.Private != 0, Tags: tagList(tagsByImage[r.ID]), CreatedAt: r.CreatedAt,
 		})
 	}
 	return items
@@ -205,4 +215,14 @@ func blobChannelsExport(rows []sqlc.BlobChannel) []blobChannelExportItem {
 		})
 	}
 	return items
+}
+
+// tagList 把标签名切片规整为非 nil,导出的 JSON 里没有标签时是 [] 而不是 null。
+// @param names 标签名,可为 nil
+// @return 非 nil 的标签名
+func tagList(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
 }

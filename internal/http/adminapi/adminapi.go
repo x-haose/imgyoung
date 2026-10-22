@@ -16,6 +16,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/recovery"
 	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
+	"github.com/x-haose/imgyoung/internal/core/tags"
 	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -63,6 +64,12 @@ type ImageAdmin interface {
 	DeleteImage(ctx context.Context, imageID string) error
 }
 
+// TagAdmin 图片标签的修改入口(由 tags.Service 实现)。
+type TagAdmin interface {
+	// Update 在单事务内修改一张图的标签;返回 tags.ErrImageNotFound / ErrInvalidName / ErrTooMany。
+	Update(ctx context.Context, imageID string, c tags.Change) error
+}
+
 // BackupAdmin 元数据库备份的管理入口(由 reliability.Service 实现)。
 type BackupAdmin interface {
 	// List 列出各健康渠道上快照的并集,最新在前,每份带持有它的渠道。
@@ -98,6 +105,7 @@ type Config struct {
 	Replicator ReplicationKicker      // 补齐管道唤醒口;nil 表示无补齐子系统(如部分测试装配)
 	Auth       *auth.Service          // 认证服务(登录/会话/用户/Token 管理)
 	Images     ImageAdmin             // 图片修改与删除入口
+	Tags       TagAdmin               // 图片标签修改入口
 	Dedup      DedupAdmin             // 相似候选裁决执行口
 	Queries    *sqlc.Queries          // 列表与统计查询
 	Audit      *audit.Recorder        // 管理操作审计记录器

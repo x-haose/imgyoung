@@ -18,6 +18,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/lifecycle"
+	"github.com/x-haose/imgyoung/internal/core/tags"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -26,27 +27,28 @@ import (
 
 // imageItem 面向前端的图片列表/详情项。
 type imageItem struct {
-	ID             string  `json:"id"`              // 对外短 ID
-	URL            string  `json:"url"`             // 访问路径
-	UserID         string  `json:"user_id"`         // 归属用户
-	UserName       string  `json:"user_name"`       // 归属用户的登录名
-	TokenID        *int64  `json:"token_id"`        // 上传来源 Token;null 表示非 Token 途径或来源 Token 记录已删除
-	TokenName      *string `json:"token_name"`      // 上传来源 Token 用途名;null 表示非 Token 途径或来源 Token 记录已删除
-	FileName       string  `json:"file_name"`       // 原始文件名
-	Mime           string  `json:"mime"`            // 真实 MIME
-	Size           int64   `json:"size"`            // 存储字节
-	Width          int64   `json:"width"`           // 像素宽
-	Height         int64   `json:"height"`          // 像素高
-	Sha256         string  `json:"sha256"`          // 内容哈希
-	ExpireAt       *string `json:"expire_at"`       // 到期时刻;null 表示永久
-	TTLSeconds     *int64  `json:"ttl_seconds"`     // 有效时长(秒),访问续期按此顺延;null 表示永久
-	LastAccessAt   *string `json:"last_access_at"`  // 最近公开访问;null 表示从未
-	AccessCount    int64   `json:"access_count"`    // 累计公开访问次数,flush 周期粒度(非精确 PV)
-	PendingCleanup bool    `json:"pending_cleanup"` // 是否在待清理列表
-	CleanupExempt  bool    `json:"cleanup_exempt"`  // 是否清理豁免
-	Private        bool    `json:"private"`         // 是否私有图:公开入口只认带有效签名的链接
-	CreatedAt      string  `json:"created_at"`      // 上传时刻
-	RefCount       int64   `json:"ref_count"`       // 物理图引用计数(同图去重共享)
+	ID             string   `json:"id"`              // 对外短 ID
+	URL            string   `json:"url"`             // 访问路径
+	UserID         string   `json:"user_id"`         // 归属用户
+	UserName       string   `json:"user_name"`       // 归属用户的登录名
+	TokenID        *int64   `json:"token_id"`        // 上传来源 Token;null 表示非 Token 途径或来源 Token 记录已删除
+	TokenName      *string  `json:"token_name"`      // 上传来源 Token 用途名;null 表示非 Token 途径或来源 Token 记录已删除
+	FileName       string   `json:"file_name"`       // 原始文件名
+	Mime           string   `json:"mime"`            // 真实 MIME
+	Size           int64    `json:"size"`            // 存储字节
+	Width          int64    `json:"width"`           // 像素宽
+	Height         int64    `json:"height"`          // 像素高
+	Sha256         string   `json:"sha256"`          // 内容哈希
+	ExpireAt       *string  `json:"expire_at"`       // 到期时刻;null 表示永久
+	TTLSeconds     *int64   `json:"ttl_seconds"`     // 有效时长(秒),访问续期按此顺延;null 表示永久
+	LastAccessAt   *string  `json:"last_access_at"`  // 最近公开访问;null 表示从未
+	AccessCount    int64    `json:"access_count"`    // 累计公开访问次数,flush 周期粒度(非精确 PV)
+	PendingCleanup bool     `json:"pending_cleanup"` // 是否在待清理列表
+	CleanupExempt  bool     `json:"cleanup_exempt"`  // 是否清理豁免
+	Private        bool     `json:"private"`         // 是否私有图:公开入口只认带有效签名的链接
+	Tags           []string `json:"tags"`            // 标签,按名称排序;没有标签为空数组
+	CreatedAt      string   `json:"created_at"`      // 上传时刻
+	RefCount       int64    `json:"ref_count"`       // 物理图引用计数(同图去重共享)
 }
 
 // replicaItem 单图在一个渠道上的副本状态。
@@ -86,13 +88,22 @@ func (h *Handlers) imageDetailFrom(ctx context.Context, row sqlc.GetImageAdminRo
 		}
 		replicas = append(replicas, item)
 	}
-	return imageDetail{imageItem: imageItemFrom(row), Replicas: replicas}, nil
+	item, err := imageItemFrom(row)
+	if err != nil {
+		return imageDetail{}, err
+	}
+	return imageDetail{imageItem: item, Replicas: replicas}, nil
 }
 
 // imageItemFrom 把查询行翻译为响应项(列表行与详情行字段同构,列表行经类型转换复用)。
 // @param row 图片详情查询行
 // @return 面向前端的响应项
-func imageItemFrom(row sqlc.GetImageAdminRow) imageItem {
+// @return 标签列的 JSON 无法解析时的错误(查询自己生成的值,出错即程序缺陷)
+func imageItemFrom(row sqlc.GetImageAdminRow) (imageItem, error) {
+	var tagNames []string
+	if err := json.Unmarshal([]byte(row.Tags), &tagNames); err != nil {
+		return imageItem{}, fmt.Errorf("解析图片标签: %w", err)
+	}
 	return imageItem{
 		ID: row.ID, URL: "/i/" + row.ID, UserID: row.UserID, UserName: row.UserName,
 		TokenID: nullableInt(row.TokenID), TokenName: nullableStr(row.TokenName),
@@ -101,8 +112,8 @@ func imageItemFrom(row sqlc.GetImageAdminRow) imageItem {
 		ExpireAt: nullableStr(row.ExpireAt), TTLSeconds: nullableInt(row.TtlSeconds),
 		LastAccessAt: nullableStr(row.LastPublicAccessAt), AccessCount: row.AccessCount,
 		PendingCleanup: row.PendingCleanup != 0, CleanupExempt: row.CleanupExempt != 0,
-		Private: row.Private != 0, CreatedAt: row.CreatedAt, RefCount: row.RefCount,
-	}
+		Private: row.Private != 0, Tags: tagNames, CreatedAt: row.CreatedAt, RefCount: row.RefCount,
+	}, nil
 }
 
 // HandleImageList 分页列出图片:普通用户只见自己的,管理员可按用户/Token/时间/关键词过滤。
@@ -124,7 +135,7 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := h.cfg.Queries.ListImagesAdmin(r.Context(), sqlc.ListImagesAdminParams{
 		UserID: userFilter, TokenID: f.tokenID, Search: q.Get("search"),
-		Since: f.since, Until: f.until, Exempt: f.exempt,
+		Since: f.since, Until: f.until, Exempt: f.exempt, Tag: f.tag,
 		PageLimit: f.limit, PageOffset: f.offset,
 	})
 	if err != nil {
@@ -134,7 +145,7 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	}
 	total, err := h.cfg.Queries.CountImagesAdmin(r.Context(), sqlc.CountImagesAdminParams{
 		UserID: userFilter, TokenID: f.tokenID, Search: q.Get("search"),
-		Since: f.since, Until: f.until, Exempt: f.exempt,
+		Since: f.since, Until: f.until, Exempt: f.exempt, Tag: f.tag,
 	})
 	if err != nil {
 		h.cfg.Logger.Error("统计图片总数失败", "err", err)
@@ -143,7 +154,13 @@ func (h *Handlers) HandleImageList(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]imageItem, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, imageItemFrom(sqlc.GetImageAdminRow(row)))
+		item, err := imageItemFrom(sqlc.GetImageAdminRow(row))
+		if err != nil {
+			h.cfg.Logger.Error("翻译图片列表项失败", "id", row.ID, "err", err)
+			httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
+			return
+		}
+		items = append(items, item)
 	}
 	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, listResponse{Items: items, Total: total})
 }
@@ -154,6 +171,7 @@ type imageFilters struct {
 	tokenID       int64  // 只看来自该 Token 的图;0 表示不限
 	since, until  string // 上传时间范围 [since, until),UTC 文本;空串表示该端不限
 	exempt        int64  // 1 表示只看已清理豁免的图,0 表示不限
+	tag           string // 只看带这个标签的图;空串表示不限
 }
 
 // parseImageFilters 解析图片列表的查询参数;user_id 与 search 不需校验,由调用方直接取用。
@@ -178,7 +196,7 @@ func parseImageFilters(r *http.Request) (imageFilters, error) {
 	if err != nil {
 		return imageFilters{}, err
 	}
-	f := imageFilters{limit: limit, offset: offset, tokenID: tokenID, since: since, until: until}
+	f := imageFilters{limit: limit, offset: offset, tokenID: tokenID, since: since, until: until, tag: q.Get("tag")}
 	if exempt {
 		f.exempt = 1
 	}
@@ -220,9 +238,10 @@ func (h *Handlers) writeImageDetail(w http.ResponseWriter, r *http.Request, row 
 
 // imagePatchRequest PATCH /images/{id} 的请求体;指针字段缺省表示不修改该项。
 type imagePatchRequest struct {
-	TTLHours      *int64 `json:"ttl_hours"`      // >0 从现在起算新到期并更新时长;0 改永久
-	CleanupExempt *bool  `json:"cleanup_exempt"` // 预设/取消清理豁免(仅管理员);取消时顺带摘 pending_cleanup 由下轮扫描重判
-	Private       *bool  `json:"private"`        // 设为私有或改回公开;属主与管理员均可改
+	TTLHours      *int64    `json:"ttl_hours"`      // >0 从现在起算新到期并更新时长;0 改永久
+	CleanupExempt *bool     `json:"cleanup_exempt"` // 预设/取消清理豁免(仅管理员);取消时顺带摘 pending_cleanup 由下轮扫描重判
+	Private       *bool     `json:"private"`        // 设为私有或改回公开;属主与管理员均可改
+	Tags          *[]string `json:"tags"`           // 整体替换这张图的标签;空数组清除全部标签
 }
 
 // HandleImagePatch 修改单图有效期或清理豁免;普通用户只可改自己的(他人图一律 404)。
@@ -238,7 +257,7 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	var req imagePatchRequest
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-		(req.TTLHours == nil && req.CleanupExempt == nil && req.Private == nil) ||
+		(req.TTLHours == nil && req.CleanupExempt == nil && req.Private == nil && req.Tags == nil) ||
 		(req.TTLHours != nil && (*req.TTLHours < 0 || *req.TTLHours > config.MaxDurationHours)) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.ImagePatchInvalid,
 			"max", strconv.Itoa(config.MaxDurationHours))
@@ -248,20 +267,18 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.CleanupExemptAdminOnly)
 		return
 	}
+	if req.Tags != nil {
+		norm, err := tags.Normalize(*req.Tags)
+		if err != nil || len(norm) > tags.MaxPerImage {
+			h.writeTagError(w, tagErrOrTooMany(err))
+			return
+		}
+		req.Tags = &norm
+	}
 	if _, ok := h.imageVisible(w, r, p, imageID); !ok {
 		return
 	}
-	err := h.cfg.Images.UpdateImage(r.Context(), imageID, imagePatchFrom(req))
-	switch {
-	case errors.Is(err, lifecycle.ErrImageExpired):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ImageExpired)
-		return
-	case errors.Is(err, lifecycle.ErrImageNotFound):
-		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
-		return
-	case err != nil:
-		h.cfg.Logger.Error("修改图片失败", "id", imageID, "err", err)
-		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
+	if !h.applyImagePatch(w, r, imageID, req) {
 		return
 	}
 	h.recordAudit(r.Context(), audit.ActionImageUpdate, imageID, imagePatchDetail(req))
@@ -278,6 +295,47 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.writeImageDetail(w, r, row)
+}
+
+// tagErrOrTooMany 标签名通过归一但个数超限时没有错误可用,补成 ErrTooMany。
+// @param err Normalize 返回的错误,可为 nil
+// @return err 非空原样返回,否则为 tags.ErrTooMany
+func tagErrOrTooMany(err error) error {
+	if err != nil {
+		return err
+	}
+	return tags.ErrTooMany
+}
+
+// applyImagePatch 施加已通过校验的修改:有效期、豁免与私有开关走生命周期服务,标签走标签服务。
+// @Description: 两类修改各自在自己的事务里完成;标签名与个数已在请求校验阶段挡掉,这里只剩图片不存在与落库失败。
+// @param imageID 目标图片短 ID
+// @param req 已通过校验的修改项
+// @return 全部生效为 true;失败时已写出错误响应
+func (h *Handlers) applyImagePatch(w http.ResponseWriter, r *http.Request, imageID string,
+	req imagePatchRequest) bool {
+	if req.TTLHours != nil || req.CleanupExempt != nil || req.Private != nil {
+		err := h.cfg.Images.UpdateImage(r.Context(), imageID, imagePatchFrom(req))
+		switch {
+		case errors.Is(err, lifecycle.ErrImageExpired):
+			httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ImageExpired)
+			return false
+		case errors.Is(err, lifecycle.ErrImageNotFound):
+			httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImageNotFound)
+			return false
+		case err != nil:
+			h.cfg.Logger.Error("修改图片失败", "id", imageID, "err", err)
+			httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
+			return false
+		}
+	}
+	if req.Tags != nil {
+		if err := h.cfg.Tags.Update(r.Context(), imageID, tags.Change{Set: req.Tags}); err != nil {
+			h.writeTagError(w, err)
+			return false
+		}
+	}
+	return true
 }
 
 // imagePatchFrom 把已通过校验的请求体译成领域侧的修改项。
@@ -305,6 +363,9 @@ func imagePatchDetail(req imagePatchRequest) string {
 	}
 	if req.Private != nil {
 		parts = append(parts, fmt.Sprintf("private=%t", *req.Private))
+	}
+	if req.Tags != nil {
+		parts = append(parts, "tags="+strings.Join(*req.Tags, ","))
 	}
 	return strings.Join(parts, " ")
 }

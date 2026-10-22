@@ -687,6 +687,11 @@ paths:
           schema:
             type: integer
             enum: [1]
+        - name: tag
+          in: query
+          description: 只看带这个标签的图，按标签名精确匹配；管理员能看到所有用户里带这个标签的图
+          schema:
+            type: string
       responses:
         '200':
           description: 图片分页
@@ -727,6 +732,58 @@ paths:
                 $ref: '#/components/schemas/BatchDeleteResult'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/images/batch-tags:
+    post:
+      operationId: batchTagImages
+      tags: [Admin · Images]
+      summary: 批量追加或移除标签
+      description: 对每张图追加 `add` 里的标签、移除 `remove` 里的标签，某张失败不影响其余。标签挂在图片属主名下，普通用户修改他人的图按不存在处理。单次最多 100 个 ID。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchTagsRequest'
+      responses:
+        '200':
+          description: 逐张结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTagsResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/admin/tags:
+    get:
+      operationId: listTags
+      tags: [Admin · Images]
+      summary: 我的标签
+      description: 返回当前用户正在使用的标签及各自的图片数，按名称排序。没有图片使用的标签不会出现。
+      security:
+        - session: []
+      responses:
+        '200':
+          description: 标签列表
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagList'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -815,8 +872,8 @@ paths:
     patch:
       operationId: patchImage
       tags: [Admin · Images]
-      summary: 修改有效期、清理豁免或私有开关
-      description: 至少带一个修改项。`ttl_hours` 与 `private` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
+      summary: 修改有效期、清理豁免、私有开关或标签
+      description: 至少带一个修改项。`ttl_hours`、`private` 与 `tags` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
       security:
         - session: []
       parameters:
@@ -3059,6 +3116,9 @@ components:
         - token_active
         - image_not_found
         - image_not_private
+        - tag_invalid
+        - tag_too_many
+        - batch_tags_invalid
         - signed_url_invalid
         - image_patch_invalid
         - cleanup_exempt_admin_only
@@ -3934,6 +3994,7 @@ components:
         - pending_cleanup
         - cleanup_exempt
         - private
+        - tags
         - created_at
         - ref_count
       properties:
@@ -3998,6 +4059,11 @@ components:
         private:
           type: boolean
           description: 是否私有图；私有图的公开链接返回 404，只有带有效签名的链接能访问
+        tags:
+          type: array
+          description: 标签，按名称排序；没有标签为空数组
+          items:
+            type: string
         created_at:
           type: string
           description: 上传时刻
@@ -4133,6 +4199,12 @@ components:
         referer:
           type: string
           description: 抓取图片时发送的 `Referer`，须是 http 或 https 绝对地址，用于绕过只放行自家页面的防盗链。缺省时取该图片来源页的地址；来源不是网页（图片清单、文档）时不发送
+        tags:
+          type: array
+          description: 导入的每张图自动带上的标签，规则同 `PATCH /api/admin/images/{id}` 的 `tags`；缺省不带
+          maxItems: 20
+          items:
+            type: string
     ImportStartRequest:
       type: object
       additionalProperties: false
@@ -4246,7 +4318,7 @@ components:
     ImportJob:
       type: object
       required:
-        [id, user_id, user_name, mode, status, seeds, ttl_seconds, exif_policy, referer, counts, scan, error_code, created_at, finished_at]
+        [id, user_id, user_name, mode, status, seeds, ttl_seconds, exif_policy, referer, tags, counts, scan, error_code, created_at, finished_at]
       properties:
         id:
           type: string
@@ -4276,6 +4348,11 @@ components:
         referer:
           type: string
           description: 创建时指定的 `Referer`；空串表示取来源页
+        tags:
+          type: array
+          description: 创建时指定的标签；没有为空数组
+          items:
+            type: string
         counts:
           $ref: '#/components/schemas/ImportCounts'
         scan:
@@ -4409,6 +4486,12 @@ components:
         private:
           type: boolean
           description: 设为私有或改回公开。私有开关每变一次，此前签发的签名链接全部失效；改回公开后原来的公开链接可用
+        tags:
+          type: array
+          description: 整体替换这张图的标签，空数组清除全部标签。标签名去首尾空白后 1 到 32 个字符，不含控制字符，最多 20 个；标签挂在图片属主名下
+          maxItems: 20
+          items:
+            type: string
     BatchDeleteRequest:
       type: object
       required: [ids]
@@ -4420,6 +4503,69 @@ components:
           items:
             type: string
           description: 待删除的短 ID
+    BatchTagsRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+        add:
+          type: array
+          description: 追加的标签；与 `remove` 至少有一个非空
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+        remove:
+          type: array
+          description: 移除的标签
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+    BatchTagsResult:
+      type: object
+      required: [updated, failed]
+      properties:
+        updated:
+          type: integer
+          description: 成功修改张数
+        failed:
+          type: array
+          description: 失败明细；全部成功时为空数组
+          items:
+            description: 一张图的失败明细：短 ID，加上与错误信封格式相同的失败原因
+            allOf:
+              - $ref: '#/components/schemas/Error'
+              - type: object
+                required: [id]
+                properties:
+                  id:
+                    type: string
+    TagList:
+      type: object
+      required: [items, total]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [name, image_count]
+            properties:
+              name:
+                type: string
+                description: 标签名
+              image_count:
+                type: integer
+                format: int64
+                description: 带这个标签的图片数
+        total:
+          type: integer
+          format: int64
     BatchDeleteResult:
       type: object
       required: [deleted, failed]
@@ -5269,6 +5415,7 @@ components:
         - pending_cleanup
         - cleanup_exempt
         - private
+        - tags
         - created_at
       properties:
         id:
@@ -5302,6 +5449,10 @@ components:
           type: boolean
         private:
           type: boolean
+        tags:
+          type: array
+          items:
+            type: string
         created_at:
           type: string
     BlobExport:

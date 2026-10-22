@@ -46,6 +46,7 @@ type importJobResponse struct {
 	TTLSeconds *int64       `json:"ttl_seconds"` // 创建时指定的有效期秒数;null 表示按默认
 	EXIFPolicy string       `json:"exif_policy"` // 创建时指定的 EXIF 档位;空串表示全局默认
 	Referer    string       `json:"referer"`     // 创建时指定的 Referer;空串表示取来源页
+	Tags       []string     `json:"tags"`        // 创建时指定的标签;没有为空数组
 	Counts     importCounts `json:"counts"`      // 各状态的条目数
 	Scan       importScan   `json:"scan"`        // 扫描进度与结果
 	ErrorCode  *string      `json:"error_code"`  // aborted 的原因码;其他状态为 null
@@ -90,13 +91,18 @@ func (h *Handlers) importJobBody(ctx context.Context, row sqlc.ImportJob) (impor
 	if err != nil {
 		return importJobResponse{}, err
 	}
+	tagNames, err := importer.DecodeTags(row.Tags)
+	if err != nil {
+		return importJobResponse{}, err
+	}
 	user, err := h.cfg.Queries.GetUser(ctx, row.UserID)
 	if err != nil {
 		return importJobResponse{}, fmt.Errorf("读取任务的创建者: %w", err)
 	}
 	resp := importJobResponse{
 		ID: row.ID, UserID: row.UserID, UserName: user.Name, Mode: row.Mode, Status: row.Status, Seeds: seeds,
-		TTLSeconds: nullableInt(row.TtlSeconds), EXIFPolicy: row.ExifPolicy, Referer: row.Referer, Counts: counts,
+		TTLSeconds: nullableInt(row.TtlSeconds), EXIFPolicy: row.ExifPolicy, Referer: row.Referer,
+		Tags: tagNames, Counts: counts,
 		Scan:      importScan{PagesFound: row.ScanPagesFound, PagesDone: row.ScanPagesDone, Report: report},
 		CreatedAt: row.CreatedAt, FinishedAt: nullableStr(row.FinishedAt),
 	}

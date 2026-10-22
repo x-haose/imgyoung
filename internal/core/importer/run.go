@@ -138,7 +138,12 @@ func (s *Service) importOne(ctx context.Context, job sqlc.ImportJob, item sqlc.L
 		code, detail := classifyFetch(err)
 		return s.markFailed(ctx, item.ID, code, detail)
 	}
-	res, err := s.cfg.Upload.Process(ictx, got.Data, s.uploadOptions(job, item))
+	opts, err := s.uploadOptions(job, item)
+	if err != nil {
+		s.cfg.Logger.Error("任务的标签无法解析,任务中止", "job", job.ID, "err", err)
+		return errcode.Internal.String()
+	}
+	res, err := s.cfg.Upload.Process(ictx, got.Data, opts)
 	if err != nil {
 		if ctx.Err() != nil {
 			return ""
@@ -223,7 +228,12 @@ func (s *Service) markFailed(ctx context.Context, itemID int64, code errcode.Cod
 // @param job 任务行
 // @param item 条目
 // @return 上传选项
-func (s *Service) uploadOptions(job sqlc.ImportJob, item sqlc.ListPendingImportItemsRow) upload.Options {
+// @return 任务行里的标签 JSON 无法解析时的错误(库里的值由本服务写入,出错即数据损坏)
+func (s *Service) uploadOptions(job sqlc.ImportJob, item sqlc.ListPendingImportItemsRow) (upload.Options, error) {
+	tagNames, err := DecodeTags(job.Tags)
+	if err != nil {
+		return upload.Options{}, err
+	}
 	policy := imaging.EXIFPolicy(job.ExifPolicy)
 	if policy == "" {
 		policy = s.cfg.Settings().EXIFPolicy
@@ -233,12 +243,13 @@ func (s *Service) uploadOptions(job sqlc.ImportJob, item sqlc.ListPendingImportI
 		FileName:       urlfetch.FileName(item.Url),
 		IdempotencyKey: importKey(job.ID, item.ID),
 		EXIFPolicy:     policy,
+		Tags:           tagNames,
 	}
 	if job.TtlSeconds.Valid {
 		opts.TTLSet = true
 		opts.TTL = time.Duration(job.TtlSeconds.Int64) * time.Second
 	}
-	return opts
+	return opts, nil
 }
 
 // refererFor 决定抓取一张图时发送的 Referer:任务指定的优先,否则取条目的第一个来源页(须是网页地址),都没有则不发。

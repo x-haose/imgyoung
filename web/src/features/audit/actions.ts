@@ -14,6 +14,7 @@ export const AUDIT_ACTIONS = [
   'user.delete',
   'image.update',
   'image.signed_url',
+  'image.tags',
   'image.delete',
   'image.recover',
   'data.export',

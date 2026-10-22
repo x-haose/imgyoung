@@ -14,6 +14,7 @@ import {
   Images as ImagesIcon,
   Import,
   Search,
+  Tags,
   Trash2,
   Upload,
   X,
@@ -31,6 +32,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { QueryState } from '@/components/query-state'
+import { BatchTagsDialog } from './batch-tags-dialog'
 import {
   BATCH_DELETE_MAX,
   batchDeleteImages,
@@ -105,6 +107,7 @@ export function Images() {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [confirmBatch, setConfirmBatch] = useState(false)
+  const [tagBatch, setTagBatch] = useState(false)
   const [uploadOpen, setUploadOpen] = useState(false)
   // 翻页或改筛选后,勾选的卡片已不在眼前,清空避免误删看不见的图。
   const listKey = JSON.stringify(params)
@@ -269,6 +272,15 @@ export function Images() {
             {m.images.selectPage}
           </Button>
           <Button
+            variant='outline'
+            size='sm'
+            disabled={selected.size === 0}
+            onClick={() => setTagBatch(true)}
+          >
+            <Tags />
+            {m.images.batchTags}
+          </Button>
+          <Button
             variant='destructive'
             size='sm'
             disabled={selected.size === 0}
@@ -292,6 +304,13 @@ export function Images() {
         destructive
         isLoading={batch.isPending}
         handleConfirm={() => batch.mutate()}
+      />
+
+      <BatchTagsDialog
+        open={tagBatch}
+        onOpenChange={setTagBatch}
+        ids={[...selected]}
+        onDone={exitSelecting}
       />
 
       <ImageDetailSheet

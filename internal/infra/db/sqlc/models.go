@@ -107,6 +107,11 @@ type Image struct {
 	CreatedAt          string
 }
 
+type ImageTag struct {
+	ImageID string
+	TagID   int64
+}
+
 type ImportItem struct {
 	ID          int64
 	JobID       string
@@ -134,6 +139,7 @@ type ImportJob struct {
 	TtlSeconds     sql.NullInt64
 	ExifPolicy     string
 	Referer        string
+	Tags           string
 	ScanPagesFound int64
 	ScanPagesDone  int64
 	ScanReport     sql.NullString
@@ -209,6 +215,13 @@ type Setting struct {
 	MaxSidePx              int64
 	MaxAspectRatio         int64
 	UpdatedAt              string
+}
+
+type Tag struct {
+	ID        int64
+	UserID    string
+	Name      string
+	CreatedAt string
 }
 
 type Token struct {

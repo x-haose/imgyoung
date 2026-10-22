@@ -210,7 +210,9 @@ func TestImagesFlow(t *testing.T) {
 	h.images.reply("https://img.example.com/a.png", pngBytes(t))
 	h.images.reply("https://img.example.com/b.png", pngBytes(t))
 
-	id, err := h.svc.CreateImages(t.Context(), opts(), []string{
+	o := opts()
+	o.Tags = []string{" imported "}
+	id, err := h.svc.CreateImages(t.Context(), o, []string{
 		"https://img.example.com/a.png", "https://IMG.example.com/a.png#frag", "https://img.example.com/b.png",
 	})
 	if err != nil {
@@ -229,6 +231,17 @@ func TestImagesFlow(t *testing.T) {
 	}
 	if !h.job(id).FinishedAt.Valid {
 		t.Error("完成的任务应有结束时刻")
+	}
+	used, err := h.env.Queries.ListUserTags(t.Context(), sqlc.DefaultUserID)
+	if err != nil || len(used) != 1 || used[0].Name != "imported" || used[0].ImageCount != 2 {
+		t.Fatalf("导入的图片应都带 imported 标签: %v, err=%v", used, err)
+	}
+	bad := opts()
+	bad.Tags = []string{"  "}
+	var inputErr *InputError
+	badURLs := []string{"https://img.example.com/a.png"}
+	if _, err := h.svc.CreateImages(t.Context(), bad, badURLs); !errors.As(err, &inputErr) {
+		t.Fatalf("非法标签名创建任务 = %v, 期望 *InputError", err)
 	}
 	rows, err := h.env.Queries.ListImportMappingItems(t.Context(), id)
 	if err != nil || len(rows) != 2 || !rows[0].ImageID.Valid {

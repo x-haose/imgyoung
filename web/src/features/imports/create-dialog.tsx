@@ -147,8 +147,10 @@ function CreateForm({ onCancel }: { onCancel: () => void }) {
       <AdvancedOptions
         options={draft.options}
         referer={draft.referer}
+        tags={draft.tags}
         onOptions={(options) => patch({ options })}
         onReferer={(referer) => patch({ referer })}
+        onTags={(tags) => patch({ tags })}
       />
       <DialogFooter>
         <Button variant='ghost' onClick={onCancel} disabled={create.isPending}>
@@ -303,17 +305,21 @@ function TextSource({
   )
 }
 
-/** 高级选项:有效期、EXIF 档位与 Referer,默认折叠。 */
+/** 高级选项:有效期、EXIF 档位、Referer 与标签,默认折叠。 */
 function AdvancedOptions({
   options,
   referer,
+  tags,
   onOptions,
   onReferer,
+  onTags,
 }: {
   options: OptionsDraft
   referer: string
+  tags: string
   onOptions: (options: OptionsDraft) => void
   onReferer: (referer: string) => void
+  onTags: (tags: string) => void
 }) {
   const m = useMessages().imports.dialog
   const [open, setOpen] = useState(false)
@@ -337,6 +343,16 @@ function AdvancedOptions({
             onChange={(e) => onReferer(e.target.value)}
           />
           <p className='text-xs text-muted-foreground'>{m.refererHint}</p>
+        </div>
+        <div className='space-y-2'>
+          <Label htmlFor='import-tags'>{m.tags}</Label>
+          <Input
+            id='import-tags'
+            value={tags}
+            placeholder={m.tagsPlaceholder}
+            onChange={(e) => onTags(e.target.value)}
+          />
+          <p className='text-xs text-muted-foreground'>{m.tagsHint}</p>
         </div>
       </CollapsibleContent>
     </Collapsible>

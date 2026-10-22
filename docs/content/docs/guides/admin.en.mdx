@@ -69,18 +69,27 @@ How accesses and the traffic estimate are counted is described in [Accessing ima
 A grid of images. Administrators see the whole site (**All images**); regular users see only their own (**My images**).
 
 - **Search** by short ID or file name.
-- **Filter** by **Upload token**, **Uploaded** time and **Exempt only**; administrators can also filter by **Owner**.
-- **Select** lets you pick images and **Delete selected**, at most 100 at a time. If some deletions fail, the result shows how many were deleted and how many failed, with the reason for the first failure (for example, the image was already deleted elsewhere).
+- **Filter** by **Tag**, **Upload token**, **Uploaded** time and **Exempt only**; administrators can also filter by **Owner**.
+- **Select** lets you pick images and edit their **Tags** in bulk or **Delete selected**, at most 100 at a time. If some deletions fail, the result shows how many were deleted and how many failed, with the reason for the first failure (for example, the image was already deleted elsewhere).
 - **Upload** uploads straight from the console; see [Uploading](./upload.mdx#uploading-in-the-admin-console).
 
 Clicking an image opens its details:
 
-- **Share link**: the full link, with **Copy as** URL, Markdown, HTML or BBCode. Below it are the available resize widths; clicking one copies a link with `?w=`. When a public site address is set, links use its domain.
-- **Metadata**: format, dimensions, size, owner, source token, references, upload time, last access, accesses, expiry (with **Change expiry**), cleanup exemption and SHA-256.
+- **Share link**: the full link, with **Copy as** URL, Markdown, HTML or BBCode. Below it are the available resize widths; clicking one copies a link with `?w=`. When a public site address is set, links use its domain. A private image has no permanent link, so this becomes **Signed link**: pick a validity and generate one; see [Private images](./private.mdx).
+- **Metadata**: format, dimensions, size, owner, source token, references, upload time, last access, accesses, expiry (with **Change expiry**), tags, private image, cleanup exemption and SHA-256.
 - **Replicas**: the replica state of this image on each channel (Pending / Uploading / Ready / Failed) and the attempt count. Replicas that have failed show **Last error**, written like a channel's failure reason; see [Failure reasons](#failure-reasons) below.
 - **Delete**; administrators also get **Audit log**, which opens the audit entries targeting this image.
 
 Lifetimes and cleanup exemptions are explained in [Lifecycle and deduplication](./lifecycle.mdx).
+
+**Tags** help you sort images:
+
+- Type a tag in **Tags** of the details drawer and press Enter to add it; click the × on a tag to remove it. An image can have at most 20 tags, each 1 to 32 characters with no control characters, and tags are case-sensitive.
+- Pick a tag in **Filter** to see only the images that have it; administrators match the tag name across every user's images.
+- After selecting several images, click **Tags** to add or remove tags on all of them.
+- Tags belong to the image's owner: when an admin tags someone else's image, the tag is recorded under the owner. A tag that no image uses does not appear in the list.
+- When importing, fill in tags in the **Advanced options** of [bulk import](./import.mdx) and the whole batch gets them automatically.
+- Tags are only for organization; they do not affect access, lifetime or cleanup.
 
 ### Upload tokens [#upload-tokens-page]
 

@@ -151,6 +151,8 @@ func mountSession(g chi.Router, cfg Config, guards uploadGuards) {
 	// 公开访问统计与冷图裁决;对外分享链接仍走 /i/。
 	g.Get("/images/{id}/thumb", cfg.Public.HandleAdminServe)
 	g.Post("/images/batch-delete", cfg.Admin.HandleImageBatchDelete)
+	g.Post("/images/batch-tags", cfg.Admin.HandleImageBatchTags)
+	g.Get("/tags", cfg.Admin.HandleTagList)
 	g.Get("/images/{id}", cfg.Admin.HandleImageGet)
 	g.Patch("/images/{id}", cfg.Admin.HandleImagePatch)
 	g.Post("/images/{id}/signed-url", cfg.Admin.HandleImageSignedURL)

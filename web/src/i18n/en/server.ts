@@ -152,6 +152,11 @@ export const server = {
       'The image resolution exceeds the pixel budget ({max} megapixels)',
     upload_private_invalid:
       'private must be true or false, and signed_ttl an integer from 1 to {max} seconds',
+    tag_invalid:
+      'A tag must be 1 to {max} characters and contain no control characters',
+    tag_too_many: 'An image can have at most {max} tags',
+    batch_tags_invalid:
+      'Invalid body: ids must be 1 to {max} image IDs, and add or remove must not both be empty',
     image_not_private: 'Only private images have signed links',
     signed_url_invalid: 'ttl_seconds must be an integer from 1 to {max}',
     upload_bad_dimensions:

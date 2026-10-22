@@ -57,6 +57,8 @@ import {
   shareURL,
 } from './data'
 import { SignedLinks } from './signed-links'
+import { TagEditor } from './tag-editor'
+import { tagsQueryKey } from './tags'
 
 type ImageDetailSheetProps = {
   id: string | undefined // 当前打开的图片;undefined 为关闭
@@ -105,6 +107,7 @@ function DetailBody({
     onSuccess: (detail) => {
       queryClient.setQueryData(imageQueryOptions(id).queryKey, detail)
       queryClient.invalidateQueries({ queryKey: [...imagesQueryKey, 'list'] })
+      queryClient.invalidateQueries({ queryKey: tagsQueryKey })
     },
   })
   const remove = useMutation({
@@ -362,6 +365,13 @@ function MetaList({
             <TtlEditor image={image} patch={patch} />
           )}
         </div>
+      </Row>
+      <Row label={m.images.tagsRow} help={m.images.tagsHelp}>
+        <TagEditor
+          tags={image.tags}
+          disabled={patch.isPending}
+          onChange={(tags) => patch.mutate({ tags })}
+        />
       </Row>
       <Row label={m.images.privateRow} help={m.images.privateHelp}>
         <Switch

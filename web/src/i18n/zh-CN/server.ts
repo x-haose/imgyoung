@@ -130,6 +130,10 @@ export const server = {
     upload_too_many_pixels: '图片分辨率超过像素预算（{max} 百万像素）',
     upload_private_invalid:
       'private 须为 true 或 false，signed_ttl 须为 1 到 {max} 的整数秒',
+    tag_invalid: '标签名需为 1 到 {max} 个字符，不含控制字符',
+    tag_too_many: '一张图最多 {max} 个标签',
+    batch_tags_invalid:
+      '请求体非法：ids 需为 1 到 {max} 个图片 ID，add 与 remove 至少有一项非空',
     image_not_private: '只有私有图才有签名链接',
     signed_url_invalid: 'ttl_seconds 须为 1 到 {max} 的整数',
     upload_bad_dimensions:

@@ -26,10 +26,11 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { tokenOptionsQueryOptions, userOptionsQueryOptions } from './data'
 import { type ImagesSearch } from './search'
+import { tagsQueryOptions } from './tags'
 
 /** 筛选维度的修改;值为 undefined 表示清除该维度。 */
 export type FilterPatch = Partial<
-  Pick<ImagesSearch, 'user' | 'token' | 'since' | 'until' | 'exempt'>
+  Pick<ImagesSearch, 'user' | 'token' | 'since' | 'until' | 'exempt' | 'tag'>
 >
 
 type FilterProps = {
@@ -44,7 +45,9 @@ const ALL = '*'
 function useFilterOptions(isAdmin: boolean, user: string | undefined) {
   const users = useQuery({ ...userOptionsQueryOptions(), enabled: isAdmin })
   const tokens = useQuery(tokenOptionsQueryOptions(user))
+  const tags = useQuery(tagsQueryOptions())
   return {
+    tags: tags.data?.items ?? [],
     users: users.data?.items ?? [],
     tokens: tokens.data?.items ?? [],
     userName: (id: string) =>
@@ -59,14 +62,15 @@ function activeCount(s: ImagesSearch): number {
     Number(Boolean(s.user)) +
     Number(s.token > 0) +
     Number(Boolean(s.since || s.until)) +
-    Number(Boolean(s.exempt))
+    Number(Boolean(s.exempt)) +
+    Number(Boolean(s.tag))
   )
 }
 
 /** 筛选面板入口:Popover 收纳用户 / Token / 时间范围 / 仅看豁免四个维度,按钮上标出已激活数。 */
 export function ImageFilters({ isAdmin, search, onChange }: FilterProps) {
   const { m } = useLocale()
-  const { users, tokens } = useFilterOptions(isAdmin, search.user)
+  const { users, tokens, tags } = useFilterOptions(isAdmin, search.user)
   const count = activeCount(search)
 
   return (
@@ -129,6 +133,30 @@ export function ImageFilters({ isAdmin, search, onChange }: FilterProps) {
                   {tk.name}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className='space-y-1.5'>
+          <Label className='text-xs text-muted-foreground'>
+            {m.images.filterTag}
+          </Label>
+          <Select
+            value={search.tag ?? ALL}
+            onValueChange={(v) => onChange({ tag: v === ALL ? undefined : v })}
+          >
+            <SelectTrigger className='w-full'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>{m.images.allTags}</SelectItem>
+              {tags.map((tg) => (
+                <SelectItem key={tg.name} value={tg.name}>
+                  {tg.name} · {tg.image_count}
+                </SelectItem>
+              ))}
+              {search.tag && !tags.some((tg) => tg.name === search.tag) && (
+                <SelectItem value={search.tag}>{search.tag}</SelectItem>
+              )}
             </SelectContent>
           </Select>
         </div>
@@ -273,6 +301,13 @@ export function ActiveFilterChips({ isAdmin, search, onChange }: FilterProps) {
       clear: { since: undefined, until: undefined },
     })
   }
+  if (search.tag) {
+    chips.push({
+      key: 'tag',
+      label: t(m.images.chipTag, { name: search.tag }),
+      clear: { tag: undefined },
+    })
+  }
   if (search.exempt) {
     chips.push({
       key: 'exempt',
@@ -307,6 +342,7 @@ export function ActiveFilterChips({ isAdmin, search, onChange }: FilterProps) {
             since: undefined,
             until: undefined,
             exempt: undefined,
+            tag: undefined,
           })
         }
       >

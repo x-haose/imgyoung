@@ -1,7 +1,8 @@
-h1:dseZCVV3L07RIqXv1T6CLU0TtBG2+G2IQJZALG1eMRs=
+h1:g3pwNeO/nr/VRKzQ0FmIUHUnXGY52aVOkGYK2MuFULA=
 20261016110645_initial.sql h1:Wr0w982VH4jTUaWsbzg2S7c0qMUU7OalrdNmtD3pBuc=
 20261017111027_settings_backup_defaults.sql h1:rjzvvsMGjBgS9gcLtZX2LSPY3V8vTrGuaf24amADISI=
 20261019115125_batch_import.sql h1:hOQpxsiAJUuEdYZoDwnlVAwKMGYoSG+EW45YK8wVycg=
 20261022042012_replicate_limit.sql h1:cv9qVdXhFteL1qEgw2yWZrQdgNWyZd6SE/1zhS0gtog=
 20261022055234_exif_spoof.sql h1:0iClLwyA5xcYr+Wy3SaLbZQl4Bx+2d+7YHq/HgJD8dA=
 20261022064600_image_private.sql h1:ydq8fdcJuiDtMw41D0hPbc04YGkZlmPDAx/1otv/d8Y=
+20261022065042_tags.sql h1:8XqhTlcxGEKA/hpwnKQn7QpG7ig401mAfksBu4VDMM8=

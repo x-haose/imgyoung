@@ -169,8 +169,8 @@ func (q *Queries) CountPendingImportItems(ctx context.Context, jobID string) (in
 }
 
 const createImportJob = `-- name: CreateImportJob :exec
-INSERT INTO import_jobs (id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+INSERT INTO import_jobs (id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
 `
 
 type CreateImportJobParams struct {
@@ -182,6 +182,7 @@ type CreateImportJobParams struct {
 	TtlSeconds sql.NullInt64
 	ExifPolicy string
 	Referer    string
+	Tags       string
 }
 
 func (q *Queries) CreateImportJob(ctx context.Context, arg CreateImportJobParams) error {
@@ -194,6 +195,7 @@ func (q *Queries) CreateImportJob(ctx context.Context, arg CreateImportJobParams
 		arg.TtlSeconds,
 		arg.ExifPolicy,
 		arg.Referer,
+		arg.Tags,
 	)
 	return err
 }
@@ -259,7 +261,7 @@ func (q *Queries) FinishImportScan(ctx context.Context, arg FinishImportScanPara
 }
 
 const getImportJob = `-- name: GetImportJob :one
-SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
+SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
 WHERE id = ?1
@@ -277,6 +279,7 @@ func (q *Queries) GetImportJob(ctx context.Context, id string) (ImportJob, error
 		&i.TtlSeconds,
 		&i.ExifPolicy,
 		&i.Referer,
+		&i.Tags,
 		&i.ScanPagesFound,
 		&i.ScanPagesDone,
 		&i.ScanReport,
@@ -479,7 +482,7 @@ func (q *Queries) ListImportItems(ctx context.Context, arg ListImportItemsParams
 }
 
 const listImportJobs = `-- name: ListImportJobs :many
-SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
+SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
 WHERE (CAST(?1 AS TEXT) = '' OR user_id = CAST(?1 AS TEXT)) AND status <> 'creating'
@@ -511,6 +514,7 @@ func (q *Queries) ListImportJobs(ctx context.Context, arg ListImportJobsParams) 
 			&i.TtlSeconds,
 			&i.ExifPolicy,
 			&i.Referer,
+			&i.Tags,
 			&i.ScanPagesFound,
 			&i.ScanPagesDone,
 			&i.ScanReport,
@@ -682,7 +686,7 @@ func (q *Queries) MarkImportItemFailed(ctx context.Context, arg MarkImportItemFa
 }
 
 const nextRunnableImportJob = `-- name: NextRunnableImportJob :one
-SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
+SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
 WHERE status IN ('scanning', 'importing')
@@ -702,6 +706,7 @@ func (q *Queries) NextRunnableImportJob(ctx context.Context) (ImportJob, error) 
 		&i.TtlSeconds,
 		&i.ExifPolicy,
 		&i.Referer,
+		&i.Tags,
 		&i.ScanPagesFound,
 		&i.ScanPagesDone,
 		&i.ScanReport,

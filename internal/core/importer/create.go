@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/x-haose/imgyoung/internal/core/tags"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/id"
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
@@ -23,6 +24,7 @@ type Options struct {
 	TTLSet     bool               // 是否显式指定了有效期;false 时按用户默认与全局默认
 	EXIFPolicy imaging.EXIFPolicy // 导入图片的 EXIF 档位;空表示全局默认
 	Referer    string             // 抓取图片时发送的 Referer,须是 http 或 https 绝对地址;空表示取条目的第一个来源页
+	Tags       []string           // 导入的每张图自动带上的标签;空表示不带
 }
 
 // Document 一份待扫描的文本。
@@ -272,6 +274,15 @@ func newJob(opts Options, mode, status string, seeds []string) (sqlc.CreateImpor
 		}
 		referer = r
 	}
+	tagNames, err := tags.Normalize(opts.Tags)
+	if err != nil || len(tagNames) > tags.MaxPerImage {
+		return sqlc.CreateImportJobParams{}, &InputError{Detail: fmt.Sprintf(
+			"tags 需为不超过 %d 个、每个 1 到 %d 个字符且不含控制字符的标签名", tags.MaxPerImage, tags.MaxNameRunes)}
+	}
+	tagsJSON, err := json.Marshal(tagNames)
+	if err != nil {
+		return sqlc.CreateImportJobParams{}, fmt.Errorf("编码标签: %w", err)
+	}
 	if seeds == nil {
 		seeds = []string{}
 	}
@@ -281,7 +292,7 @@ func newJob(opts Options, mode, status string, seeds []string) (sqlc.CreateImpor
 	}
 	p := sqlc.CreateImportJobParams{
 		ID: id.New(), UserID: opts.UserID, Mode: mode, Status: status, Seeds: string(seedsJSON),
-		ExifPolicy: string(opts.EXIFPolicy), Referer: referer,
+		ExifPolicy: string(opts.EXIFPolicy), Referer: referer, Tags: string(tagsJSON),
 	}
 	if opts.TTLSet {
 		p.TtlSeconds = sql.NullInt64{Int64: int64(opts.TTL / time.Second), Valid: true}

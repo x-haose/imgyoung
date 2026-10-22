@@ -1,15 +1,15 @@
 -- name: CreateImportJob :exec
-INSERT INTO import_jobs (id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer)
-VALUES (@id, @user_id, @mode, @status, @seeds, sqlc.narg(ttl_seconds), @exif_policy, @referer);
+INSERT INTO import_jobs (id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags)
+VALUES (@id, @user_id, @mode, @status, @seeds, sqlc.narg(ttl_seconds), @exif_policy, @referer, @tags);
 
 -- name: GetImportJob :one
-SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
+SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
 WHERE id = @id;
 
 -- name: ListImportJobs :many
-SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
+SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
 WHERE (CAST(@user_id AS TEXT) = '' OR user_id = CAST(@user_id AS TEXT)) AND status <> 'creating'
@@ -22,7 +22,7 @@ FROM import_jobs
 WHERE (CAST(@user_id AS TEXT) = '' OR user_id = CAST(@user_id AS TEXT)) AND status <> 'creating';
 
 -- name: NextRunnableImportJob :one
-SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
+SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer, tags,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
 WHERE status IN ('scanning', 'importing')

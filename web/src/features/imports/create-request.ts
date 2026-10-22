@@ -1,4 +1,5 @@
 import { type UploadOptions } from '@/features/images/data'
+import { parseTags } from '@/features/images/tags'
 import {
   defaultOptionsDraft,
   type OptionsDraft,
@@ -17,6 +18,7 @@ export interface CreateDraft {
   files: SourceDocument[] // 选择的文件
   baseURL: string // 解析文本里相对路径的基准地址
   referer: string // 抓取图片时发送的 Referer
+  tags: string // 导入的每张图自动带上的标签,逗号分隔
   options: OptionsDraft
 }
 
@@ -28,6 +30,7 @@ export const emptyDraft: CreateDraft = {
   files: [],
   baseURL: '',
   referer: '',
+  tags: '',
   options: defaultOptionsDraft,
 }
 
@@ -64,6 +67,7 @@ export function toRequest(
     ...(options.ttl !== undefined ? { ttl: options.ttl } : {}),
     ...(options.exif !== undefined ? { exif_policy: options.exif } : {}),
     ...(d.referer.trim() !== '' ? { referer: d.referer.trim() } : {}),
+    ...(parseTags(d.tags).length > 0 ? { tags: parseTags(d.tags) } : {}),
   }
   switch (d.mode) {
     case 'images':

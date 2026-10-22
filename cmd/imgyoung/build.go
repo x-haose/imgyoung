@@ -25,6 +25,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/referer"
 	"github.com/x-haose/imgyoung/internal/core/reliability"
 	"github.com/x-haose/imgyoung/internal/core/replication"
+	"github.com/x-haose/imgyoung/internal/core/tags"
 	"github.com/x-haose/imgyoung/internal/core/upload"
 	"github.com/x-haose/imgyoung/internal/core/usage"
 	"github.com/x-haose/imgyoung/internal/core/variants"
@@ -353,7 +354,7 @@ func buildHTTP(in infra, s services, shutdown func(), logger *slog.Logger) *http
 		Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot,
 		Backups: s.backup, Recovery: s.recovery, Imports: s.importer, Signer: s.signer,
-		Shutdown: shutdown, Logger: logger,
+		Tags: tags.New(in.conn.Writer(), in.queries), Shutdown: shutdown, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{
 		Auth: s.auth, Upload: s.upload, Queries: in.queries, Objects: pub, Images: s.sweeper, Audit: s.audit,

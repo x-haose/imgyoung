@@ -57,6 +57,12 @@ WHERE blob_id = ?;
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
+       CAST(COALESCE((SELECT json_group_array(n)
+                      FROM (SELECT tg.name AS n
+                            FROM image_tags it
+                            JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id
+                            ORDER BY tg.name)), '[]') AS TEXT) AS tags,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -68,6 +74,8 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@since = '' OR i.created_at >= @since)
   AND (@until = '' OR i.created_at < @until)
   AND (@exempt = 0 OR i.cleanup_exempt = 1)
+  AND (@tag = '' OR EXISTS (SELECT 1 FROM image_tags it JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id AND tg.name = @tag))
 ORDER BY i.created_at DESC
 LIMIT @page_limit OFFSET @page_offset;
 
@@ -79,12 +87,20 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
   AND (@search = '' OR i.id LIKE '%' || @search || '%' OR i.file_name LIKE '%' || @search || '%')
   AND (@since = '' OR i.created_at >= @since)
   AND (@until = '' OR i.created_at < @until)
-  AND (@exempt = 0 OR i.cleanup_exempt = 1);
+  AND (@exempt = 0 OR i.cleanup_exempt = 1)
+  AND (@tag = '' OR EXISTS (SELECT 1 FROM image_tags it JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id AND tg.name = @tag));
 
 -- name: GetImageAdmin :one
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
        i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
+       CAST(COALESCE((SELECT json_group_array(n)
+                      FROM (SELECT tg.name AS n
+                            FROM image_tags it
+                            JOIN tags tg ON tg.id = it.tag_id
+                            WHERE it.image_id = i.id
+                            ORDER BY tg.name)), '[]') AS TEXT) AS tags,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
