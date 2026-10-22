@@ -191,6 +191,7 @@ curl -b jar.txt -OJ \
 | 新建 | 400 | `import_input_invalid` | 请求不合法，提示里指出哪一项有问题，例如某个地址不是 `http` 或 `https` 绝对地址 |
 | 新建 | 413 | `import_input_invalid` | 请求体超过 32 MiB |
 | 查看、取消、重试、删除、确认、对照表 | 404 | `import_not_found` | 任务不存在，或属于别的用户（管理员能看到所有人的任务） |
+| 新建 | 429 | `import_busy` | 文本解析的名额被占满，等待超过 15 秒仍没有轮到，稍后重试 |
 | 确认、重试 | 403 | `import_owner_only` | 管理员操作别人的任务，这两项只有创建者能做 |
 | 取消、重试、删除、确认 | 409 | `import_state_invalid` | 任务当前状态不允许这个操作 |
 | 确认 | 400 | `import_no_selection` | 所选域名下没有待导入的图片地址 |

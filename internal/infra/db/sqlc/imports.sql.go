@@ -211,26 +211,18 @@ func (q *Queries) DeleteCreatingImportJob(ctx context.Context, id string) (int64
 	return result.RowsAffected()
 }
 
-const deleteImportJob = `-- name: DeleteImportJob :execrows
-DELETE FROM import_jobs
-WHERE id = ?1 AND status IN ('ready', 'done', 'cancelled', 'aborted')
+const deleteImportItemsBatch = `-- name: DeleteImportItemsBatch :execrows
+DELETE FROM import_items
+WHERE id IN (SELECT i.id FROM import_items i WHERE i.job_id = ?1 LIMIT ?2)
 `
 
-func (q *Queries) DeleteImportJob(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteImportJob, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+type DeleteImportItemsBatchParams struct {
+	JobID string
+	Batch int64
 }
 
-const deleteStaleCreatingImportJobs = `-- name: DeleteStaleCreatingImportJobs :execrows
-DELETE FROM import_jobs
-WHERE status = 'creating'
-`
-
-func (q *Queries) DeleteStaleCreatingImportJobs(ctx context.Context) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteStaleCreatingImportJobs)
+func (q *Queries) DeleteImportItemsBatch(ctx context.Context, arg DeleteImportItemsBatchParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteImportItemsBatch, arg.JobID, arg.Batch)
 	if err != nil {
 		return 0, err
 	}
@@ -293,6 +285,49 @@ func (q *Queries) GetImportJob(ctx context.Context, id string) (ImportJob, error
 		&i.FinishedAt,
 	)
 	return i, err
+}
+
+const hideImportJob = `-- name: HideImportJob :execrows
+UPDATE import_jobs
+SET status = 'creating'
+WHERE id = ?1 AND status IN ('ready', 'done', 'cancelled', 'aborted')
+`
+
+func (q *Queries) HideImportJob(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, hideImportJob, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const listCreatingImportJobIDs = `-- name: ListCreatingImportJobIDs :many
+SELECT id
+FROM import_jobs
+WHERE status = 'creating'
+`
+
+func (q *Queries) ListCreatingImportJobIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listCreatingImportJobIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listImportHostSamples = `-- name: ListImportHostSamples :many

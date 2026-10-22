@@ -65,6 +65,7 @@ export const server = {
     import_no_selection:
       'No image addresses are waiting to be imported under the selected hosts',
     import_nothing_to_retry: 'There are no items to retry',
+    import_busy: 'Text parsing is busy, please try again later',
     import_owner_only: 'Only the user who created this import task can do this',
     import_listing_invalid: 'The sitemap or feed content cannot be parsed',
     snapshot_name_invalid: 'Invalid snapshot name',

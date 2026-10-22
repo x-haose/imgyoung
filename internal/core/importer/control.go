@@ -187,14 +187,15 @@ func (s *Service) Delete(ctx context.Context, actor Actor, jobID string) error {
 	if _, err := access(ctx, s.cfg.Queries, actor, jobID, false); err != nil {
 		return err
 	}
-	n, err := s.cfg.Queries.DeleteImportJob(ctx, jobID)
+	// 先把任务藏起来(creating,对外不可见),再分批删除;中途失败留给 Recover 接着清。
+	n, err := s.cfg.Queries.HideImportJob(ctx, jobID)
 	if err != nil {
 		return fmt.Errorf("删除导入任务: %w", err)
 	}
 	if n == 0 {
 		return s.stateError(ctx, jobID)
 	}
-	return nil
+	return s.purge(context.WithoutCancel(ctx), jobID)
 }
 
 // stateError 重新读取任务,按它此刻的状态构造 StateError;任务已不存在即 ErrNotFound。

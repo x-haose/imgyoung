@@ -260,6 +260,9 @@ func (h *Handlers) writeImportError(w http.ResponseWriter, err error) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.ImportOwnerOnly)
 	case errors.As(err, &stateErr):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ImportStateInvalid)
+	case errors.Is(err, importer.ErrBusy):
+		w.Header().Set("Retry-After", "15")
+		httpx.WriteError(h.cfg.Logger, w, http.StatusTooManyRequests, errcode.ImportBusy)
 	case errors.Is(err, importer.ErrNoSelection):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.ImportNoSelection)
 	case errors.Is(err, importer.ErrNothingToRetry):

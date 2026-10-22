@@ -191,6 +191,7 @@ curl -b jar.txt -OJ \
 | Create | 400 | `import_input_invalid` | The request is invalid; the message says which part, for example an address that is not an absolute `http` or `https` address |
 | Create | 413 | `import_input_invalid` | The request body exceeds 32 MiB |
 | View, cancel, retry, delete, start, mapping | 404 | `import_not_found` | The job does not exist or belongs to another user (administrators can see everyone's jobs) |
+| Create | 429 | `import_busy` | The slots for parsing text are all taken and none became free within 15 seconds; try again later |
 | Start, retry | 403 | `import_owner_only` | An administrator acted on someone else's job; only the creator can do these two |
 | Cancel, retry, delete, start | 409 | `import_state_invalid` | The job's current state does not allow this action |
 | Start | 400 | `import_no_selection` | No pending image addresses under the selected domains |

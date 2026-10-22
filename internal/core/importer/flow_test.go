@@ -738,7 +738,7 @@ func TestSiteScanFollowsRedirects(t *testing.T) {
 	h := newHarness(t)
 	const (
 		typed = "http://blog.example.com/sitemap.xml"
-		final = "https://www.blog.example.com/sitemap.xml"
+		final = "https://WWW.Blog.example.com:443/sitemap.xml" // 重定向目标带大小写与默认端口
 		page  = "https://www.blog.example.com/blog/post"
 	)
 	h.pages.final[typed] = final
@@ -867,5 +867,50 @@ VALUES ('half', 'https://a.example.com/a.png', 'a.example.com', 'pending')`)
 		`SELECT (SELECT COUNT(*) FROM import_jobs), (SELECT COUNT(*) FROM import_items)`)
 	if err := row.Scan(&jobs, &items); err != nil || jobs != 0 || items != 0 {
 		t.Fatalf("清理后任务 %d 个、条目 %d 个, err=%v, 期望都被删除", jobs, items, err)
+	}
+}
+
+// TestDeleteLargeJobInChunks 条目数超过一批的任务也能删干净:任务行与全部条目都不留。
+func TestDeleteLargeJobInChunks(t *testing.T) {
+	h := newHarness(t)
+	n := deleteChunk*2 + 5
+	urls := make([]string, n)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://img.example.com/%d.png", i)
+	}
+	id, err := h.svc.CreateImages(t.Context(), opts(), urls)
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	if err := h.svc.Cancel(t.Context(), me(), id); err != nil {
+		t.Fatalf("取消: %v", err)
+	}
+	if err := h.svc.Delete(t.Context(), me(), id); err != nil {
+		t.Fatalf("删除: %v", err)
+	}
+	var jobs, items int64
+	row := h.env.Conn.QueryRowContext(t.Context(),
+		`SELECT (SELECT COUNT(*) FROM import_jobs), (SELECT COUNT(*) FROM import_items)`)
+	if err := row.Scan(&jobs, &items); err != nil || jobs != 0 || items != 0 {
+		t.Fatalf("删除后任务 %d 个、条目 %d 个, err=%v, 期望都被删除", jobs, items, err)
+	}
+}
+
+// TestParseSlotsBusy 解析名额被占满时,新的文本任务排队有时限,超时返回 ErrBusy 而不是一直挂着。
+func TestParseSlotsBusy(t *testing.T) {
+	h := newHarness(t)
+	h.svc.parseDeadline = 50 * time.Millisecond
+	for range parseSlots {
+		h.svc.parse <- struct{}{}
+	}
+	docs := []Document{{Name: "a.md", Text: "![a](https://img.old.com/a.png)"}}
+	if _, err := h.svc.CreateText(t.Context(), opts(), docs, ""); !errors.Is(err, ErrBusy) {
+		t.Fatalf("名额占满时 = %v, 期望 ErrBusy", err)
+	}
+	for range parseSlots {
+		<-h.svc.parse
+	}
+	if _, err := h.svc.CreateText(t.Context(), opts(), docs, ""); err != nil {
+		t.Fatalf("名额释放后应能创建: %v", err)
 	}
 }

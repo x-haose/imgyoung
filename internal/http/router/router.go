@@ -136,7 +136,7 @@ func mountSession(g chi.Router, cfg Config, guards uploadGuards) {
 	g.Post("/tokens/{id}/s3-credential", cfg.Admin.HandleTokenS3Credential)
 	g.Delete("/tokens/{id}", cfg.Admin.HandleTokenDelete)
 	g.Get("/images", cfg.Admin.HandleImageList)
-	// 批量导入:所有登录用户可用,任务只对创建者可见;转存与上传同一条管线,并发由导入服务自行限定。
+	// 批量导入:所有登录用户可用,普通用户只见自己的任务,管理员见全部并能取消、删除任何任务;转存与上传同一条管线,并发由导入服务自行限定。
 	g.Post("/imports", cfg.Admin.HandleImportCreate)
 	g.Get("/imports", cfg.Admin.HandleImportList)
 	g.Get("/imports/{id}", cfg.Admin.HandleImportGet)

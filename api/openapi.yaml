@@ -902,6 +902,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '429':
+          description: '`text` 模式下，文本解析的并发名额被占满，等待超过 15 秒仍没有轮到，错误码 `import_busy`，稍后重试'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '500':
           $ref: '#/components/responses/InternalError'
   /api/admin/imports/{id}:
@@ -2918,6 +2924,7 @@ components:
         - import_nothing_to_retry
         - import_listing_invalid
         - import_owner_only
+        - import_busy
         - snapshot_name_invalid
         - snapshot_not_found
         - snapshot_corrupt

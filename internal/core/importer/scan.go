@@ -56,11 +56,16 @@ func (s *Service) scanDocuments(ctx context.Context, docs []Document, base *url.
 // @param d 文档
 // @param base 解析相对路径的基准地址,可为 nil
 // @return 扫描结果
-// @return *InputError(解析超时)、ctx 取消的错误
+// @return *InputError(解析超时)、ErrBusy(等名额超时)、ctx 取消的错误
 func (s *Service) scanWithDeadline(ctx context.Context, i int, d Document, base *url.URL) (scannedDocument, error) {
+	wait := time.NewTimer(s.parseDeadline)
 	select {
 	case s.parse <- struct{}{}:
+		wait.Stop()
+	case <-wait.C:
+		return scannedDocument{}, ErrBusy
 	case <-ctx.Done():
+		wait.Stop()
 		return scannedDocument{}, ctx.Err()
 	}
 	done := make(chan scannedDocument, 1)
@@ -342,6 +347,9 @@ func (sc *siteScan) expand(ctx context.Context, task listingTask) (expanded, err
 func (sc *siteScan) collectListing(ctx context.Context, listURL, finalURL string,
 	l imgrefs.Listing) (expanded, error) {
 	host := imgrefs.Host(finalURL)
+	if normalized, ok := imgrefs.Normalize(finalURL, nil); ok {
+		host = imgrefs.Host(normalized)
+	}
 	var out expanded
 	keep := func(raws []string) []string {
 		var kept []string

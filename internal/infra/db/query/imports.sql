@@ -46,17 +46,23 @@ UPDATE import_jobs
 SET status = 'importing', error_code = '', finished_at = NULL
 WHERE id = @id AND status IN ('done', 'aborted', 'cancelled');
 
--- name: DeleteImportJob :execrows
-DELETE FROM import_jobs
+-- name: HideImportJob :execrows
+UPDATE import_jobs
+SET status = 'creating'
 WHERE id = @id AND status IN ('ready', 'done', 'cancelled', 'aborted');
+
+-- name: DeleteImportItemsBatch :execrows
+DELETE FROM import_items
+WHERE id IN (SELECT i.id FROM import_items i WHERE i.job_id = @job_id LIMIT @batch);
+
+-- name: ListCreatingImportJobIDs :many
+SELECT id
+FROM import_jobs
+WHERE status = 'creating';
 
 -- name: DeleteCreatingImportJob :execrows
 DELETE FROM import_jobs
 WHERE id = @id AND status = 'creating';
-
--- name: DeleteStaleCreatingImportJobs :execrows
-DELETE FROM import_jobs
-WHERE status = 'creating';
 
 -- name: SetImportScanProgress :exec
 UPDATE import_jobs

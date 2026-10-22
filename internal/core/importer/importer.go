@@ -68,14 +68,19 @@ const (
 	MaxTextDocumentBytes = 4 << 20
 	// parseSlots 同时解析文本的执行单元数,限制恶意输入能占用的 CPU。
 	parseSlots = 2
-	// defaultParseDeadline 解析一份文档的时限,超时按输入不合法拒绝。
+	// defaultParseDeadline 解析一份文档的时限,超时按输入不合法拒绝;排队等解析名额同样不超过它,超时返回 ErrBusy。
 	defaultParseDeadline = 15 * time.Second
+	// deleteChunk 删除任务时每批删除的条目数。一条语句级联删除百万行会像大事务一样占住唯一的写连接。
+	deleteChunk = 2000
 	// maxStartHosts 一次确认最多可选的域名数,低于 SQLite 的绑定变量上限。
 	maxStartHosts = 1000
 )
 
 // ErrNotFound 任务不存在,或不属于当前用户。
 var ErrNotFound = errors.New("importer: 导入任务不存在")
+
+// ErrBusy 文本解析的并发名额被占满,等待超时。
+var ErrBusy = errors.New("importer: 文本解析繁忙")
 
 // ErrNoSelection 所选域名下没有待导入的条目。
 var ErrNoSelection = errors.New("importer: 所选域名下没有待导入的条目")

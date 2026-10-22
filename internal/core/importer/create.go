@@ -176,21 +176,49 @@ func (s *Service) writeChunks(ctx context.Context, n int, write func(q *sqlc.Que
 // 删不掉只记日志,遗留的行由 Recover 在下次启动时清掉。
 // @param jobID 任务 ID
 func (s *Service) discard(ctx context.Context, jobID string) {
-	if _, err := s.cfg.Queries.DeleteCreatingImportJob(context.WithoutCancel(ctx), jobID); err != nil {
+	if err := s.purge(context.WithoutCancel(ctx), jobID); err != nil {
 		s.cfg.Logger.Error("清理没有写完的导入任务失败,留待下次启动清理", "job", jobID, "err", err)
 	}
+}
+
+// purge 分批删除一个任务的条目,最后删任务行。
+// @Description: 条目与来源靠外键级联删除,一条语句删百万行会长时间占住唯一的写连接,所以每批 deleteChunk 个条目
+// 一条语句。任务须已是 creating 状态(对外不可见);中途失败时它留在 creating,由 Recover 接着清。
+// @param jobID 任务 ID
+// @return 删除失败的错误
+func (s *Service) purge(ctx context.Context, jobID string) error {
+	for {
+		n, err := s.cfg.Queries.DeleteImportItemsBatch(ctx, sqlc.DeleteImportItemsBatchParams{
+			JobID: jobID, Batch: deleteChunk,
+		})
+		if err != nil {
+			return fmt.Errorf("删除任务的条目: %w", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if _, err := s.cfg.Queries.DeleteCreatingImportJob(ctx, jobID); err != nil {
+		return fmt.Errorf("删除任务行: %w", err)
+	}
+	return nil
 }
 
 // Recover 启动时清掉上次进程在创建中途退出遗留的 creating 任务。
 // @Description: 须在对外提供服务之前调用:此时不会有进行中的创建,否则会误删正在写入的任务。
 // @return 删除失败的错误
 func (s *Service) Recover(ctx context.Context) error {
-	n, err := s.cfg.Queries.DeleteStaleCreatingImportJobs(ctx)
+	ids, err := s.cfg.Queries.ListCreatingImportJobIDs(ctx)
 	if err != nil {
-		return fmt.Errorf("清理没有写完的导入任务: %w", err)
+		return fmt.Errorf("列出没有写完的导入任务: %w", err)
 	}
-	if n > 0 {
-		s.cfg.Logger.Warn("已清理上次中断时没有写完的导入任务", "count", n)
+	for _, jobID := range ids {
+		if err := s.purge(ctx, jobID); err != nil {
+			return err
+		}
+	}
+	if len(ids) > 0 {
+		s.cfg.Logger.Warn("已清理上次中断时没有写完的导入任务", "count", len(ids))
 	}
 	return nil
 }

@@ -2,7 +2,7 @@
 CREATE TABLE import_items (
     id INTEGER PRIMARY KEY, -- 内部主键(rowid 别名,自增),也是发现顺序
     job_id TEXT NOT NULL REFERENCES import_jobs (id) ON DELETE CASCADE, -- 所属任务
-    url TEXT NOT NULL, -- 图片的绝对地址,已规范化(去掉 # 之后的部分,协议与域名小写),任务内唯一
+    url TEXT NOT NULL, -- 图片的绝对地址,已规范化(去掉 # 之后的部分,协议与域名小写,去掉默认端口),任务内唯一
     host TEXT NOT NULL, -- url 的域名,小写,非默认端口时带端口;确认页按它分组
     state TEXT NOT NULL, -- 条目状态:candidate / pending / done / failed / skipped
     image_id TEXT REFERENCES images (id) ON DELETE SET NULL, -- 导入成功后的图片短 ID;图片被删除后置空
