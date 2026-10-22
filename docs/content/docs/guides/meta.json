@@ -6,6 +6,7 @@
     "import",
     "clients",
     "access",
+    "private",
     "lifecycle",
     "admin"
   ]

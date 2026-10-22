@@ -12,6 +12,7 @@ CREATE TABLE images (
     access_count INTEGER NOT NULL DEFAULT 0, -- 累计公开访问次数;计数口径为活跃度 flush 周期粒度(同周期内多次访问计 1),非精确 PV
     pending_cleanup INTEGER NOT NULL DEFAULT 0, -- 冷图待清理标签,1 表示已入待裁决集
     cleanup_exempt INTEGER NOT NULL DEFAULT 0, -- 清理豁免,1 表示裁决保留、不再参与冷图打标
+    private INTEGER NOT NULL DEFAULT 0, -- 私有图,1 表示公开入口只认带有效签名的链接,且一律经代理输出、不走渠道直链
     created_at TEXT NOT NULL DEFAULT (datetime('now')) -- 创建时刻,UTC 文本
 );
 

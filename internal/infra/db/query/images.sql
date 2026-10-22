@@ -1,6 +1,6 @@
 -- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds, private)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetImageIDByObjectKey :one
 SELECT id
@@ -13,7 +13,7 @@ SET object_key = NULL
 WHERE user_id = @user_id AND object_key = @object_key;
 
 -- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, i.created_at, b.storage_key, b.mime, b.size, b.sha256
+SELECT i.id, i.file_name, i.blob_id, i.created_at, i.private, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = @id
@@ -56,7 +56,7 @@ WHERE blob_id = ?;
 -- name: ListImagesAdmin :many
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
-       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -84,7 +84,7 @@ WHERE (@user_id = '' OR i.user_id = @user_id)
 -- name: GetImageAdmin :one
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
-       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -160,9 +160,19 @@ JOIN blobs b ON b.id = i.blob_id;
 
 -- name: ListImagesExport :many
 SELECT id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds,
-       last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
+       last_public_access_at, access_count, pending_cleanup, cleanup_exempt, private, created_at
 FROM images
 ORDER BY created_at;
 
 -- name: ImageExists :one
 SELECT EXISTS (SELECT 1 FROM images WHERE id = ?);
+
+-- name: GetImagePrivate :one
+SELECT private
+FROM images
+WHERE id = ?;
+
+-- name: SetImagePrivate :execrows
+UPDATE images
+SET private = @private
+WHERE id = @id;

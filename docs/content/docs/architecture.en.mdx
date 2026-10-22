@@ -221,7 +221,10 @@ as an access.
 
 1. **Hotlink protection**: middleware allows the request or returns 403 based on the Referer allowlist.
 2. **Reference lookup**: a missing reference returns 404. A reference past its expiry time is treated as missing right
-   away, without waiting for the cleanup task, and an access never renews it.
+   away, without waiting for the cleanup task, and an access never renews it. For a private image this step also checks
+   the signature on the link (the admin console preview checks the login identity: owner or admin); an invalid one
+   returns 404 too, without saying why, and a passing request always gets `Cache-Control: private, no-store` and is
+   never redirected to a direct link.
 3. **Parameter validation**: a `w` outside the width presets, or an explicit `format` outside the allowed formats,
    returns 400. This check does not depend on the original's format: an original that is never processed, such as a
    GIF, also gets 400 for out-of-preset parameters, and the original for valid ones.

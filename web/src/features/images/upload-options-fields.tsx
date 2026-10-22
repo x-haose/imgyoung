@@ -1,12 +1,14 @@
 import { cn } from '@/lib/utils'
 import { useMessages } from '@/context/locale-provider'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { type OptionsDraft } from './upload-options'
 
 type UploadOptionsFieldsProps = {
   draft: OptionsDraft
   onChange: (draft: OptionsDraft) => void
   footnote?: string // 追加在两条档位说明之后的一句话
+  showPrivate?: boolean // 是否提供「私有」开关;批量导入不支持
 }
 
 /** 有效期与 EXIF 档位的分段选择区,上传与批量导入共用。 */
@@ -14,6 +16,7 @@ export function UploadOptionsFields({
   draft,
   onChange,
   footnote,
+  showPrivate = false,
 }: UploadOptionsFieldsProps) {
   const m = useMessages()
   const ttlHint =
@@ -23,6 +26,7 @@ export function UploadOptionsFields({
         ? m.images.ttlNeverHint
         : m.images.ttlCustomHint
   const hints = [ttlHint, m.images.exifHint]
+  if (showPrivate) hints.push(m.images.privateUploadHint)
   if (footnote) hints.push(footnote)
 
   return (
@@ -71,6 +75,22 @@ export function UploadOptionsFields({
             ]}
           />
         </div>
+        {showPrivate && (
+          <>
+            <span className='text-sm whitespace-nowrap'>
+              {m.images.privateUpload}
+            </span>
+            <div>
+              <Switch
+                checked={draft.private}
+                aria-label={m.images.privateUpload}
+                onCheckedChange={(checked) =>
+                  onChange({ ...draft, private: checked })
+                }
+              />
+            </div>
+          </>
+        )}
       </div>
       <p className='text-xs text-muted-foreground'>
         {hints.join(m.common.sentenceSeparator)}

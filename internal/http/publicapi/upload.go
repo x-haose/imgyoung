@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/core/upload"
@@ -21,8 +22,10 @@ const idempotencyHeader = "Idempotency-Key"
 
 // uploadResponse 上传成功的响应体。
 type uploadResponse struct {
-	ID  string `json:"id"`  // 对外短 ID
-	URL string `json:"url"` // 图片绝对访问地址;配置了 base_url 用配置,否则按请求推导
+	ID        string `json:"id"`                   // 对外短 ID
+	URL       string `json:"url"`                  // 图片绝对访问地址;配置了 base_url 用配置,否则按请求推导;私有图是带签名的链接
+	Private   bool   `json:"private,omitempty"`    // 是否私有图
+	ExpiresAt string `json:"expires_at,omitempty"` // 私有图签名链接的到期时刻,UTC 文本;非私有图省略
 }
 
 // HandleHealth 健康检查端点。
@@ -84,6 +87,12 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		return
 	}
 
+	priv, ok := parsePrivacy(form.private, form.signedTTL)
+	if !ok {
+		h.writePrivacyInvalid(w)
+		return
+	}
+
 	h.runUpload(w, r, set, form.data, upload.Options{
 		UserID:         userID,
 		TokenID:        tokenID,
@@ -92,13 +101,14 @@ func (h *Handlers) serveUpload(w http.ResponseWriter, r *http.Request, userID st
 		EXIFPolicy:     policy,
 		TTL:            ttl,
 		TTLSet:         ttlSet,
-	})
+		Private:        priv.private,
+	}, priv.signedTTL)
 }
 
-// multipartOverhead 上传请求体在文件之外的余量:multipart 边界、各段头与 exif_policy / ttl 等短字段。
+// multipartOverhead 上传请求体在文件之外的余量:multipart 边界、各段头与 exif_policy / ttl / private 等短字段。
 const multipartOverhead = 64 << 10
 
-// maxFieldBytes 单个短字段(exif_policy / ttl)的字节上限。
+// maxFieldBytes 单个短字段(exif_policy / ttl / private / signed_ttl)的字节上限。
 const maxFieldBytes = 1 << 10
 
 // 上传表单的读取错误,由 writeReadError 翻译成状态码。
@@ -115,11 +125,13 @@ type uploadForm struct {
 	data       []byte // file 段的完整字节
 	exifPolicy string // exif_policy 字段;空表示未指定
 	ttl        string // ttl 字段;空表示未指定
+	private    string // private 字段;空表示未指定
+	signedTTL  string // signed_ttl 字段;空表示未指定
 }
 
 // readUploadForm 流式读取 multipart 上传表单:file 段直接读进内存,不落临时文件。
 // @Description: 单图上限只约束 file 段本身;请求体整体以单图上限加 multipartOverhead 为界,挡住超大请求体。
-// 只认第一个带文件名的 file 段与 exif_policy、ttl 两个短字段,其余段跳过不读。
+// 只认第一个带文件名的 file 段与 exif_policy、ttl、private、signed_ttl 四个短字段,其余段跳过不读。
 // @param maxFile 单图字节上限
 // @return 上传表单
 // @return errFileTooLarge 或 *http.MaxBytesError(超限)、errNoFile、errFieldTooLong 或 multipart 格式错误
@@ -165,6 +177,10 @@ func (f *uploadForm) readPart(part *multipart.Part, maxFile int64) error {
 		f.exifPolicy, err = readField(part)
 	case "ttl":
 		f.ttl, err = readField(part)
+	case "private":
+		f.private, err = readField(part)
+	case "signed_ttl":
+		f.signedTTL, err = readField(part)
 	default:
 		// 不认识的段不读,字节仍计入请求体上限。
 	}
@@ -203,25 +219,31 @@ func readLimited(r io.Reader, limit int64, tooLarge error) ([]byte, error) {
 // @param set 本次请求生效的配置快照
 // @param data 待上传的图片字节
 // @param opts 上传选项,调用方按各自入口解析后填好
+// @param signedTTL 私有图响应里签名链接的有效时长
 func (h *Handlers) runUpload(w http.ResponseWriter, r *http.Request, set config.Settings, data []byte,
-	opts upload.Options) {
+	opts upload.Options, signedTTL time.Duration) {
 	res, err := h.cfg.Upload.Process(r.Context(), data, opts)
 	if err != nil {
 		h.writeUploadError(w, set, err)
 		return
 	}
 	h.cfg.Logger.Info("上传成功", "id", res.ImageID, "file", opts.FileName, "size", len(data))
-	writeUploaded(h, w, r, set, res.ImageID)
+	h.writeUploaded(w, r, set, res.ImageID, signedTTL)
 }
 
 // writeUploaded 写上传成功的响应体:短 ID 与绝对访问地址。
 // @param set 配置快照
 // @param imageID 对外短 ID
-func writeUploaded(h *Handlers, w http.ResponseWriter, r *http.Request, set config.Settings, imageID string) {
-	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, uploadResponse{
-		ID:  imageID,
-		URL: httpx.ImageURL(r, set.BaseURL, imageID),
-	})
+// @param signedTTL 私有图响应里签名链接的有效时长
+func (h *Handlers) writeUploaded(w http.ResponseWriter, r *http.Request, set config.Settings, imageID string,
+	signedTTL time.Duration) {
+	body, err := h.uploadedBody(r, set, imageID, signedTTL)
+	if err != nil {
+		h.cfg.Logger.Error("组装上传响应失败", "id", imageID, "err", err)
+		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
+		return
+	}
+	httpx.WriteJSON(h.cfg.Logger, w, http.StatusOK, body)
 }
 
 // writeUploadError 把上传服务的业务错误映射为 HTTP 状态码与用户可读消息。

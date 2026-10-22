@@ -396,6 +396,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/images/{id}/signed-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 图片短 ID */
+                id: components["parameters"]["imageID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 签发私有图的访问链接
+         * @description 为一张私有图签发带签名的访问链接。签名覆盖图片 ID 与到期时刻，链接到期后失效；可带 `?w=`、`?format=` 等处理参数。要提前收回已发出的链接，只能删除图片或更换主密钥。公开图返回 409（`image_not_private`），普通用户操作他人的图返回 404。
+         */
+        post: operations["signImageURL"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/images/{id}": {
         parameters: {
             query?: never;
@@ -421,8 +444,8 @@ export interface paths {
         options?: never;
         head?: never;
         /**
-         * 修改有效期或清理豁免
-         * @description 至少带一个修改项。`ttl_hours` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
+         * 修改有效期、清理豁免或私有开关
+         * @description 至少带一个修改项。`ttl_hours` 与 `private` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
          */
         patch: operations["patchImage"];
         trace?: never;
@@ -1408,7 +1431,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "import_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_bad_dimensions" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_not_private" | "signed_url_invalid" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "import_busy" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_private_invalid" | "upload_bad_dimensions" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -1484,9 +1507,13 @@ export interface components {
             id: string;
             /**
              * Format: uri
-             * @description 图片的完整访问地址；配置了 `base_url` 时以它为前缀，否则按请求推导
+             * @description 图片的完整访问地址；配置了 `base_url` 时以它为前缀，否则按请求推导。私有图返回的是带 `exp` 与 `sig` 参数的签名链接，可直接使用
              */
             url: string;
+            /** @description 是否私有图；公开图省略 */
+            private?: boolean;
+            /** @description 私有图签名链接的到期时刻，UTC 文本；公开图省略 */
+            expires_at?: string;
         };
         UploadURLRequest: {
             /**
@@ -1503,6 +1530,10 @@ export interface components {
             exif_policy?: "strip" | "passthrough" | "spoof";
             /** @description 有效期秒数，0 到 3153600000 的整数，可写成数字或数字字符串；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
             ttl?: number | string;
+            /** @description 是否作为私有图保存，规则同表单上传的 `private` */
+            private?: boolean;
+            /** @description 仅私有图使用：响应里签名链接的有效秒数，规则同表单上传的 `signed_ttl` */
+            signed_ttl?: number | string;
         };
         LoginRequest: {
             /** @description 登录名 */
@@ -1932,6 +1963,8 @@ export interface components {
             pending_cleanup: boolean;
             /** @description 是否已豁免冷图清理 */
             cleanup_exempt: boolean;
+            /** @description 是否私有图；私有图的公开链接返回 404，只有带有效签名的链接能访问 */
+            private: boolean;
             /** @description 上传时刻 */
             created_at: string;
             /**
@@ -2209,6 +2242,8 @@ export interface components {
             ttl_hours?: number;
             /** @description 设置或取消冷图清理豁免，仅管理员。设置与取消都会清除待清理标记，取消后由下一轮扫描重新判定 */
             cleanup_exempt?: boolean;
+            /** @description 设为私有或改回公开。改回公开后，此前签发的签名链接仍然有效但不再需要 */
+            private?: boolean;
         };
         BatchDeleteRequest: {
             /** @description 待删除的短 ID */
@@ -2731,6 +2766,7 @@ export interface components {
             access_count: number;
             pending_cleanup: boolean;
             cleanup_exempt: boolean;
+            private: boolean;
             created_at: string;
         };
         /** @description 导出的物理图 */
@@ -3059,6 +3095,13 @@ export interface components {
                     exif_policy?: "strip" | "passthrough" | "spoof";
                     /** @description 有效期秒数，0 到 3153600000 的整数；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认 */
                     ttl?: string;
+                    /**
+                     * @description 是否作为私有图保存。私有图的公开链接一律返回 404，只有带有效签名的链接能访问；缺省为 `false`
+                     * @enum {string}
+                     */
+                    private?: "true" | "false";
+                    /** @description 仅私有图使用：响应里签名链接的有效秒数，1 到 3153600000 的整数；缺省为 86400（24 小时） */
+                    signed_ttl?: string;
                 };
             };
         };
@@ -3675,6 +3718,64 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    signImageURL: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description 登录或 `GET /api/admin/me` 响应里的 `csrf_token`；缺失或不匹配返回 403 */
+                "X-CSRF-Token": components["parameters"]["csrfToken"];
+            };
+            path: {
+                /** @description 图片短 ID */
+                id: components["parameters"]["imageID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: int64
+                     * @description 链接的有效秒数
+                     */
+                    ttl_seconds: number;
+                };
+            };
+        };
+        responses: {
+            /** @description 签名链接 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * Format: uri
+                         * @description 带 `exp` 与 `sig` 参数的绝对链接
+                         */
+                        url: string;
+                        /** @description 链接的到期时刻，UTC 文本 */
+                        expires_at: string;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description 图片不是私有图（`image_not_private`） */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };

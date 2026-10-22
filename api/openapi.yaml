@@ -733,6 +733,64 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/admin/images/{id}/signed-url:
+    parameters:
+      - $ref: '#/components/parameters/imageID'
+    post:
+      operationId: signImageURL
+      tags: [Admin · Images]
+      summary: 签发私有图的访问链接
+      description: 为一张私有图签发带签名的访问链接。签名覆盖图片 ID 与到期时刻，链接到期后失效；可带 `?w=`、`?format=` 等处理参数。已发出的链接无法单独收回，要在到期前让它失效只能删除图片。公开图返回 409（`image_not_private`），普通用户操作他人的图返回 404。
+      security:
+        - session: []
+      parameters:
+        - $ref: '#/components/parameters/csrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ttl_seconds]
+              properties:
+                ttl_seconds:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  maximum: 3153600000
+                  description: 链接的有效秒数
+      responses:
+        '200':
+          description: 签名链接
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_at]
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                    description: 带 `exp` 与 `sig` 参数的绝对链接
+                  expires_at:
+                    type: string
+                    description: 链接的到期时刻，UTC 文本
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 图片不是私有图（`image_not_private`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /api/admin/images/{id}:
     parameters:
       - $ref: '#/components/parameters/imageID'
@@ -757,8 +815,8 @@ paths:
     patch:
       operationId: patchImage
       tags: [Admin · Images]
-      summary: 修改有效期或清理豁免
-      description: 至少带一个修改项。`ttl_hours` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
+      summary: 修改有效期、清理豁免或私有开关
+      description: 至少带一个修改项。`ttl_hours` 与 `private` 图片属主即可修改；已到期的图片不能再修改有效期，返回 409。`cleanup_exempt` 对应冷图裁决里的「保留」，仅管理员可改，普通用户带上它返回 403。普通用户修改他人的图返回 404。
       security:
         - session: []
       parameters:
@@ -2763,6 +2821,13 @@ components:
               ttl:
                 type: string
                 description: 有效期秒数，0 到 3153600000 的整数；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
+              private:
+                type: string
+                enum: ['true', 'false']
+                description: 是否作为私有图保存。私有图的公开链接一律返回 404，只有带有效签名的链接能访问；缺省为 `false`
+              signed_ttl:
+                type: string
+                description: 仅私有图使用：响应里签名链接的有效秒数，1 到 3153600000 的整数；缺省为 86400（24 小时）
     UploadURL:
       required: true
       content:
@@ -2993,6 +3058,8 @@ components:
         - token_not_found
         - token_active
         - image_not_found
+        - image_not_private
+        - signed_url_invalid
         - image_patch_invalid
         - cleanup_exempt_admin_only
         - image_expired
@@ -3068,6 +3135,7 @@ components:
         - upload_busy
         - upload_unsupported_type
         - upload_too_many_pixels
+        - upload_private_invalid
         - upload_bad_dimensions
         - upload_invalid_image
         - upload_exif_policy
@@ -3201,7 +3269,13 @@ components:
         url:
           type: string
           format: uri
-          description: 图片的完整访问地址；配置了 `base_url` 时以它为前缀，否则按请求推导
+          description: 图片的完整访问地址；配置了 `base_url` 时以它为前缀，否则按请求推导。私有图返回的是带 `exp` 与 `sig` 参数的签名链接，可直接使用
+        private:
+          type: boolean
+          description: 是否私有图；公开图省略
+        expires_at:
+          type: string
+          description: 私有图签名链接的到期时刻，UTC 文本；公开图省略
     UploadURLRequest:
       type: object
       required: [url]
@@ -3219,6 +3293,14 @@ components:
           description: 本次 EXIF 档位；缺省用运营配置的全局默认
         ttl:
           description: 有效期秒数，0 到 3153600000 的整数，可写成数字或数字字符串；`0` 或 `never` 都表示永久。缺省时用该用户的默认有效期，用户未设置则用全局默认
+          oneOf:
+            - type: integer
+            - type: string
+        private:
+          type: boolean
+          description: 是否作为私有图保存，规则同表单上传的 `private`
+        signed_ttl:
+          description: 仅私有图使用：响应里签名链接的有效秒数，规则同表单上传的 `signed_ttl`
           oneOf:
             - type: integer
             - type: string
@@ -3851,6 +3933,7 @@ components:
         - access_count
         - pending_cleanup
         - cleanup_exempt
+        - private
         - created_at
         - ref_count
       properties:
@@ -3912,6 +3995,9 @@ components:
         cleanup_exempt:
           type: boolean
           description: 是否已豁免冷图清理
+        private:
+          type: boolean
+          description: 是否私有图；私有图的公开链接返回 404，只有带有效签名的链接能访问
         created_at:
           type: string
           description: 上传时刻
@@ -4320,6 +4406,9 @@ components:
         cleanup_exempt:
           type: boolean
           description: 设置或取消冷图清理豁免，仅管理员。设置与取消都会清除待清理标记，取消后由下一轮扫描重新判定
+        private:
+          type: boolean
+          description: 设为私有或改回公开。改回公开后，此前签发的签名链接仍然有效但不再需要
     BatchDeleteRequest:
       type: object
       required: [ids]
@@ -5179,6 +5268,7 @@ components:
         - access_count
         - pending_cleanup
         - cleanup_exempt
+        - private
         - created_at
       properties:
         id:
@@ -5209,6 +5299,8 @@ components:
         pending_cleanup:
           type: boolean
         cleanup_exempt:
+          type: boolean
+        private:
           type: boolean
         created_at:
           type: string

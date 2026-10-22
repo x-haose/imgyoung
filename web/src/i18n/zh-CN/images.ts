@@ -124,6 +124,26 @@ export const images = {
   exifStrip: '剥离',
   exifPassthrough: '保留',
   exifSpoof: '伪装',
+  private: '私有',
+  privateRow: '私有图',
+  privateHelp:
+    '私有图的公开链接打不开，只有带有效签名的链接能访问；一律经本服务输出，不走渠道直链，也不被 CDN 缓存。防盗链白名单对它同样生效',
+  privateSet: '已设为私有',
+  privateUnset: '已改回公开',
+  privateUpload: '私有',
+  privateUploadHint:
+    '私有图没有永久链接，上传后在图片详情里生成有时效的签名链接',
+  signedTitle: '签名链接',
+  signedHint: '选择有效期后生成，链接到期即失效。已发出的链接无法提前收回',
+  signedValidity: '链接有效期',
+  signedGenerate: '生成链接',
+  signedExpiresAt: '{time} 到期',
+  signedTtl: {
+    '1': '1 小时',
+    '24': '1 天',
+    '168': '7 天',
+    '720': '30 天',
+  },
   exifHint:
     '剥离会去掉拍摄设备、GPS 等元数据；伪装会换成一份编造的机型、位置与时间；默认跟随全局设置',
   clipboardImage: '剪贴板图片',

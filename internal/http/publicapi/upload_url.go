@@ -26,6 +26,8 @@ type urlUploadRequest struct {
 	FileName   string          `json:"file_name"`   // 覆盖由地址推断的文件名,可省
 	EXIFPolicy string          `json:"exif_policy"` // 本次 EXIF 档位,省略则用全局默认
 	TTL        json.RawMessage `json:"ttl"`         // 有效期秒数或 "never";省略表示未显式指定
+	Private    bool            `json:"private"`     // 是否作为私有图保存
+	SignedTTL  json.RawMessage `json:"signed_ttl"`  // 私有图响应里签名链接的有效秒数,省略为 24 小时
 }
 
 // HandleUploadURL 处理数据面 URL 转存(Bearer Token 认证)。
@@ -63,7 +65,7 @@ func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID
 		return
 	}
 	idemKey := r.Header.Get(idempotencyHeader)
-	if h.respondExisting(w, r, set, userID, idemKey) {
+	if h.respondExisting(w, r, set, userID, idemKey, req.priv.signedTTL) {
 		return
 	}
 
@@ -80,7 +82,8 @@ func (h *Handlers) serveUploadURL(w http.ResponseWriter, r *http.Request, userID
 		EXIFPolicy:     req.policy,
 		TTL:            req.ttl,
 		TTLSet:         req.ttlSet,
-	})
+		Private:        req.priv.private,
+	}, req.priv.signedTTL)
 }
 
 // urlUpload 解析并校验过的 URL 转存参数。
@@ -90,6 +93,7 @@ type urlUpload struct {
 	policy   imaging.EXIFPolicy // 本次生效的 EXIF 档位,已校验合法
 	ttl      time.Duration      // 显式指定的有效时长,仅 ttlSet 为 true 时生效;0 表示显式永久
 	ttlSet   bool               // 请求是否显式指定了 ttl
+	priv     privacy            // 私有选项
 }
 
 // parseURLUpload 解析 URL 转存的请求体并校验参数。
@@ -123,27 +127,33 @@ func (h *Handlers) parseURLUpload(w http.ResponseWriter, r *http.Request, set co
 		h.writeUploadError(w, set, err)
 		return urlUpload{}, false
 	}
+	priv, ok := parsePrivacy(strconv.FormatBool(req.Private), httpx.TTLString(req.SignedTTL))
+	if !ok {
+		h.writePrivacyInvalid(w)
+		return urlUpload{}, false
+	}
 	name := req.FileName
 	if name == "" {
 		name = urlfetch.FileName(req.URL)
 	}
-	return urlUpload{url: req.URL, fileName: name, policy: policy, ttl: ttl, ttlSet: ttlSet}, true
+	return urlUpload{url: req.URL, fileName: name, policy: policy, ttl: ttl, ttlSet: ttlSet, priv: priv}, true
 }
 
 // respondExisting 幂等键命中时直接返回第一次的结果。
 // @param set 配置快照
 // @param userID 归属用户 id
 // @param key 幂等键,可为空(视为未命中)
+// @param signedTTL 命中的是私有图时,响应里签名链接的有效时长
 // @return 是否已写出响应:命中,或查询失败已写出错误
 func (h *Handlers) respondExisting(w http.ResponseWriter, r *http.Request, set config.Settings,
-	userID, key string) bool {
+	userID, key string, signedTTL time.Duration) bool {
 	imageID, found, err := h.cfg.Upload.ExistingUpload(r.Context(), userID, key)
 	if err != nil {
 		h.writeUploadError(w, set, err)
 		return true
 	}
 	if found {
-		writeUploaded(h, w, r, set, imageID)
+		h.writeUploaded(w, r, set, imageID, signedTTL)
 	}
 	return found
 }

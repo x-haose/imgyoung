@@ -129,6 +129,7 @@ type Options struct {
 	EXIFPolicy     imaging.EXIFPolicy // 本次上传生效的 EXIF 档位,必填;调用方解析"单次指定 > 全局默认"后传入
 	TTL            time.Duration      // 请求显式指定的有效时长,仅 TTLSet 为 true 时生效;0 表示显式永久
 	TTLSet         bool               // 请求是否显式指定 ttl;false 时按"用户默认 > 全局默认"解析,到期时刻由落库时刻推算
+	Private        bool               // 是否作为私有图保存:公开入口只认带有效签名的链接
 	ObjectKey      string             // S3 协议上传时客户端指定的对象键,可为空;同用户同键按 S3 语义覆盖(旧图让出别名,短 ID 仍可访问)
 }
 
@@ -255,7 +256,7 @@ func (s *Service) store(ctx context.Context, set config.Settings, win idemWindow
 		idemKey: opts.IdempotencyKey, idemWin: win, doneIDs: doneIDs, channels: all, need: minSuccess(set),
 		sha256: prep.sha256, phash: prep.phash, key: key, mime: meta.mime, size: int64(len(prep.data)),
 		width: int64(meta.width), height: int64(meta.height),
-		ttl: resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()), objectKey: opts.ObjectKey,
+		ttl: resolveTTL(opts, user.DefaultTtlHours, set.DefaultTTL()), objectKey: opts.ObjectKey, private: opts.Private,
 	})
 	if err != nil {
 		s.discardWritten(ctx, targets, doneIDs, key)
@@ -671,6 +672,7 @@ type persistParams struct {
 	width, height int64            // 像素尺寸
 	ttl           time.Duration    // 有效时长,<=0 表示永不过期;到期时刻与 ttl_seconds 均由此推算
 	objectKey     string           // S3 对象键别名,空表示非 S3 途径
+	private       bool             // 是否私有图
 }
 
 // persist 在单事务内写入 blob、引用、副本状态与幂等键。
@@ -765,6 +767,7 @@ func insertImage(ctx context.Context, q *sqlc.Queries, p persistParams, blobID i
 		ObjectKey:  sql.NullString{String: p.objectKey, Valid: p.objectKey != ""},
 		ExpireAt:   expireAt,
 		TtlSeconds: ttlSeconds,
+		Private:    boolInt(p.private),
 	}); err != nil {
 		return fmt.Errorf("写入引用记录: %w", err)
 	}
@@ -830,4 +833,14 @@ func insertReplica(ctx context.Context, q *sqlc.Queries, blobID, channelID int64
 		return 0, fmt.Errorf("写入副本状态(渠道 %d): %w", channelID, err)
 	}
 	return 0, nil
+}
+
+// boolInt 布尔转 SQLite 的 0/1 整数。
+// @param b 布尔值
+// @return 1 表示 true,0 表示 false
+func boolInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

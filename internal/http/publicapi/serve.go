@@ -13,21 +13,24 @@ import (
 
 	"github.com/x-haose/imgyoung/internal/core/channel"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
+	"github.com/x-haose/imgyoung/internal/http/middleware"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/errcode"
+	"github.com/x-haose/imgyoung/internal/infra/signedurl"
 )
 
 // imageAccess 一次图片访问的入口属性。
 type imageAccess struct {
 	touch   bool // 是否记公开访问活跃度:对外入口计,后台入口不计;HEAD 与参数非法的请求不算访问
 	mutable bool // URL 指向的内容可能变化:对象键别名可被同键重传改指,响应须每次向源站确认
+	session bool // 经会话鉴权的后台入口:私有图凭登录身份(属主或管理员)访问,不看链接签名
 }
 
 // originalOpts 原图响应随之变化的维度。
 type originalOpts struct {
-	degraded   bool // 按需处理失败后的回退输出:不可缓存,也不走 304 与 302
-	varyAccept bool // 同一 URL 的响应随 Accept 协商变化(支持 WebP 的浏览器拿到的是衍生图)
-	mutable    bool // 见 imageAccess.mutable
+	degraded   bool      // 按需处理失败后的回退输出:不可缓存,也不走 304 与 302
+	varyAccept bool      // 同一 URL 的响应随 Accept 协商变化(支持 WebP 的浏览器拿到的是衍生图)
+	cache      cacheMode // 缓存策略;私有图不走 302 直链
 }
 
 // HandleServe 按短 ID 代理输出图片(对外公开入口,计公开访问活跃度)。
@@ -39,7 +42,7 @@ func (h *Handlers) HandleServe(w http.ResponseWriter, r *http.Request) {
 // @Description: 管理员浏览若计数,会把冷图摘出待清理列表(TTL 续期时还顺延到期)、
 // 抬高访问统计与热门榜,故后台展示一律走此会话鉴权通道;对外分享仍用 /i/。
 func (h *Handlers) HandleAdminServe(w http.ResponseWriter, r *http.Request) {
-	h.serveImageID(w, r, chi.URLParam(r, "id"), imageAccess{})
+	h.serveImageID(w, r, chi.URLParam(r, "id"), imageAccess{session: true})
 }
 
 // serveImageID 按已解析出的短 ID 输出图片:查引用、校验处理参数、计活跃度、走衍生图或原图。
@@ -60,6 +63,18 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 		http.Error(w, "服务内部错误", http.StatusInternalServerError)
 		return
 	}
+	if row.Private != 0 && !h.mayViewPrivate(r, row.ID, a) {
+		// 与不存在同样的响应,不暴露私有图是否存在。
+		http.NotFound(w, r)
+		return
+	}
+	cache := cacheImmutable
+	if a.mutable {
+		cache = cacheRevalidate
+	}
+	if row.Private != 0 {
+		cache = cachePrivate
+	}
 	// 按需处理:解析档位参数,命中则走处理路径(即便 redirect 省流量模式也强制代理)。
 	var req variantRequest
 	if h.cfg.Variants != nil {
@@ -73,10 +88,40 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 		h.cfg.Activity.Touch(imageID)
 	}
 	if req.process {
-		h.serveVariant(w, r, row, req, a.mutable)
+		h.serveVariant(w, r, row, req, cache)
 		return
 	}
-	h.serveOriginal(w, r, row, originalOpts{varyAccept: req.varyAccept, mutable: a.mutable})
+	h.serveOriginal(w, r, row, originalOpts{varyAccept: req.varyAccept, cache: cache})
+}
+
+// mayViewPrivate 判断这次请求能否看这张私有图。
+// @Description: 公开入口只认链接上未过期的有效签名;后台入口认登录身份,属主或管理员可看。
+// 无法确认(查询归属失败)按不能看处理,不放行。
+// @param r 请求
+// @param imageID 图片短 ID
+// @param a 入口属性
+// @return 能看为 true
+func (h *Handlers) mayViewPrivate(r *http.Request, imageID string, a imageAccess) bool {
+	if !a.session {
+		q := r.URL.Query()
+		return h.cfg.Signer.Verify(imageID, q.Get(signedurl.ParamExpires), q.Get(signedurl.ParamSignature),
+			time.Now()) == nil
+	}
+	info, ok := middleware.SessionFrom(r.Context())
+	if !ok {
+		return false
+	}
+	if info.Principal.IsAdmin() {
+		return true
+	}
+	owner, err := h.cfg.Queries.GetImageOwner(r.Context(), imageID)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			h.cfg.Logger.Error("查询图片归属失败", "id", imageID, "err", err)
+		}
+		return false
+	}
+	return owner == info.Principal.UserID
 }
 
 // serveOriginal 代理或重定向原图字节:ETag/304 协商、302 省流量、按渠道优先级容灾读取;HEAD 只写响应头。
@@ -90,7 +135,7 @@ func (h *Handlers) serveImageID(w http.ResponseWriter, r *http.Request, imageID 
 func (h *Handlers) serveOriginal(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow, o originalOpts) {
 	etag := `"` + row.Sha256 + `"`
 	if !o.degraded && r.Header.Get("If-None-Match") == etag {
-		writeNotModified(w, etag, o.mutable, o.varyAccept)
+		writeNotModified(w, etag, o.cache, o.varyAccept)
 		return
 	}
 	candidates, ok := h.servingCandidates(w, r, row)
@@ -98,7 +143,7 @@ func (h *Handlers) serveOriginal(w http.ResponseWriter, r *http.Request, row sql
 		return
 	}
 	// 302 省流量模式:候选中允许直链且非加密的渠道直接重定向;无直链候选则回退代理。
-	if !o.degraded && h.cfg.Settings().AccessMode == "redirect" &&
+	if !o.degraded && o.cache != cachePrivate && h.cfg.Settings().AccessMode == "redirect" &&
 		redirectToDirectLink(w, r, candidates, row.StorageKey) {
 		return
 	}
@@ -181,7 +226,7 @@ func writeOriginalHeaders(hd http.Header, row sqlc.GetImageBlobRow, o originalOp
 		hd.Set("Cache-Control", "no-store")
 		return
 	}
-	hd.Set("Cache-Control", cacheControl(o.mutable))
+	hd.Set("Cache-Control", cacheControl(o.cache))
 	hd.Set("ETag", `"`+row.Sha256+`"`)
 	setVary(hd, o.varyAccept)
 	if uploaded, err := sqlc.ParseTimeText(row.CreatedAt); err == nil {
@@ -216,10 +261,10 @@ func (h *Handlers) ServeObject(w http.ResponseWriter, r *http.Request, imageID s
 		return fmt.Errorf("查询引用记录: %w", err)
 	}
 	// 对象键可被同键重传改指,缓存语义同 /o/ 别名
-	opts := originalOpts{mutable: true}
+	opts := originalOpts{cache: cacheRevalidate}
 	etag := `"` + row.Sha256 + `"`
 	if r.Header.Get("If-None-Match") == etag {
-		writeNotModified(w, etag, opts.mutable, opts.varyAccept)
+		writeNotModified(w, etag, opts.cache, opts.varyAccept)
 		return nil
 	}
 	candidates, err := h.cfg.Channels.CandidatesForBlob(r.Context(), row.BlobID)

@@ -56,6 +56,7 @@ import {
   type ReplicaItem,
   shareURL,
 } from './data'
+import { SignedLinks } from './signed-links'
 
 type ImageDetailSheetProps = {
   id: string | undefined // 当前打开的图片;undefined 为关闭
@@ -144,7 +145,11 @@ function DetailBody({
                     className='mx-auto max-h-80 w-full object-contain'
                   />
                 </a>
-                <ShareLinks url={url} widths={config?.process_widths} />
+                {image.private ? (
+                  <SignedLinks id={image.id} baseURL={config?.base_url} />
+                ) : (
+                  <ShareLinks url={url} widths={config?.process_widths} />
+                )}
                 <MetaList image={image} isAdmin={isAdmin} patch={patch} />
                 <ReplicaList replicas={image.replicas} />
               </>
@@ -357,6 +362,24 @@ function MetaList({
             <TtlEditor image={image} patch={patch} />
           )}
         </div>
+      </Row>
+      <Row label={m.images.privateRow} help={m.images.privateHelp}>
+        <Switch
+          checked={image.private}
+          disabled={patch.isPending}
+          aria-label={m.images.privateRow}
+          onCheckedChange={(checked) =>
+            patch.mutate(
+              { private: checked },
+              {
+                onSuccess: () =>
+                  toast.success(
+                    checked ? m.images.privateSet : m.images.privateUnset
+                  ),
+              }
+            )
+          }
+        />
       </Row>
       <Row label={m.images.cleanupExempt} help={m.images.exemptHelp}>
         {isAdmin ? (

@@ -191,9 +191,10 @@ func (s *Sweeper) DeleteImage(ctx context.Context, imageID string) error {
 type ImagePatch struct {
 	TTL           *time.Duration // 新的有效时长,从现在起算并记为该图的时长;0 表示改为永久
 	CleanupExempt *bool          // 清理豁免;无论方向都摘掉待清理标签
+	Private       *bool          // 私有图开关
 }
 
-// UpdateImage 在单事务内修改一条引用的有效期与清理豁免,任一项失败整次回滚。
+// UpdateImage 在单事务内修改一条引用的有效期、清理豁免与私有开关,任一项失败整次回滚。
 // @Description: 已到期的引用不再改有效期,判断与修改在同一条 UPDATE 里完成。豁免开关无论方向都摘
 // pending_cleanup:置豁免即裁决保留,取消豁免交下轮冷图扫描重判。
 // @param ctx 控制超时与取消
@@ -214,12 +215,25 @@ func (s *Sweeper) UpdateImage(ctx context.Context, imageID string, patch ImagePa
 			return err
 		}
 	}
+	if err := setImageFlags(ctx, q, imageID, patch); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交引用修改: %w", err)
+	}
+	return nil
+}
+
+// setImageFlags 改一条引用的清理豁免与私有开关。
+// @param q 事务内查询集
+// @param imageID 目标引用短 ID
+// @param patch 修改项,只处理其中的清理豁免与私有开关
+// @return 引用不存在时的 ErrImageNotFound;落库失败时的错误
+func setImageFlags(ctx context.Context, q *sqlc.Queries, imageID string, patch ImagePatch) error {
 	if patch.CleanupExempt != nil {
-		exempt := int64(0)
-		if *patch.CleanupExempt {
-			exempt = 1
-		}
-		n, err := q.SetImageCleanupExempt(ctx, sqlc.SetImageCleanupExemptParams{Exempt: exempt, ID: imageID})
+		n, err := q.SetImageCleanupExempt(ctx, sqlc.SetImageCleanupExemptParams{
+			Exempt: boolInt(*patch.CleanupExempt), ID: imageID,
+		})
 		if err != nil {
 			return fmt.Errorf("更新清理豁免: %w", err)
 		}
@@ -227,8 +241,14 @@ func (s *Sweeper) UpdateImage(ctx context.Context, imageID string, patch ImagePa
 			return ErrImageNotFound
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交引用修改: %w", err)
+	if patch.Private != nil {
+		n, err := q.SetImagePrivate(ctx, sqlc.SetImagePrivateParams{Private: boolInt(*patch.Private), ID: imageID})
+		if err != nil {
+			return fmt.Errorf("更新私有开关: %w", err)
+		}
+		if n == 0 {
+			return ErrImageNotFound
+		}
 	}
 	return nil
 }
@@ -458,4 +478,14 @@ func (s *Sweeper) enqueueObjectDeletes(ctx context.Context, blobID int64, storag
 			s.cfg.Logger.Warn("入队删除渠道对象失败,待对账 GC 兜底", "blob", blobID, "channel", chID, "err", err)
 		}
 	}
+}
+
+// boolInt 布尔转 SQLite 的 0/1 整数。
+// @param b 布尔值
+// @return 1 表示 true,0 表示 false
+func boolInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

@@ -42,7 +42,9 @@ var (
 // 图片管理。
 var (
 	ImageNotFound          = define("image_not_found", "图片不存在")
-	ImagePatchInvalid      = define("image_patch_invalid", "请求体非法:ttl_hours 须为 0(永久)或不超过 {max} 的正整数,且至少包含一项修改")
+	ImagePatchInvalid      = define("image_patch_invalid", "请求体非法:ttl_hours 须为 0 或不超过 {max} 的正整数,private 须为布尔值,至少含一项修改")
+	ImageNotPrivate        = define("image_not_private", "只有私有图才有签名链接")
+	SignedURLInvalid       = define("signed_url_invalid", "ttl_seconds 须为 1 到 {max} 的整数")
 	CleanupExemptAdminOnly = define("cleanup_exempt_admin_only", "清理豁免仅管理员可设置")
 	ImageExpired           = define("image_expired", "图片已到期,不能再修改有效期")
 	BatchIDsInvalid        = define("batch_ids_invalid", "请求体非法:ids 需为 1 到 {max} 个图片 ID")
@@ -157,6 +159,7 @@ var (
 	UploadBadDimensions   = define("upload_bad_dimensions", "图片单边超过 {max_side} 像素,或长边与短边之比超过 {max_ratio}:1")
 	UploadInvalidImage    = define("upload_invalid_image", "图片内容无法解析")
 	UploadEXIFPolicy      = define("upload_exif_policy", "exif_policy 取值非法(可选 strip / passthrough / spoof)")
+	UploadPrivateInvalid  = define("upload_private_invalid", "private 须为 true 或 false,signed_ttl 须为 1 到 {max} 的整数秒")
 	UploadQuotaExceeded   = define("upload_quota_exceeded", "存储配额已满")
 	UploadUnavailable     = define("upload_unavailable", "存储渠道暂不可用,请稍后重试")
 	UploadTTLInvalid      = define("upload_ttl_invalid", "ttl 取值非法(需要 0 到 {max} 的整数秒,或 never 表示永久)")

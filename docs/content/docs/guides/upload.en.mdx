@@ -42,8 +42,10 @@ curl -H "Authorization: Bearer imgy_xxxxxxxx" \
 | `file` | Yes | The image file. Only the first `file` part with a file name is used. The file name is metadata only (shown and searchable in the console); control characters are removed and it is truncated to 255 bytes |
 | `ttl` | No | Lifetime in whole seconds (0 to 3153600000) or `never`; both `0` and `never` mean the image never expires. When omitted, the user's default applies, then the global default; see [Lifecycle and deduplication](./lifecycle.mdx) |
 | `exif_policy` | No | `strip`, `passthrough` or `spoof`. When omitted, the global default applies (`passthrough` by default); see [EXIF handling](#exif-handling) below |
+| `private` | No | `true` or `false` (`1` and `0` are also accepted); `true` stores the image as a [private image](#private-images). Defaults to `false` |
+| `signed_ttl` | No | Private images only: validity in seconds (1 to 3153600000) of the signed link in the response; defaults to 86400 (24 hours) |
 
-- `ttl` and `exif_policy` are read only from multipart form fields; putting them in the URL query string has no effect.
+- `ttl`, `exif_policy`, `private` and `signed_ttl` are read only from multipart form fields; putting them in the URL query string has no effect.
 - Each of the two fields is at most 1 KiB; a longer one returns 400.
 - Any other form fields are ignored.
 - The `Idempotency-Key` request header is optional; see [Idempotency keys](#idempotency-keys).
@@ -59,6 +61,7 @@ A successful upload returns 200:
 
 - `id` is a 10-character short ID drawn from `0-9A-Za-z`.
 - `url` is always absolute. If the **Public site address** (`base_url`) is set, it is used; otherwise the address is derived from the request: the scheme from whether the connection uses TLS, the host from the `Host` header.
+- For a private image, `url` is a signed link with `exp` and `sig` parameters, and the response also has `private: true` and `expires_at`.
 - When the request arrives through a trusted reverse proxy, `X-Forwarded-Proto` and `X-Forwarded-Host` are used instead. Which proxies are trusted is set by the `IMGYOUNG_TRUSTED_PROXIES` environment variable.
 
 <Callout type="warn" title="Set base_url behind a reverse proxy or CDN">
@@ -132,6 +135,8 @@ The body is a JSON object of at most 8 KiB containing only the fields below; any
 | `file_name` | No | File name. Defaults to the last segment of the URL path, or `fetched` if there is none |
 | `exif_policy` | No | Same as the form upload |
 | `ttl` | No | Same as the form upload; the number `3600` and the strings `"3600"` and `"never"` are all accepted |
+| `private` | No | A boolean, same as the form upload |
+| `signed_ttl` | No | Same as the form upload; a number or a string is accepted |
 
 The response and the use of `Idempotency-Key` are the same as for the form upload. The format of the fetched bytes is determined from their content; the `Content-Type` declared by the remote server plays no part.
 
@@ -288,6 +293,10 @@ The EXIF policy takes effect at upload time, and the processed bytes are what th
 This is because an original's bytes never change after upload, and responses carry `Cache-Control: immutable`, so browsers and CDNs can safely cache them for a year. If EXIF were processed on access, changing the global policy would change the bytes served by the same original's link: the CDN cache would have to be purged wholesale, and old bytes already cached in visitors' browsers could not be invalidated at all.
 
 A `/i/` link does not always serve the original: for a JPEG or PNG original requested without parameters, the format is negotiated from the request's `Accept` header, and variants are generated with the current **Target formats** and encoding quality; see [on-demand processing](./access.mdx#on-demand-processing). After you change these settings, output that is already cached does not update right away: CDN caches update once they expire or are purged manually, and browser caches once they expire (up to a year). See [CDN](../operations/cdn.mdx).
+
+## Private images [#private-images]
+
+Upload with `private=true` and the image is stored as a private image: its public link does not open, only a link with a valid signature does, and the `url` in the response is a signed link valid for 24 hours. For a fresh link later, or to make it public again or private, see [Private images](./private.mdx).
 
 ## Uploading the same image more than once
 

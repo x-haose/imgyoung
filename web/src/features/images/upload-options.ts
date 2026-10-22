@@ -9,12 +9,14 @@ export interface OptionsDraft {
   ttlMode: TtlMode
   ttlHours: string // 自定义档的小时数,输入框原文
   exif: ExifMode
+  private: boolean // 作为私有图保存
 }
 
 export const defaultOptionsDraft: OptionsDraft = {
   ttlMode: 'default',
   ttlHours: '24',
   exif: 'default',
+  private: false,
 }
 
 /** 草稿转请求选项;自定义档未填有效小时数时提示 ttlRequiredMessage 并返回 null,静默回退到默认档会打破三态语义。 */
@@ -35,5 +37,6 @@ export function draftToOptions(
           ? String(Math.round(hours * 3600))
           : undefined,
     exif: draft.exif === 'default' ? undefined : draft.exif,
+    private: draft.private || undefined,
   }
 }

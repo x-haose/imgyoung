@@ -49,6 +49,7 @@ type imageExportItem struct {
 	AccessCount        int64   `json:"access_count"`          // 累计公开访问次数
 	PendingCleanup     bool    `json:"pending_cleanup"`       // 是否在待清理列表
 	CleanupExempt      bool    `json:"cleanup_exempt"`        // 是否清理豁免
+	Private            bool    `json:"private"`               // 是否私有图
 	CreatedAt          string  `json:"created_at"`            // 上传时刻,UTC 文本
 }
 
@@ -171,7 +172,7 @@ func imagesExport(rows []sqlc.Image) []imageExportItem {
 			FileName: r.FileName, ObjectKey: nullableStr(r.ObjectKey), ExpireAt: nullableStr(r.ExpireAt),
 			TTLSeconds: nullableInt(r.TtlSeconds), LastPublicAccessAt: nullableStr(r.LastPublicAccessAt),
 			AccessCount: r.AccessCount, PendingCleanup: r.PendingCleanup != 0, CleanupExempt: r.CleanupExempt != 0,
-			CreatedAt: r.CreatedAt,
+			Private: r.Private != 0, CreatedAt: r.CreatedAt,
 		})
 	}
 	return items

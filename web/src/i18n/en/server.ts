@@ -150,6 +150,10 @@ export const server = {
       'Only image files are supported (jpeg/png/gif/webp)',
     upload_too_many_pixels:
       'The image resolution exceeds the pixel budget ({max} megapixels)',
+    upload_private_invalid:
+      'private must be true or false, and signed_ttl an integer from 1 to {max} seconds',
+    image_not_private: 'Only private images have signed links',
+    signed_url_invalid: 'ttl_seconds must be an integer from 1 to {max}',
     upload_bad_dimensions:
       'The image side exceeds {max_side} px, or its long side is more than {max_ratio} times the short side',
     upload_invalid_image: 'The image content cannot be decoded',

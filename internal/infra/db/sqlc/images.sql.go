@@ -122,8 +122,8 @@ func (q *Queries) CountPendingCleanupImages(ctx context.Context) (int64, error) 
 }
 
 const createImage = `-- name: CreateImage :exec
-INSERT INTO images (id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO images (id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds, private)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateImageParams struct {
@@ -135,6 +135,7 @@ type CreateImageParams struct {
 	ObjectKey  sql.NullString
 	ExpireAt   sql.NullString
 	TtlSeconds sql.NullInt64
+	Private    int64
 }
 
 func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error {
@@ -147,6 +148,7 @@ func (q *Queries) CreateImage(ctx context.Context, arg CreateImageParams) error 
 		arg.ObjectKey,
 		arg.ExpireAt,
 		arg.TtlSeconds,
+		arg.Private,
 	)
 	return err
 }
@@ -167,7 +169,7 @@ func (q *Queries) DeleteImage(ctx context.Context, id string) (int64, error) {
 const getImageAdmin = `-- name: GetImageAdmin :one
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
-       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -189,6 +191,7 @@ type GetImageAdminRow struct {
 	AccessCount        int64
 	PendingCleanup     int64
 	CleanupExempt      int64
+	Private            int64
 	CreatedAt          string
 	Mime               string
 	Size               int64
@@ -214,6 +217,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 		&i.AccessCount,
 		&i.PendingCleanup,
 		&i.CleanupExempt,
+		&i.Private,
 		&i.CreatedAt,
 		&i.Mime,
 		&i.Size,
@@ -226,7 +230,7 @@ func (q *Queries) GetImageAdmin(ctx context.Context, id string) (GetImageAdminRo
 }
 
 const getImageBlob = `-- name: GetImageBlob :one
-SELECT i.id, i.file_name, i.blob_id, i.created_at, b.storage_key, b.mime, b.size, b.sha256
+SELECT i.id, i.file_name, i.blob_id, i.created_at, i.private, b.storage_key, b.mime, b.size, b.sha256
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
 WHERE i.id = ?1
@@ -243,6 +247,7 @@ type GetImageBlobRow struct {
 	FileName   string
 	BlobID     int64
 	CreatedAt  string
+	Private    int64
 	StorageKey string
 	Mime       string
 	Size       int64
@@ -257,6 +262,7 @@ func (q *Queries) GetImageBlob(ctx context.Context, arg GetImageBlobParams) (Get
 		&i.FileName,
 		&i.BlobID,
 		&i.CreatedAt,
+		&i.Private,
 		&i.StorageKey,
 		&i.Mime,
 		&i.Size,
@@ -307,6 +313,19 @@ func (q *Queries) GetImageOwner(ctx context.Context, id string) (string, error) 
 	var user_id string
 	err := row.Scan(&user_id)
 	return user_id, err
+}
+
+const getImagePrivate = `-- name: GetImagePrivate :one
+SELECT private
+FROM images
+WHERE id = ?
+`
+
+func (q *Queries) GetImagePrivate(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getImagePrivate, id)
+	var private int64
+	err := row.Scan(&private)
+	return private, err
 }
 
 const imageExists = `-- name: ImageExists :one
@@ -380,7 +399,7 @@ func (q *Queries) ListExpiredImages(ctx context.Context, arg ListExpiredImagesPa
 const listImagesAdmin = `-- name: ListImagesAdmin :many
 SELECT i.id, i.user_id, u.name AS user_name, i.token_id, t.name AS token_name, i.file_name,
        i.expire_at, i.ttl_seconds, i.last_public_access_at, i.access_count,
-       i.pending_cleanup, i.cleanup_exempt, i.created_at,
+       i.pending_cleanup, i.cleanup_exempt, i.private, i.created_at,
        b.mime, b.size, b.width, b.height, b.sha256, b.ref_count
 FROM images i
 JOIN blobs b ON b.id = i.blob_id
@@ -420,6 +439,7 @@ type ListImagesAdminRow struct {
 	AccessCount        int64
 	PendingCleanup     int64
 	CleanupExempt      int64
+	Private            int64
 	CreatedAt          string
 	Mime               string
 	Size               int64
@@ -460,6 +480,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 			&i.AccessCount,
 			&i.PendingCleanup,
 			&i.CleanupExempt,
+			&i.Private,
 			&i.CreatedAt,
 			&i.Mime,
 			&i.Size,
@@ -483,7 +504,7 @@ func (q *Queries) ListImagesAdmin(ctx context.Context, arg ListImagesAdminParams
 
 const listImagesExport = `-- name: ListImagesExport :many
 SELECT id, blob_id, user_id, token_id, file_name, object_key, expire_at, ttl_seconds,
-       last_public_access_at, access_count, pending_cleanup, cleanup_exempt, created_at
+       last_public_access_at, access_count, pending_cleanup, cleanup_exempt, private, created_at
 FROM images
 ORDER BY created_at
 `
@@ -510,6 +531,7 @@ func (q *Queries) ListImagesExport(ctx context.Context) ([]Image, error) {
 			&i.AccessCount,
 			&i.PendingCleanup,
 			&i.CleanupExempt,
+			&i.Private,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -650,6 +672,25 @@ type SetImageCleanupExemptParams struct {
 
 func (q *Queries) SetImageCleanupExempt(ctx context.Context, arg SetImageCleanupExemptParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setImageCleanupExempt, arg.Exempt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setImagePrivate = `-- name: SetImagePrivate :execrows
+UPDATE images
+SET private = ?1
+WHERE id = ?2
+`
+
+type SetImagePrivateParams struct {
+	Private int64
+	ID      string
+}
+
+func (q *Queries) SetImagePrivate(ctx context.Context, arg SetImagePrivateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setImagePrivate, arg.Private, arg.ID)
 	if err != nil {
 		return 0, err
 	}

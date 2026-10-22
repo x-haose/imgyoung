@@ -73,17 +73,19 @@ export function ImageCard({
             <Check className='size-3.5' />
           </span>
         ) : (
-          <div className='pointer-events-none absolute inset-x-0 bottom-0 flex justify-end bg-linear-to-t from-black/65 to-transparent p-2 pt-6 opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100'>
-            <Button
-              size='sm'
-              variant='secondary'
-              className='h-7 bg-white/90 text-neutral-900 hover:bg-white'
-              onClick={copy}
-            >
-              <Link2 />
-              {m.common.copy}
-            </Button>
-          </div>
+          !image.private && (
+            <div className='pointer-events-none absolute inset-x-0 bottom-0 flex justify-end bg-linear-to-t from-black/65 to-transparent p-2 pt-6 opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100'>
+              <Button
+                size='sm'
+                variant='secondary'
+                className='h-7 bg-white/90 text-neutral-900 hover:bg-white'
+                onClick={copy}
+              >
+                <Link2 />
+                {m.common.copy}
+              </Button>
+            </div>
+          )
         )}
       </div>
       <div className='flex flex-col gap-1.5 px-3 py-2.5'>

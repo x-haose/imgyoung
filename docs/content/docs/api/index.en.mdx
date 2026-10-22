@@ -132,7 +132,7 @@ their error responses are plain text:
 | Status | Meaning |
 |---|---|
 | 403 | Rejected by hotlink protection (`/i/` and `/o/` only) |
-| 404 | The image does not exist, has expired, or was deleted |
+| 404 | The image does not exist, has expired, or was deleted, or a private image has no valid signature |
 | 500 | Looking up the image metadata failed (database error); retry later |
 | 503 | No healthy channel can currently read the image |
 

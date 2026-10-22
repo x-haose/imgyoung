@@ -150,6 +150,7 @@ export function UploadDialog({
         </Tabs>
 
         <UploadOptionsFields
+          showPrivate
           draft={draft}
           onChange={setDraft}
           footnote={m.images.appliesLater}

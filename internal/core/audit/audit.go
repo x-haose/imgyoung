@@ -37,8 +37,10 @@ const (
 	ActionUserDelete = "user.delete"
 	// ActionImageDelete 图片引用删除。
 	ActionImageDelete = "image.delete"
-	// ActionImageUpdate 图片有效期/清理豁免修改。
+	// ActionImageUpdate 图片有效期/清理豁免/私有开关修改。
 	ActionImageUpdate = "image.update"
+	// ActionImageSignedURL 为私有图签发访问链接。
+	ActionImageSignedURL = "image.signed_url"
 	// ActionImageRecover 按渠道里的对象找回图片记录。
 	ActionImageRecover = "image.recover"
 	// ActionDataExport 元数据导出。

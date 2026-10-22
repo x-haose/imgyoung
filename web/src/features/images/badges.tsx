@@ -1,12 +1,12 @@
 import { t } from '@/i18n'
-import { Clock } from 'lucide-react'
+import { Clock, Lock } from 'lucide-react'
 import { formatRelativeTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useMessages } from '@/context/locale-provider'
 import { Badge } from '@/components/ui/badge'
 import { type ImageItem, isExpired } from './data'
 
-/** 图片状态徽标:待清理、已豁免与到期;全部为空时不渲染。 */
+/** 图片状态徽标:私有、待清理、已豁免与到期;全部为空时不渲染。 */
 export function ImageBadges({
   image,
   className,
@@ -16,11 +16,22 @@ export function ImageBadges({
 }) {
   const m = useMessages()
   const expired = isExpired(image.expire_at)
-  if (!image.pending_cleanup && !image.cleanup_exempt && !image.expire_at) {
+  if (
+    !image.private &&
+    !image.pending_cleanup &&
+    !image.cleanup_exempt &&
+    !image.expire_at
+  ) {
     return null
   }
   return (
     <div className={cn('flex flex-wrap items-center gap-1', className)}>
+      {image.private && (
+        <Badge variant='outline' className='gap-1 font-normal'>
+          <Lock />
+          {m.images.private}
+        </Badge>
+      )}
       {image.pending_cleanup && (
         <Badge
           variant='outline'

@@ -102,6 +102,7 @@ type Image struct {
 	AccessCount        int64
 	PendingCleanup     int64
 	CleanupExempt      int64
+	Private            int64
 	CreatedAt          string
 }
 

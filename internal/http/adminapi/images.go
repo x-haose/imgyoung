@@ -44,6 +44,7 @@ type imageItem struct {
 	AccessCount    int64   `json:"access_count"`    // 累计公开访问次数,flush 周期粒度(非精确 PV)
 	PendingCleanup bool    `json:"pending_cleanup"` // 是否在待清理列表
 	CleanupExempt  bool    `json:"cleanup_exempt"`  // 是否清理豁免
+	Private        bool    `json:"private"`         // 是否私有图:公开入口只认带有效签名的链接
 	CreatedAt      string  `json:"created_at"`      // 上传时刻
 	RefCount       int64   `json:"ref_count"`       // 物理图引用计数(同图去重共享)
 }
@@ -100,7 +101,7 @@ func imageItemFrom(row sqlc.GetImageAdminRow) imageItem {
 		ExpireAt: nullableStr(row.ExpireAt), TTLSeconds: nullableInt(row.TtlSeconds),
 		LastAccessAt: nullableStr(row.LastPublicAccessAt), AccessCount: row.AccessCount,
 		PendingCleanup: row.PendingCleanup != 0, CleanupExempt: row.CleanupExempt != 0,
-		CreatedAt: row.CreatedAt, RefCount: row.RefCount,
+		Private: row.Private != 0, CreatedAt: row.CreatedAt, RefCount: row.RefCount,
 	}
 }
 
@@ -221,6 +222,7 @@ func (h *Handlers) writeImageDetail(w http.ResponseWriter, r *http.Request, row 
 type imagePatchRequest struct {
 	TTLHours      *int64 `json:"ttl_hours"`      // >0 从现在起算新到期并更新时长;0 改永久
 	CleanupExempt *bool  `json:"cleanup_exempt"` // 预设/取消清理豁免(仅管理员);取消时顺带摘 pending_cleanup 由下轮扫描重判
+	Private       *bool  `json:"private"`        // 设为私有或改回公开;属主与管理员均可改
 }
 
 // HandleImagePatch 修改单图有效期或清理豁免;普通用户只可改自己的(他人图一律 404)。
@@ -236,7 +238,7 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 	var req imagePatchRequest
 	r.Body = http.MaxBytesReader(w, r.Body, userBodyLimit)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-		(req.TTLHours == nil && req.CleanupExempt == nil) ||
+		(req.TTLHours == nil && req.CleanupExempt == nil && req.Private == nil) ||
 		(req.TTLHours != nil && (*req.TTLHours < 0 || *req.TTLHours > config.MaxDurationHours)) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusBadRequest, errcode.ImagePatchInvalid,
 			"max", strconv.Itoa(config.MaxDurationHours))
@@ -282,7 +284,7 @@ func (h *Handlers) HandleImagePatch(w http.ResponseWriter, r *http.Request) {
 // @param req 已通过校验的修改项
 // @return 领域侧修改项
 func imagePatchFrom(req imagePatchRequest) lifecycle.ImagePatch {
-	patch := lifecycle.ImagePatch{CleanupExempt: req.CleanupExempt}
+	patch := lifecycle.ImagePatch{CleanupExempt: req.CleanupExempt, Private: req.Private}
 	if req.TTLHours != nil {
 		ttl := time.Duration(*req.TTLHours) * time.Hour
 		patch.TTL = &ttl
@@ -300,6 +302,9 @@ func imagePatchDetail(req imagePatchRequest) string {
 	}
 	if req.CleanupExempt != nil {
 		parts = append(parts, fmt.Sprintf("cleanup_exempt=%t", *req.CleanupExempt))
+	}
+	if req.Private != nil {
+		parts = append(parts, fmt.Sprintf("private=%t", *req.Private))
 	}
 	return strings.Join(parts, " ")
 }

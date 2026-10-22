@@ -38,6 +38,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
 	"github.com/x-haose/imgyoung/internal/infra/observability"
 	"github.com/x-haose/imgyoung/internal/infra/secret"
+	"github.com/x-haose/imgyoung/internal/infra/signedurl"
 	"github.com/x-haose/imgyoung/internal/infra/urlfetch"
 	"github.com/x-haose/imgyoung/internal/infra/version"
 	"github.com/x-haose/imgyoung/web"
@@ -92,6 +93,7 @@ type services struct {
 	manager  *channel.Manager       // 渠道管理器
 	runner   *replication.Runner    // 补齐子系统
 	referer  *referer.Service       // 防盗链白名单
+	signer   *signedurl.Signer      // 私有图签名链接的签发与验签
 	metrics  *observability.Metrics // 指标集
 	audit    *audit.Recorder        // 审计记录器
 	alerts   *alert.Service         // 告警评估与投递
@@ -247,6 +249,9 @@ func buildServices(in infra, logger *slog.Logger) (services, error) {
 	if err != nil {
 		return services{}, err
 	}
+	if s.signer, err = signedurl.New(in.master); err != nil {
+		return services{}, err
+	}
 	s.vstore = variants.New(variants.Config{
 		Dir:      filepath.Join(in.boot.DataDir, "variants"),
 		Capacity: func() int64 { return in.store.Current().VariantsCacheMB << 20 },
@@ -341,13 +346,14 @@ func registerQueueGauges(m *observability.Metrics, runner *replication.Runner, l
 func buildHTTP(in infra, s services, shutdown func(), logger *slog.Logger) *http.Server {
 	pub := publicapi.New(publicapi.Config{
 		Queries: in.queries, Channels: s.manager, Upload: s.upload, Fetch: s.fetcher,
-		Settings: in.store.Current, Activity: s.tracker, Variants: s.variants, Logger: logger,
+		Settings: in.store.Current, Activity: s.tracker, Variants: s.variants, Signer: s.signer, Logger: logger,
 	})
 	adm := adminapi.New(adminapi.Config{
 		Admin: s.manager, OAuth: channel.NewOAuthSessions(),
 		Replicator: s.runner, Auth: s.auth, Images: s.sweeper, Dedup: s.merger,
 		Queries: in.queries, Audit: s.audit, Referer: s.referer, Settings: in.store, Boot: in.boot,
-		Backups: s.backup, Recovery: s.recovery, Imports: s.importer, Shutdown: shutdown, Logger: logger,
+		Backups: s.backup, Recovery: s.recovery, Imports: s.importer, Signer: s.signer,
+		Shutdown: shutdown, Logger: logger,
 	})
 	s3 := s3api.New(s3api.Config{
 		Auth: s.auth, Upload: s.upload, Queries: in.queries, Objects: pub, Images: s.sweeper, Audit: s.audit,

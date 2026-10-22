@@ -153,6 +153,7 @@ func mountSession(g chi.Router, cfg Config, guards uploadGuards) {
 	g.Post("/images/batch-delete", cfg.Admin.HandleImageBatchDelete)
 	g.Get("/images/{id}", cfg.Admin.HandleImageGet)
 	g.Patch("/images/{id}", cfg.Admin.HandleImagePatch)
+	g.Post("/images/{id}/signed-url", cfg.Admin.HandleImageSignedURL)
 	g.Delete("/images/{id}", cfg.Admin.HandleImageDelete)
 	// 全站资源(渠道/用户/审计/导出)仅管理员可见可改。
 	g.Group(func(ad chi.Router) {

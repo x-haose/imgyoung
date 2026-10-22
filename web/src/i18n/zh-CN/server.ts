@@ -128,6 +128,10 @@ export const server = {
     upload_busy: '已达上传并发上限，请稍后重试',
     upload_unsupported_type: '仅支持图片文件（jpeg/png/gif/webp）',
     upload_too_many_pixels: '图片分辨率超过像素预算（{max} 百万像素）',
+    upload_private_invalid:
+      'private 须为 true 或 false，signed_ttl 须为 1 到 {max} 的整数秒',
+    image_not_private: '只有私有图才有签名链接',
+    signed_url_invalid: 'ttl_seconds 须为 1 到 {max} 的整数',
     upload_bad_dimensions:
       '图片单边超过 {max_side} 像素，或长边与短边之比超过 {max_ratio}：1',
     upload_invalid_image: '图片内容无法解析',

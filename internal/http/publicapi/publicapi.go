@@ -12,6 +12,7 @@ import (
 	"github.com/x-haose/imgyoung/internal/core/variants"
 	"github.com/x-haose/imgyoung/internal/infra/config"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
+	"github.com/x-haose/imgyoung/internal/infra/signedurl"
 )
 
 // BlobChannels 按 blob 提供可服务的渠道候选与容灾读取(由 channel.Manager 实现)。
@@ -47,6 +48,7 @@ type Config struct {
 	Settings func() config.Settings // 运营配置快照读取口(逐请求取值,热生效);上传上限/像素预算/访问模式/base_url/EXIF 默认档/处理档位均出自它
 	Activity AccessTracker          // 公开访问活跃度追踪器
 	Variants *variants.Service      // 按需处理服务;为 nil 表示不启用(仅代理原图)
+	Signer   *signedurl.Signer      // 私有图链接的验签器
 	Logger   *slog.Logger           // 结构化日志
 }
 

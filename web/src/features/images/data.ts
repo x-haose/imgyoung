@@ -142,10 +142,22 @@ export const deleteImage = (id: string) => api.delete(`/api/admin/images/${id}`)
 export const batchDeleteImages = (ids: string[]) =>
   api.post<BatchDeleteResult>('/api/admin/images/batch-delete', { ids })
 
-/** 上传可选项;ttl 为秒数字符串或 "never",缺省跟随用户 / 站点默认;exif 缺省跟随站点默认。 */
+/** 私有图的签名链接(POST /api/admin/images/{id}/signed-url)。 */
+export interface SignedURL {
+  url: string
+  expires_at: string
+}
+
+export const signImageURL = (id: string, ttlSeconds: number) =>
+  api.post<SignedURL>(`/api/admin/images/${id}/signed-url`, {
+    ttl_seconds: ttlSeconds,
+  })
+
+/** 上传可选项;ttl 为秒数字符串或 "never",缺省跟随用户 / 站点默认;exif 缺省跟随站点默认;private 为 true 时作为私有图保存。 */
 export interface UploadOptions {
   ttl?: string
   exif?: ExifPolicy
+  private?: boolean
 }
 
 export const uploadFile = (file: File, name: string, opts: UploadOptions) => {
@@ -153,6 +165,7 @@ export const uploadFile = (file: File, name: string, opts: UploadOptions) => {
   fd.append('file', file, name)
   if (opts.ttl !== undefined) fd.append('ttl', opts.ttl)
   if (opts.exif !== undefined) fd.append('exif_policy', opts.exif)
+  if (opts.private) fd.append('private', 'true')
   return api.form<UploadResult>('/api/admin/upload', fd)
 }
 
@@ -161,6 +174,7 @@ export const uploadFromURL = (url: string, opts: UploadOptions) =>
     url,
     ...(opts.ttl !== undefined ? { ttl: opts.ttl } : {}),
     ...(opts.exif !== undefined ? { exif_policy: opts.exif } : {}),
+    ...(opts.private ? { private: true } : {}),
   })
 
 /** 删除确认文案:宽限为 0 或配置未加载时不承诺不存在的宽限期。 */

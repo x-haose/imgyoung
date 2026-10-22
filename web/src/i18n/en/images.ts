@@ -130,6 +130,27 @@ export const images = {
   exifStrip: 'Strip',
   exifPassthrough: 'Keep',
   exifSpoof: 'Spoof',
+  private: 'Private',
+  privateRow: 'Private image',
+  privateHelp:
+    'The public link of a private image does not open; only a link with a valid signature does. It is always served through this service, never redirected to a channel and never cached by a CDN. The hotlink allowlist still applies',
+  privateSet: 'Set to private',
+  privateUnset: 'Made public again',
+  privateUpload: 'Private',
+  privateUploadHint:
+    'A private image has no permanent link; generate a time-limited signed link in the image details after uploading',
+  signedTitle: 'Signed link',
+  signedHint:
+    'Pick a validity and generate; the link stops working when it expires. A link already handed out cannot be recalled early',
+  signedValidity: 'Link validity',
+  signedGenerate: 'Generate link',
+  signedExpiresAt: 'Expires {time}',
+  signedTtl: {
+    '1': '1 hour',
+    '24': '1 day',
+    '168': '7 days',
+    '720': '30 days',
+  },
   exifHint:
     'Stripping removes camera, GPS and similar metadata; spoofing replaces them with an invented camera, location and time; the default follows the global setting',
   clipboardImage: 'Clipboard image',

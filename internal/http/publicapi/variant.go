@@ -14,20 +14,27 @@ import (
 	"github.com/x-haose/imgyoung/internal/infra/imaging"
 )
 
-// cacheImmutable 短 ID 下的原图与衍生图内容不可变(URL 即版本),缓存一年。
-const cacheImmutable = "public, max-age=31536000, immutable"
+// cacheMode 响应的缓存策略。
+type cacheMode int
 
-// cacheRevalidate 对象键别名可被同键重传改指:允许缓存,但每次使用前须带 ETag 向源站确认,未变即 304。
-const cacheRevalidate = "public, no-cache"
+const (
+	cacheImmutable  cacheMode = iota // 短 ID 下的原图与衍生图内容不可变(URL 即版本),缓存一年
+	cacheRevalidate                  // 对象键别名可被同键重传改指:允许缓存,但每次使用前须带 ETag 向源站确认,未变即 304
+	cachePrivate                     // 私有图:浏览器与 CDN 都不得保存,链接的签名是有时效的凭据
+)
 
-// cacheControl 按 URL 内容是否可变选缓存策略。
-// @param mutable URL 指向的内容是否可能变化
+// cacheControl 返回缓存策略对应的 Cache-Control 取值。
+// @param mode 缓存策略
 // @return Cache-Control 取值
-func cacheControl(mutable bool) string {
-	if mutable {
-		return cacheRevalidate
+func cacheControl(mode cacheMode) string {
+	switch mode {
+	case cachePrivate:
+		return "private, no-store"
+	case cacheRevalidate:
+		return "public, no-cache"
+	default:
+		return "public, max-age=31536000, immutable"
 	}
-	return cacheImmutable
 }
 
 // errVariantParams 处理参数不在允许档位内,应回 400。
@@ -147,13 +154,13 @@ func (h *Handlers) formatAllowed(f string) bool {
 // @param r 请求
 // @param row 引用与物理图信息
 // @param req 处理诉求
-// @param mutable URL 指向的内容是否可能变化(对象键别名)
+// @param cache 缓存策略
 func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc.GetImageBlobRow,
-	req variantRequest, mutable bool) {
+	req variantRequest, cache cacheMode) {
 	// 衍生图内容由(原图 + 宽度 + 格式)唯一决定,据此构造强 ETag。
 	etag := `"` + row.Sha256 + "-" + strconv.Itoa(req.params.Width) + "-" + req.params.Format + `"`
 	if match := r.Header.Get("If-None-Match"); match == etag {
-		writeNotModified(w, etag, mutable, req.varyAccept)
+		writeNotModified(w, etag, cache, req.varyAccept)
 		return
 	}
 
@@ -162,14 +169,14 @@ func (h *Handlers) serveVariant(w http.ResponseWriter, r *http.Request, row sqlc
 	if err != nil {
 		// 处理繁忙或失败:降级回退原图,保证可用性;degraded=true 确保不把全尺寸原图当衍生图缓存。
 		h.cfg.Logger.Warn("按需处理失败,降级回退原图", "id", row.ID, "err", err)
-		h.serveOriginal(w, r, row, originalOpts{degraded: true})
+		h.serveOriginal(w, r, row, originalOpts{degraded: true, cache: cache})
 		return
 	}
 
 	hd := w.Header()
 	hd.Set("Content-Type", mime)
 	hd.Set("Content-Length", strconv.Itoa(len(data)))
-	hd.Set("Cache-Control", cacheControl(mutable))
+	hd.Set("Cache-Control", cacheControl(cache))
 	hd.Set("ETag", etag)
 	setVary(hd, req.varyAccept)
 	hd.Set("X-Content-Type-Options", "nosniff")
@@ -190,12 +197,12 @@ func setVary(h http.Header, varyAccept bool) {
 
 // writeNotModified 写 304,带上 200 响应会有的 ETag、Cache-Control 与 Vary,缓存方据此续用已存的副本。
 // @param etag 强 ETag(含引号)
-// @param mutable URL 指向的内容是否可能变化(对象键别名)
+// @param cache 缓存策略
 // @param varyAccept 响应是否随 Accept 协商变化
-func writeNotModified(w http.ResponseWriter, etag string, mutable, varyAccept bool) {
+func writeNotModified(w http.ResponseWriter, etag string, cache cacheMode, varyAccept bool) {
 	hd := w.Header()
 	hd.Set("ETag", etag)
-	hd.Set("Cache-Control", cacheControl(mutable))
+	hd.Set("Cache-Control", cacheControl(cache))
 	setVary(hd, varyAccept)
 	w.WriteHeader(http.StatusNotModified)
 }

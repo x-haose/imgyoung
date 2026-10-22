@@ -175,13 +175,11 @@ A `Referer` can be forged or left out, and with **Allow empty referer** on, ever
 When images go through a CDN, cache hits never reach this host, so its rules cannot see them and you need equivalent rules on the CDN; in redirect mode, channel public addresses are outside its reach as well.
 </Callout>
 
-## No private images [#no-private-images]
+## Private images [#private-images]
 
-Every image link is public: anyone who knows the link can fetch the image without signing in, and there are no signed links or other access checks. A short ID is just a random identifier, not a secret. It does not matter if a link is guessed or enumerated, because the image is public to begin with.
+By default an image link is public: anyone who knows the link can open it, and a short ID is just a random identifier, not a secret. Images that need restricting can be made private: the public link does not open, only a time-limited link with a valid signature does, and the image is never served through a channel's direct link or cached by a CDN. See [Private images](./private.mdx).
 
-Private images would need short-lived signed links checked by this host on every access, with no year-long caching and no 302 to a channel's direct link. That conflicts with an access design built around images that are public, immutable and cacheable for a long time, so ImgYoung does not offer private images.
-
-Do not upload images that must not be public. If you only want to limit which sites can embed your images, use [hotlink protection](#hotlink-protection).
+Do not upload content that nobody should see. If you only want to limit which sites can embed your images, use [hotlink protection](#hotlink-protection).
 
 ## Access counting
 
