@@ -26,7 +26,10 @@ export const imports = {
     mode: 'Input',
     status: 'Status',
     progress: 'Progress',
+    owner: 'Created by',
   },
+  allUsers: 'All users',
+  filterUser: 'Filter by creator',
   view: 'View',
   emptyTitle: 'No imports yet',
   emptyDesc:
@@ -79,6 +82,7 @@ export const imports = {
     settingsTitle: 'Task settings',
     mode: 'Input',
     created: 'Created',
+    owner: 'Created by',
     finished: 'Finished',
     ttl: 'Expiry',
     ttlDefault: 'User default or global default',

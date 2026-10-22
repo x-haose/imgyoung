@@ -41,6 +41,10 @@ func (a *app) serve() error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// 对外服务之前清掉上次在创建导入任务途中退出遗留的半成品。
+	if err := a.importer.Recover(ctx); err != nil {
+		return err
+	}
 	shutdown := sync.OnceFunc(func() { a.shutdown(cancel) })
 
 	var g run.Group

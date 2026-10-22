@@ -831,12 +831,17 @@ paths:
       operationId: listImports
       tags: [Admin · Import]
       summary: 导入任务列表
-      description: 分页返回当前用户创建的导入任务，最新的在前。管理员也只看得到自己的任务。
+      description: 分页返回导入任务，最新的在前。普通用户只看得到自己创建的；管理员看到全部，并可用 `user_id` 只看指定用户的。
       security:
         - session: []
       parameters:
         - $ref: '#/components/parameters/page'
         - $ref: '#/components/parameters/pageSize'
+        - name: user_id
+          in: query
+          description: 只看指定用户创建的任务；仅管理员生效
+          schema:
+            type: string
       responses:
         '200':
           description: 导入任务分页
@@ -904,7 +909,7 @@ paths:
       operationId: getImport
       tags: [Admin · Import]
       summary: 导入任务详情
-      description: 返回任务的状态、各状态的条目数与扫描报告。进行中的任务由前端轮询本接口取得进度。
+      description: 返回任务的状态、各状态的条目数与扫描报告。进行中的任务由前端轮询本接口取得进度。普通用户只能读自己的任务，管理员能读全部。
       security:
         - session: []
       parameters:
@@ -928,7 +933,7 @@ paths:
       operationId: deleteImport
       tags: [Admin · Import]
       summary: 删除导入任务
-      description: 删除任务及其条目、来源与对照表。已经导入的图片不受影响。`scanning` 与 `importing` 的任务须先取消。
+      description: 删除任务及其条目、来源与对照表。已经导入的图片不受影响。`scanning` 与 `importing` 的任务须先取消。管理员可以删除任何人的任务。
       security:
         - session: []
       parameters:
@@ -1026,6 +1031,8 @@ paths:
         对 `ready` 状态的任务，导入 `hosts` 所列域名下的全部 `candidate` 条目，其余条目记为 `skipped`，任务进入 `importing`。
 
         `hosts` 里没有任何域名对应待导入的条目时返回 400，任务保持 `ready`。
+
+        只有创建任务的用户能确认；管理员确认别人的任务返回 403，错误码 `import_owner_only`。
       security:
         - session: []
       parameters:
@@ -1053,7 +1060,11 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: 无权限，或管理员操作别人的任务（`import_owner_only`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1069,7 +1080,7 @@ paths:
       operationId: cancelImport
       tags: [Admin · Import]
       summary: 取消导入任务
-      description: 取消 `scanning`、`ready` 或 `importing` 的任务。正在转存的图片会被中断，没处理完的条目保持 `pending`，已经导入的图片保留。
+      description: 取消 `scanning`、`ready` 或 `importing` 的任务。正在转存的图片会被中断，没处理完的条目保持 `pending`，已经导入的图片保留。管理员可以取消任何人的任务。
       security:
         - session: []
       parameters:
@@ -1106,6 +1117,8 @@ paths:
 
         没有 `failed` 或 `pending` 的条目时返回 409。因存储配额或没有可用渠道而中止的任务，先解决问题再重试。
 
+        只有创建任务的用户能重试；管理员重试别人的任务返回 403，错误码 `import_owner_only`。
+
         扫描没有完成就中止或取消的 `site` 任务没有候选可以继续，重试会让它回到 `scanning`，从头重新扫描。
       security:
         - session: []
@@ -1122,7 +1135,11 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: 无权限，或管理员操作别人的任务（`import_owner_only`）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -2900,6 +2917,7 @@ components:
         - import_no_selection
         - import_nothing_to_retry
         - import_listing_invalid
+        - import_owner_only
         - snapshot_name_invalid
         - snapshot_not_found
         - snapshot_corrupt
@@ -3908,11 +3926,17 @@ components:
     ImportJob:
       type: object
       required:
-        [id, mode, status, seeds, ttl_seconds, exif_policy, referer, counts, scan, error_code, created_at, finished_at]
+        [id, user_id, user_name, mode, status, seeds, ttl_seconds, exif_policy, referer, counts, scan, error_code, created_at, finished_at]
       properties:
         id:
           type: string
           description: 任务 ID
+        user_id:
+          type: string
+          description: 创建任务的用户，导入的图片归属于他
+        user_name:
+          type: string
+          description: 创建任务的用户的登录名
         mode:
           $ref: '#/components/schemas/ImportMode'
         status:

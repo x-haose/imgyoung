@@ -31,6 +31,10 @@ type Document struct {
 	Text string // 文档全文
 }
 
+// writeChunk 创建任务时每个事务写入的条目数。一个事务占着唯一的写连接,大批量一次写完会让上传等其他写入
+// 排队到超时;分批提交让它们在批与批之间插队。
+const writeChunk = 2000
+
 // CreateImages 创建图片地址清单任务:条目直接待转存,任务进入 importing。
 // @param opts 公共参数
 // @param urls 图片地址,每个都须是 http 或 https 绝对地址;规范化后相同的只导入一次
@@ -52,16 +56,12 @@ func (s *Service) CreateImages(ctx context.Context, opts Options, urls []string)
 	if err != nil {
 		return "", err
 	}
-	err = s.inTx(ctx, func(q *sqlc.Queries) error {
-		if err := q.CreateImportJob(ctx, params); err != nil {
-			return fmt.Errorf("写入导入任务: %w", err)
-		}
-		for _, u := range normalized {
-			if _, err := upsertItem(ctx, q, params.ID, u, StatePending); err != nil {
-				return err
-			}
-		}
-		return nil
+	err = s.buildJob(ctx, params, len(normalized), func(q *sqlc.Queries, i int) error {
+		_, err := upsertItem(ctx, q, params.ID, normalized[i], StatePending)
+		return err
+	}, func(q *sqlc.Queries) error {
+		job := sqlc.ImportJob{ID: params.ID, Status: StatusCreating}
+		return transition(ctx, q, job, StatusCreating, StatusImporting)
 	})
 	if err != nil {
 		return "", err
@@ -84,7 +84,7 @@ func (s *Service) CreateText(ctx context.Context, opts Options, docs []Document,
 	if err != nil {
 		return "", err
 	}
-	params, err := newJob(opts, ModeText, StatusScanning, nil)
+	params, err := newJob(opts, ModeText, StatusReady, nil)
 	if err != nil {
 		return "", err
 	}
@@ -97,11 +97,20 @@ func (s *Service) CreateText(ctx context.Context, opts Options, docs []Document,
 	if err != nil {
 		return "", fmt.Errorf("编码扫描报告: %w", err)
 	}
-	err = s.inTx(ctx, func(q *sqlc.Queries) error {
-		if err := q.CreateImportJob(ctx, params); err != nil {
-			return fmt.Errorf("写入导入任务: %w", err)
+	var flat []sourcedRef
+	for _, d := range scanned {
+		for _, r := range d.res.Refs {
+			flat = append(flat, sourcedRef{source: d.name, ref: r})
 		}
-		return storeScanned(ctx, q, params.ID, scanned, report.Pages, string(reportJSON))
+	}
+	err = s.buildJob(ctx, params, len(flat), func(q *sqlc.Queries, i int) error {
+		return addRef(ctx, q, params.ID, flat[i].source, flat[i].ref)
+	}, func(q *sqlc.Queries) error {
+		ok, err := finishScan(ctx, q, params.ID, report.Pages, report.Pages, string(reportJSON))
+		if err == nil && !ok {
+			err = errors.New("文本任务创建后不在 creating 状态")
+		}
+		return err
 	})
 	if err != nil {
 		return "", err
@@ -109,25 +118,81 @@ func (s *Service) CreateText(ctx context.Context, opts Options, docs []Document,
 	return params.ID, nil
 }
 
-// storeScanned 把文本扫描到的候选写入任务,并让任务进入 ready。
-// @param q 事务内的查询集
-// @param jobID 任务 ID
-// @param docs 各文档的扫描结果
-// @param pages 文档数
-// @param report 扫描报告的 JSON
+// sourcedRef 一处带来源的图片引用。
+type sourcedRef struct {
+	source string      // 引用所在的文档名
+	ref    imgrefs.Ref // 引用
+}
+
+// buildJob 分批写入一个任务的条目,最后让任务对外可见。
+// @Description: 任务行先以 creating 状态建立,接口与调度都看不见它;条目每 writeChunk 个一个事务提交;
+// 全部写完后由 publish 在一个小事务里把它切到可见的状态。中途失败即删掉这个任务,进程在中途退出遗留的
+// creating 任务由 Recover 在启动时清掉,所以不会留下半个任务。
+// @param params 任务行参数,Status 是最终要进入的状态
+// @param n 条目数
+// @param write 写入第 i 个条目,在事务内执行
+// @param publish 让任务进入最终状态,在事务内执行
 // @return 写入失败的错误
-func storeScanned(ctx context.Context, q *sqlc.Queries, jobID string, docs []scannedDocument, pages int64,
-	report string) error {
-	for _, d := range docs {
-		if err := addRefs(ctx, q, jobID, d.name, d.res.Refs); err != nil {
+func (s *Service) buildJob(ctx context.Context, params sqlc.CreateImportJobParams, n int,
+	write func(q *sqlc.Queries, i int) error, publish func(q *sqlc.Queries) error) error {
+	creating := params
+	creating.Status = StatusCreating
+	if err := s.cfg.Queries.CreateImportJob(ctx, creating); err != nil {
+		return fmt.Errorf("写入导入任务: %w", err)
+	}
+	err := s.writeChunks(ctx, n, write)
+	if err == nil {
+		err = s.inTx(ctx, publish)
+	}
+	if err != nil {
+		s.discard(ctx, params.ID)
+	}
+	return err
+}
+
+// writeChunks 把 n 个条目分成每批 writeChunk 个,每批一个事务。
+// @param n 条目数
+// @param write 写入第 i 个条目
+// @return 任一批失败的错误
+func (s *Service) writeChunks(ctx context.Context, n int, write func(q *sqlc.Queries, i int) error) error {
+	for lo := 0; lo < n; lo += writeChunk {
+		hi := min(lo+writeChunk, n)
+		err := s.inTx(ctx, func(q *sqlc.Queries) error {
+			for i := lo; i < hi; i++ {
+				if err := write(q, i); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
 			return err
 		}
 	}
-	ok, err := finishScan(ctx, q, jobID, pages, pages, report)
-	if err == nil && !ok {
-		err = errors.New("文本任务创建后不在 scanning 状态")
+	return nil
+}
+
+// discard 删掉没有写完的 creating 任务及其条目。删除脱离请求的取消:请求断开正是常见的失败原因。
+// 删不掉只记日志,遗留的行由 Recover 在下次启动时清掉。
+// @param jobID 任务 ID
+func (s *Service) discard(ctx context.Context, jobID string) {
+	if _, err := s.cfg.Queries.DeleteCreatingImportJob(context.WithoutCancel(ctx), jobID); err != nil {
+		s.cfg.Logger.Error("清理没有写完的导入任务失败,留待下次启动清理", "job", jobID, "err", err)
 	}
-	return err
+}
+
+// Recover 启动时清掉上次进程在创建中途退出遗留的 creating 任务。
+// @Description: 须在对外提供服务之前调用:此时不会有进行中的创建,否则会误删正在写入的任务。
+// @return 删除失败的错误
+func (s *Service) Recover(ctx context.Context) error {
+	n, err := s.cfg.Queries.DeleteStaleCreatingImportJobs(ctx)
+	if err != nil {
+		return fmt.Errorf("清理没有写完的导入任务: %w", err)
+	}
+	if n > 0 {
+		s.cfg.Logger.Warn("已清理上次中断时没有写完的导入任务", "count", n)
+	}
+	return nil
 }
 
 // CreateSite 创建站点扫描任务:任务进入 scanning,由调度循环抓取并扫描。
@@ -232,199 +297,4 @@ func (s *Service) inTx(ctx context.Context, fn func(q *sqlc.Queries) error) erro
 		return fmt.Errorf("提交事务: %w", err)
 	}
 	return nil
-}
-
-// owned 读取任务并确认归属;别人的任务按不存在处理,不泄露存在性。
-// @param q 查询集,可绑定到事务
-// @param userID 操作者用户 id
-// @param jobID 任务 ID
-// @return 任务行
-// @return ErrNotFound 或查询失败的错误
-func owned(ctx context.Context, q *sqlc.Queries, userID, jobID string) (sqlc.ImportJob, error) {
-	job, err := q.GetImportJob(ctx, jobID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && job.UserID != userID) {
-		return sqlc.ImportJob{}, ErrNotFound
-	}
-	if err != nil {
-		return sqlc.ImportJob{}, fmt.Errorf("读取导入任务: %w", err)
-	}
-	return job, nil
-}
-
-// Start 确认并开始导入:所选域名下的候选条目转为待转存,其余记为跳过,任务进入 importing。
-// @param userID 操作者用户 id
-// @param jobID 任务 ID
-// @param hosts 要导入的域名
-// @return ErrNotFound、*StateError(任务不在 ready)、ErrNoSelection(所选域名下没有候选条目);其他为基础设施错误
-func (s *Service) Start(ctx context.Context, userID, jobID string, hosts []string) error {
-	if len(hosts) > maxStartHosts {
-		return &InputError{Detail: fmt.Sprintf("hosts 超过 %d 个", maxStartHosts)}
-	}
-	err := s.inTx(ctx, func(q *sqlc.Queries) error {
-		job, err := owned(ctx, q, userID, jobID)
-		if err != nil {
-			return err
-		}
-		if job.Status != StatusReady {
-			return &StateError{Status: job.Status}
-		}
-		n, err := q.ConfirmImportItems(ctx, sqlc.ConfirmImportItemsParams{JobID: jobID, Hosts: uniqueHosts(hosts)})
-		if err != nil {
-			return fmt.Errorf("确认待导入的条目: %w", err)
-		}
-		if n == 0 {
-			return ErrNoSelection
-		}
-		if err := q.SkipImportCandidates(ctx, jobID); err != nil {
-			return fmt.Errorf("跳过未选中的条目: %w", err)
-		}
-		return transition(ctx, q, job, StatusReady, StatusImporting)
-	})
-	if err != nil {
-		return err
-	}
-	s.kick()
-	return nil
-}
-
-// transition 在任务仍处于 from 状态时把它改为 to;状态已被改走即报 StateError。
-// @param job 已读取的任务行,状态改走时据此报告
-// @param from 期望的当前状态
-// @param to 目标状态
-// @return *StateError 或写入失败的错误
-func transition(ctx context.Context, q *sqlc.Queries, job sqlc.ImportJob, from, to string) error {
-	n, err := q.TransitionImportJob(ctx, sqlc.TransitionImportJobParams{
-		ID: job.ID, FromStatus: from, ToStatus: to,
-	})
-	if err != nil {
-		return fmt.Errorf("改变任务状态: %w", err)
-	}
-	if n == 0 {
-		return &StateError{Status: job.Status}
-	}
-	return nil
-}
-
-// Cancel 取消 scanning、ready 或 importing 的任务;正在转存的那张处理完即停,已导入的保留。
-// @param userID 操作者用户 id
-// @param jobID 任务 ID
-// @return ErrNotFound、*StateError(任务已经结束);其他为基础设施错误
-func (s *Service) Cancel(ctx context.Context, userID, jobID string) error {
-	if _, err := owned(ctx, s.cfg.Queries, userID, jobID); err != nil {
-		return err
-	}
-	n, err := s.cfg.Queries.CancelImportJob(ctx, sqlc.CancelImportJobParams{
-		ID: jobID, FinishedAt: sqlc.TimeNull(time.Now()),
-	})
-	if err != nil {
-		return fmt.Errorf("取消导入任务: %w", err)
-	}
-	if n == 0 {
-		return s.stateError(ctx, jobID)
-	}
-	s.interrupt(jobID)
-	return nil
-}
-
-// Retry 把 done、aborted 或 cancelled 的任务里失败的条目重新置为待转存,连同未处理的一起继续,任务回到 importing。
-// @param userID 操作者用户 id
-// @param jobID 任务 ID
-// @return ErrNotFound、*StateError、ErrNothingToRetry(没有失败或未处理的条目);其他为基础设施错误
-func (s *Service) Retry(ctx context.Context, userID, jobID string) error {
-	err := s.inTx(ctx, func(q *sqlc.Queries) error {
-		job, err := owned(ctx, q, userID, jobID)
-		if err != nil {
-			return err
-		}
-		if job.Status != StatusDone && job.Status != StatusAborted && job.Status != StatusCancelled {
-			return &StateError{Status: job.Status}
-		}
-		if job.Mode == ModeSite && !job.ScanReport.Valid && job.Status != StatusDone {
-			// 扫描没有完成就中止或取消:没有候选可续,从头重新扫描。
-			return transition(ctx, q, job, job.Status, StatusScanning)
-		}
-		if err := requeue(ctx, q, jobID); err != nil {
-			return err
-		}
-		n, err := q.ResumeImportJob(ctx, jobID)
-		if err != nil {
-			return fmt.Errorf("继续导入任务: %w", err)
-		}
-		if n == 0 {
-			return &StateError{Status: job.Status}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	s.kick()
-	return nil
-}
-
-// requeue 把失败的条目重新置为待转存。
-// @param q 事务内的查询集
-// @param jobID 任务 ID
-// @return ErrNothingToRetry(重置后仍没有待转存的条目);其他为基础设施错误
-func requeue(ctx context.Context, q *sqlc.Queries, jobID string) error {
-	requeued, err := q.RequeueFailedImportItems(ctx, jobID)
-	if err != nil {
-		return fmt.Errorf("重置失败的条目: %w", err)
-	}
-	pending, err := q.CountPendingImportItems(ctx, jobID)
-	if err != nil {
-		return fmt.Errorf("统计待转存的条目: %w", err)
-	}
-	if requeued == 0 && pending == 0 {
-		return ErrNothingToRetry
-	}
-	return nil
-}
-
-// Delete 删除任务及其条目、来源;已导入的图片不受影响。scanning 与 importing 的任务须先取消。
-// @param userID 操作者用户 id
-// @param jobID 任务 ID
-// @return ErrNotFound、*StateError(任务仍在进行);其他为基础设施错误
-func (s *Service) Delete(ctx context.Context, userID, jobID string) error {
-	if _, err := owned(ctx, s.cfg.Queries, userID, jobID); err != nil {
-		return err
-	}
-	n, err := s.cfg.Queries.DeleteImportJob(ctx, jobID)
-	if err != nil {
-		return fmt.Errorf("删除导入任务: %w", err)
-	}
-	if n == 0 {
-		return s.stateError(ctx, jobID)
-	}
-	return nil
-}
-
-// stateError 重新读取任务,按它此刻的状态构造 StateError;任务已不存在即 ErrNotFound。
-// @param jobID 任务 ID
-// @return ErrNotFound、*StateError 或读取失败的错误
-func (s *Service) stateError(ctx context.Context, jobID string) error {
-	job, err := s.cfg.Queries.GetImportJob(ctx, jobID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
-		return fmt.Errorf("读取导入任务: %w", err)
-	}
-	return &StateError{Status: job.Status}
-}
-
-// uniqueHosts 把域名转成小写、去掉首尾空白并去重,与条目里 host 的形态一致。
-// @param hosts 域名
-// @return 规范化后的域名
-func uniqueHosts(hosts []string) []string {
-	seen := make(map[string]struct{}, len(hosts))
-	out := make([]string, 0, len(hosts))
-	for _, h := range hosts {
-		h = strings.ToLower(strings.TrimSpace(h))
-		if _, dup := seen[h]; !dup {
-			seen[h] = struct{}{}
-			out = append(out, h)
-		}
-	}
-	return out
 }

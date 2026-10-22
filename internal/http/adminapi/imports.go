@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/x-haose/imgyoung/internal/core/audit"
+	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/importer"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/errcode"
@@ -30,14 +31,14 @@ type ImportAdmin interface {
 	CreateText(ctx context.Context, opts importer.Options, docs []importer.Document, baseURL string) (string, error)
 	// CreateSite 创建站点扫描任务,任务进入 scanning。
 	CreateSite(ctx context.Context, opts importer.Options, sites []string) (string, error)
-	// Start 确认并开始导入所选域名下的条目。
-	Start(ctx context.Context, userID, jobID string, hosts []string) error
-	// Cancel 取消进行中或待确认的任务。
-	Cancel(ctx context.Context, userID, jobID string) error
-	// Retry 重试失败的条目并继续未处理的。
-	Retry(ctx context.Context, userID, jobID string) error
-	// Delete 删除已结束或待确认的任务。
-	Delete(ctx context.Context, userID, jobID string) error
+	// Start 确认并开始导入所选域名下的条目;只有创建者能做。
+	Start(ctx context.Context, actor importer.Actor, jobID string, hosts []string) error
+	// Cancel 取消进行中或待确认的任务;管理员可以取消任何人的。
+	Cancel(ctx context.Context, actor importer.Actor, jobID string) error
+	// Retry 重试失败的条目并继续未处理的;只有创建者能做。
+	Retry(ctx context.Context, actor importer.Actor, jobID string) error
+	// Delete 删除已结束或待确认的任务;管理员可以删除任何人的。
+	Delete(ctx context.Context, actor importer.Actor, jobID string) error
 }
 
 // importDocument 创建请求里的一份文本。
@@ -167,11 +168,11 @@ func (h *Handlers) HandleImportStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := chi.URLParam(r, "id")
-	if err := h.cfg.Imports.Start(r.Context(), p.UserID, jobID, req.Hosts); err != nil {
+	if err := h.cfg.Imports.Start(r.Context(), importActor(p), jobID, req.Hosts); err != nil {
 		h.writeImportError(w, err)
 		return
 	}
-	h.respondImport(w, r, p.UserID, jobID)
+	h.respondImport(w, r, p, jobID)
 }
 
 // HandleImportCancel 取消导入任务。
@@ -182,12 +183,16 @@ func (h *Handlers) HandleImportCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := chi.URLParam(r, "id")
-	if err := h.cfg.Imports.Cancel(r.Context(), p.UserID, jobID); err != nil {
+	row, ok := h.importJobFor(w, r, p, jobID)
+	if !ok {
+		return
+	}
+	if err := h.cfg.Imports.Cancel(r.Context(), importActor(p), jobID); err != nil {
 		h.writeImportError(w, err)
 		return
 	}
-	h.recordAudit(r.Context(), audit.ActionImportCancel, jobID, "")
-	h.respondImport(w, r, p.UserID, jobID)
+	h.recordAudit(r.Context(), audit.ActionImportCancel, jobID, "owner="+row.UserID)
+	h.respondImport(w, r, p, jobID)
 }
 
 // HandleImportRetry 重试失败的条目并继续。
@@ -198,11 +203,11 @@ func (h *Handlers) HandleImportRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := chi.URLParam(r, "id")
-	if err := h.cfg.Imports.Retry(r.Context(), p.UserID, jobID); err != nil {
+	if err := h.cfg.Imports.Retry(r.Context(), importActor(p), jobID); err != nil {
 		h.writeImportError(w, err)
 		return
 	}
-	h.respondImport(w, r, p.UserID, jobID)
+	h.respondImport(w, r, p, jobID)
 }
 
 // HandleImportDelete 删除导入任务。
@@ -213,19 +218,30 @@ func (h *Handlers) HandleImportDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jobID := chi.URLParam(r, "id")
-	if err := h.cfg.Imports.Delete(r.Context(), p.UserID, jobID); err != nil {
+	row, ok := h.importJobFor(w, r, p, jobID)
+	if !ok {
+		return
+	}
+	if err := h.cfg.Imports.Delete(r.Context(), importActor(p), jobID); err != nil {
 		h.writeImportError(w, err)
 		return
 	}
-	h.recordAudit(r.Context(), audit.ActionImportDelete, jobID, "")
+	h.recordAudit(r.Context(), audit.ActionImportDelete, jobID, "owner="+row.UserID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// importActor 把会话主体翻译为导入服务的操作者。
+// @param p 会话主体
+// @return 操作者
+func importActor(p auth.Principal) importer.Actor {
+	return importer.Actor{UserID: p.UserID, Admin: p.IsAdmin()}
+}
+
 // respondImport 回读任务并输出详情。任务在操作与回读之间被删除按不存在处理。
-// @param userID 操作者用户 id
+// @param p 会话主体
 // @param jobID 任务 ID
-func (h *Handlers) respondImport(w http.ResponseWriter, r *http.Request, userID, jobID string) {
-	row, ok := h.importJobFor(w, r, userID, jobID)
+func (h *Handlers) respondImport(w http.ResponseWriter, r *http.Request, p auth.Principal, jobID string) {
+	row, ok := h.importJobFor(w, r, p, jobID)
 	if !ok {
 		return
 	}
@@ -240,6 +256,8 @@ func (h *Handlers) writeImportError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, importer.ErrNotFound):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImportNotFound)
+	case errors.Is(err, importer.ErrNotOwner):
+		httpx.WriteError(h.cfg.Logger, w, http.StatusForbidden, errcode.ImportOwnerOnly)
 	case errors.As(err, &stateErr):
 		httpx.WriteError(h.cfg.Logger, w, http.StatusConflict, errcode.ImportStateInvalid)
 	case errors.Is(err, importer.ErrNoSelection):

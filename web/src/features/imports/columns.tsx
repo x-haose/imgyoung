@@ -7,8 +7,20 @@ import { type ImportJob } from './data'
 import { JobProgress } from './job-progress'
 import { ImportStatusBadge } from './status-badge'
 
-/** 任务列表的列;文案随语言变化,由调用方用 useMemo 缓存。 */
-export function importColumns(m: Messages['imports']): ColumnDef<ImportJob>[] {
+/** 任务列表的列;showOwner 为真时多一列创建者(管理员看得到全部用户的任务);文案随语言变化,由调用方用 useMemo 缓存。 */
+export function importColumns(
+  m: Messages['imports'],
+  showOwner: boolean
+): ColumnDef<ImportJob>[] {
+  const owner: ColumnDef<ImportJob>[] = showOwner
+    ? [
+        {
+          id: 'owner',
+          header: m.columns.owner,
+          cell: ({ row }) => row.original.user_name,
+        },
+      ]
+    : []
   return [
     {
       id: 'created',
@@ -28,6 +40,7 @@ export function importColumns(m: Messages['imports']): ColumnDef<ImportJob>[] {
         </div>
       ),
     },
+    ...owner,
     {
       id: 'mode',
       header: m.columns.mode,

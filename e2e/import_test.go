@@ -16,10 +16,12 @@ import (
 
 // importView 导入任务详情中本文件断言用到的字段。
 type importView struct {
-	ID     string `json:"id"`     // 任务 ID
-	Mode   string `json:"mode"`   // 输入类型
-	Status string `json:"status"` // 任务状态
-	Counts struct {
+	ID       string `json:"id"`        // 任务 ID
+	UserID   string `json:"user_id"`   // 创建任务的用户
+	UserName string `json:"user_name"` // 创建任务的用户的登录名
+	Mode     string `json:"mode"`      // 输入类型
+	Status   string `json:"status"`    // 任务状态
+	Counts   struct {
 		Candidate int64 `json:"candidate"` // 待确认
 		Pending   int64 `json:"pending"`   // 待转存
 		Done      int64 `json:"done"`      // 已导入
@@ -268,7 +270,8 @@ func TestImportSiteScan(t *testing.T) {
 	}
 }
 
-// TestImportOwnership 导入任务只对创建者可见:别人读、改、删都按不存在处理,列表里也没有。
+// TestImportOwnership 普通用户只能看到和操作自己的任务,别人的一律按不存在处理;管理员能看到全部、取消与删除任何人的,
+// 但确认与重试只有创建者能做。
 func TestImportOwnership(t *testing.T) {
 	t.Parallel()
 	inst := startInstance(t, nil)
@@ -278,29 +281,70 @@ func TestImportOwnership(t *testing.T) {
 	adminAPI := importAPI{t: t, inst: inst, client: admin, csrf: adminCSRF}
 	bobAPI := importAPI{t: t, inst: inst, client: bob, csrf: bobCSRF}
 
-	job := adminAPI.create(`{"mode":"text","documents":[{"name":"a.md","text":"![x](https://a.example.com/x.png)"}]}`)
+	body := `{"mode":"text","documents":[{"name":"a.md","text":"![x](https://a.example.com/x.png)"}]}`
+	adminJob := adminAPI.create(body)
+	bobJob := bobAPI.create(body)
 
 	for _, c := range []struct{ method, path string }{
-		{http.MethodGet, "/" + job.ID}, {http.MethodGet, "/" + job.ID + "/hosts"},
-		{http.MethodGet, "/" + job.ID + "/items"}, {http.MethodGet, "/" + job.ID + "/mapping"},
-		{http.MethodPost, "/" + job.ID + "/start"}, {http.MethodPost, "/" + job.ID + "/cancel"},
-		{http.MethodPost, "/" + job.ID + "/retry"}, {http.MethodDelete, "/" + job.ID},
+		{http.MethodGet, "/" + adminJob.ID}, {http.MethodGet, "/" + adminJob.ID + "/hosts"},
+		{http.MethodGet, "/" + adminJob.ID + "/items"}, {http.MethodGet, "/" + adminJob.ID + "/mapping"},
+		{http.MethodPost, "/" + adminJob.ID + "/start"}, {http.MethodPost, "/" + adminJob.ID + "/cancel"},
+		{http.MethodPost, "/" + adminJob.ID + "/retry"}, {http.MethodDelete, "/" + adminJob.ID},
 	} {
-		body := ""
-		if c.path == "/"+job.ID+"/start" {
-			body = `{"hosts":["a.example.com"]}`
+		reqBody := ""
+		if strings.HasSuffix(c.path, "/start") {
+			reqBody = `{"hosts":["a.example.com"]}`
 		}
-		status, raw := bobAPI.call(c.method, c.path, body)
+		status, raw := bobAPI.call(c.method, c.path, reqBody)
 		wantImportError(t, c.method+" "+c.path, status, raw, http.StatusNotFound, "import_not_found")
 	}
-	status, raw := bobAPI.call(http.MethodGet, "", "")
+	if total := listTotal(t, bobAPI, ""); total != 1 {
+		t.Fatalf("bob 的任务列表总数 = %d, 期望只有自己的 1 个", total)
+	}
+	if total := listTotal(t, adminAPI, ""); total != 2 {
+		t.Fatalf("管理员的任务列表总数 = %d, 期望看到全部 2 个", total)
+	}
+	if total := listTotal(t, adminAPI, "?user_id="+bobJob.UserID); total != 1 {
+		t.Fatalf("按 user_id 过滤后的总数 = %d, 期望 1", total)
+	}
+	if got := adminAPI.get(bobJob.ID); got.UserName != "bob" || got.UserID == "" {
+		t.Fatalf("管理员读别人的任务 = %+v, 期望带创建者信息", got)
+	}
+
+	status, raw := adminAPI.call(http.MethodPost, "/"+bobJob.ID+"/start", `{"hosts":["a.example.com"]}`)
+	wantImportError(t, "管理员确认别人的任务", status, raw, http.StatusForbidden, "import_owner_only")
+	status, raw = adminAPI.call(http.MethodPost, "/"+bobJob.ID+"/retry", "")
+	wantImportError(t, "管理员重试别人的任务", status, raw, http.StatusForbidden, "import_owner_only")
+	if status, raw = adminAPI.call(http.MethodPost, "/"+bobJob.ID+"/cancel", ""); status != http.StatusOK {
+		t.Fatalf("管理员取消别人的任务状态码 = %d; body=%s", status, raw)
+	}
+	if status, raw = adminAPI.call(http.MethodDelete, "/"+bobJob.ID, ""); status != http.StatusNoContent {
+		t.Fatalf("管理员删除别人的任务状态码 = %d; body=%s", status, raw)
+	}
+	if got := adminAPI.wait(adminJob.ID, "ready"); got.Counts.Candidate != 1 {
+		t.Fatalf("别人的操作不应影响任务: %+v", got)
+	}
+}
+
+// get 读取任务详情并断言 200。
+func (a importAPI) get(id string) importView {
+	a.t.Helper()
+	status, raw := a.call(http.MethodGet, "/"+id, "")
+	if status != http.StatusOK {
+		a.t.Fatalf("读任务状态码 = %d; body=%s", status, raw)
+	}
+	return decodeImport(a.t, raw)
+}
+
+// listTotal 列出任务并返回总数。
+func listTotal(t *testing.T, api importAPI, query string) int64 {
+	t.Helper()
+	status, raw := api.call(http.MethodGet, query, "")
 	var list struct {
 		Total int64 `json:"total"` // 总数
 	}
-	if err := json.Unmarshal(raw, &list); err != nil || status != http.StatusOK || list.Total != 0 {
-		t.Fatalf("bob 的任务列表 = %d %s, 期望为空", status, raw)
+	if err := json.Unmarshal(raw, &list); err != nil || status != http.StatusOK {
+		t.Fatalf("任务列表 = %d %s", status, raw)
 	}
-	if got := adminAPI.wait(job.ID, "ready"); got.Counts.Candidate != 1 {
-		t.Fatalf("别人的操作不应影响任务: %+v", got)
-	}
+	return list.Total
 }

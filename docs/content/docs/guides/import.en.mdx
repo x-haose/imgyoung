@@ -13,7 +13,7 @@ An old image host is shutting down, or the images on your blog are scattered acr
 
 Imported images belong to the signed-in account and go through the same processing as an [upload](./upload.mdx): the format allowlist, pixel budget, EXIF handling and storage quota all apply. To fetch a single image, use [fetching from a URL](./upload.mdx#fetching-from-a-url).
 
-Every signed-in user can use it, and each user sees and manages only their own jobs.
+Every signed-in user can use it. Regular users see and manage only the jobs they created; administrators see everyone's jobs and can cancel or delete any of them, but only the creator can start or retry a job. The whole instance processes one import job at a time, so an administrator can cancel a stuck job to let the ones behind it continue.
 
 ## Creating an import
 
@@ -190,7 +190,8 @@ curl -b jar.txt -OJ \
 |---|---|---|---|
 | Create | 400 | `import_input_invalid` | The request is invalid; the message says which part, for example an address that is not an absolute `http` or `https` address |
 | Create | 413 | `import_input_invalid` | The request body exceeds 32 MiB |
-| View, cancel, retry, delete, start, mapping | 404 | `import_not_found` | The job does not exist or belongs to another user |
+| View, cancel, retry, delete, start, mapping | 404 | `import_not_found` | The job does not exist or belongs to another user (administrators can see everyone's jobs) |
+| Start, retry | 403 | `import_owner_only` | An administrator acted on someone else's job; only the creator can do these two |
 | Cancel, retry, delete, start | 409 | `import_state_invalid` | The job's current state does not allow this action |
 | Start | 400 | `import_no_selection` | No pending image addresses under the selected domains |
 | Retry | 409 | `import_nothing_to_retry` | There are no failed or unprocessed items |

@@ -142,7 +142,26 @@ func upsertItem(ctx context.Context, q *sqlc.Queries, jobID, rawURL, state strin
 	return itemID, nil
 }
 
-// addRefs 把一个来源里扫描到的引用登记为待确认的条目,并记下来源与原文。
+// addRef 把一处引用登记为待确认的条目,并记下来源与原文。
+// @param q 查询集,可绑定到事务
+// @param jobID 任务 ID
+// @param source 引用所在的页面地址或文档名;空串表示不记来源
+// @param r 可抓取的引用
+// @return 写入失败时的错误
+func addRef(ctx context.Context, q *sqlc.Queries, jobID, source string, r imgrefs.Ref) error {
+	itemID, err := upsertItem(ctx, q, jobID, r.URL, StateCandidate)
+	if err != nil || source == "" {
+		return err
+	}
+	if err := q.AddImportItemSource(ctx, sqlc.AddImportItemSourceParams{
+		ItemID: itemID, Source: source, Raw: r.Raw,
+	}); err != nil {
+		return fmt.Errorf("写入引用来源: %w", err)
+	}
+	return nil
+}
+
+// addRefs 把一个来源里扫描到的引用登记为待确认的条目。
 // @param q 查询集,可绑定到事务
 // @param jobID 任务 ID
 // @param source 引用所在的页面地址或文档名;空串表示不记来源
@@ -150,17 +169,8 @@ func upsertItem(ctx context.Context, q *sqlc.Queries, jobID, rawURL, state strin
 // @return 写入失败时的错误
 func addRefs(ctx context.Context, q *sqlc.Queries, jobID, source string, refs []imgrefs.Ref) error {
 	for _, r := range refs {
-		itemID, err := upsertItem(ctx, q, jobID, r.URL, StateCandidate)
-		if err != nil {
+		if err := addRef(ctx, q, jobID, source, r); err != nil {
 			return err
-		}
-		if source == "" {
-			continue
-		}
-		if err := q.AddImportItemSource(ctx, sqlc.AddImportItemSourceParams{
-			ItemID: itemID, Source: source, Raw: r.Raw,
-		}); err != nil {
-			return fmt.Errorf("写入引用来源: %w", err)
 		}
 	}
 	return nil

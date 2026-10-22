@@ -12,14 +12,14 @@ WHERE id = @id;
 SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
-WHERE user_id = @user_id
+WHERE (CAST(@user_id AS TEXT) = '' OR user_id = CAST(@user_id AS TEXT)) AND status <> 'creating'
 ORDER BY created_at DESC, rowid DESC
 LIMIT @page_limit OFFSET @page_offset;
 
 -- name: CountImportJobs :one
 SELECT COUNT(*)
 FROM import_jobs
-WHERE user_id = @user_id;
+WHERE (CAST(@user_id AS TEXT) = '' OR user_id = CAST(@user_id AS TEXT)) AND status <> 'creating';
 
 -- name: NextRunnableImportJob :one
 SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
@@ -50,6 +50,14 @@ WHERE id = @id AND status IN ('done', 'aborted', 'cancelled');
 DELETE FROM import_jobs
 WHERE id = @id AND status IN ('ready', 'done', 'cancelled', 'aborted');
 
+-- name: DeleteCreatingImportJob :execrows
+DELETE FROM import_jobs
+WHERE id = @id AND status = 'creating';
+
+-- name: DeleteStaleCreatingImportJobs :execrows
+DELETE FROM import_jobs
+WHERE status = 'creating';
+
 -- name: SetImportScanProgress :exec
 UPDATE import_jobs
 SET scan_pages_found = @pages_found, scan_pages_done = @pages_done
@@ -61,7 +69,7 @@ SET status = 'ready',
     scan_pages_found = @pages_found,
     scan_pages_done = @pages_done,
     scan_report = @scan_report
-WHERE id = @id AND status = 'scanning';
+WHERE id = @id AND status IN ('scanning', 'creating');
 
 -- name: ResetImportScan :exec
 UPDATE import_jobs

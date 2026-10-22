@@ -61,6 +61,7 @@ export function canRetry(job: ImportJob): boolean {
 export interface ImportListParams {
   page: number
   page_size: number
+  user_id?: string // 仅管理员生效:只看该用户创建的任务
 }
 
 /** 任务分页列表;有进行中的任务时轮询,翻页时保留上一页数据。 */

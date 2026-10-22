@@ -436,7 +436,7 @@ export interface paths {
         };
         /**
          * 导入任务列表
-         * @description 分页返回当前用户创建的导入任务，最新的在前。管理员也只看得到自己的任务。
+         * @description 分页返回导入任务，最新的在前。普通用户只看得到自己创建的；管理员看到全部，并可用 `user_id` 只看指定用户的。
          */
         get: operations["listImports"];
         put?: never;
@@ -466,14 +466,14 @@ export interface paths {
         };
         /**
          * 导入任务详情
-         * @description 返回任务的状态、各状态的条目数与扫描报告。进行中的任务由前端轮询本接口取得进度。
+         * @description 返回任务的状态、各状态的条目数与扫描报告。进行中的任务由前端轮询本接口取得进度。普通用户只能读自己的任务，管理员能读全部。
          */
         get: operations["getImport"];
         put?: never;
         post?: never;
         /**
          * 删除导入任务
-         * @description 删除任务及其条目、来源与对照表。已经导入的图片不受影响。`scanning` 与 `importing` 的任务须先取消。
+         * @description 删除任务及其条目、来源与对照表。已经导入的图片不受影响。`scanning` 与 `importing` 的任务须先取消。管理员可以删除任何人的任务。
          */
         delete: operations["deleteImport"];
         options?: never;
@@ -535,6 +535,8 @@ export interface paths {
          * @description 对 `ready` 状态的任务，导入 `hosts` 所列域名下的全部 `candidate` 条目，其余条目记为 `skipped`，任务进入 `importing`。
          *
          *     `hosts` 里没有任何域名对应待导入的条目时返回 400，任务保持 `ready`。
+         *
+         *     只有创建任务的用户能确认；管理员确认别人的任务返回 403，错误码 `import_owner_only`。
          */
         post: operations["startImport"];
         delete?: never;
@@ -554,7 +556,7 @@ export interface paths {
         put?: never;
         /**
          * 取消导入任务
-         * @description 取消 `scanning`、`ready` 或 `importing` 的任务。正在转存的图片会被中断，没处理完的条目保持 `pending`，已经导入的图片保留。
+         * @description 取消 `scanning`、`ready` 或 `importing` 的任务。正在转存的图片会被中断，没处理完的条目保持 `pending`，已经导入的图片保留。管理员可以取消任何人的任务。
          */
         post: operations["cancelImport"];
         delete?: never;
@@ -577,6 +579,8 @@ export interface paths {
          * @description 对 `done`、`aborted` 或 `cancelled` 的任务，把 `failed` 的条目重新置为待导入，连同尚未处理的条目一起继续，任务回到 `importing`。
          *
          *     没有 `failed` 或 `pending` 的条目时返回 409。因存储配额或没有可用渠道而中止的任务，先解决问题再重试。
+         *
+         *     只有创建任务的用户能重试；管理员重试别人的任务返回 403，错误码 `import_owner_only`。
          *
          *     扫描没有完成就中止或取消的 `site` 任务没有候选可以继续，重试会让它回到 `scanning`，从头重新扫描。
          */
@@ -1342,7 +1346,7 @@ export interface components {
          * @description 错误码，稳定的机器可读标识；同一种失败恒为同一个错误码，文案措辞变化不影响它
          * @enum {string}
          */
-        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
+        ErrorCode: "internal" | "invalid_body" | "unauthenticated" | "csrf_rejected" | "admin_required" | "must_change_password" | "source_not_allowed" | "no_healthy_channel" | "lang_invalid" | "query_param_invalid" | "login_rate_limited" | "invalid_credentials" | "user_disabled" | "old_password_incorrect" | "password_too_short" | "user_name_taken" | "invalid_role" | "user_not_found" | "user_protected" | "cannot_delete_self" | "user_has_images" | "user_ttl_invalid" | "token_request_invalid" | "token_name_taken" | "token_id_invalid" | "token_not_found" | "token_active" | "image_not_found" | "image_patch_invalid" | "cleanup_exempt_admin_only" | "image_expired" | "batch_ids_invalid" | "candidate_id_invalid" | "candidate_not_found" | "keeper_invalid" | "candidate_stale" | "referer_pattern_invalid" | "referer_exists" | "referer_id_invalid" | "referer_not_found" | "backup_snapshot_failed" | "backup_store_failed" | "backup_prune_failed" | "recovery_busy" | "import_input_invalid" | "import_not_found" | "import_state_invalid" | "import_no_selection" | "import_nothing_to_retry" | "import_listing_invalid" | "import_owner_only" | "snapshot_name_invalid" | "snapshot_not_found" | "snapshot_corrupt" | "settings_body_invalid" | "setting_unknown" | "setting_type" | "setting_positive" | "setting_non_negative" | "setting_too_large" | "setting_range" | "setting_option" | "setting_url" | "setting_site_root" | "setting_empty" | "channel_id_invalid" | "channel_not_found" | "channel_name_exists" | "channel_deleting" | "channel_config_changed" | "channel_encrypted_immutable" | "channel_sole_replicas" | "purge_param_invalid" | "channel_name_driver_required" | "channel_name_too_long" | "channel_encrypted_direct_link" | "channel_local_path_relative" | "channel_config_key_invalid" | "channel_keep_not_secret" | "channel_keep_no_value" | "channel_unknown_backend" | "channel_unknown_template" | "channel_field_required" | "channel_param_invalid" | "channel_backend_failed" | "channel_bucket_failed" | "channel_unrepresentable" | "oauth_token_invalid" | "oauth_no_refresh_token" | "oauth_not_required" | "oauth_option_required" | "oauth_base_url_required" | "oauth_session_not_found" | "oauth_denied" | "oauth_exchange_failed" | "upload_token_invalid" | "upload_token_scope" | "upload_unauthenticated" | "upload_rate_limited" | "upload_busy" | "upload_unsupported_type" | "upload_too_many_pixels" | "upload_invalid_image" | "upload_exif_policy" | "upload_quota_exceeded" | "upload_unavailable" | "upload_ttl_invalid" | "upload_too_large" | "upload_field_too_long" | "upload_no_file" | "url_body_invalid" | "url_required" | "url_scheme" | "url_blocked" | "url_too_many_redirects" | "url_too_large" | "url_bad_status" | "url_fetch_failed" | "variant_params_invalid";
         /**
          * @description 失败原因的分类，按底层错误判定；`unclassified` 表示无法归类，此时以 `detail` 的原始错误为准
          * @enum {string}
@@ -1956,6 +1960,10 @@ export interface components {
         ImportJob: {
             /** @description 任务 ID */
             id: string;
+            /** @description 创建任务的用户，导入的图片归属于他 */
+            user_id: string;
+            /** @description 创建任务的用户的登录名 */
+            user_name: string;
             mode: components["schemas"]["ImportMode"];
             status: components["schemas"]["ImportStatus"];
             /** @description `site` 任务的起始地址；其他模式为空数组 */
@@ -3627,6 +3635,8 @@ export interface operations {
                 page?: components["parameters"]["page"];
                 /** @description 每页条数；缺省 20，上限 100 */
                 page_size?: components["parameters"]["pageSize"];
+                /** @description 只看指定用户创建的任务；仅管理员生效 */
+                user_id?: string;
             };
             header?: never;
             path?: never;
@@ -3863,7 +3873,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description 无权限，或管理员操作别人的任务（`import_owner_only`） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
             /** @description 任务不在 `ready` 状态，错误码 `import_state_invalid` */
             409: {
@@ -3941,7 +3959,15 @@ export interface operations {
                 };
             };
             401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
+            /** @description 无权限，或管理员操作别人的任务（`import_owner_only`） */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             404: components["responses"]["NotFound"];
             /** @description 任务状态不允许重试（`import_state_invalid`），或没有可重试的条目（`import_nothing_to_retry`） */
             409: {

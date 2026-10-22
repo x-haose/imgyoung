@@ -17,8 +17,14 @@ import {
 
 type Confirming = 'cancel' | 'delete' | null
 
-/** 任务详情的操作:按状态给出取消、重试与删除;取消与删除先确认。 */
-export function JobActions({ job }: { job: ImportJob }) {
+/** 任务详情的操作:按状态给出取消、重试与删除,取消与删除先确认;非创建者(管理员看别人的任务)没有重试。 */
+export function JobActions({
+  job,
+  isOwner,
+}: {
+  job: ImportJob
+  isOwner: boolean // 重试只有创建者能做
+}) {
   const m = useMessages().imports.detail
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -54,7 +60,7 @@ export function JobActions({ job }: { job: ImportJob }) {
   const deletable = !(job.status === 'scanning' || job.status === 'importing')
   return (
     <>
-      {canRetry(job) && (
+      {isOwner && canRetry(job) && (
         <Button disabled={retry.isPending} onClick={() => retry.mutate()}>
           {retry.isPending ? (
             <Loader2 className='animate-spin' />

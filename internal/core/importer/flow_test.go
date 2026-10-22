@@ -198,6 +198,9 @@ func (h *harness) exec(query string, args ...any) {
 	}
 }
 
+// me 默认用户作为操作者。
+func me() Actor { return Actor{UserID: sqlc.DefaultUserID} }
+
 // opts 默认用户的创建参数。
 func opts() Options { return Options{UserID: sqlc.DefaultUserID} }
 
@@ -236,7 +239,7 @@ func TestImagesFlow(t *testing.T) {
 			t.Errorf("图片清单不带 Referer、带 User-Agent,得 %+v", c)
 		}
 	}
-	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); !errors.Is(err, ErrNothingToRetry) {
+	if err := h.svc.Retry(t.Context(), me(), id); !errors.Is(err, ErrNothingToRetry) {
 		t.Fatalf("没有失败条目时重试 = %v, 期望 ErrNothingToRetry", err)
 	}
 }
@@ -261,12 +264,12 @@ func TestTextFlowConfirmsHosts(t *testing.T) {
 		t.Fatalf("扫描报告 = %+v, err=%v", report, err)
 	}
 
-	err = h.svc.Start(t.Context(), sqlc.DefaultUserID, id, []string{"no.such.host"})
+	err = h.svc.Start(t.Context(), me(), id, []string{"no.such.host"})
 	if !errors.Is(err, ErrNoSelection) {
 		t.Fatalf("所选域名下没有条目 = %v, 期望 ErrNoSelection", err)
 	}
 	h.wantStatus(id, StatusReady)
-	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, []string{"IMG.old.com"}); err != nil {
+	if err := h.svc.Start(t.Context(), me(), id, []string{"IMG.old.com"}); err != nil {
 		t.Fatalf("确认: %v", err)
 	}
 	c := h.counts(id)
@@ -274,7 +277,7 @@ func TestTextFlowConfirmsHosts(t *testing.T) {
 		t.Fatalf("确认后各状态 = %v", c)
 	}
 	var stateErr *StateError
-	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, []string{"img.old.com"}); !errors.As(err, &stateErr) {
+	if err := h.svc.Start(t.Context(), me(), id, []string{"img.old.com"}); !errors.As(err, &stateErr) {
 		t.Fatalf("重复确认 = %v, 期望 StateError", err)
 	}
 
@@ -324,7 +327,7 @@ func TestFailuresAndRetry(t *testing.T) {
 	}
 
 	h.images.reply(missURL, pngBytes(t))
-	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); err != nil {
+	if err := h.svc.Retry(t.Context(), me(), id); err != nil {
 		t.Fatalf("重试: %v", err)
 	}
 	if job := h.job(id); job.Status != StatusImporting || job.FinishedAt.Valid {
@@ -365,7 +368,7 @@ func TestQuotaAbortAndResume(t *testing.T) {
 	}
 
 	h.exec(`UPDATE users SET quota_bytes = NULL WHERE id = ?`, sqlc.DefaultUserID)
-	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); err != nil {
+	if err := h.svc.Retry(t.Context(), me(), id); err != nil {
 		t.Fatalf("重试: %v", err)
 	}
 	if job := h.job(id); job.ErrorCode != "" || job.Status != StatusImporting {
@@ -465,7 +468,7 @@ func TestItemIDReuseDoesNotCrossJobs(t *testing.T) {
 		t.Fatalf("创建任务: %v", err)
 	}
 	h.runImport(first)
-	if err := h.svc.Delete(t.Context(), sqlc.DefaultUserID, first); err != nil {
+	if err := h.svc.Delete(t.Context(), me(), first); err != nil {
 		t.Fatalf("删除任务: %v", err)
 	}
 
@@ -499,7 +502,7 @@ func TestCancelStopsImport(t *testing.T) {
 	}()
 	<-h.images.started
 
-	if err := h.svc.Cancel(t.Context(), sqlc.DefaultUserID, id); err != nil {
+	if err := h.svc.Cancel(t.Context(), me(), id); err != nil {
 		t.Fatalf("取消: %v", err)
 	}
 	<-finished
@@ -509,13 +512,13 @@ func TestCancelStopsImport(t *testing.T) {
 		t.Fatalf("各状态 = %v, 期望条目仍是 pending", c)
 	}
 	var stateErr *StateError
-	err = h.svc.Cancel(t.Context(), sqlc.DefaultUserID, id)
+	err = h.svc.Cancel(t.Context(), me(), id)
 	if !errors.As(err, &stateErr) || stateErr.Status != StatusCancelled {
 		t.Fatalf("重复取消 = %v, 期望 StateError(cancelled)", err)
 	}
 }
 
-// TestOwnership 别人的任务一律按不存在处理,四个操作都不例外。
+// TestOwnership 别人的任务对普通用户一律按不存在处理,四个操作都不例外。
 func TestOwnership(t *testing.T) {
 	h := newHarness(t)
 	h.exec(`INSERT INTO users (id, name, role) VALUES ('u2', 'other', 'user')`)
@@ -523,11 +526,12 @@ func TestOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("创建任务: %v", err)
 	}
+	other := Actor{UserID: "u2"}
 	checks := map[string]error{
-		"Start":  h.svc.Start(t.Context(), "u2", id, []string{"img.example.com"}),
-		"Cancel": h.svc.Cancel(t.Context(), "u2", id),
-		"Retry":  h.svc.Retry(t.Context(), "u2", id),
-		"Delete": h.svc.Delete(t.Context(), "u2", id),
+		"Start":  h.svc.Start(t.Context(), other, id, []string{"img.example.com"}),
+		"Cancel": h.svc.Cancel(t.Context(), other, id),
+		"Retry":  h.svc.Retry(t.Context(), other, id),
+		"Delete": h.svc.Delete(t.Context(), other, id),
 	}
 	for name, err := range checks {
 		if !errors.Is(err, ErrNotFound) {
@@ -535,6 +539,32 @@ func TestOwnership(t *testing.T) {
 		}
 	}
 	h.wantStatus(id, StatusImporting)
+}
+
+// TestAdminAccess 管理员可以取消、删除任何人的任务;确认与重试只有创建者能做,管理员得到 ErrNotOwner。
+func TestAdminAccess(t *testing.T) {
+	h := newHarness(t)
+	h.exec(`INSERT INTO users (id, name, role) VALUES ('u2', 'other', 'user')`)
+	admin := Actor{UserID: sqlc.DefaultUserID, Admin: true}
+	docs := []Document{{Name: "a.md", Text: "![a](https://img.old.com/a.png)"}}
+	ready, err := h.svc.CreateText(t.Context(), Options{UserID: "u2"}, docs, "")
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+
+	if err := h.svc.Start(t.Context(), admin, ready, []string{"img.old.com"}); !errors.Is(err, ErrNotOwner) {
+		t.Fatalf("管理员确认别人的任务 = %v, 期望 ErrNotOwner", err)
+	}
+	if err := h.svc.Retry(t.Context(), admin, ready); !errors.Is(err, ErrNotOwner) {
+		t.Fatalf("管理员重试别人的任务 = %v, 期望 ErrNotOwner", err)
+	}
+	h.wantStatus(ready, StatusReady)
+	if err := h.svc.Cancel(t.Context(), admin, ready); err != nil {
+		t.Fatalf("管理员取消别人的任务: %v", err)
+	}
+	if err := h.svc.Delete(t.Context(), admin, ready); err != nil {
+		t.Fatalf("管理员删除别人的任务: %v", err)
+	}
 }
 
 // TestDeleteRules 进行中的任务不能删;删除任务连同条目一起消失;图片被删后条目里的图片 ID 置空,对照表不再列出它。
@@ -546,7 +576,7 @@ func TestDeleteRules(t *testing.T) {
 		t.Fatalf("创建任务: %v", err)
 	}
 	var stateErr *StateError
-	if err := h.svc.Delete(t.Context(), sqlc.DefaultUserID, id); !errors.As(err, &stateErr) {
+	if err := h.svc.Delete(t.Context(), me(), id); !errors.As(err, &stateErr) {
 		t.Fatalf("删除进行中的任务 = %v, 期望 StateError", err)
 	}
 	h.runImport(id)
@@ -558,7 +588,7 @@ func TestDeleteRules(t *testing.T) {
 		t.Fatalf("图片被删后对照表 = %v, err=%v, 期望为空", rows, err)
 	}
 
-	if err := h.svc.Delete(t.Context(), sqlc.DefaultUserID, id); err != nil {
+	if err := h.svc.Delete(t.Context(), me(), id); err != nil {
 		t.Fatalf("删除已完成的任务: %v", err)
 	}
 	var n int64
@@ -651,7 +681,7 @@ func TestSiteScanAndImport(t *testing.T) {
 		t.Fatalf("域名分组 = %+v, err=%v", hosts, err)
 	}
 
-	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, []string{"cdn.old.com"}); err != nil {
+	if err := h.svc.Start(t.Context(), me(), id, []string{"cdn.old.com"}); err != nil {
 		t.Fatalf("确认: %v", err)
 	}
 	h.runImport(id)
@@ -741,7 +771,7 @@ func TestSiteRetryRestartsInterruptedScan(t *testing.T) {
 	}
 	h.exec(`UPDATE import_jobs SET status = 'aborted', error_code = 'internal' WHERE id = ?`, id)
 
-	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); err != nil {
+	if err := h.svc.Retry(t.Context(), me(), id); err != nil {
 		t.Fatalf("重试: %v", err)
 	}
 	if job := h.job(id); job.Status != StatusScanning || job.ErrorCode != "" || job.FinishedAt.Valid {
@@ -750,7 +780,7 @@ func TestSiteRetryRestartsInterruptedScan(t *testing.T) {
 
 	// 扫描完成过的站点任务(有报告)中止在导入阶段,重试不回到扫描。
 	h.exec(`UPDATE import_jobs SET status = 'aborted', scan_report = '{}' WHERE id = ?`, id)
-	if err := h.svc.Retry(t.Context(), sqlc.DefaultUserID, id); !errors.Is(err, ErrNothingToRetry) {
+	if err := h.svc.Retry(t.Context(), me(), id); !errors.Is(err, ErrNothingToRetry) {
 		t.Fatalf("没有失败条目时重试 = %v, 期望 ErrNothingToRetry", err)
 	}
 }
@@ -784,11 +814,58 @@ func TestStartHostsBounds(t *testing.T) {
 	for i := range tooMany {
 		tooMany[i] = fmt.Sprintf("h%d.example.com", i)
 	}
-	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, tooMany); !errors.As(err, &inputErr) {
+	if err := h.svc.Start(t.Context(), me(), id, tooMany); !errors.As(err, &inputErr) {
 		t.Fatalf("域名过多 = %v, 期望 InputError", err)
 	}
 	h.wantStatus(id, StatusReady)
-	if err := h.svc.Start(t.Context(), sqlc.DefaultUserID, id, []string{"img.old.com", "IMG.old.com"}); err != nil {
+	if err := h.svc.Start(t.Context(), me(), id, []string{"img.old.com", "IMG.old.com"}); err != nil {
 		t.Fatalf("重复域名确认: %v", err)
+	}
+}
+
+// TestChunkedCreation 条目数超过一批时分批写入,任务最后才变得可见,条目一个不少。
+func TestChunkedCreation(t *testing.T) {
+	h := newHarness(t)
+	n := writeChunk*2 + 7
+	urls := make([]string, n)
+	for i := range urls {
+		urls[i] = fmt.Sprintf("https://img.example.com/%d.png", i)
+	}
+	id, err := h.svc.CreateImages(t.Context(), opts(), urls)
+	if err != nil {
+		t.Fatalf("创建任务: %v", err)
+	}
+	h.wantStatus(id, StatusImporting)
+	if c := h.counts(id); c[StatePending] != int64(n) {
+		t.Fatalf("待转存 = %d, 期望 %d", c[StatePending], n)
+	}
+}
+
+// TestRecoverRemovesUnfinishedCreation 创建中途退出遗留的 creating 任务对列表、详情都不可见,启动清理会连同条目一起删掉。
+func TestRecoverRemovesUnfinishedCreation(t *testing.T) {
+	h := newHarness(t)
+	h.exec(`INSERT INTO import_jobs (id, user_id, mode, status) VALUES ('half', 'default', 'images', 'creating')`)
+	h.exec(`INSERT INTO import_items (job_id, url, host, state)
+VALUES ('half', 'https://a.example.com/a.png', 'a.example.com', 'pending')`)
+
+	rows, err := h.env.Queries.ListImportJobs(t.Context(), sqlc.ListImportJobsParams{PageLimit: 10})
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("列表 = %v, err=%v, 期望看不到 creating 任务", rows, err)
+	}
+	if err := h.svc.Cancel(t.Context(), me(), "half"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("取消 creating 任务 = %v, 期望 ErrNotFound", err)
+	}
+	if next, err := h.env.Queries.NextRunnableImportJob(t.Context()); err == nil {
+		t.Fatalf("调度不应取到 creating 任务: %s", next.ID)
+	}
+
+	if err := h.svc.Recover(t.Context()); err != nil {
+		t.Fatalf("启动清理: %v", err)
+	}
+	var jobs, items int64
+	row := h.env.Conn.QueryRowContext(t.Context(),
+		`SELECT (SELECT COUNT(*) FROM import_jobs), (SELECT COUNT(*) FROM import_items)`)
+	if err := row.Scan(&jobs, &items); err != nil || jobs != 0 || items != 0 {
+		t.Fatalf("清理后任务 %d 个、条目 %d 个, err=%v, 期望都被删除", jobs, items, err)
 	}
 }

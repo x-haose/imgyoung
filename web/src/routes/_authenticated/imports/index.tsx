@@ -1,5 +1,5 @@
 import { createFileRoute, stripSearchParams } from '@tanstack/react-router'
-import { bool, int, pageParam, searchSchema } from '@/lib/search'
+import { bool, int, pageParam, searchSchema, str } from '@/lib/search'
 import { Imports } from '@/features/imports'
 import { IMPORTS_PAGE_SIZE } from '@/features/imports/data'
 
@@ -9,6 +9,7 @@ export const Route = createFileRoute('/_authenticated/imports/')({
   validateSearch: searchSchema({
     page: pageParam(defaults.page),
     page_size: int(defaults.page_size, 1, 100),
+    user: str(), // 管理员按创建者筛选
     new: bool(), // 打开新建导入对话框
   }),
   // 缺省的页码与页长不写进地址栏。

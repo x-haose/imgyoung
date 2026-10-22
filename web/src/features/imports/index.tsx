@@ -4,23 +4,37 @@ import { getRouteApi } from '@tanstack/react-router'
 import { getCoreRowModel, useReactTable } from '@tanstack/react-table'
 import { t } from '@/i18n'
 import { PackageOpen, Plus } from 'lucide-react'
+import { useSession } from '@/lib/session'
 import { useMessages } from '@/context/locale-provider'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { Page } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { DataTableView } from '@/components/data-table'
 import { QueryState } from '@/components/query-state'
+import { userOptionsQueryOptions } from '@/features/images/data'
 import { importColumns } from './columns'
 import { CreateImportDialog } from './create-dialog'
 import { IMPORTS_PAGE_SIZE, importsQueryOptions } from './data'
 
 const route = getRouteApi('/_authenticated/imports/')
 
+/** Radix Select 不接受空串作为选项值,「全部用户」用哨兵值。 */
+const ALL = '*'
+
 /** 导入页:当前用户的导入任务列表与新建入口;有进行中的任务时自动刷新进度。 */
 export function Imports() {
   const m = useMessages()
   const search = route.useSearch()
   const navigate = route.useNavigate()
+  const isAdmin = useSession().user.role === 'admin'
+  const users = useQuery({ ...userOptionsQueryOptions(), enabled: isAdmin })
 
   const { pagination, onPaginationChange, ensurePageInRange } =
     useTableUrlState({
@@ -38,6 +52,7 @@ export function Imports() {
     importsQueryOptions({
       page: pagination.pageIndex + 1,
       page_size: pagination.pageSize,
+      user_id: isAdmin ? search.user : undefined,
     })
   )
   const total = query.data?.total ?? 0
@@ -46,7 +61,10 @@ export function Imports() {
     if (query.data) ensurePageInRange(pageCount)
   }, [query.data, pageCount, ensurePageInRange])
 
-  const columns = useMemo(() => importColumns(m.imports), [m.imports])
+  const columns = useMemo(
+    () => importColumns(m.imports, isAdmin),
+    [m.imports, isAdmin]
+  )
   const table = useReactTable({
     data: query.data?.items ?? [],
     columns,
@@ -74,10 +92,38 @@ export function Imports() {
         </>
       }
       actions={
-        <Button onClick={() => setCreating(true)}>
-          <Plus />
-          {m.imports.create}
-        </Button>
+        <>
+          {isAdmin && (
+            <Select
+              value={search.user ?? ALL}
+              onValueChange={(v) =>
+                navigate({
+                  search: (prev) => ({
+                    ...prev,
+                    user: v === ALL ? undefined : v,
+                    page: undefined,
+                  }),
+                })
+              }
+            >
+              <SelectTrigger className='w-44' aria-label={m.imports.filterUser}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={ALL}>{m.imports.allUsers}</SelectItem>
+                {(users.data?.items ?? []).map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.name || u.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          <Button onClick={() => setCreating(true)}>
+            <Plus />
+            {m.imports.create}
+          </Button>
+        </>
       }
     >
       <QueryState query={query}>

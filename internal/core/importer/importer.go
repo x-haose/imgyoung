@@ -28,6 +28,7 @@ const (
 
 // 任务状态。
 const (
+	StatusCreating  = "creating"  // 条目分批写入中,对接口与调度不可见;只在创建过程中短暂存在
 	StatusScanning  = "scanning"  // 正在抓取并扫描
 	StatusReady     = "ready"     // 扫描完成,等待确认
 	StatusImporting = "importing" // 正在逐张转存

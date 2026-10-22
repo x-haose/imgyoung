@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/x-haose/imgyoung/internal/core/auth"
 	"github.com/x-haose/imgyoung/internal/core/importer"
 	"github.com/x-haose/imgyoung/internal/http/httpx"
 	"github.com/x-haose/imgyoung/internal/infra/db/sqlc"
@@ -37,6 +38,8 @@ type importScan struct {
 // importJobResponse 导入任务详情。
 type importJobResponse struct {
 	ID         string       `json:"id"`          // 任务 ID
+	UserID     string       `json:"user_id"`     // 创建任务的用户
+	UserName   string       `json:"user_name"`   // 创建任务的用户的登录名
 	Mode       string       `json:"mode"`        // 输入类型
 	Status     string       `json:"status"`      // 任务状态
 	Seeds      []string     `json:"seeds"`       // site 任务的起始地址
@@ -50,13 +53,15 @@ type importJobResponse struct {
 	FinishedAt *string      `json:"finished_at"` // 结束时刻;未结束为 null
 }
 
-// importJobFor 读取任务并确认归属;失败时已写响应。
-// @param userID 操作者用户 id
+// importJobFor 读取任务并确认操作者可见:创建者看自己的,管理员看全部;别人的任务按不存在处理。失败时已写响应。
+// @param p 会话主体
 // @param jobID 任务 ID
 // @return 任务行与是否可继续
-func (h *Handlers) importJobFor(w http.ResponseWriter, r *http.Request, userID, jobID string) (sqlc.ImportJob, bool) {
+func (h *Handlers) importJobFor(w http.ResponseWriter, r *http.Request, p auth.Principal,
+	jobID string) (sqlc.ImportJob, bool) {
 	row, err := h.cfg.Queries.GetImportJob(r.Context(), jobID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && row.UserID != userID) {
+	hidden := err == nil && (row.Status == importer.StatusCreating || (row.UserID != p.UserID && !p.IsAdmin()))
+	if errors.Is(err, sql.ErrNoRows) || hidden {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusNotFound, errcode.ImportNotFound)
 		return sqlc.ImportJob{}, false
 	}
@@ -85,9 +90,13 @@ func (h *Handlers) importJobBody(ctx context.Context, row sqlc.ImportJob) (impor
 	if err != nil {
 		return importJobResponse{}, err
 	}
+	user, err := h.cfg.Queries.GetUser(ctx, row.UserID)
+	if err != nil {
+		return importJobResponse{}, fmt.Errorf("读取任务的创建者: %w", err)
+	}
 	resp := importJobResponse{
-		ID: row.ID, Mode: row.Mode, Status: row.Status, Seeds: seeds, TTLSeconds: nullableInt(row.TtlSeconds),
-		EXIFPolicy: row.ExifPolicy, Referer: row.Referer, Counts: counts,
+		ID: row.ID, UserID: row.UserID, UserName: user.Name, Mode: row.Mode, Status: row.Status, Seeds: seeds,
+		TTLSeconds: nullableInt(row.TtlSeconds), EXIFPolicy: row.ExifPolicy, Referer: row.Referer, Counts: counts,
 		Scan:      importScan{PagesFound: row.ScanPagesFound, PagesDone: row.ScanPagesDone, Report: report},
 		CreatedAt: row.CreatedAt, FinishedAt: nullableStr(row.FinishedAt),
 	}
@@ -139,7 +148,7 @@ func (h *Handlers) writeImportJob(w http.ResponseWriter, r *http.Request, status
 	httpx.WriteJSON(h.cfg.Logger, w, status, body)
 }
 
-// HandleImportList 分页列出当前用户的导入任务,最新的在前。
+// HandleImportList 分页列出导入任务,最新的在前:普通用户只见自己的,管理员见全部并可按 user_id 过滤。
 func (h *Handlers) HandleImportList(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.sessionPrincipal(r)
 	if !ok {
@@ -151,7 +160,11 @@ func (h *Handlers) HandleImportList(w http.ResponseWriter, r *http.Request) {
 		h.writeQueryError(w, err)
 		return
 	}
-	items, total, err := h.importPage(r.Context(), p.UserID, limit, offset)
+	userFilter := p.UserID
+	if p.IsAdmin() {
+		userFilter = r.URL.Query().Get("user_id")
+	}
+	items, total, err := h.importPage(r.Context(), userFilter, limit, offset)
 	if err != nil {
 		h.cfg.Logger.Error("查询导入任务列表失败", "err", err)
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
@@ -161,7 +174,7 @@ func (h *Handlers) HandleImportList(w http.ResponseWriter, r *http.Request) {
 }
 
 // importPage 查一页任务与总数。
-// @param userID 任务的归属用户 id
+// @param userID 只看这个用户的任务;空串表示全部
 // @return 任务详情,恒非 nil
 // @return 总数
 // @return 查询失败的错误
@@ -204,7 +217,7 @@ func (h *Handlers) HandleImportGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	h.respondImport(w, r, p.UserID, chi.URLParam(r, "id"))
+	h.respondImport(w, r, p, chi.URLParam(r, "id"))
 }
 
 // importHost 待确认的条目按域名分组。
@@ -221,7 +234,7 @@ func (h *Handlers) HandleImportHosts(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	row, ok := h.importJobFor(w, r, p.UserID, chi.URLParam(r, "id"))
+	row, ok := h.importJobFor(w, r, p, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
@@ -284,7 +297,7 @@ func (h *Handlers) HandleImportItems(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	row, ok := h.importJobFor(w, r, p.UserID, chi.URLParam(r, "id"))
+	row, ok := h.importJobFor(w, r, p, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
@@ -366,7 +379,7 @@ func (h *Handlers) HandleImportMapping(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(h.cfg.Logger, w, http.StatusInternalServerError, errcode.Internal)
 		return
 	}
-	row, ok := h.importJobFor(w, r, p.UserID, chi.URLParam(r, "id"))
+	row, ok := h.importJobFor(w, r, p, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}

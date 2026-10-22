@@ -25,7 +25,13 @@ import {
 } from './data'
 
 /** 确认页:按域名分组列出待导入的图片地址,勾选要搬的域名后开始导入;默认一个都不选。 */
-export function HostPicker({ id }: { id: string }) {
+export function HostPicker({
+  id,
+  canStart,
+}: {
+  id: string
+  canStart: boolean // 只有创建者能开始导入
+}) {
   const m = useMessages().imports.hosts
   const queryClient = useQueryClient()
   const query = useQuery(importHostsQueryOptions(id))
@@ -57,52 +63,57 @@ export function HostPicker({ id }: { id: string }) {
       </CardHeader>
       <CardContent>
         <QueryState query={query}>
-          <div className='mb-3 flex gap-1'>
-            <Button
-              variant='ghost'
-              size='sm'
-              onClick={() => setSelected(new Set(hosts.map((h) => h.host)))}
-            >
-              {m.selectAll}
-            </Button>
-            <Button
-              variant='ghost'
-              size='sm'
-              disabled={selected.size === 0}
-              onClick={() => setSelected(new Set())}
-            >
-              {m.clear}
-            </Button>
-          </div>
+          {canStart && (
+            <div className='mb-3 flex gap-1'>
+              <Button
+                variant='ghost'
+                size='sm'
+                onClick={() => setSelected(new Set(hosts.map((h) => h.host)))}
+              >
+                {m.selectAll}
+              </Button>
+              <Button
+                variant='ghost'
+                size='sm'
+                disabled={selected.size === 0}
+                onClick={() => setSelected(new Set())}
+              >
+                {m.clear}
+              </Button>
+            </div>
+          )}
           <ul className='divide-y overflow-hidden rounded-xl border'>
             {hosts.map((h) => (
               <HostRow
                 key={h.host}
                 host={h}
                 checked={selected.has(h.host)}
+                readOnly={!canStart}
                 onToggle={() => toggle(h.host)}
               />
             ))}
           </ul>
         </QueryState>
       </CardContent>
-      <CardFooter className='flex-wrap justify-between gap-3'>
-        <p className='text-sm text-muted-foreground'>
-          {selected.size === 0
-            ? m.none
-            : t(m.selected, {
-                hosts: formatNumber(selected.size),
-                images: formatNumber(images),
-              })}
-        </p>
-        <Button
-          disabled={selected.size === 0 || start.isPending}
-          onClick={() => start.mutate()}
-        >
-          {start.isPending ? <Loader2 className='animate-spin' /> : <Play />}
-          {m.start}
-        </Button>
-      </CardFooter>
+      {canStart && (
+        <CardFooter className='flex-wrap justify-between gap-3'>
+          <p className='text-sm text-muted-foreground'>
+            {selected.size === 0
+              ? m.none
+              : t(m.selected, {
+                  hosts: formatNumber(selected.size),
+                  images: formatNumber(images),
+                })}
+          </p>
+          <Button
+            disabled={selected.size === 0 || start.isPending}
+            onClick={() => start.mutate()}
+          >
+            {start.isPending ? <Loader2 className='animate-spin' /> : <Play />}
+            {m.start}
+          </Button>
+        </CardFooter>
+      )}
     </Card>
   )
 }
@@ -111,10 +122,12 @@ export function HostPicker({ id }: { id: string }) {
 function HostRow({
   host,
   checked,
+  readOnly,
   onToggle,
 }: {
   host: ImportHost
   checked: boolean
+  readOnly: boolean
   onToggle: () => void
 }) {
   const m = useMessages().imports.hosts
@@ -129,6 +142,7 @@ function HostRow({
         <Checkbox
           checked={checked}
           onCheckedChange={onToggle}
+          disabled={readOnly}
           className='mt-0.5'
           aria-label={t(m.selectRow, { host: host.host })}
         />

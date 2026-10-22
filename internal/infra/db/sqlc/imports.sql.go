@@ -145,7 +145,7 @@ func (q *Queries) CountImportItemsByState(ctx context.Context, jobID string) ([]
 const countImportJobs = `-- name: CountImportJobs :one
 SELECT COUNT(*)
 FROM import_jobs
-WHERE user_id = ?1
+WHERE (CAST(?1 AS TEXT) = '' OR user_id = CAST(?1 AS TEXT)) AND status <> 'creating'
 `
 
 func (q *Queries) CountImportJobs(ctx context.Context, userID string) (int64, error) {
@@ -198,6 +198,19 @@ func (q *Queries) CreateImportJob(ctx context.Context, arg CreateImportJobParams
 	return err
 }
 
+const deleteCreatingImportJob = `-- name: DeleteCreatingImportJob :execrows
+DELETE FROM import_jobs
+WHERE id = ?1 AND status = 'creating'
+`
+
+func (q *Queries) DeleteCreatingImportJob(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteCreatingImportJob, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteImportJob = `-- name: DeleteImportJob :execrows
 DELETE FROM import_jobs
 WHERE id = ?1 AND status IN ('ready', 'done', 'cancelled', 'aborted')
@@ -211,13 +224,26 @@ func (q *Queries) DeleteImportJob(ctx context.Context, id string) (int64, error)
 	return result.RowsAffected()
 }
 
+const deleteStaleCreatingImportJobs = `-- name: DeleteStaleCreatingImportJobs :execrows
+DELETE FROM import_jobs
+WHERE status = 'creating'
+`
+
+func (q *Queries) DeleteStaleCreatingImportJobs(ctx context.Context) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteStaleCreatingImportJobs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const finishImportScan = `-- name: FinishImportScan :execrows
 UPDATE import_jobs
 SET status = 'ready',
     scan_pages_found = ?1,
     scan_pages_done = ?2,
     scan_report = ?3
-WHERE id = ?4 AND status = 'scanning'
+WHERE id = ?4 AND status IN ('scanning', 'creating')
 `
 
 type FinishImportScanParams struct {
@@ -421,7 +447,7 @@ const listImportJobs = `-- name: ListImportJobs :many
 SELECT id, user_id, mode, status, seeds, ttl_seconds, exif_policy, referer,
        scan_pages_found, scan_pages_done, scan_report, error_code, created_at, finished_at
 FROM import_jobs
-WHERE user_id = ?1
+WHERE (CAST(?1 AS TEXT) = '' OR user_id = CAST(?1 AS TEXT)) AND status <> 'creating'
 ORDER BY created_at DESC, rowid DESC
 LIMIT ?3 OFFSET ?2
 `

@@ -61,6 +61,7 @@ var (
 	ImportNoSelection    = define("import_no_selection", "所选域名下没有待导入的图片地址")
 	ImportNothingToRetry = define("import_nothing_to_retry", "没有需要重试的条目")
 	ImportListingInvalid = define("import_listing_invalid", "站点地图或订阅源的内容无法解析")
+	ImportOwnerOnly      = define("import_owner_only", "只有创建这个导入任务的用户能执行此操作")
 )
 
 // 相似图裁决。

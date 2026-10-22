@@ -61,6 +61,7 @@ export const server = {
     import_state_invalid: '任务当前状态不允许此操作',
     import_no_selection: '所选域名下没有待导入的图片地址',
     import_nothing_to_retry: '没有需要重试的条目',
+    import_owner_only: '只有创建这个导入任务的用户能执行此操作',
     import_listing_invalid: '站点地图或订阅源的内容无法解析',
     snapshot_name_invalid: '快照名非法',
     snapshot_not_found: '快照不存在',

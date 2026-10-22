@@ -3,7 +3,7 @@ CREATE TABLE import_jobs (
     id TEXT PRIMARY KEY, -- 对外任务 ID(nanoid)
     user_id TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE, -- 归属用户,导入的图片归属于他
     mode TEXT NOT NULL, -- 输入类型:images / text / site
-    status TEXT NOT NULL, -- 任务状态:scanning / ready / importing / done / cancelled / aborted
+    status TEXT NOT NULL, -- 任务状态:creating(条目分批写入中,对外不可见) / scanning / ready / importing / done / cancelled / aborted
     seeds TEXT NOT NULL DEFAULT '[]', -- site 任务的起始地址,JSON 字符串数组;其他类型为 []
     ttl_seconds INTEGER, -- 导入图片的有效期,秒;0 表示永久,NULL 表示按用户默认与全局默认
     exif_policy TEXT NOT NULL DEFAULT '', -- 导入图片的 EXIF 档位 strip / passthrough;空串表示全局默认

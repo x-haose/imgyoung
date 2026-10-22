@@ -3,6 +3,7 @@ import { getRouteApi, Link } from '@tanstack/react-router'
 import { ArrowLeft, PackageOpen } from 'lucide-react'
 import { hasStatus } from '@/lib/errors'
 import { formatRelativeTime } from '@/lib/format'
+import { useSession } from '@/lib/session'
 import { useMessages } from '@/context/locale-provider'
 import { Page } from '@/components/layout/page'
 import { Button } from '@/components/ui/button'
@@ -26,6 +27,7 @@ export function ImportDetail() {
   const { id } = route.useParams()
   const query = useQuery(importQueryOptions(id))
   const job = query.data
+  const { user } = useSession()
 
   return (
     <Page
@@ -35,6 +37,8 @@ export function ImportDetail() {
           <span className='inline-flex flex-wrap items-center gap-x-2 gap-y-1'>
             <ImportStatusBadge status={job.status} />
             {m.mode[job.mode]} · {formatRelativeTime(job.created_at)}
+            {job.user_id !== user.id &&
+              ` · ${m.detail.owner}：${job.user_name}`}
           </span>
         )
       }
@@ -46,7 +50,7 @@ export function ImportDetail() {
               {m.back}
             </Link>
           </Button>
-          {job && <JobActions job={job} />}
+          {job && <JobActions job={job} isOwner={job.user_id === user.id} />}
         </>
       }
     >
@@ -75,11 +79,12 @@ function NotFound() {
 
 /** 按状态选择主体:扫描中、待确认、导入中、结束。 */
 function JobBody({ job }: { job: ImportJob }) {
+  const isOwner = job.user_id === useSession().user.id
   const report = job.scan.report
   return (
     <div className='flex flex-col gap-6'>
       {job.status === 'scanning' && <ScanningPanel job={job} />}
-      {job.status === 'ready' && <ReadyPanel job={job} />}
+      {job.status === 'ready' && <ReadyPanel job={job} isOwner={isOwner} />}
       {job.status === 'importing' && <ImportingPanel job={job} />}
       {!isRunning(job.status) && job.status !== 'ready' && (
         <ResultPanel job={job} />
@@ -94,9 +99,11 @@ function JobBody({ job }: { job: ImportJob }) {
 }
 
 /** 待确认:有候选图片时选域名,什么也没找到时只陈述并等待删除。 */
-function ReadyPanel({ job }: { job: ImportJob }) {
+function ReadyPanel({ job, isOwner }: { job: ImportJob; isOwner: boolean }) {
   const m = useMessages().imports.detail
-  if (job.counts.candidate > 0) return <HostPicker id={job.id} />
+  if (job.counts.candidate > 0) {
+    return <HostPicker id={job.id} canStart={isOwner} />
+  }
   return (
     <Card>
       <CardContent className='flex flex-col items-center gap-2 py-12 text-center'>

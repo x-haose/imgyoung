@@ -24,7 +24,10 @@ export const imports = {
     mode: '输入类型',
     status: '状态',
     progress: '进度',
+    owner: '创建者',
   },
+  allUsers: '全部用户',
+  filterUser: '按创建者筛选',
   view: '查看',
   emptyTitle: '还没有导入任务',
   emptyDesc:
@@ -76,6 +79,7 @@ export const imports = {
     settingsTitle: '任务参数',
     mode: '输入类型',
     created: '创建于',
+    owner: '创建者',
     finished: '结束于',
     ttl: '有效期',
     ttlDefault: '用户默认或全局默认',
